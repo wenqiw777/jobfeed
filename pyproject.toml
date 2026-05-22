@@ -9,7 +9,10 @@ description = "Local-first job scanning and evaluation pipeline."
 requires-python = ">=3.11"
 dependencies = [
     "aiosqlite",
+    "alembic >= 1.15",
+    "asyncpg >= 0.30",
     "click",
+    "psycopg2-binary >= 2.9",
     "pydantic",
     "structlog",
 ]
@@ -21,6 +24,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "ruff",
+    "testcontainers[postgres] >= 4.0",
 ]
 
 [project.scripts]
@@ -42,6 +46,8 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 "src/jobfeed/adapters/store/sqlite.py" = ["ARG002", "E501", "PLR0913"]
 "src/jobfeed/adapters/store/_sqlite_*.py" = ["PLR0913"]
 "tests/**/test_ports.py" = ["ARG002", "PLR0913"]
+"migrations/env.py" = ["PLC0415"]
+"migrations/versions/*.py" = ["E501"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

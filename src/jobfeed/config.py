@@ -90,6 +90,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
     """
     file_data = _load_toml_file(config_path)
     env_data = _collect_env_overrides(os.environ)
+    _apply_convenience_env_vars(os.environ, env_data)
     merged = _merge_dicts(file_data, env_data)
     return Settings.model_validate(merged)
 
@@ -125,6 +126,23 @@ def _collect_env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
             continue
         _set_nested_value(overrides, path, value)
     return overrides
+
+
+def _apply_convenience_env_vars(
+    environ: Mapping[str, str],
+    overrides: dict[str, object],
+) -> None:
+    """Apply convenience (non-nested) env var aliases into the overrides dict.
+
+    ``JOBFEED_DB_URL`` is a flat env var that maps to ``db.url`` for ergonomic
+    use in Docker Compose and shell scripts.  The nested form
+    ``JOBFEED_DB__URL`` takes precedence if both are set.
+    """
+    db_url = environ.get("JOBFEED_DB_URL")
+    if db_url is not None:
+        db_section = overrides.setdefault("db", {})
+        if isinstance(db_section, dict):
+            db_section.setdefault("url", db_url)
 
 
 def _set_nested_value(target: dict[str, object], path: list[str], value: str) -> None:
