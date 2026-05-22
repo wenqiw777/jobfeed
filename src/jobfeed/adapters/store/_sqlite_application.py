@@ -60,16 +60,23 @@ async def _transition_in_tx(
     row = await cursor.fetchone()
     from_status: str | None = row[0] if row else None
 
+    # Compute follow-up for applied transitions
+    followup_val: str | None = None
+    if new_status == "applied":
+        followup_dt = datetime.now(UTC) + timedelta(days=7)
+        followup_val = followup_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
     # Update current status row
     await db.execute(
         """
         UPDATE job_status
            SET status = ?,
                last_status_change_at = ?,
+               next_followup_at = COALESCE(?, next_followup_at),
                resume_variant = COALESCE(?, resume_variant)
          WHERE job_id = ?
         """,
-        (new_status, now, resume_variant, job_id),
+        (new_status, now, followup_val, resume_variant, job_id),
     )
 
     # Append to history log

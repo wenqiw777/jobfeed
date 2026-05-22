@@ -5,8 +5,9 @@ from __future__ import annotations
 INSERT_JOB_DO_NOTHING_SQL = """
 INSERT INTO jobs (
     platform, canonical_id, url, title, company, location, jd_text, jd_quality,
-    posted_at, discovered_at, enriched_at, enrich_source
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    posted_at, discovered_at, enriched_at, enrich_source,
+    company_norm, title_norm, location_norm
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(platform, canonical_id) DO NOTHING
 """
 
@@ -16,7 +17,8 @@ SET platform = ?, canonical_id = ?, url = ?, title = ?, company = ?,
     location = ?, jd_text = COALESCE(?, jd_text),
     jd_quality = COALESCE(?, jd_quality), posted_at = COALESCE(?, posted_at),
     discovered_at = ?, enriched_at = COALESCE(?, enriched_at),
-    enrich_source = COALESCE(?, enrich_source)
+    enrich_source = COALESCE(?, enrich_source),
+    company_norm = ?, title_norm = ?, location_norm = ?
 WHERE id = ?
 """
 

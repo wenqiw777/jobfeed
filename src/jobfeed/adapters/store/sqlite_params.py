@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jobfeed.adapters.store._normalize import normalize, normalize_company
 from jobfeed.adapters.store.sqlite_mapping import (
     block_json,
     datetime_to_db,
@@ -44,6 +45,9 @@ def job_params(job: JobPosting) -> tuple[object, ...]:
         datetime_to_db(job.discovered_at),
         datetime_to_db(job.enriched_at),
         job.enrich_source,
+        normalize_company(job.company),
+        normalize(job.title),
+        normalize(job.location),
     )
 
 

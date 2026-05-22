@@ -40,14 +40,8 @@ DECAY_GHOST_DAYS = 30
 DECAY_ARCHIVE_DAYS = 14
 FOLLOWUP_GRACE_DAYS = 7
 LOOKBACK_DAYS = 60
-RESUME_HASH_A = (
-    "aabbccdd00112233445566778899aabb"
-    "00112233445566778899aabbccddeeff"
-)
-RESUME_HASH_B = (
-    "1122334455667788990011223344556677889900"
-    "aabbccddeeff0011223344bb"
-)
+RESUME_HASH_A = "aabbccdd00112233445566778899aabb00112233445566778899aabbccddeeff"
+RESUME_HASH_B = "1122334455667788990011223344556677889900aabbccddeeff0011223344bb"
 LIST_LIMIT_SMALL = 5
 PENDING_LIMIT = 100
 EXPECTED_JOB_PAIR = 2
@@ -259,11 +253,13 @@ class TestJobCRUD:
         await contract_store.save_job(make_job("exists-1"))
 
         exists = await contract_store.job_exists(
-            platform="mock", canonical_id="exists-1",
+            platform="mock",
+            canonical_id="exists-1",
         )
         assert exists is True
         missing = await contract_store.job_exists(
-            platform="mock", canonical_id="nope",
+            platform="mock",
+            canonical_id="nope",
         )
         assert missing is False
 
@@ -988,9 +984,7 @@ class TestStatusListing:
 
         await _insert_scored_job(contract_store, "ls-scored")
 
-        results = await contract_store.list_statuses(
-            statuses=frozenset({"applied"})
-        )
+        results = await contract_store.list_statuses(statuses=frozenset({"applied"}))
         statuses = {r.status for r in results}
         assert "applied" in statuses
         assert "scored" not in statuses
@@ -1235,9 +1229,7 @@ class TestEvaluationReads:
 
     async def test_needs_attention_surfaces_low_quality_scored(self, contract_store):
         """needs_attention should detect low-quality jobs that have been scored."""
-        job_id, _ = await _insert_job(
-            contract_store, "attn-lq", jd_text=JD_TEXT_STUB
-        )
+        job_id, _ = await _insert_job(contract_store, "attn-lq", jd_text=JD_TEXT_STUB)
         await contract_store.save_stage_a(job_id, _make_stage_a())
 
         report = await contract_store.needs_attention()

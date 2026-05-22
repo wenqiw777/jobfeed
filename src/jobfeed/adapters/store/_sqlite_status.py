@@ -158,19 +158,27 @@ async def transition_status(
 
     Returns:
         The new status string.
+
+    Raises:
+        ValueError: If transition is invalid.
     """
     async with lock:
-        result = await _transition_status_in_tx(
-            db,
-            job_id=job_id,
-            new_status=new_status,
-            reason=reason,
-            resume_variant=resume_variant,
-            force=force,
-            i_mean_it=i_mean_it,
-            followup_grace_days=followup_grace_days,
-        )
-        await db.commit()
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            result = await _transition_status_in_tx(
+                db,
+                job_id=job_id,
+                new_status=new_status,
+                reason=reason,
+                resume_variant=resume_variant,
+                force=force,
+                i_mean_it=i_mean_it,
+                followup_grace_days=followup_grace_days,
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
         return result
 
 
@@ -221,6 +229,16 @@ async def restore_from_archived(
         ValueError: If job is not archived or no prior status exists.
     """
     async with lock:
+        # Verify current status is archived
+        cursor = await db.execute(
+            "SELECT status FROM job_status WHERE job_id = ?",
+            (int(job_id),),
+        )
+        status_row = await cursor.fetchone()
+        if status_row is None or status_row["status"] != "archived":
+            current = status_row["status"] if status_row else "unknown"
+            raise ValueError(f"job {job_id} is not archived (status={current})")
+
         # Find the most recent non-archived to_status in history
         cursor = await db.execute(
             """SELECT to_status FROM job_status_history
@@ -234,15 +252,20 @@ async def restore_from_archived(
             raise ValueError(f"no non-archived history for job_id={job_id}")
         target_status: str = row["to_status"]
 
-        result = await _transition_status_in_tx(
-            db,
-            job_id=job_id,
-            new_status=target_status,
-            reason="restore_from_archived",
-            force=True,
-            i_mean_it=True,
-        )
-        await db.commit()
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            result = await _transition_status_in_tx(
+                db,
+                job_id=job_id,
+                new_status=target_status,
+                reason="restore_from_archived",
+                force=True,
+                i_mean_it=True,
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
         return result
 
 
@@ -263,48 +286,53 @@ async def auto_decay(
 
     Returns:
         Counts of ghosted and archived jobs.
+
+    Raises:
+        Exception: If sweep transaction fails (rolled back).
     """
     decay_placeholders = ",".join("?" for _ in DECAY_SOURCES)
     decay_list = sorted(DECAY_SOURCES)
 
     async with lock:
-        # Ghost stale DECAY_SOURCES
-        cursor = await db.execute(
-            f"""SELECT job_id FROM job_status
-                WHERE status IN ({decay_placeholders})
-                  AND last_status_change_at < datetime('now', ? || ' days')""",
-            (*decay_list, f"-{ghost_days}"),
-        )
-        ghost_rows = list(await cursor.fetchall())
-        ghost_count = len(ghost_rows)
-        for row in ghost_rows:
-            await _transition_status_in_tx(
-                db,
-                job_id=str(row["job_id"]),
-                new_status="ghosted",
-                reason="auto_decay",
-                force=True,
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await db.execute(
+                f"""SELECT job_id FROM job_status
+                    WHERE status IN ({decay_placeholders})
+                      AND last_status_change_at < datetime('now', ? || ' days')""",
+                (*decay_list, f"-{ghost_days}"),
             )
+            ghost_rows = list(await cursor.fetchall())
+            ghost_count = len(ghost_rows)
+            for row in ghost_rows:
+                await _transition_status_in_tx(
+                    db,
+                    job_id=str(row["job_id"]),
+                    new_status="ghosted",
+                    reason="auto_decay",
+                    force=True,
+                )
 
-        # Archive stale ignored
-        cursor = await db.execute(
-            """SELECT job_id FROM job_status
-               WHERE status = 'ignored'
-                 AND last_status_change_at < datetime('now', ? || ' days')""",
-            (f"-{archive_ignored_days}",),
-        )
-        archive_rows = list(await cursor.fetchall())
-        archive_count = len(archive_rows)
-        for row in archive_rows:
-            await _transition_status_in_tx(
-                db,
-                job_id=str(row["job_id"]),
-                new_status="archived",
-                reason="auto_decay",
-                force=True,
+            cursor = await db.execute(
+                """SELECT job_id FROM job_status
+                   WHERE status = 'ignored'
+                     AND last_status_change_at < datetime('now', ? || ' days')""",
+                (f"-{archive_ignored_days}",),
             )
-
-        await db.commit()
+            archive_rows = list(await cursor.fetchall())
+            archive_count = len(archive_rows)
+            for row in archive_rows:
+                await _transition_status_in_tx(
+                    db,
+                    job_id=str(row["job_id"]),
+                    new_status="archived",
+                    reason="auto_decay",
+                    force=True,
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
     return AutoDecayResult(ghosted=ghost_count, archived=archive_count)
 

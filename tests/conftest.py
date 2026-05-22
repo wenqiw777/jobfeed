@@ -44,6 +44,4 @@ async def contract_store(
         finally:
             await s.close()
     else:
-        pytest.skip(
-            f"backend {request.param!r} not yet implemented"
-        )
+        pytest.skip(f"backend {request.param!r} not yet implemented")
