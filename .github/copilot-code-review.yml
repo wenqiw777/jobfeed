@@ -1,0 +1,5 @@
+# GitHub Copilot — automatic PR code review
+# Enable at: repo Settings > Copilot > Code review > Auto-review
+
+auto_review:
+  enabled: true
