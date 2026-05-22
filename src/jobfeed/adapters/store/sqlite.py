@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -42,13 +42,13 @@ from jobfeed.adapters.store.sqlite_sql import (
     INSERT_JOB_DO_NOTHING_SQL,
     INSERT_PIPELINE_RUN_SQL,
     LIST_EVALUATED_SQL,
-    PENDING_STAGE_A_SQL,
-    PENDING_STAGE_B_SQL,
     SAVE_STAGE_A_ERROR_SQL,
     SAVE_STAGE_A_SQL,
     SAVE_STAGE_B_ERROR_SQL,
     SAVE_STAGE_B_SQL,
     UPDATE_JOB_SQL,
+    build_pending_stage_a_query,
+    build_pending_stage_b_query,
 )
 from jobfeed.domain.models import (
     ApplicationRecord,
@@ -70,6 +70,11 @@ from jobfeed.domain.models import (
     WorkflowAttention,
 )
 
+# Bumped when schema.sql changes in a way that fresh and existing databases
+# must agree on. Phase 1 hardening is version 1; Phase 0 databases carry the
+# implicit version 0 (no user_version stamp) and have no in-place upgrade path.
+SCHEMA_VERSION = 1
+
 
 class SQLiteStore:
     """SQLite-backed JobStore implementation."""
@@ -88,6 +93,9 @@ class SQLiteStore:
         """Open SQLite connection and initialize schema.
 
         Raises:
+            RuntimeError: If the database predates the Phase 1 schema (no
+                in-place migration path) or carries a newer, unsupported
+                schema version.
             Exception: If initialization fails.
         """
         async with self._connection_lock:
@@ -98,12 +106,60 @@ class SQLiteStore:
             try:
                 db.row_factory = sqlite3.Row
                 await db.execute("PRAGMA foreign_keys = ON")
-                schema = Path(__file__).with_name("schema.sql").read_text("utf-8")
-                await db.executescript(schema)
+                await self._initialize_schema(db)
             except Exception:
                 await db.close()
                 raise
             self._db = db
+
+    async def _initialize_schema(self, db: aiosqlite.Connection) -> None:
+        """Apply the schema to a fresh database, rejecting stale ones.
+
+        SQLite has no in-place migration path in Phase 1, so a database created
+        by an older schema (missing Phase 1 columns) is rejected with an
+        actionable error instead of failing later on a missing column.
+
+        Args:
+            db: Open database connection to initialize.
+
+        Raises:
+            RuntimeError: If the database predates the Phase 1 schema or carries
+                a newer, unsupported version.
+        """
+        version = await self._schema_version(db)
+        if version == SCHEMA_VERSION:
+            return
+        if version != 0:
+            raise RuntimeError(
+                f"SQLite schema version {version} is newer than the supported "
+                f"version {SCHEMA_VERSION}; upgrade jobfeed."
+            )
+        if await self._has_prephase1_jobs_table(db):
+            raise RuntimeError(
+                "Existing SQLite database predates the Phase 1 schema and has "
+                "no in-place migration path. Delete it to recreate "
+                f"(e.g. rm {self.db_path})."
+            )
+        schema = Path(__file__).with_name("schema.sql").read_text("utf-8")
+        await db.executescript(schema)
+        await db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    @staticmethod
+    async def _schema_version(db: aiosqlite.Connection) -> int:
+        cursor = await db.execute("PRAGMA user_version")
+        row = await cursor.fetchone()
+        return int(row[0]) if row is not None else 0
+
+    @staticmethod
+    async def _has_prephase1_jobs_table(db: aiosqlite.Connection) -> bool:
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
+        )
+        if await cursor.fetchone() is None:
+            return False
+        cursor = await db.execute("PRAGMA table_info(jobs)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        return "company_norm" not in columns
 
     async def close(self) -> None:
         """Close the SQLite connection when open."""
@@ -220,7 +276,14 @@ class SQLiteStore:
         Returns:
             Jobs pending Stage A.
         """
-        rows = await self._fetchall(PENDING_STAGE_A_SQL, (limit,))
+        sql, params = build_pending_stage_a_query(
+            limit=limit,
+            quality_bands=quality_bands,
+            corpus=corpus,
+            max_days=max_days,
+            now=datetime.now(UTC),
+        )
+        rows = await self._fetchall(sql, tuple(params))
         return [job_from_row(row_to_dict(row)) for row in rows]
 
     async def load_pending_stage_b(
@@ -238,7 +301,12 @@ class SQLiteStore:
         Returns:
             Jobs pending Stage B.
         """
-        rows = await self._fetchall(PENDING_STAGE_B_SQL, (limit,))
+        sql, params = build_pending_stage_b_query(
+            limit=limit,
+            max_days=max_days,
+            now=datetime.now(UTC),
+        )
+        rows = await self._fetchall(sql, tuple(params))
         return [job_from_row(row_to_dict(row)) for row in rows]
 
     async def list_evaluated_jobs(self, limit: int = 100) -> list[JobEvaluation]:

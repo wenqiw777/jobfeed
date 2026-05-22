@@ -175,6 +175,11 @@ class EvaluateService:
             if not isinstance(result, StageAResult):
                 raise TypeError("stage_a parser returned non-StageAResult")
             await self.store.save_stage_a(job_id, result)
+            # Threshold is a service-side policy, not a store concern: below the
+            # configured Stage A threshold the job is terminally skipped so it
+            # never enters the Stage B queue (plan Decision 1 / Task 1).
+            if result.score < self.settings.scoring.stage_a_threshold:
+                await self.store.mark_stage_b_skipped(job_id)
             return
         if not isinstance(result, StageBResult):
             raise TypeError("stage_b parser returned non-StageBResult")

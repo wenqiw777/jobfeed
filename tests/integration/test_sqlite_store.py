@@ -6,7 +6,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import aiosqlite
@@ -306,6 +306,89 @@ async def test_stage_errors_are_retryable(
     pending_b = await store.load_pending_stage_b()
     pending_b_ids = {j.canonical_id for j in pending_b}
     assert "stage-b-error" in pending_b_ids
+
+
+async def test_connect_rejects_prephase1_database(tmp_path: Path) -> None:
+    """A pre-Phase-1 jobs table (missing Phase 1 columns) is rejected clearly.
+
+    Args:
+        tmp_path: Temporary directory for the database file.
+    """
+    db_path = tmp_path / "legacy.db"
+    conn = await aiosqlite.connect(db_path)
+    await conn.execute(
+        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, platform TEXT, canonical_id TEXT)"
+    )
+    await conn.commit()
+    await conn.close()
+
+    store = SQLiteStore(db_path)
+    with pytest.raises(RuntimeError, match="predates the Phase 1 schema"):
+        await store.connect()
+
+
+async def test_load_pending_stage_a_corpus_filters(store: SQLiteStore) -> None:
+    """corpus selects unrated (no eval or error), failed (errors), or all.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    await store.save_job(make_store_job("unrated"))
+    failed = await store.save_job(make_store_job("failed"))
+    completed = await store.save_job(make_store_job("completed"))
+    await store.save_stage_a_error(failed.job_id, "boom")
+    await store.save_stage_a(completed.job_id, make_stage_a())
+
+    default_ids = {j.canonical_id for j in await store.load_pending_stage_a()}
+    failed_ids = {
+        j.canonical_id for j in await store.load_pending_stage_a(corpus="failed")
+    }
+    all_ids = {j.canonical_id for j in await store.load_pending_stage_a(corpus="all")}
+
+    assert default_ids == {"unrated", "failed"}
+    assert failed_ids == {"failed"}
+    assert all_ids == {"unrated", "failed", "completed"}
+
+
+async def test_load_pending_stage_a_quality_and_freshness_filters(
+    store: SQLiteStore,
+) -> None:
+    """quality_bands filters by jd_quality and max_days filters by recency.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    now = datetime.now(UTC)
+    await store.save_job(
+        make_base_job(
+            "fresh-good", jd_text="JD", jd_quality=QualityBand.GOOD, discovered_at=now
+        )
+    )
+    await store.save_job(
+        make_base_job(
+            "fresh-partial",
+            jd_text="JD",
+            jd_quality=QualityBand.PARTIAL,
+            discovered_at=now,
+        )
+    )
+    await store.save_job(
+        make_base_job(
+            "stale-good",
+            jd_text="JD",
+            jd_quality=QualityBand.GOOD,
+            discovered_at=now - timedelta(days=30),
+        )
+    )
+
+    quality_ids = {
+        j.canonical_id
+        for j in await store.load_pending_stage_a(quality_bands=frozenset({"good"}))
+    }
+    fresh_ids = {j.canonical_id for j in await store.load_pending_stage_a(max_days=7)}
+
+    assert quality_ids == {"fresh-good", "stale-good"}
+    assert fresh_ids == {"fresh-good", "fresh-partial"}
 
 
 async def test_stage_b_persists_raw_blocks_and_separate_metadata(

@@ -298,6 +298,65 @@ async def test_evaluate_service_scores_stage_a_and_stage_b(
     assert all(item.stage_b is not None for item in evaluations)
 
 
+async def test_evaluate_service_skips_stage_b_below_threshold(
+    store: SQLiteStore,
+) -> None:
+    """Stage A scores below the threshold are gated out of Stage B.
+
+    CountingLLM scores Stage A at 75; with a threshold of 80 every job is
+    marked skipped, so Stage B is never called (no error) and its queue drains.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": MOCK_COUNT})]
+    )
+    service = EvaluateService(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+        RecordingLogger(),
+    )
+
+    run = await service.run()
+    pending_b = await store.load_pending_stage_b()
+
+    assert run.stage_a_scored == MOCK_COUNT
+    assert run.stage_b_scored == 0
+    assert run.errors == 0
+    assert pending_b == []
+
+
+async def test_evaluate_service_sends_stage_b_at_or_above_threshold(
+    store: SQLiteStore,
+) -> None:
+    """Stage A scores at or above the threshold proceed to Stage B (not gated).
+
+    Score 75 >= threshold 70, so jobs are not skipped and Stage B is attempted;
+    here it errors on the Stage-A-shaped payload, proving the gate let them
+    through rather than skipping them.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": MOCK_COUNT})]
+    )
+    service = EvaluateService(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=70)),
+        RecordingLogger(),
+    )
+
+    run = await service.run()
+
+    assert run.stage_a_scored == MOCK_COUNT
+    assert run.errors == MOCK_COUNT
+    assert run.stage_b_scored == 0
+
+
 async def test_evaluate_service_persists_parse_failures_and_continues(
     store: SQLiteStore,
 ) -> None:
@@ -312,7 +371,9 @@ async def test_evaluate_service_persists_parse_failures_and_continues(
     evaluations = await store.list_evaluated_jobs()
 
     assert run.errors == SINGLE_SOURCE_COUNT
-    assert pending == []
+    # Stage A errors are retryable: the default "unrated" corpus includes
+    # errored rows (plan Task 1), so a later run re-attempts them.
+    assert len(pending) == SINGLE_SOURCE_COUNT
     assert all(item.stage_a is None for item in evaluations)
 
 
@@ -360,7 +421,9 @@ async def test_evaluate_service_persists_llm_timeout_and_continues(
     evaluations = await store.list_evaluated_jobs()
 
     assert run.errors == SINGLE_SOURCE_COUNT
-    assert pending == []
+    # Stage A errors are retryable: the default "unrated" corpus includes
+    # errored rows (plan Task 1), so a later run re-attempts them.
+    assert len(pending) == SINGLE_SOURCE_COUNT
     assert all(item.stage_a is None for item in evaluations)
 
 

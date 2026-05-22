@@ -386,6 +386,116 @@ def _block_json(raw_blocks: dict[str, object] | None, key: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Pending-queue query builders
+# ---------------------------------------------------------------------------
+
+
+def _pg_corpus_condition(corpus: str) -> str:
+    """Return the WHERE fragment selecting the requested Stage A corpus.
+
+    Args:
+        corpus: "unrated" (no eval row or stage A error), "all" (no
+            restriction), or "failed" (Stage A errors only).
+
+    Returns:
+        SQL boolean fragment; empty string for "all".
+
+    Raises:
+        ValueError: If corpus is not a recognized value.
+    """
+    if corpus == "unrated":
+        return (
+            "(evaluations.job_id IS NULL "
+            "OR evaluations.stage_a_status IS NULL "
+            "OR evaluations.stage_a_status = 'error')"
+        )
+    if corpus == "failed":
+        return "evaluations.stage_a_status = 'error'"
+    if corpus == "all":
+        return ""
+    raise ValueError(f"unknown corpus: {corpus!r}")
+
+
+def _build_pending_stage_a_query(
+    *,
+    limit: int,
+    quality_bands: frozenset[str] | None,
+    corpus: str,
+    max_days: int | None,
+    now: datetime,
+) -> tuple[str, list[Any]]:
+    """Build the Stage A pending query with optional legacy parity filters.
+
+    Args:
+        limit: Max rows.
+        quality_bands: Optional jd_quality allow-list.
+        corpus: "unrated", "all", or "failed".
+        max_days: Optional freshness window on discovered_at.
+        now: Reference time for the freshness cutoff.
+
+    Returns:
+        SQL string and its positional (asyncpg) parameters.
+    """
+    conditions: list[str] = []
+    params: list[Any] = []
+    corpus_clause = _pg_corpus_condition(corpus)
+    if corpus_clause:
+        conditions.append(corpus_clause)
+    if quality_bands:
+        params.append(sorted(quality_bands))
+        conditions.append(f"jobs.jd_quality = ANY(${len(params)})")
+    if max_days is not None:
+        params.append(now - timedelta(days=max_days))
+        conditions.append(f"jobs.discovered_at >= ${len(params)}")
+    where = " AND ".join(conditions) if conditions else "TRUE"
+    params.append(limit)
+    sql = (
+        "SELECT jobs.* FROM jobs "
+        "LEFT JOIN evaluations ON evaluations.job_id = jobs.id "
+        f"WHERE {where} "
+        "ORDER BY jobs.discovered_at DESC, jobs.id DESC "
+        f"LIMIT ${len(params)}"
+    )
+    return sql, params
+
+
+def _build_pending_stage_b_query(
+    *,
+    limit: int,
+    max_days: int | None,
+    now: datetime,
+) -> tuple[str, list[Any]]:
+    """Build the Stage B pending query (Stage A completed, Stage B pending).
+
+    Args:
+        limit: Max rows.
+        max_days: Optional freshness window on discovered_at.
+        now: Reference time for the freshness cutoff.
+
+    Returns:
+        SQL string and its positional (asyncpg) parameters.
+    """
+    conditions = [
+        "evaluations.stage_a_status = 'completed'",
+        "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status = 'error')",
+    ]
+    params: list[Any] = []
+    if max_days is not None:
+        params.append(now - timedelta(days=max_days))
+        conditions.append(f"jobs.discovered_at >= ${len(params)}")
+    params.append(limit)
+    where = " AND ".join(conditions)
+    sql = (
+        "SELECT jobs.* FROM jobs "
+        "JOIN evaluations ON evaluations.job_id = jobs.id "
+        f"WHERE {where} "
+        "ORDER BY jobs.discovered_at DESC, jobs.id DESC "
+        f"LIMIT ${len(params)}"
+    )
+    return sql, params
+
+
+# ---------------------------------------------------------------------------
 # PostgresStore
 # ---------------------------------------------------------------------------
 
@@ -711,18 +821,16 @@ class PostgresStore:
         Returns:
             Jobs pending Stage A.
         """
+        sql, params = _build_pending_stage_a_query(
+            limit=limit,
+            quality_bands=quality_bands,
+            corpus=corpus,
+            max_days=max_days,
+            now=datetime.now(UTC),
+        )
         pool = self._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """SELECT jobs.*
-                   FROM jobs
-                   LEFT JOIN evaluations ON evaluations.job_id = jobs.id
-                   WHERE evaluations.job_id IS NULL
-                      OR evaluations.stage_a_status IS NULL
-                   ORDER BY jobs.discovered_at DESC, jobs.id DESC
-                   LIMIT $1""",
-                limit,
-            )
+            rows = await conn.fetch(sql, *params)
         return [_job_from_record(r) for r in rows]
 
     async def load_pending_stage_b(
@@ -740,19 +848,14 @@ class PostgresStore:
         Returns:
             Jobs pending Stage B.
         """
+        sql, params = _build_pending_stage_b_query(
+            limit=limit,
+            max_days=max_days,
+            now=datetime.now(UTC),
+        )
         pool = self._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """SELECT jobs.*
-                   FROM jobs
-                   JOIN evaluations ON evaluations.job_id = jobs.id
-                   WHERE evaluations.stage_a_status = 'completed'
-                     AND (evaluations.stage_b_status IS NULL
-                          OR evaluations.stage_b_status = 'error')
-                   ORDER BY jobs.discovered_at DESC, jobs.id DESC
-                   LIMIT $1""",
-                limit,
-            )
+            rows = await conn.fetch(sql, *params)
         return [_job_from_record(r) for r in rows]
 
     async def list_evaluated_jobs(self, limit: int = 100) -> list[JobEvaluation]:

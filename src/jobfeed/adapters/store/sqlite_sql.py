@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 INSERT_JOB_DO_NOTHING_SQL = """
 INSERT INTO jobs (
     platform, canonical_id, url, title, company, location, jd_text, jd_quality,
@@ -82,24 +84,106 @@ ON CONFLICT(job_id) DO UPDATE SET
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 """
 
-PENDING_STAGE_A_SQL = """
-SELECT jobs.*
-FROM jobs
-LEFT JOIN evaluations ON evaluations.job_id = jobs.id
-WHERE evaluations.job_id IS NULL OR evaluations.stage_a_status IS NULL
-ORDER BY jobs.discovered_at DESC, jobs.id DESC
-LIMIT ?
-"""
+_PENDING_STAGE_A_BASE = (
+    "SELECT jobs.*\nFROM jobs\nLEFT JOIN evaluations ON evaluations.job_id = jobs.id"
+)
+_PENDING_STAGE_B_BASE = (
+    "SELECT jobs.*\nFROM jobs\nJOIN evaluations ON evaluations.job_id = jobs.id"
+)
+_ORDER_LIMIT = "ORDER BY jobs.discovered_at DESC, jobs.id DESC\nLIMIT ?"
 
-PENDING_STAGE_B_SQL = """
-SELECT jobs.*
-FROM jobs
-JOIN evaluations ON evaluations.job_id = jobs.id
-WHERE evaluations.stage_a_status = 'completed'
-  AND (evaluations.stage_b_status IS NULL OR evaluations.stage_b_status = 'error')
-ORDER BY jobs.discovered_at DESC, jobs.id DESC
-LIMIT ?
-"""
+
+def _corpus_condition(corpus: str) -> str:
+    """Return the WHERE fragment selecting the requested Stage A corpus.
+
+    Args:
+        corpus: "unrated" (no eval row or stage A error), "all" (no
+            restriction), or "failed" (Stage A errors only).
+
+    Returns:
+        SQL boolean fragment; empty string for "all".
+
+    Raises:
+        ValueError: If corpus is not a recognized value.
+    """
+    if corpus == "unrated":
+        return (
+            "(evaluations.job_id IS NULL "
+            "OR evaluations.stage_a_status IS NULL "
+            "OR evaluations.stage_a_status = 'error')"
+        )
+    if corpus == "failed":
+        return "evaluations.stage_a_status = 'error'"
+    if corpus == "all":
+        return ""
+    raise ValueError(f"unknown corpus: {corpus!r}")
+
+
+def build_pending_stage_a_query(
+    *,
+    limit: int,
+    quality_bands: frozenset[str] | None,
+    corpus: str,
+    max_days: int | None,
+    now: datetime,
+) -> tuple[str, list[object]]:
+    """Build the Stage A pending query with optional legacy parity filters.
+
+    Args:
+        limit: Max rows.
+        quality_bands: Optional jd_quality allow-list.
+        corpus: "unrated", "all", or "failed".
+        max_days: Optional freshness window on discovered_at.
+        now: Reference time for the freshness cutoff.
+
+    Returns:
+        SQL string and its positional parameters.
+    """
+    conditions: list[str] = []
+    params: list[object] = []
+    corpus_clause = _corpus_condition(corpus)
+    if corpus_clause:
+        conditions.append(corpus_clause)
+    if quality_bands:
+        marks = ", ".join("?" for _ in quality_bands)
+        conditions.append(f"jobs.jd_quality IN ({marks})")
+        params.extend(sorted(quality_bands))
+    if max_days is not None:
+        conditions.append("jobs.discovered_at >= ?")
+        params.append((now - timedelta(days=max_days)).isoformat())
+    where = " AND ".join(conditions) if conditions else "1 = 1"
+    params.append(limit)
+    return f"{_PENDING_STAGE_A_BASE}\nWHERE {where}\n{_ORDER_LIMIT}", params
+
+
+def build_pending_stage_b_query(
+    *,
+    limit: int,
+    max_days: int | None,
+    now: datetime,
+) -> tuple[str, list[object]]:
+    """Build the Stage B pending query (Stage A completed, Stage B pending).
+
+    Args:
+        limit: Max rows.
+        max_days: Optional freshness window on discovered_at.
+        now: Reference time for the freshness cutoff.
+
+    Returns:
+        SQL string and its positional parameters.
+    """
+    conditions = [
+        "evaluations.stage_a_status = 'completed'",
+        "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status = 'error')",
+    ]
+    params: list[object] = []
+    if max_days is not None:
+        conditions.append("jobs.discovered_at >= ?")
+        params.append((now - timedelta(days=max_days)).isoformat())
+    params.append(limit)
+    where = " AND ".join(conditions)
+    return f"{_PENDING_STAGE_B_BASE}\nWHERE {where}\n{_ORDER_LIMIT}", params
+
 
 LIST_EVALUATED_SQL = """
 SELECT
@@ -155,11 +239,11 @@ __all__ = [
     "INSERT_JOB_DO_NOTHING_SQL",
     "INSERT_PIPELINE_RUN_SQL",
     "LIST_EVALUATED_SQL",
-    "PENDING_STAGE_A_SQL",
-    "PENDING_STAGE_B_SQL",
     "SAVE_STAGE_A_ERROR_SQL",
     "SAVE_STAGE_A_SQL",
     "SAVE_STAGE_B_ERROR_SQL",
     "SAVE_STAGE_B_SQL",
     "UPDATE_JOB_SQL",
+    "build_pending_stage_a_query",
+    "build_pending_stage_b_query",
 ]
