@@ -38,12 +38,13 @@ CREATE TABLE IF NOT EXISTS evaluations (
         stage_b_verdict IS NULL OR stage_b_verdict IN ('apply', 'consider', 'skip')
     ),
     stage_b_jd_summary TEXT,
-    block_a_json TEXT,
-    block_b_json TEXT,
-    block_c_json TEXT,
-    block_e_json TEXT,
+    stage_b_verdict_json TEXT,
+    stage_b_summary_json TEXT,
+    stage_b_fit_json TEXT,
+    stage_b_hooks_json TEXT,
     stage_b_status TEXT CHECK (
-        stage_b_status IS NULL OR stage_b_status IN ('completed', 'error')
+        stage_b_status IS NULL
+        OR stage_b_status IN ('completed', 'error', 'skipped_below_threshold')
     ),
     stage_b_error TEXT,
     stage_b_model TEXT,

@@ -50,17 +50,18 @@ ON CONFLICT(job_id) DO UPDATE SET
 
 SAVE_STAGE_B_SQL = """
 INSERT INTO evaluations (
-    job_id, stage_b_verdict, stage_b_jd_summary, block_a_json, block_b_json,
-    block_c_json, block_e_json, stage_b_status, stage_b_error, stage_b_model,
+    job_id, stage_b_verdict, stage_b_jd_summary, stage_b_verdict_json,
+    stage_b_summary_json, stage_b_fit_json, stage_b_hooks_json,
+    stage_b_status, stage_b_error, stage_b_model,
     stage_b_cost_usd, stage_b_prompt_hash, stage_b_resume_hash
 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', NULL, ?, ?, ?, ?)
 ON CONFLICT(job_id) DO UPDATE SET
     stage_b_verdict = excluded.stage_b_verdict,
     stage_b_jd_summary = excluded.stage_b_jd_summary,
-    block_a_json = excluded.block_a_json,
-    block_b_json = excluded.block_b_json,
-    block_c_json = excluded.block_c_json,
-    block_e_json = excluded.block_e_json,
+    stage_b_verdict_json = excluded.stage_b_verdict_json,
+    stage_b_summary_json = excluded.stage_b_summary_json,
+    stage_b_fit_json = excluded.stage_b_fit_json,
+    stage_b_hooks_json = excluded.stage_b_hooks_json,
     stage_b_status = excluded.stage_b_status,
     stage_b_error = NULL,
     stage_b_model = excluded.stage_b_model,
@@ -125,10 +126,10 @@ SELECT
     evaluations.stage_a_resume_hash,
     evaluations.stage_b_verdict,
     evaluations.stage_b_jd_summary,
-    evaluations.block_a_json,
-    evaluations.block_b_json,
-    evaluations.block_c_json,
-    evaluations.block_e_json,
+    evaluations.stage_b_verdict_json,
+    evaluations.stage_b_summary_json,
+    evaluations.stage_b_fit_json,
+    evaluations.stage_b_hooks_json,
     evaluations.stage_b_status,
     evaluations.stage_b_error,
     evaluations.stage_b_model,

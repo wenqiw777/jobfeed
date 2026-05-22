@@ -224,7 +224,7 @@ def test_remaining_domain_models_are_instantiable() -> None:
         resume_hash="resume-hash",
     )
 
-    assert MLGateResult(fit=True, probability=0.91).fail_reason is None
+    assert MLGateResult(score=0.91, result="pass").fail_reason is None
     assert (
         LLMUsage(
             model="mock/stage-a",

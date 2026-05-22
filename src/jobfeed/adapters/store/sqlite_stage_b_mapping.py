@@ -57,10 +57,10 @@ def stage_b_from_row(row: RowData) -> StageBResult | None:
 
 def _raw_blocks_from_row(row: RowData) -> dict[str, object]:
     return {
-        "block_a": _json_object(row, "block_a_json"),
-        "block_b": _json_object(row, "block_b_json"),
-        "block_c": _json_object(row, "block_c_json"),
-        "block_e": _json_object(row, "block_e_json"),
+        "block_a": _json_object(row, "stage_b_verdict_json"),
+        "block_b": _json_object(row, "stage_b_summary_json"),
+        "block_c": _json_object(row, "stage_b_fit_json"),
+        "block_e": _json_object(row, "stage_b_hooks_json"),
     }
 
 

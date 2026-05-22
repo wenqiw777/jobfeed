@@ -319,7 +319,7 @@ async def test_stage_b_persists_raw_blocks_and_separate_metadata(
     row = _eval_row(store.db_path, saved.job_id)
     evaluations = await store.list_evaluated_jobs()
 
-    assert json.loads(row["block_c_json"])["score_0_100"] == STAGE_B_SCORE
+    assert json.loads(row["stage_b_fit_json"])["score_0_100"] == STAGE_B_SCORE
     assert row["stage_a_model"] == "mock/stage-a"
     assert row["stage_b_model"] == "mock/stage-b"
     assert row["stage_a_prompt_hash"] == "stage-a-prompt"
@@ -341,7 +341,7 @@ async def test_stage_b_mapping_rejects_missing_raw_block_fields(
     _set_eval_column(
         store.db_path,
         saved.job_id,
-        "block_c_json",
+        "stage_b_fit_json",
         json.dumps({"score_0_100": STAGE_B_SCORE, "gaps": []}),
     )
 
@@ -363,7 +363,8 @@ async def test_stage_b_mapping_rejects_invalid_gap_severity(
     gap = gaps[0]
     assert isinstance(gap, dict)
     gap["severity"] = "blocker"
-    _set_eval_column(store.db_path, saved.job_id, "block_c_json", json.dumps(block_c))
+    col = "stage_b_fit_json"
+    _set_eval_column(store.db_path, saved.job_id, col, json.dumps(block_c))
 
     with pytest.raises(ValueError, match="invalid gap severity: blocker"):
         await store.list_evaluated_jobs()

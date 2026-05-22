@@ -134,9 +134,19 @@ class StageBResult:
 class MLGateResult:
     """Machine-learning gate decision before paid LLM scoring."""
 
-    fit: bool
-    probability: float
+    score: float
+    result: str
     fail_reason: str | None = None
+    version: str | None = None
+    is_swe_role: bool | None = None
+    seniority_level: str | None = None
+    degree_required: str | None = None
+    clearance_required: bool | None = None
+    school_restricted: bool | None = None
+    yoe_min: int | None = None
+    domain_tags: list[str] | None = None
+    tech_required: list[str] | None = None
+    role_type: str | None = None
 
 
 @dataclass(kw_only=True)
