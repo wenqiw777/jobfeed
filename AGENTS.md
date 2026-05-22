@@ -1,0 +1,15 @@
+# Agent Contract
+
+- Read `docs/engineering-standards.md` before editing code.
+- Implement Phase 0 rewrite tasks in this repository; do not edit the legacy sibling repo `../job-apply` for this rewrite.
+- Treat the Phase 0 plan as source of truth when it conflicts with the architecture spec.
+- Do not read or write `~/.jobfeed/` in Phase 0.
+- Do not add external network IO, real LLM calls, browser automation, Temporal, Postgres, or frontend code in Phase 0.
+- Treat `./bin/jobfeed ...` as the canonical user-facing CLI path. Host-native `jobfeed ...` or `uv run jobfeed ...` is allowed only for developer debugging, not production-parity acceptance.
+- Keep `domain/` pure stdlib and keep services adapter-free.
+- Write docstrings for public production APIs and comments only for why, constraints, invariants, complexity, or failure modes.
+- Run `make quality` before marking any task complete.
+- Keep commits task-sized and conventional with scope, for example `docs(phase0): ...` or `test(phase0): ...`.
+- Execute Phase 0 tasks sequentially unless a human explicitly approves parallel writers.
+- Stop and update the plan if implementation reality conflicts with the plan.
+- Never silence a failing quality gate by weakening the gate without explicit human approval.
