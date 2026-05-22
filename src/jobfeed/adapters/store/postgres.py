@@ -10,8 +10,7 @@ try:
     import asyncpg  # type: ignore[import-untyped]
 except ImportError as _exc:  # pragma: no cover
     raise ImportError(
-        "asyncpg is required for PostgresStore. "
-        "Install it with: pip install asyncpg"
+        "asyncpg is required for PostgresStore. Install it with: pip install asyncpg"
     ) from _exc
 
 from jobfeed.adapters.store._normalize import normalize, normalize_company
@@ -236,11 +235,14 @@ def _status_info_from_record(r: asyncpg.Record) -> StatusInfo:
         next_followup_at=r["next_followup_at"],
         resume_variant=r["resume_variant"],
         notes=r["notes"],
-        last_status_change_at=r["last_status_change_at"] or datetime(1970, 1, 1, tzinfo=UTC),
+        last_status_change_at=r["last_status_change_at"]
+        or datetime(1970, 1, 1, tzinfo=UTC),
     )
 
 
-def _attention_item_from_record(r: asyncpg.Record, reason: str) -> WorkflowAttentionItem:
+def _attention_item_from_record(
+    r: asyncpg.Record, reason: str
+) -> WorkflowAttentionItem:
     """Build a WorkflowAttentionItem from a joined query record.
 
     Args:
@@ -256,7 +258,8 @@ def _attention_item_from_record(r: asyncpg.Record, reason: str) -> WorkflowAtten
         company=r["company"],
         url=r["url"],
         status=r["status"],
-        last_status_change_at=r["last_status_change_at"] or datetime(1970, 1, 1, tzinfo=UTC),
+        last_status_change_at=r["last_status_change_at"]
+        or datetime(1970, 1, 1, tzinfo=UTC),
         next_followup_at=r["next_followup_at"],
         notes=r["notes"],
         reason=reason,
@@ -853,7 +856,9 @@ class PostgresStore:
             result: Gate decision with features.
         """
         domain_tags = json.dumps(result.domain_tags) if result.domain_tags else None
-        tech_required = json.dumps(result.tech_required) if result.tech_required else None
+        tech_required = (
+            json.dumps(result.tech_required) if result.tech_required else None
+        )
         pool = self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
@@ -979,7 +984,9 @@ class PostgresStore:
             raise KeyError(f"no status row for job_id={job_id}")
         old_status: str = row["status"]
 
-        err = validate_transition(old_status, new_status, force=force, i_mean_it=i_mean_it)
+        err = validate_transition(
+            old_status, new_status, force=force, i_mean_it=i_mean_it
+        )
         if err is not None:
             raise ValueError(err)
 
@@ -1105,9 +1112,7 @@ class PostgresStore:
                 )
                 if row is None or row["status"] != "archived":
                     current = row["status"] if row else "unknown"
-                    raise ValueError(
-                        f"job {job_id} is not archived (status={current})"
-                    )
+                    raise ValueError(f"job {job_id} is not archived (status={current})")
 
                 hist = await conn.fetchrow(
                     """SELECT to_status FROM job_status_history
@@ -1117,9 +1122,7 @@ class PostgresStore:
                     int(job_id),
                 )
                 if hist is None:
-                    raise ValueError(
-                        f"no non-archived history for job_id={job_id}"
-                    )
+                    raise ValueError(f"no non-archived history for job_id={job_id}")
                 target_status: str = hist["to_status"]
 
                 return await self._transition_status_in_tx(
@@ -1147,9 +1150,7 @@ class PostgresStore:
             Counts of ghosted and archived jobs.
         """
         decay_list = sorted(DECAY_SOURCES)
-        decay_placeholders = ", ".join(
-            f"${i}" for i in range(1, len(decay_list) + 1)
-        )
+        decay_placeholders = ", ".join(f"${i}" for i in range(1, len(decay_list) + 1))
         ghost_interval_param = f"${len(decay_list) + 1}"
 
         pool = self._get_pool()
@@ -1232,13 +1233,17 @@ class PostgresStore:
 
         if days is not None:
             param_idx += 1
-            clauses.append(f"s.last_status_change_at >= now() - (${param_idx} || ' days')::interval")
+            clauses.append(
+                f"s.last_status_change_at >= now() - (${param_idx} || ' days')::interval"
+            )
             params.append(str(days))
 
         if no_response_days is not None:
             clauses.append("s.status = 'applied'")
             param_idx += 1
-            clauses.append(f"s.last_status_change_at < now() - (${param_idx} || ' days')::interval")
+            clauses.append(
+                f"s.last_status_change_at < now() - (${param_idx} || ' days')::interval"
+            )
             params.append(str(no_response_days))
 
         if needs_followup:
@@ -1320,8 +1325,7 @@ class PostgresStore:
                    ORDER BY s.next_followup_at ASC""",
             )
             follow_up = [
-                _attention_item_from_record(r, "follow-up due")
-                for r in follow_rows
+                _attention_item_from_record(r, "follow-up due") for r in follow_rows
             ]
 
             # Bucket 2: interview_prep
@@ -1333,8 +1337,7 @@ class PostgresStore:
                    ORDER BY s.last_status_change_at DESC""",
             )
             interview = [
-                _attention_item_from_record(r, "interview prep")
-                for r in interview_rows
+                _attention_item_from_record(r, "interview prep") for r in interview_rows
             ]
 
             # Bucket 3: going_ghosted
@@ -1349,8 +1352,7 @@ class PostgresStore:
                 str(warn_days),
             )
             ghosting = [
-                _attention_item_from_record(r, "going silent")
-                for r in ghosting_rows
+                _attention_item_from_record(r, "going silent") for r in ghosting_rows
             ]
 
         return WorkflowAttention(
@@ -1472,9 +1474,7 @@ class PostgresStore:
                 # Transition status to applied
                 now = datetime.now(UTC)
                 followup_val = now + timedelta(days=7)
-                from_status: str | None = (
-                    status_row["status"] if status_row else None
-                )
+                from_status: str | None = status_row["status"] if status_row else None
 
                 await conn.execute(
                     """UPDATE job_status
@@ -1650,7 +1650,9 @@ class PostgresStore:
                     *resp_sorted,
                     cutoff,
                 )
-                variant_rows = [(r["job_id"], r["resume_variant_at_change"]) for r in vrows]
+                variant_rows = [
+                    (r["job_id"], r["resume_variant_at_change"]) for r in vrows
+                ]
 
                 # Build per-variant stats
                 job_variant: dict[int, str] = {}
@@ -1667,7 +1669,9 @@ class PostgresStore:
                     by_resume_dict[vname] = ResumeVariantStats(
                         sent=len(jids),
                         responses=len(v_resp),
-                        interviews=sum(1 for s in v_resp.values() if s & _INTERVIEW_STATUSES),
+                        interviews=sum(
+                            1 for s in v_resp.values() if s & _INTERVIEW_STATUSES
+                        ),
                         offers=sum(1 for s in v_resp.values() if "offer" in s),
                         rejections=sum(1 for s in v_resp.values() if "rejected" in s),
                     )

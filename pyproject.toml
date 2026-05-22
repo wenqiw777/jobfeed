@@ -47,6 +47,7 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 "src/jobfeed/adapters/store/_sqlite_*.py" = ["PLR0913"]
 "src/jobfeed/adapters/store/postgres.py" = ["ARG002", "E501", "PLR0913", "SIM117"]
 "tests/**/test_ports.py" = ["ARG002", "PLR0913"]
+"tests/conftest.py" = ["PLC0415"]
 "migrations/env.py" = ["PLC0415"]
 "migrations/versions/*.py" = ["E501"]
 
@@ -66,3 +67,5 @@ mypy_path = "src"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = ["postgres: requires PostgreSQL (Docker)"]
+addopts = "-m 'not postgres'"
