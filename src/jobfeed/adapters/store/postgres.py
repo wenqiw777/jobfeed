@@ -390,6 +390,19 @@ def _block_json(raw_blocks: dict[str, object] | None, key: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+# Error rows over this retry cap drop out of the pending queues (plan Task 1);
+# they stay terminally in 'error' for manual triage instead of retrying forever.
+_PG_MAX_STAGE_RETRIES = 3
+_PG_STAGE_A_UNDER_CAP = (
+    "(evaluations.stage_a_status IS DISTINCT FROM 'error' "
+    f"OR evaluations.stage_a_error_count < {_PG_MAX_STAGE_RETRIES})"
+)
+_PG_STAGE_B_UNDER_CAP = (
+    "(evaluations.stage_b_status IS DISTINCT FROM 'error' "
+    f"OR evaluations.stage_b_error_count < {_PG_MAX_STAGE_RETRIES})"
+)
+
+
 def _pg_corpus_condition(corpus: str) -> str:
     """Return the WHERE fragment selecting the requested Stage A corpus.
 
@@ -441,6 +454,7 @@ def _build_pending_stage_a_query(
     corpus_clause = _pg_corpus_condition(corpus)
     if corpus_clause:
         conditions.append(corpus_clause)
+    conditions.append(_PG_STAGE_A_UNDER_CAP)
     if quality_bands:
         params.append(sorted(quality_bands))
         conditions.append(f"jobs.jd_quality = ANY(${len(params)})")
@@ -478,6 +492,7 @@ def _build_pending_stage_b_query(
     conditions = [
         "evaluations.stage_a_status = 'completed'",
         "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status = 'error')",
+        _PG_STAGE_B_UNDER_CAP,
     ]
     params: list[Any] = []
     if max_days is not None:
@@ -678,8 +693,8 @@ class PostgresStore:
                        job_id, stage_a_score, stage_a_one_line,
                        stage_a_timing_eligible, stage_a_status, stage_a_error,
                        stage_a_model, stage_a_cost_usd,
-                       stage_a_prompt_hash, stage_a_resume_hash
-                   ) VALUES ($1,$2,$3,$4,'completed',NULL,$5,$6,$7,$8)
+                       stage_a_prompt_hash, stage_a_resume_hash, stage_a_at
+                   ) VALUES ($1,$2,$3,$4,'completed',NULL,$5,$6,$7,$8,now())
                    ON CONFLICT (job_id) DO UPDATE SET
                        stage_a_score = EXCLUDED.stage_a_score,
                        stage_a_one_line = EXCLUDED.stage_a_one_line,
@@ -690,6 +705,7 @@ class PostgresStore:
                        stage_a_cost_usd = EXCLUDED.stage_a_cost_usd,
                        stage_a_prompt_hash = EXCLUDED.stage_a_prompt_hash,
                        stage_a_resume_hash = EXCLUDED.stage_a_resume_hash,
+                       stage_a_at = COALESCE(evaluations.stage_a_at, now()),
                        updated_at = now()""",
                 int(job_id),
                 result.score,
@@ -711,11 +727,13 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                """INSERT INTO evaluations (job_id, stage_a_status, stage_a_error)
-                   VALUES ($1, 'error', $2)
+                """INSERT INTO evaluations (
+                       job_id, stage_a_status, stage_a_error, stage_a_error_count
+                   ) VALUES ($1, 'error', $2, 1)
                    ON CONFLICT (job_id) DO UPDATE SET
                        stage_a_status = EXCLUDED.stage_a_status,
                        stage_a_error = EXCLUDED.stage_a_error,
+                       stage_a_error_count = evaluations.stage_a_error_count + 1,
                        updated_at = now()""",
                 int(job_id),
                 error,
@@ -737,8 +755,8 @@ class PostgresStore:
                        stage_b_fit_json, stage_b_hooks_json,
                        stage_b_status, stage_b_error,
                        stage_b_model, stage_b_cost_usd,
-                       stage_b_prompt_hash, stage_b_resume_hash
-                   ) VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,'completed',NULL,$8,$9,$10,$11)
+                       stage_b_prompt_hash, stage_b_resume_hash, stage_b_at
+                   ) VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,'completed',NULL,$8,$9,$10,$11,now())
                    ON CONFLICT (job_id) DO UPDATE SET
                        stage_b_verdict = EXCLUDED.stage_b_verdict,
                        stage_b_jd_summary = EXCLUDED.stage_b_jd_summary,
@@ -752,6 +770,7 @@ class PostgresStore:
                        stage_b_cost_usd = EXCLUDED.stage_b_cost_usd,
                        stage_b_prompt_hash = EXCLUDED.stage_b_prompt_hash,
                        stage_b_resume_hash = EXCLUDED.stage_b_resume_hash,
+                       stage_b_at = COALESCE(evaluations.stage_b_at, now()),
                        updated_at = now()""",
                 int(job_id),
                 result.verdict.value,
@@ -776,11 +795,13 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                """INSERT INTO evaluations (job_id, stage_b_status, stage_b_error)
-                   VALUES ($1, 'error', $2)
+                """INSERT INTO evaluations (
+                       job_id, stage_b_status, stage_b_error, stage_b_error_count
+                   ) VALUES ($1, 'error', $2, 1)
                    ON CONFLICT (job_id) DO UPDATE SET
                        stage_b_status = EXCLUDED.stage_b_status,
                        stage_b_error = EXCLUDED.stage_b_error,
+                       stage_b_error_count = evaluations.stage_b_error_count + 1,
                        updated_at = now()""",
                 int(job_id),
                 error,

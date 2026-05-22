@@ -28,8 +28,11 @@ SAVE_STAGE_A_SQL = """
 INSERT INTO evaluations (
     job_id, stage_a_score, stage_a_one_line, stage_a_timing_eligible,
     stage_a_status, stage_a_error, stage_a_model, stage_a_cost_usd,
-    stage_a_prompt_hash, stage_a_resume_hash
-) VALUES (?, ?, ?, ?, 'completed', NULL, ?, ?, ?, ?)
+    stage_a_prompt_hash, stage_a_resume_hash, stage_a_at
+) VALUES (
+    ?, ?, ?, ?, 'completed', NULL, ?, ?, ?, ?,
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+)
 ON CONFLICT(job_id) DO UPDATE SET
     stage_a_score = excluded.stage_a_score,
     stage_a_one_line = excluded.stage_a_one_line,
@@ -40,15 +43,17 @@ ON CONFLICT(job_id) DO UPDATE SET
     stage_a_cost_usd = excluded.stage_a_cost_usd,
     stage_a_prompt_hash = excluded.stage_a_prompt_hash,
     stage_a_resume_hash = excluded.stage_a_resume_hash,
+    stage_a_at = COALESCE(stage_a_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 """
 
 SAVE_STAGE_A_ERROR_SQL = """
-INSERT INTO evaluations (job_id, stage_a_status, stage_a_error)
-VALUES (?, 'error', ?)
+INSERT INTO evaluations (job_id, stage_a_status, stage_a_error, stage_a_error_count)
+VALUES (?, 'error', ?, 1)
 ON CONFLICT(job_id) DO UPDATE SET
     stage_a_status = excluded.stage_a_status,
     stage_a_error = excluded.stage_a_error,
+    stage_a_error_count = stage_a_error_count + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 """
 
@@ -57,8 +62,11 @@ INSERT INTO evaluations (
     job_id, stage_b_verdict, stage_b_jd_summary, stage_b_verdict_json,
     stage_b_summary_json, stage_b_fit_json, stage_b_hooks_json,
     stage_b_status, stage_b_error, stage_b_model,
-    stage_b_cost_usd, stage_b_prompt_hash, stage_b_resume_hash
-) VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', NULL, ?, ?, ?, ?)
+    stage_b_cost_usd, stage_b_prompt_hash, stage_b_resume_hash, stage_b_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, 'completed', NULL, ?, ?, ?, ?,
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+)
 ON CONFLICT(job_id) DO UPDATE SET
     stage_b_verdict = excluded.stage_b_verdict,
     stage_b_jd_summary = excluded.stage_b_jd_summary,
@@ -72,15 +80,17 @@ ON CONFLICT(job_id) DO UPDATE SET
     stage_b_cost_usd = excluded.stage_b_cost_usd,
     stage_b_prompt_hash = excluded.stage_b_prompt_hash,
     stage_b_resume_hash = excluded.stage_b_resume_hash,
+    stage_b_at = COALESCE(stage_b_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 """
 
 SAVE_STAGE_B_ERROR_SQL = """
-INSERT INTO evaluations (job_id, stage_b_status, stage_b_error)
-VALUES (?, 'error', ?)
+INSERT INTO evaluations (job_id, stage_b_status, stage_b_error, stage_b_error_count)
+VALUES (?, 'error', ?, 1)
 ON CONFLICT(job_id) DO UPDATE SET
     stage_b_status = excluded.stage_b_status,
     stage_b_error = excluded.stage_b_error,
+    stage_b_error_count = stage_b_error_count + 1,
     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 """
 
@@ -91,6 +101,19 @@ _PENDING_STAGE_B_BASE = (
     "SELECT jobs.*\nFROM jobs\nJOIN evaluations ON evaluations.job_id = jobs.id"
 )
 _ORDER_LIMIT = "ORDER BY jobs.discovered_at DESC, jobs.id DESC\nLIMIT ?"
+
+# Error rows over this retry cap stay terminally in 'error' status and drop out
+# of the pending queues (plan Task 1); they surface in needs_attention for
+# manual triage instead of retrying (and burning LLM calls) forever.
+MAX_STAGE_RETRIES = 3
+_STAGE_A_UNDER_CAP = (
+    f"(evaluations.stage_a_status IS NOT 'error' "
+    f"OR evaluations.stage_a_error_count < {MAX_STAGE_RETRIES})"
+)
+_STAGE_B_UNDER_CAP = (
+    f"(evaluations.stage_b_status IS NOT 'error' "
+    f"OR evaluations.stage_b_error_count < {MAX_STAGE_RETRIES})"
+)
 
 
 def _corpus_condition(corpus: str) -> str:
@@ -144,6 +167,7 @@ def build_pending_stage_a_query(
     corpus_clause = _corpus_condition(corpus)
     if corpus_clause:
         conditions.append(corpus_clause)
+    conditions.append(_STAGE_A_UNDER_CAP)
     if quality_bands:
         marks = ", ".join("?" for _ in quality_bands)
         conditions.append(f"jobs.jd_quality IN ({marks})")
@@ -175,6 +199,7 @@ def build_pending_stage_b_query(
     conditions = [
         "evaluations.stage_a_status = 'completed'",
         "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status = 'error')",
+        _STAGE_B_UNDER_CAP,
     ]
     params: list[object] = []
     if max_days is not None:

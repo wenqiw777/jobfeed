@@ -297,7 +297,8 @@ async def auto_decay(
             cursor = await db.execute(
                 f"""SELECT job_id FROM job_status
                     WHERE status IN ({decay_placeholders})
-                      AND last_status_change_at < datetime('now', ? || ' days')""",
+                      AND julianday(last_status_change_at)
+                          < julianday(datetime('now', ? || ' days'))""",
                 (*decay_list, f"-{ghost_days}"),
             )
             ghost_rows = list(await cursor.fetchall())
@@ -314,7 +315,8 @@ async def auto_decay(
             cursor = await db.execute(
                 """SELECT job_id FROM job_status
                    WHERE status = 'ignored'
-                     AND last_status_change_at < datetime('now', ? || ' days')""",
+                     AND julianday(last_status_change_at)
+                         < julianday(datetime('now', ? || ' days'))""",
                 (f"-{archive_ignored_days}",),
             )
             archive_rows = list(await cursor.fetchall())

@@ -391,6 +391,46 @@ async def test_load_pending_stage_a_quality_and_freshness_filters(
     assert fresh_ids == {"fresh-good", "fresh-partial"}
 
 
+async def test_stage_a_retry_cap_excludes_jobs_over_limit(
+    store: SQLiteStore,
+) -> None:
+    """Errored jobs retry up to the cap, then drop out of the pending queue.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    saved = await store.save_job(make_store_job("capped"))
+    await store.save_stage_a_error(saved.job_id, "boom-1")
+    await store.save_stage_a_error(saved.job_id, "boom-2")
+    under_cap = {j.canonical_id for j in await store.load_pending_stage_a()}
+
+    await store.save_stage_a_error(saved.job_id, "boom-3")
+    over_cap = {j.canonical_id for j in await store.load_pending_stage_a()}
+
+    assert "capped" in under_cap
+    assert "capped" not in over_cap
+
+
+async def test_stage_completion_timestamps_are_stamped_and_immutable(
+    store: SQLiteStore,
+) -> None:
+    """save_stage_a/b stamp stage_a_at/stage_b_at once and preserve them.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    saved = await store.save_job(make_store_job())
+    await store.save_stage_a(saved.job_id, make_stage_a())
+    first = _eval_row(store.db_path, saved.job_id)
+    assert first["stage_a_at"] is not None
+
+    await store.save_stage_b(saved.job_id, make_stage_b())
+    after_b = _eval_row(store.db_path, saved.job_id)
+
+    assert after_b["stage_b_at"] is not None
+    assert after_b["stage_a_at"] == first["stage_a_at"]
+
+
 async def test_stage_b_persists_raw_blocks_and_separate_metadata(
     store: SQLiteStore,
 ) -> None:
