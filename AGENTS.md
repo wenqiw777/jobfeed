@@ -13,3 +13,11 @@
 - Execute Phase 0 tasks sequentially unless a human explicitly approves parallel writers.
 - Stop and update the plan if implementation reality conflicts with the plan.
 - Never silence a failing quality gate by weakening the gate without explicit human approval.
+
+## Review guidelines
+
+- Prioritize correctness bugs, behavioral regressions, data-loss risks, security issues, and missing tests for changed behavior.
+- Treat violations of the Phase 0 Docker/runtime boundary as important: `./bin/jobfeed ...` is the canonical user-facing CLI, and host-native commands are debug-only.
+- Treat architecture boundary violations as important: `domain/` must stay stdlib-only, `services/` must stay adapter-free, and `cli/` must stay a thin sync shell.
+- Treat SQLite persistence issues as important when they affect transactions, foreign keys, idempotency, enum/score validation, or domain-required NOT NULL fields.
+- Treat review findings as actionable only when they cite concrete changed files or line-level behavior. Avoid style-only comments unless they affect maintainability or the documented engineering standards.
