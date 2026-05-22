@@ -41,9 +41,13 @@ jobfeed/                              # repo root
 ├── src/
 │   └── jobfeed/
 │       ├── domain/
-│       │   ├── models.py             # MODIFY: add StatusTransition, ApplicationRecord,
-│       │   │                         #   ResumeSnapshot, ResumeVariant, CompanyRecord,
-│       │   │                         #   WorkflowAttention, CostEntry
+│       │   ├── models.py             # MODIFY: re-export hub; keep core pipeline models
+│       │   ├── models_status.py      # CREATE: StatusTransition, StatusInfo, AutoDecayResult,
+│       │   │                         #   WorkflowAttentionItem, WorkflowAttention
+│       │   ├── models_application.py # CREATE: ApplicationRecord, ResumeSnapshot,
+│       │   │                         #   ResumeVariant, ApplicationStats, ResumeVariantStats
+│       │   ├── models_ops.py         # CREATE: CompanyRecord, CostEntry, DigestStats,
+│       │   │                         #   AttentionItem, AttentionReport
 │       │   └── status.py             # CREATE: ALLOWED_TRANSITIONS, STATUS_VALUES,
 │       │                             #   validate_transition() — pure domain, no IO
 │       │
