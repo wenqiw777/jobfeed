@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 import aiosqlite
 
@@ -728,7 +728,7 @@ async def enrich_paste(
         job_id=job_id,
         jd_text=jd_text,
         jd_quality=quality.value,
-        enriched_at=datetime.utcnow(),
+        enriched_at=datetime.now(tz=UTC),
         enrich_source="manual-paste",
     )
     return job_id
