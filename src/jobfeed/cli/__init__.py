@@ -168,11 +168,13 @@ def _sqlite_store(settings: Settings) -> SQLiteStore:
 
 from jobfeed.cli.digest import digest  # noqa: E402
 from jobfeed.cli.evaluate import evaluate  # noqa: E402
+from jobfeed.cli.migrate import migrate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
 
 cli.add_command(scan)
 cli.add_command(evaluate)
 cli.add_command(digest)
+cli.add_command(migrate)
 
 
 __all__ = [
