@@ -230,7 +230,7 @@ def _remap_columns(
     row: dict[str, Any],
     renames: dict[str, str],
     drops: set[str] | None = None,
-) -> dict: # type: ignore[type-arg] #type: ignore[type-arg]
+) -> dict:  # type: ignore[type-arg] #type: ignore[type-arg]
     """Apply column renames and drops to a row dict."""
     mapped = {}
     for k, v in row.items():
@@ -243,7 +243,7 @@ def _remap_columns(
 def _map_legacy_row_for_comparison(
     row: dict[str, Any],
     table: str,
-) -> dict: # type: ignore[type-arg]
+) -> dict:  # type: ignore[type-arg]
     """Remap legacy column names to new names for checksum comparison."""
     if table == "jobs":
         mapped = _remap_columns(row, _LEGACY_JOB_RENAMES, _LEGACY_JOB_DROP)
