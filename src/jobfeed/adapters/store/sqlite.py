@@ -6,13 +6,25 @@ import asyncio
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import aiosqlite
 
 from jobfeed.adapters.store import _sqlite_application as _app
 from jobfeed.adapters.store import _sqlite_ops as _ops
 from jobfeed.adapters.store import _sqlite_status as _st
+from jobfeed.adapters.store.legacy_import import (
+    AppliedRow,
+    CompanyRow,
+    CostLedgerRow,
+    EvaluationRow,
+    JobRow,
+    JobStatusRow,
+    ResumeSnapshotRow,
+    ResumeVariantRow,
+    StateRow,
+    StatusHistoryRow,
+)
 from jobfeed.adapters.store.sqlite_mapping import (
     evaluation_from_row,
     job_from_row,
@@ -805,6 +817,486 @@ class SQLiteStore:
             days=days,
             max_per_category=max_per_category,
         )
+
+    # --- BulkImportPort implementation ---
+
+    _TRIGGER_SQL = (
+        "CREATE TRIGGER IF NOT EXISTS trg_jobs_seed_status\n"
+        "AFTER INSERT ON jobs\n"
+        "FOR EACH ROW\n"
+        "BEGIN\n"
+        "    INSERT OR IGNORE INTO job_status (job_id, status) "
+        "VALUES (NEW.id, 'new');\n"
+        "    INSERT INTO job_status_history (job_id, from_status, to_status)\n"
+        "        VALUES (NEW.id, NULL, 'new');\n"
+        "END;"
+    )
+
+    async def disable_triggers(self) -> None:
+        """Drop the auto-seed trigger to avoid conflicts during import."""
+        async with self._connection_lock:
+            db = self._connection()
+            await db.execute("DROP TRIGGER IF EXISTS trg_jobs_seed_status")
+            await db.commit()
+
+    async def enable_triggers(self) -> None:
+        """Re-create the auto-seed trigger after import."""
+        async with self._connection_lock:
+            db = self._connection()
+            await db.execute(self._TRIGGER_SQL)
+            await db.commit()
+
+    async def begin_import_transaction(self) -> None:
+        """Begin an immediate transaction for import."""
+        async with self._connection_lock:
+            db = self._connection()
+            await db.execute("BEGIN IMMEDIATE")
+
+    async def commit_import_transaction(self) -> None:
+        """Commit the import transaction."""
+        async with self._connection_lock:
+            db = self._connection()
+            await db.commit()
+
+    async def rollback_import_transaction(self) -> None:
+        """Roll back the import transaction."""
+        async with self._connection_lock:
+            db = self._connection()
+            await db.rollback()
+
+    async def reset_sequences(self) -> None:
+        """No-op for SQLite (auto-increment handles itself)."""
+
+    async def bulk_insert_jobs(self, rows: list[JobRow]) -> int:
+        """Insert job rows in bulk.
+
+        Args:
+            rows: Job rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO jobs ("
+            "id, platform, canonical_id, url, title, company, location, "
+            "jd_text, jd_quality, posted_at, discovered_at, enriched_at, "
+            "enrich_source, company_norm, title_norm, location_norm, "
+            "jd_lang, enrich_error, quality_rubric_version, reapply_notice, "
+            "hard_filter, seniority_level, degree_required, clearance_required, "
+            "school_restricted, domain_tags, tech_required, role_type, yoe_min, "
+            "ml_gate_score, ml_gate_result, ml_gate_fail_reason, ml_gate_at, "
+            "ml_gate_version, is_swe_role"
+            ") VALUES ("
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["id"],
+                        row["platform"],
+                        row["canonical_id"],
+                        row["url"],
+                        row["title"],
+                        row["company"],
+                        row["location"],
+                        row.get("jd_text"),
+                        row.get("jd_quality"),
+                        row.get("posted_at"),
+                        row["discovered_at"],
+                        row.get("enriched_at"),
+                        row.get("enrich_source"),
+                        row.get("company_norm"),
+                        row.get("title_norm"),
+                        row.get("location_norm"),
+                        row.get("jd_lang"),
+                        row.get("enrich_error"),
+                        row.get("quality_rubric_version"),
+                        row.get("reapply_notice"),
+                        row.get("hard_filter"),
+                        row.get("seniority_level"),
+                        row.get("degree_required"),
+                        row.get("clearance_required"),
+                        row.get("school_restricted"),
+                        row.get("domain_tags"),
+                        row.get("tech_required"),
+                        row.get("role_type"),
+                        row.get("yoe_min"),
+                        row.get("ml_gate_score"),
+                        row.get("ml_gate_result"),
+                        row.get("ml_gate_fail_reason"),
+                        row.get("ml_gate_at"),
+                        row.get("ml_gate_version"),
+                        row.get("is_swe_role"),
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_evaluations(self, rows: list[EvaluationRow]) -> int:
+        """Insert evaluation rows in bulk (id auto-generated).
+
+        Args:
+            rows: Evaluation rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO evaluations ("
+            "job_id, stage_a_score, stage_a_one_line, stage_a_timing_eligible, "
+            "stage_a_status, stage_a_error, stage_a_model, stage_a_cost_usd, "
+            "stage_a_prompt_hash, stage_a_resume_hash, "
+            "stage_b_verdict, stage_b_jd_summary, "
+            "stage_b_verdict_json, stage_b_summary_json, "
+            "stage_b_fit_json, stage_b_hooks_json, "
+            "stage_b_status, stage_b_error, stage_b_model, stage_b_cost_usd, "
+            "stage_b_prompt_hash, stage_b_resume_hash, "
+            "created_at, updated_at"
+            ") VALUES ("
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["job_id"],
+                        row.get("stage_a_score"),
+                        row.get("stage_a_one_line"),
+                        row.get("stage_a_timing_eligible"),
+                        row.get("stage_a_status"),
+                        row.get("stage_a_error"),
+                        row.get("stage_a_model"),
+                        row.get("stage_a_cost_usd"),
+                        row.get("stage_a_prompt_hash"),
+                        row.get("stage_a_resume_hash"),
+                        row.get("stage_b_verdict"),
+                        row.get("stage_b_jd_summary"),
+                        row.get("stage_b_verdict_json"),
+                        row.get("stage_b_summary_json"),
+                        row.get("stage_b_fit_json"),
+                        row.get("stage_b_hooks_json"),
+                        row.get("stage_b_status"),
+                        row.get("stage_b_error"),
+                        row.get("stage_b_model"),
+                        row.get("stage_b_cost_usd"),
+                        row.get("stage_b_prompt_hash"),
+                        row.get("stage_b_resume_hash"),
+                        row["created_at"],
+                        row["updated_at"],
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_job_status(self, rows: list[JobStatusRow]) -> int:
+        """Insert job_status rows in bulk.
+
+        Args:
+            rows: Job status rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO job_status ("
+            "job_id, status, next_followup_at, resume_variant, notes, "
+            "last_status_change_at"
+            ") VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["job_id"],
+                        row["status"],
+                        row.get("next_followup_at"),
+                        row.get("resume_variant"),
+                        row.get("notes"),
+                        row["last_status_change_at"],
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_job_status_history(self, rows: list[StatusHistoryRow]) -> int:
+        """Insert job_status_history rows in bulk with preserved IDs.
+
+        Args:
+            rows: Status history rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO job_status_history ("
+            "id, job_id, from_status, to_status, changed_at, reason, "
+            "resume_variant_at_change"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["id"],
+                        row["job_id"],
+                        row.get("from_status"),
+                        row["to_status"],
+                        row["changed_at"],
+                        row.get("reason"),
+                        row.get("resume_variant_at_change"),
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_applied(self, rows: list[AppliedRow]) -> int:
+        """Insert applied rows in bulk.
+
+        Args:
+            rows: Applied rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO applied ("
+            "job_id, applied_at, notes, master_resume_hash, "
+            "tailored_resume_hash, cover_letter, application_method, "
+            "verdict_snapshot, fit_snapshot, hooks_snapshot"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["job_id"],
+                        row["applied_at"],
+                        row.get("notes"),
+                        row.get("master_resume_hash"),
+                        row.get("tailored_resume_hash"),
+                        row.get("cover_letter"),
+                        row.get("application_method"),
+                        row.get("verdict_snapshot"),
+                        row.get("fit_snapshot"),
+                        row.get("hooks_snapshot"),
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_resume_snapshots(self, rows: list[ResumeSnapshotRow]) -> int:
+        """Insert resume_snapshots rows in bulk.
+
+        Args:
+            rows: Resume snapshot rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO resume_snapshots ("
+            "resume_hash, captured_at, source, content, notes"
+            ") VALUES (?, ?, ?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["resume_hash"],
+                        row["captured_at"],
+                        row["source"],
+                        row["content"],
+                        row.get("notes"),
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_resume_variants(self, rows: list[ResumeVariantRow]) -> int:
+        """Insert resume_variants rows in bulk.
+
+        Args:
+            rows: Resume variant rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO resume_variants ("
+            "name, description, created_at"
+            ") VALUES (?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["name"],
+                        row.get("description"),
+                        row["created_at"],
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_companies(self, rows: list[CompanyRow]) -> int:
+        """Insert companies rows in bulk.
+
+        Args:
+            rows: Company rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO companies ("
+            "slug, ats_vendor, ats_override, last_verified_at, "
+            "last_probe_attempt_at, job_count_last_scan, notes, "
+            "consecutive_discover_failures"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["slug"],
+                        row.get("ats_vendor"),
+                        row.get("ats_override", 0),
+                        row.get("last_verified_at"),
+                        row.get("last_probe_attempt_at"),
+                        row.get("job_count_last_scan", 0),
+                        row.get("notes"),
+                        row.get("consecutive_discover_failures", 0),
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_cost_ledger(self, rows: list[CostLedgerRow]) -> int:
+        """Insert cost_ledger rows in bulk.
+
+        Args:
+            rows: Cost ledger rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = (
+            "INSERT INTO cost_ledger ("
+            "day, spent_usd, calls, last_updated"
+            ") VALUES (?, ?, ?, ?)"
+        )
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(
+                    sql,
+                    (
+                        row["day"],
+                        row["spent_usd"],
+                        row.get("calls", 0),
+                        row["last_updated"],
+                    ),
+                )
+        return len(rows)
+
+    async def bulk_insert_state(self, rows: list[StateRow]) -> int:
+        """Insert state rows in bulk.
+
+        Args:
+            rows: State rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        sql = "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)"
+        async with self._connection_lock:
+            db = self._connection()
+            for row in rows:
+                await db.execute(sql, (row["key"], row["value"]))
+        return len(rows)
+
+    # --- ParityReadPort implementation ---
+
+    async def read_all_rows(self, table: str) -> list[dict[str, Any]]:
+        """Read all rows from a table as dicts for parity verification.
+
+        Args:
+            table: Table name to read from.
+
+        Returns:
+            List of row dicts.
+
+        Raises:
+            ValueError: If table name is not in the allowlist.
+        """
+        _ALLOWED = frozenset(
+            {
+                "jobs",
+                "evaluations",
+                "job_status",
+                "job_status_history",
+                "applied",
+                "resume_snapshots",
+                "resume_variants",
+                "companies",
+                "cost_ledger",
+                "state",
+                "pipeline_runs",
+            }
+        )
+        if table not in _ALLOWED:
+            raise ValueError(f"Table {table!r} not allowed for parity reads")
+        async with self._connection_lock:
+            cursor = await self._connection().execute(f"SELECT * FROM {table}")
+            rows = await cursor.fetchall()
+            if not rows:
+                return []
+            cols = [d[0] for d in cursor.description]
+            return [dict(zip(cols, row, strict=True)) for row in rows]
+
+    async def count_rows(self, table: str) -> int:
+        """Count rows in a table for parity verification.
+
+        Args:
+            table: Table name to count rows in.
+
+        Returns:
+            Row count.
+
+        Raises:
+            ValueError: If table name is not in the allowlist.
+        """
+        _ALLOWED = frozenset(
+            {
+                "jobs",
+                "evaluations",
+                "job_status",
+                "job_status_history",
+                "applied",
+                "resume_snapshots",
+                "resume_variants",
+                "companies",
+                "cost_ledger",
+                "state",
+                "pipeline_runs",
+            }
+        )
+        if table not in _ALLOWED:
+            raise ValueError(f"Table {table!r} not allowed for parity reads")
+        async with self._connection_lock:
+            cursor = await self._connection().execute(f"SELECT COUNT(*) FROM {table}")
+            row = await cursor.fetchone()
+            return int(row[0]) if row else 0
 
     # --- private helpers ---
 
