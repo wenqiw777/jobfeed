@@ -18,7 +18,7 @@ from jobfeed.domain.models_application import (
     ResumeSnapshot,
     ResumeVariantStats,
 )
-from jobfeed.domain.status import RESPONSE_STATUSES
+from jobfeed.domain.status import RESPONSE_STATUSES, is_terminal
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -59,6 +59,9 @@ async def _transition_in_tx(
     )
     row = await cursor.fetchone()
     from_status: str | None = row[0] if row else None
+
+    if from_status is not None and is_terminal(from_status):
+        raise ValueError(f"cannot apply from terminal status '{from_status}'")
 
     # Compute follow-up for applied transitions
     followup_val: str | None = None

@@ -229,31 +229,29 @@ async def restore_from_archived(
         ValueError: If job is not archived or no prior status exists.
     """
     async with lock:
-        # Verify current status is archived
-        cursor = await db.execute(
-            "SELECT status FROM job_status WHERE job_id = ?",
-            (int(job_id),),
-        )
-        status_row = await cursor.fetchone()
-        if status_row is None or status_row["status"] != "archived":
-            current = status_row["status"] if status_row else "unknown"
-            raise ValueError(f"job {job_id} is not archived (status={current})")
-
-        # Find the most recent non-archived to_status in history
-        cursor = await db.execute(
-            """SELECT to_status FROM job_status_history
-               WHERE job_id = ? AND to_status != 'archived'
-               ORDER BY changed_at DESC, id DESC
-               LIMIT 1""",
-            (int(job_id),),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            raise ValueError(f"no non-archived history for job_id={job_id}")
-        target_status: str = row["to_status"]
-
         await db.execute("BEGIN IMMEDIATE")
         try:
+            cursor = await db.execute(
+                "SELECT status FROM job_status WHERE job_id = ?",
+                (int(job_id),),
+            )
+            status_row = await cursor.fetchone()
+            if status_row is None or status_row["status"] != "archived":
+                current = status_row["status"] if status_row else "unknown"
+                raise ValueError(f"job {job_id} is not archived (status={current})")
+
+            cursor = await db.execute(
+                """SELECT to_status FROM job_status_history
+                   WHERE job_id = ? AND to_status != 'archived'
+                   ORDER BY changed_at DESC, id DESC
+                   LIMIT 1""",
+                (int(job_id),),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                raise ValueError(f"no non-archived history for job_id={job_id}")
+            target_status: str = row["to_status"]
+
             result = await _transition_status_in_tx(
                 db,
                 job_id=job_id,
