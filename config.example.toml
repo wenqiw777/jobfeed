@@ -1,0 +1,17 @@
+[db]
+backend = "sqlite"
+sqlite_path = ".jobfeed-dev/dev.db"
+
+[llm]
+stage_a = "mock/stage-a"
+stage_b = "mock/stage-b"
+
+[scoring]
+stage_a_threshold = 60
+
+[execution]
+default_runner = "in_process"
+
+[observability]
+log_level = "info"
+log_format = "human"

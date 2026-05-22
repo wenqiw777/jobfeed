@@ -28,13 +28,50 @@ Functionality stays identical to the current project. This is a pure architectur
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
 | Backend | Python + FastAPI | Mature ecosystem, native ML/LLM library support |
-| Database | PostgreSQL (primary) + SQLite (dev fallback) | PG for production, SQLite for zero-dependency local dev. Dual mode via repository pattern |
-| Task Queue | Temporal (optional) | Durable execution, built-in retry/backoff, workflow visualization. CLI runs in-process by default; Temporal for Web triggers, scheduling, and durable execution |
+| Database | PostgreSQL (primary) + SQLite (bootstrap/debug fallback) | PG for production/full-stack execution, SQLite for Phase 0 and developer fallback. Dual mode via repository pattern |
+| Task Queue | Temporal (full-stack observable mode) | Durable execution, built-in retry/backoff, workflow visualization. The containerized CLI uses InProcessRunner unless the user explicitly selects Temporal; Web triggers, schedules, and durable execution use Temporal |
 | Frontend | React 19 + Vite + TanStack Query + Tailwind | Proven stack, no change needed |
 | LLM Integration | Abstraction layer: Anthropic SDK, OpenAI SDK, Claude CLI, Codex CLI, MockLLM | Multi-provider support behind LLMClient Protocol |
-| Deployment | Docker Compose (8 containers) | One command to reproduce entire environment |
+| Deployment | Docker Compose + thin host launchers | Docker is the canonical production-parity runtime. Host launchers normalize OS differences and forward commands into the containerized app CLI |
 | Observability | structlog + Sentry + OpenTelemetry (Jaeger/Prometheus/Grafana) | Structured logs + error tracking + distributed tracing |
-| CI/CD | GitHub Actions | lint + typecheck + test + LLM review |
+| CI/CD | GitHub Actions | containerized lint + typecheck + test + CLI smoke + LLM review |
+
+---
+
+## 2.1 Runtime Contract
+
+Jobfeed is **Docker-first** for user-facing and production-parity execution.
+
+The canonical user command is a host launcher:
+
+```bash
+./bin/jobfeed scan
+./bin/jobfeed evaluate
+./bin/jobfeed digest
+```
+
+The host launcher does not run application code directly. It forwards arguments
+to the containerized application CLI:
+
+```bash
+docker compose run --rm jobfeed-cli jobfeed "$@"
+```
+
+The real application CLI still lives in the Python package (`src/jobfeed/cli`).
+It parses arguments, loads config, wires dependencies, opens/closes adapters,
+and calls services. The host launcher only absorbs host OS differences
+(macOS/Linux shell vs Windows PowerShell, path handling, Docker invocation).
+
+Host-native execution (`uv run jobfeed ...` or `python -m jobfeed ...`) is a
+developer/debug fallback, not the supported user path and not the production
+parity standard.
+
+Phase 0 uses a Dockerized CLI walking skeleton: `jobfeed-cli` container,
+mounted repo-local `.jobfeed-dev/` SQLite data, MockSource, and MockLLM. It does
+not start Postgres, Temporal, Web, or observability yet.
+
+Full-stack mode uses Docker Compose for the user-facing CLI, Web API/UI,
+Postgres, Temporal, and observability.
 
 ---
 
@@ -57,74 +94,83 @@ Domain depends on nothing. Ports define interfaces. Adapters implement interface
 ```
 jobfeed/                              # repo root
 ├── src/
-│   ├── domain/                       # pure business logic, zero external imports
-│   │   ├── models.py                 # JobPosting, Evaluation, Status, LLMUsage, PipelineRun
-│   │   ├── scoring.py                # prompt rendering + response parsing (NO LLM calls — LLM orchestration in services/)
-│   │   ├── filtering.py              # hard-filter rule engine
-│   │   ├── ml_gate.py                # feature extraction + vectorization + prediction
-│   │   ├── quality.py                # JD text quality assessment
-│   │   └── digest.py                 # Markdown summary rendering
-│   │
-│   ├── ports/                        # Protocol interfaces (dependency inversion core)
-│   │   ├── store.py                  # JobStore protocol
-│   │   ├── llm.py                    # LLMClient protocol
-│   │   ├── source.py                 # SimpleSource + SessionSource protocols
-│   │   ├── embedder.py               # Embedder protocol
-│   │   └── notifier.py               # Notifier protocol (PLANNED, not current parity)
-│   │
-│   ├── adapters/                     # concrete implementations of ports
-│   │   ├── store/
-│   │   │   ├── postgres.py           # PostgreSQL via asyncpg
-│   │   │   └── sqlite.py             # SQLite via aiosqlite
-│   │   ├── llm/
-│   │   │   ├── anthropic.py          # Anthropic SDK (prompt caching)
-│   │   │   ├── openai.py             # OpenAI SDK (Codex/GPT)
-│   │   │   ├── claude_cli.py         # claude -p subprocess
-│   │   │   ├── codex_cli.py          # codex exec subprocess
-│   │   │   └── mock.py              # deterministic responses for testing + dev
-│   │   ├── sources/
-│   │   │   ├── _jobspy.py            # shared JobSpy wrapper (lazy import, DataFrame → JobPosting)
-│   │   │   ├── linkedin_playwright.py # SessionSource: discover + enrich_session
-│   │   │   ├── linkedin_jobspy.py    # SimpleSource, thin shell → _jobspy.scrape() (NEW, not parity)
-│   │   │   ├── indeed_jobspy.py      # SimpleSource, thin shell → _jobspy.scrape()
-│   │   │   ├── ats.py               # Greenhouse/Ashby/Lever (parity)
-│   │   │   └── speedyapply.py        # GitHub markdown list → routes to ATS vendors
-│   │   ├── embedder/
-│   │   │   └── sentence_transformer.py
-│   │   └── notifier/                 # PLANNED, not current parity
-│   │       └── gmail.py              # stub in current repo
-│   │
-│   ├── services/                     # orchestration: compose domain + ports
-│   │   ├── scan.py                   # discover + store pipeline
-│   │   ├── evaluate.py               # ML gate -> Stage A -> Stage B
-│   │   ├── workflow.py               # status transitions, decay, attention
-│   │   ├── application.py            # apply audit trail: snapshots + record
-│   │   └── digest.py                 # pull data + render
-│   │
-│   ├── cli/                          # Click commands (thin shell)
-│   │   ├── __init__.py               # Click group entry
-│   │   ├── scan.py                   # scan
-│   │   ├── evaluate.py               # evaluate
-│   │   ├── manage.py                 # mark, note, followup, archive (alias), companies, bootstrap-companies
-│   │   ├── apply.py                  # apply, apply-history
-│   │   ├── snapshots.py              # snapshots list/show/diff
-│   │   ├── ml_gate.py                # ml-gate train/info
-│   │   └── serve.py                  # serve
-│   │
-│   ├── web/                          # FastAPI (thin shell)
-│   │   ├── app.py                    # app factory
-│   │   ├── deps.py                   # dependency injection
-│   │   ├── schemas.py                # Pydantic response models
-│   │   └── routes/
-│   │       ├── jobs.py
-│   │       ├── stats.py
-│   │       └── health.py
-│   │
-│   ├── config.py                     # pydantic-settings
-│   ├── observability.py              # structlog + OTel + Sentry init
-│   └── temporal/                     # Temporal workflow definitions
-│       ├── workflows.py              # ScanWorkflow, EvaluateWorkflow
-│       └── activities.py             # each activity = one service call
+│   └── jobfeed/
+│       ├── domain/                   # pure business logic, zero external imports
+│       │   ├── errors.py             # JobfeedError, ScoringParseError
+│       │   ├── models.py             # JobPosting, Evaluation, Status, LLMUsage, PipelineRun
+│       │   ├── types.py              # shared Literal aliases
+│       │   ├── scoring.py            # prompt rendering + response parsing (NO LLM calls)
+│       │   ├── filtering.py          # hard-filter rule engine
+│       │   ├── ml_gate.py            # feature extraction + vectorization + prediction
+│       │   ├── quality.py            # JD text quality assessment
+│       │   └── digest.py             # Markdown summary rendering
+│       │
+│       ├── ports/                    # Protocol interfaces (dependency inversion core)
+│       │   ├── store.py              # JobStore protocol
+│       │   ├── llm.py                # LLMClient protocol
+│       │   ├── source.py             # SimpleSource + SessionSource protocols
+│       │   ├── embedder.py           # Embedder protocol
+│       │   └── notifier.py           # Notifier protocol (PLANNED, not current parity)
+│       │
+│       ├── adapters/                 # concrete implementations of ports
+│       │   ├── store/
+│       │   │   ├── postgres.py       # PostgreSQL via asyncpg
+│       │   │   ├── sqlite.py         # SQLite via aiosqlite
+│       │   │   ├── sqlite_mapping.py # row/domain mapping helpers
+│       │   │   ├── sqlite_stage_b_mapping.py # validated raw block mapping
+│       │   │   ├── sqlite_row.py     # shared row validation helpers
+│       │   │   ├── sqlite_params.py  # SQL parameter helpers
+│       │   │   └── sqlite_sql.py     # SQL statement constants
+│       │   ├── llm/
+│       │   │   ├── anthropic.py      # Anthropic SDK (prompt caching)
+│       │   │   ├── openai.py         # OpenAI SDK (Codex/GPT)
+│       │   │   ├── claude_cli.py     # claude -p subprocess
+│       │   │   ├── codex_cli.py      # codex exec subprocess
+│       │   │   └── mock.py           # deterministic responses for testing + dev
+│       │   ├── sources/
+│       │   │   ├── _jobspy.py        # shared JobSpy wrapper
+│       │   │   ├── linkedin_playwright.py
+│       │   │   ├── linkedin_jobspy.py
+│       │   │   ├── indeed_jobspy.py
+│       │   │   ├── ats.py
+│       │   │   └── speedyapply.py
+│       │   ├── embedder/
+│       │   │   └── sentence_transformer.py
+│       │   └── notifier/             # PLANNED, not current parity
+│       │       └── gmail.py
+│       │
+│       ├── services/                 # orchestration: compose domain + ports
+│       │   ├── error_handler.py      # recoverable service error policy
+│       │   ├── scan.py               # discover + store pipeline
+│       │   ├── evaluate.py           # ML gate -> Stage A -> Stage B
+│       │   ├── workflow.py           # status transitions, decay, attention
+│       │   ├── application.py        # apply audit trail: snapshots + record
+│       │   └── digest.py             # pull data + render
+│       │
+│       ├── cli/                      # Click commands (thin shell)
+│       │   ├── __init__.py           # Click group entry
+│       │   ├── scan.py               # scan
+│       │   ├── evaluate.py           # evaluate
+│       │   ├── manage.py             # mark, note, followup, archive, companies
+│       │   ├── apply.py              # apply, apply-history
+│       │   ├── snapshots.py          # snapshots list/show/diff
+│       │   ├── ml_gate.py            # ml-gate train/info
+│       │   └── serve.py              # serve
+│       │
+│       ├── web/                      # FastAPI (thin shell)
+│       │   ├── app.py                # app factory
+│       │   ├── deps.py               # dependency injection
+│       │   ├── schemas.py            # Pydantic response models
+│       │   └── routes/
+│       │       ├── jobs.py
+│       │       ├── stats.py
+│       │       └── health.py
+│       │
+│       ├── config.py                 # pydantic-settings
+│       ├── observability.py          # structlog + OTel + Sentry init
+│       └── temporal/                 # Temporal workflow definitions
+│           ├── workflows.py          # ScanWorkflow, EvaluateWorkflow
+│           └── activities.py         # each activity = one service call
 │
 ├── migrations/                       # Alembic
 │   ├── alembic.ini
@@ -159,8 +205,8 @@ All domain types are pure Python dataclasses with zero external dependencies.
 
 - **JobPosting** — id (store identity; `None` before persistence), platform, canonical_id, url, title, company, location, jd_text, jd_quality, posted_at, discovered_at (scraped_at), enriched_at, enrich_source. Natural identity remains `(platform, canonical_id)`.
 - **QualityBand** — enum: full, good, partial, stub, missing, abandoned
-- **StageAResult** — score (0-100), one_line, timing_eligible (eligible/mismatch/unclear), model, cost_usd, prompt_hash, resume_hash
-- **StageBResult** — verdict, jd_summary, fit_analysis, resume_hooks, model, cost_usd, prompt_hash, resume_hash, raw_blocks (optional exact `block_a`/`block_b`/`block_c`/`block_e` object for audit persistence)
+- **StageAResult** — score (0-100), one_line, timing_eligible (eligible/mismatch/unclear), model, optional cost_usd, prompt_hash, resume_hash
+- **StageBResult** — verdict, jd_summary, fit_analysis, resume_hooks, model, optional cost_usd, prompt_hash, resume_hash, raw_blocks (optional exact `block_a`/`block_b`/`block_c`/`block_e` object for audit persistence)
 - **Verdict** — enum: apply, consider, skip
 - **FitAnalysis** — score (0-100), strengths (list[MatchItem]), gaps (list[GapItem])
 - **MatchItem** — requirement, evidence
@@ -246,7 +292,7 @@ Rule: `scraped_at` = system-observed freshness (main filter). `posted_at` = empl
 ### Business Metrics Models
 
 - **LLMUsage** — model, input_tokens, output_tokens, cost_usd, cached, latency_ms, timestamp
-- **PipelineRun** — run_id, started_at, source, jobs_discovered, jobs_filtered, jobs_ml_gated, jobs_scored, total_llm_cost_usd, errors, finished_at
+- **PipelineRun** — run_id, started_at, source, jobs_discovered, jobs_inserted, jobs_updated, jobs_filtered, jobs_ml_gated, stage_a_scored, stage_b_scored, jobs_scored, total_llm_cost_usd, errors, finished_at. `source` is the operation/source label: source name for single-source scan, `scan` for aggregate scan, `evaluate` for evaluation.
 
 Domain models != database schema. The adapter layer handles conversion between domain objects and database rows.
 
@@ -274,7 +320,7 @@ class LLMClient(Protocol):
 ```
 
 - **LLMRequest**: messages, model, temperature, max_tokens, response_schema (optional)
-- **LLMResponse**: content, model, input_tokens, output_tokens, cost_usd, cached
+- **LLMResponse**: content, model, input_tokens, output_tokens, optional cost_usd, cached
 
 ### Provider Routing
 
@@ -298,7 +344,7 @@ stage_b = "openai/gpt-4.1"
 | CodexCliLLM | `codex exec` subprocess | Codex CLI backend, supports configured model names, read-only/ephemeral mode |
 | MockLLM | in-memory | Deterministic responses, zero cost, for testing + dev |
 
-Domain layer (scoring.py) renders prompts and parses responses — it does NOT call LLMClient. LLM orchestration (call → retry → persist) lives in `services/evaluate.py`, which depends on the LLMClient Protocol. Provider-specific optimizations happen inside the adapter, invisible to services.
+Domain layer (`domain/scoring.py`) renders prompts and parses responses; it raises expected parse failures via `domain/errors.py` and does NOT call LLMClient. The prompt renderers state the exact JSON keys that the parsers require. LLM orchestration lives in `services/evaluate.py`, which depends on the LLMClient Protocol, applies configured timeout/concurrency limits, and records recoverable runtime failures as explicit stage errors. Recoverable service failures, including scoring parse failures, LLM runtime failures, and per-source fetch failures, are handled through `services/error_handler.py` so persistence, logging, and run counters use one naming pattern. Provider-specific optimizations happen inside the adapter, invisible to services.
 
 ### Prompt Composition
 
@@ -326,7 +372,7 @@ user prompt   = resume.md + score_rubric.md + JD text
 
 ### Protocol
 
-JobStore protocol defines: save_job, get_job, list_jobs, job_exists, save_stage_a, save_stage_b, load_pending_stage_a, load_pending_stage_b, transition_status, get_status, record_llm_usage, record_pipeline_run, record_application, list_applications, save_resume_snapshot, get_resume_snapshot, diff_resume_snapshots, application_stats, save_ml_gate_result, connect, close.
+JobStore protocol defines: save_job, get_job, list_jobs, job_exists, save_stage_a, save_stage_a_error, save_stage_b, save_stage_b_error, load_pending_stage_a, load_pending_stage_b, transition_status, get_status, record_llm_usage, record_pipeline_run, record_application, list_applications, save_resume_snapshot, get_resume_snapshot, diff_resume_snapshots, application_stats, save_ml_gate_result, connect, close.
 
 ### Two Adapters
 
@@ -338,6 +384,8 @@ JobStore protocol defines: save_job, get_job, list_jobs, job_exists, save_stage_
 | Concurrency | Multi-connection, row-level locks | WAL mode, single writer |
 | Full-text search | tsvector + GIN index | FTS5 |
 | Use case | Production, CI | Dev, offline, quick testing |
+
+Phase 0 implementation note: only SQLite is wired. `db.backend != "sqlite"` is a fail-fast configuration error until the Postgres adapter is implemented. SQLite connections enable `PRAGMA foreign_keys = ON`, `connect()` is idempotent, and `close()` serializes with in-flight store operations before closing. `save_job` uses conflict-aware insert plus update inside one immediate transaction for race-safe `(platform, canonical_id)` upserts while preserving inserted/updated flags. The Phase 0 SQLite schema mirrors domain-required `url`, `location`, and `pipeline_runs.source` as NOT NULL, applies CHECK constraints for persisted enum/score fields, and records `created_at`/`updated_at` on evaluation rows.
 
 ### ATS Companies in Database
 
@@ -379,20 +427,23 @@ See **Temporal Flow Detail** above for full workflow/activity diagrams.
 
 Two runners, same business services underneath:
 
-**InProcessRunner (CLI default)**
-- `jobfeed scan` / `jobfeed evaluate` → calls services directly, in-process, blocking
-- Zero external dependency beyond Python + DB + config
+**InProcessRunner (default runner inside the containerized CLI)**
+- `./bin/jobfeed scan` / `./bin/jobfeed evaluate` → host launcher enters `jobfeed-cli` container; the real `jobfeed` CLI calls services directly, in-process, blocking
+- No Temporal dependency. In Phase 0 this needs only the CLI container + mounted SQLite data/config; in full-stack Docker it may use Postgres if config selects it
 - Uses DB writes as coarse-grained resume boundary: re-running skips completed evaluations / upserts existing scan rows
 - Debug: terminal stack trace, standard logging
 
 **TemporalRunner (optional observable mode)**
-- `jobfeed scan --runner temporal` → submits ScanWorkflow to Temporal server
+- `./bin/jobfeed scan --runner temporal` → submits ScanWorkflow to Temporal server
 - Web / Schedule → default Temporal
 - Activity-level retry, backoff, timeout, resume after worker crash
 - Workflow/activity status visible in Temporal UI
 - Configurable as default: `[execution] default_runner = "temporal"` in config
 
 Both runners emit the same PipelineRun / PipelineStep metrics to DB.
+
+Host-native `uv run jobfeed ...` may invoke the same InProcessRunner for
+developer debugging, but it is not the canonical user-facing runtime.
 
 **Web triggers via Temporal** (async, non-blocking):
 
@@ -631,7 +682,7 @@ hard_filters:
   big_company_list: ["google", "meta", "amazon", "apple", "microsoft"]
 ```
 
-**Legacy config import**: migration plan (Section 17) must also import `~/.jobfeed/config.toml` and `~/.jobfeed/preferences.yml` from existing install, preserving hard_filters, big_company_list, big_company_days, and max_daily_score_calls.
+**Legacy config import**: migration plan (Section 19) must also import `~/.jobfeed/config.toml` and `~/.jobfeed/preferences.yml` from existing install, preserving hard_filters, big_company_list, big_company_days, and max_daily_score_calls.
 
 Secrets in environment variables only (`.env`, gitignored):
 
@@ -644,7 +695,7 @@ DATABASE_PASSWORD=...
 
 Load priority: env vars > .env > config.toml > defaults.
 
-Environment switching: `~/.jobfeed/config.toml` (default), `--config /path/to/other.toml` to override. Repo only contains `config.example.toml`.
+Environment switching: `~/.jobfeed/config.toml` (steady-state user config) or `--config /path/to/other.toml` to override. In Docker-first runtime, user config and data paths must be mounted into the container at stable container paths; the host launcher is responsible for using the Compose profile that provides those mounts. Repo only contains example templates such as `config.example.toml` and Docker-specific examples. Phase 0's `load_settings()` uses repo-local defaults only when no config path is supplied; an explicit missing `--config` path is a user error.
 
 ### Dependency Injection
 
@@ -652,7 +703,7 @@ No DI framework. One factory function wires everything:
 
 ```
 create_app(settings)
-├── build store adapter (PG or SQLite based on config)
+├── build store adapter (Phase 0: SQLite only; later PG or SQLite based on config)
 ├── build LLM clients (per-stage, based on provider/model spec)
 ├── build enabled source adapters (from config)
 ├── build services with above adapters
@@ -663,7 +714,7 @@ Three entry points share the same factory:
 
 | Entry | How it gets dependencies |
 |-------|--------------------------|
-| CLI | `cli/__init__.py` calls `create_app()`, stores services in Click context |
+| CLI | Host launcher (`bin/jobfeed` / `bin/jobfeed.ps1`) enters Docker; containerized `cli/__init__.py` calls `create_app()`, stores services in Click context |
 | Web | `web/app.py` app factory calls `create_app()`, injects via FastAPI `Depends()` |
 | Temporal | Worker startup calls `create_app()`, activities access services from worker context |
 
@@ -675,6 +726,7 @@ Three entry points share the same factory:
 
 **Structured Logging (structlog)**
 - JSON format in production, human-readable in dev
+- Human logs use TTY-aware color rendering so redirected output is not polluted with ANSI escapes
 - request_id propagated across entire request lifecycle
 - Key fields on every log: event, job_id, source, model, latency_ms, error
 
@@ -786,13 +838,13 @@ on: [push, pull_request]
 │   └── bandit -r src/
 │
 ├── job: unit-tests           (needs: quality-gate, no Docker)
-│   ├── pytest tests/unit/ -x --cov=src/domain
+│   ├── pytest tests/unit/ -x --cov=src/jobfeed/domain
 │   ├── timeout 5s performance baseline
 │   └── upload coverage artifact
 │
 ├── job: integration-tests    (needs: quality-gate, parallel with unit)
 │   ├── services: postgres via testcontainers
-│   ├── pytest tests/integration/ --cov=src/adapters
+│   ├── pytest tests/integration/ --cov=src/jobfeed/adapters
 │   └── upload coverage artifact
 │
 ├── job: frontend             (needs: quality-gate, parallel with unit)
@@ -808,7 +860,7 @@ on: [push, pull_request]
 │   └── pytest tests/e2e/ -v
 │
 ├── job: mutation-tests       (needs: unit-tests, PR only)
-│   └── mutmut run --paths-to-mutate=src/domain/
+│   └── mutmut run --paths-to-mutate=src/jobfeed/domain/
 │
 ├── job: llm-review           (needs: quality-gate, PR only, advisory)
 │   ├── Codex CLI review → post PR comment
@@ -840,10 +892,16 @@ on: [push, pull_request]
 
 ## 13. Docker Compose
 
-### Containers (8 total)
+Docker Compose is the canonical runtime for production-parity execution.
+User-facing CLI commands enter Compose through host launchers.
+
+### Services
+
+Full-stack mode has 8 long-running containers plus one one-shot CLI service:
 
 | Container | Image | Purpose |
 |-----------|-------|---------|
+| jobfeed-cli | ./Dockerfile | One-shot user-facing CLI service used by `bin/jobfeed` / `bin/jobfeed.ps1` |
 | postgres | postgres:16 | Application DB + Temporal persistence (separate databases on same instance) |
 | temporal | temporalio/auto-setup | Workflow engine (uses postgres for persistence, NOT Redis) |
 | temporal-ui | temporalio/ui | Workflow visualization |
@@ -858,17 +916,23 @@ Note: Redis removed. Temporal uses PostgreSQL for persistence (official supporte
 ### Dev Override
 
 `docker-compose.dev.yml` overrides for local development:
-- Backend and frontend run on host (hot reload) instead of containers
-- Only infrastructure services (PG, Temporal, observability) run in Docker
-- Volume mounts for persistent data
+- The canonical CLI remains containerized through `jobfeed-cli`
+- Backend and frontend may run on host for hot reload as a developer fallback
+- Infrastructure services (PG, Temporal, observability) run in Docker
+- Volume mounts for persistent data and repo-local development state
 
 ### One Command Start
 
 ```bash
+# User-facing CLI (canonical)
+./bin/jobfeed scan
+./bin/jobfeed evaluate
+./bin/jobfeed digest
+
 # Full stack (production-like)
 docker compose up
 
-# Dev mode (infra in Docker, app on host)
+# Dev mode (infra in Docker, optional app hot reload on host)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 make dev  # starts backend + frontend on host
 ```
@@ -990,6 +1054,15 @@ All commands from the current repo are preserved except `upgrade-blocks` (stale)
 
 Key flags that must be preserved (not just command names):
 
+Canonical invocation is through the host launcher:
+
+```bash
+./bin/jobfeed <command> [flags]
+```
+
+The launcher forwards all command names and flags unchanged to the
+containerized `jobfeed` CLI.
+
 **scan:**
 - `--linkedin-only` / `--indeed-only` / `--ats` / `--speedyapply-only` — source selectors
 - `--ats-workers N` — ATS parallel concurrency
@@ -1040,7 +1113,7 @@ Key flags that must be preserved (not just command names):
 ### Filtering
 
 - Renders current full evaluated set (all jobs meeting threshold), NOT only "since last digest"
-- Previous digest cutoff (from digest file mtime, not state table) only splits the Apply tier into new vs previously seen
+- Previous digest cutoff (from digest file mtime, not state table) only splits the Apply tier into new vs previously seen; cutoff and compared discovery timestamps must be timezone-aware
 - Respects hard filters from `preferences.yml`
 - Uses two-stage evaluation results (not legacy single-pass scores)
 - No state update on render — digest is a read-only report
