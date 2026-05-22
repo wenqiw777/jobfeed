@@ -39,7 +39,7 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/jobfeed/ports/*.py" = ["ARG002", "PLR0913"]
-"src/jobfeed/adapters/store/sqlite.py" = ["ARG002"]
+"src/jobfeed/adapters/store/sqlite.py" = ["ARG002", "E501", "PLR0913"]
 "src/jobfeed/adapters/store/_sqlite_*.py" = ["PLR0913"]
 "tests/**/test_ports.py" = ["ARG002", "PLR0913"]
 

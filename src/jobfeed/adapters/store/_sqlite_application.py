@@ -117,18 +117,10 @@ def _count_outcomes(
     """
     response_count = len(job_response_statuses)
     interview_count = sum(
-        1
-        for s in job_response_statuses.values()
-        if s & _INTERVIEW_STATUSES
+        1 for s in job_response_statuses.values() if s & _INTERVIEW_STATUSES
     )
-    offer_count = sum(
-        1 for s in job_response_statuses.values() if "offer" in s
-    )
-    rejection_count = sum(
-        1
-        for s in job_response_statuses.values()
-        if "rejected" in s
-    )
+    offer_count = sum(1 for s in job_response_statuses.values() if "offer" in s)
+    rejection_count = sum(1 for s in job_response_statuses.values() if "rejected" in s)
     return (
         response_count,
         interview_count,
@@ -207,9 +199,7 @@ def _build_variant_stats(
     """
     job_variant: dict[int, str] = {}
     for jid, raw_name in variant_rows:
-        job_variant[jid] = (
-            raw_name if raw_name is not None else "unknown"
-        )
+        job_variant[jid] = raw_name if raw_name is not None else "unknown"
 
     variant_jobs: dict[str, set[int]] = {}
     for jid, vname in job_variant.items():
@@ -217,25 +207,13 @@ def _build_variant_stats(
 
     result: dict[str, ResumeVariantStats] = {}
     for vname, jids in sorted(variant_jobs.items()):
-        v_resp = {
-            j: job_resp[j] for j in jids if j in job_resp
-        }
+        v_resp = {j: job_resp[j] for j in jids if j in job_resp}
         result[vname] = ResumeVariantStats(
             sent=len(jids),
             responses=len(v_resp),
-            interviews=sum(
-                1
-                for s in v_resp.values()
-                if s & _INTERVIEW_STATUSES
-            ),
-            offers=sum(
-                1 for s in v_resp.values() if "offer" in s
-            ),
-            rejections=sum(
-                1
-                for s in v_resp.values()
-                if "rejected" in s
-            ),
+            interviews=sum(1 for s in v_resp.values() if s & _INTERVIEW_STATUSES),
+            offers=sum(1 for s in v_resp.values() if "offer" in s),
+            rejections=sum(1 for s in v_resp.values() if "rejected" in s),
         )
     return result
 
@@ -264,6 +242,10 @@ async def record_application(
     Returns:
         True if the application was newly recorded, False if the job
         was already marked as applied.
+
+    Raises:
+        aiosqlite.Error: On database failure (transaction is rolled
+            back before re-raising).
     """
     job_id_int = int(record.job_id)
     applied_at_str = record.applied_at.isoformat()
@@ -395,9 +377,7 @@ async def application_stats(
     Returns:
         Aggregate application statistics.
     """
-    cutoff = (
-        datetime.now(UTC) - timedelta(days=since_days_ago)
-    ).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=since_days_ago)).isoformat()
 
     _empty = ApplicationStats(
         applied_count=0,
@@ -452,14 +432,13 @@ async def application_stats(
 
         # 3. Median days to first response
         deltas = await _fetch_response_deltas(
-            db, set(job_resp.keys()),
+            db,
+            set(job_resp.keys()),
         )
         median_days = _median(deltas)
 
         # 4. Per-variant breakdown (optional)
-        by_resume_dict: (
-            dict[str, ResumeVariantStats] | None
-        ) = None
+        by_resume_dict: dict[str, ResumeVariantStats] | None = None
         if by_resume:
             cursor = await db.execute(
                 f"""
