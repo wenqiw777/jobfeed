@@ -174,7 +174,15 @@ Rename Phase 0's opaque block columns to semantic names. This is a Phase 0 fixup
 - Test: `tests/unit/test_status.py`
 
 **What to build:**
-Add domain models needed by the expanded store layer. Domain modules may import stdlib and `jobfeed.domain.*` (internal cross-references); they must NOT import adapters, infrastructure, or third-party runtime libraries. If `models.py` would exceed the 300-line hygiene limit, split into focused private modules and re-export.
+Add domain models needed by the expanded store layer. Domain modules may import stdlib and `jobfeed.domain.*` (internal cross-references); they must NOT import adapters, infrastructure, or third-party runtime libraries.
+
+**Mandatory split:** `models.py` is currently 259 lines. Adding 12+ new models will push it well past the 300-line gate. Split proactively into focused modules **in this task** — do not leave it for the implementer to figure out:
+- `models.py` — keep core pipeline models: `JobPosting`, `StageAResult`, `StageBResult`, `FitAnalysis`, `MatchItem`, `GapItem`, `MLGateResult`, `SaveJobResult`, `JobEvaluation`, `PipelineRun`, `LLMUsage`, `LLMRequest`, `LLMResponse`, `Message`. Re-export everything from sub-modules for backward compatibility.
+- `models_status.py` — status-related models: `StatusTransition`, `StatusInfo`, `AutoDecayResult`, `WorkflowAttentionItem`, `WorkflowAttention`.
+- `models_application.py` — application audit models: `ApplicationRecord`, `ResumeSnapshot`, `ResumeVariant`, `ApplicationStats`, `ResumeVariantStats`.
+- `models_ops.py` — operational models: `CompanyRecord`, `CostEntry`, `DigestStats`, `AttentionItem`, `AttentionReport`.
+
+All public names re-exported from `models.py` via `from jobfeed.domain.models_status import *` etc. so existing `from jobfeed.domain.models import X` imports continue to work.
 
 New models in `models.py`:
 - **StatusTransition** — `job_id: str`, `from_status: JobStatus | None`, `to_status: JobStatus`, `reason: str | None`, `changed_at: datetime`, `resume_variant: str | None`. Represents one row in `job_status_history`.
@@ -283,7 +291,7 @@ Add these method signatures to the Protocol:
 - `save_job` must implement quality-ladder protection on upsert: incoming quality worse than stored → keep stored jd_text + quality. Compute and persist `company_norm`, `title_norm`, `location_norm` via `_normalize.py` on every save. **No soft-key dedup at DB layer** — each `(platform, canonical_id)` is an independent row; twin folding is UI/API layer only (per design spec Section 4 "Dedupe / Twin Semantics").
 - `job_exists(self, *, platform: str, canonical_id: str) -> bool` — if not already in Phase 0, add it.
 - `load_pending_stage_a` — refine signature to add legacy parity filters: `quality_bands: frozenset[str] | None = None` (filter by jd_quality), `corpus: str = "unrated"` (`"unrated"` = no eval or error; `"all"` = include completed; `"failed"` = errors only), `max_days: int | None = None` (freshness filter on discovered_at). Phase 0's minimal signature only has `limit`.
-- `load_pending_stage_b` — refine signature to add: `max_days: int | None = None` (freshness filter on discovered_at). Phase 0's minimal signature only has `threshold` and `limit`.
+- `load_pending_stage_b` — **remove `threshold` parameter** (conflicts with Decision 1: threshold belongs to EvaluateService, not the store). The store returns all Stage A-completed, Stage B-pending jobs; the service filters by threshold. Refine signature to: `load_pending_stage_b(self, *, limit: int = 100, max_days: int | None = None) -> list[JobPosting]`. Phase 0's SQL `WHERE stage_a_score >= ?` must be changed to `WHERE stage_a_status = 'completed' AND (stage_b_status IS NULL OR stage_b_status = 'error')`.
 
 **Explicitly deferred (not in Phase 1 Protocol):**
 - `record_llm_usage` — deferred to **Phase 3** (First Real LLM). Phase 1 has `record_cost` for day-level aggregation; per-call usage tracking arrives with real LLM integration.
@@ -418,11 +426,14 @@ CREATE TABLE IF NOT EXISTS state (
 
 **Phase 0 baseline `evaluations` columns (already exist — 25 columns):** `id`, `job_id`, `stage_a_score`, `stage_a_one_line`, `stage_a_timing_eligible`, `stage_a_status`, `stage_a_error`, `stage_a_model`, `stage_a_cost_usd`, `stage_a_prompt_hash`, `stage_a_resume_hash`, `stage_b_verdict`, `stage_b_jd_summary`, `stage_b_verdict_json`, `stage_b_summary_json`, `stage_b_fit_json`, `stage_b_hooks_json`, `stage_b_status`, `stage_b_error`, `stage_b_model`, `stage_b_cost_usd`, `stage_b_prompt_hash`, `stage_b_resume_hash`, `created_at`, `updated_at`. Phase 0 block columns (`block_a_json` etc.) are renamed to semantic names before Phase 1 begins — this is a Phase 0 schema fixup, not a Phase 1 migration.
 
-**Columns added to `evaluations` in Phase 1:** `stage_a_at TEXT`, `stage_b_at TEXT`.
+**Columns added to `evaluations` in Phase 1:** `stage_a_at TEXT`, `stage_b_at TEXT`, `stage_a_error_count INTEGER NOT NULL DEFAULT 0`, `stage_b_error_count INTEGER NOT NULL DEFAULT 0`.
 
 **Evaluations timestamp write paths:** `created_at` is set on row INSERT (SQL DEFAULT); never updated after. `updated_at` is set on INSERT (DEFAULT) and **must be refreshed** on every evaluation write (`save_stage_a`, `save_stage_b`, `save_stage_a_error`, `save_stage_b_error`, `mark_stage_b_skipped`). `stage_a_at` records when Stage A first completed (set by `save_stage_a`, immutable after). `stage_b_at` records when Stage B first completed (set by `save_stage_b`, immutable after). Both adapters must include `updated_at = <now>` in every evaluation UPDATE statement.
 
-**Evaluations status enum (Phase 0 fixup if not already present):** `stage_a_status` and `stage_b_status` allow: `NULL` (pending), `"completed"`, `"error"` (retryable), `"skipped_below_threshold"` (terminal — Stage B only, set when Stage A score < threshold). Legacy v16 writes `skipped_below_threshold`; import and parity depend on this value being preserved.
+**Evaluations status enums (distinct per stage):**
+- `stage_a_status` CHECK: `NULL` (pending), `"completed"`, `"error"` (retryable). **No `skipped_below_threshold`** — Stage A always runs; it cannot be skipped.
+- `stage_b_status` CHECK: `NULL` (pending), `"completed"`, `"error"` (retryable), `"skipped_below_threshold"` (terminal — set when Stage A score < threshold; Stage B is never called).
+- **Implementation note:** These are **separate CHECK constraints** in schema.sql. Do NOT copy `stage_b_status`'s enum into `stage_a_status`. Legacy v16 writes `skipped_below_threshold` only to `stage_b_status`; import and parity depend on this value being preserved.
 
 **Phase 0 baseline `pipeline_runs` columns (already exist):** `id`, `run_id`, `started_at`, `source`, `jobs_discovered`, `jobs_inserted`, `jobs_updated`, `jobs_filtered`, `jobs_ml_gated`, `stage_a_scored`, `stage_b_scored`, `jobs_scored`, `total_llm_cost_usd`, `errors`, `finished_at`. No columns added in Phase 1.
 
@@ -637,6 +648,8 @@ Contract test groups (each group tests one Protocol concern):
 
 **Behavioral decision (Phase 1 change from Phase 0):** Phase 0's minimal store may have treated errors as terminal. Phase 1 adopts legacy retry semantics: error = retryable. The `load_pending_*` queries include error rows. This is intentional — production pipelines need automatic retry on transient LLM failures.
 
+**Retry cap:** To prevent infinite retries on permanently bad data (corrupt JD, unparseable response), `load_pending_stage_a` and `load_pending_stage_b` must exclude rows where `stage_a_error` / `stage_b_error` has been written **more than `max_retries` times** (default: 3). Implementation: add `error_count INTEGER NOT NULL DEFAULT 0` columns to `evaluations` for both Stage A and Stage B. `save_stage_a_error` increments `stage_a_error_count`; `save_stage_b_error` increments `stage_b_error_count`. Pending queries add `AND stage_a_error_count < ?` / `AND stage_b_error_count < ?`. Jobs that exceed the cap stay in `error` status permanently — visible in `needs_attention` report for manual triage. Backoff is handled by the service layer (EvaluateService), not the store.
+
 **Group 3: Status Lifecycle**
 - Fresh job → auto-seeded to `new`
 - `new → scored → shortlisted → applied` sequence
@@ -705,6 +718,8 @@ Contract test groups (each group tests one Protocol concern):
 - `load_pending_stage_a(corpus="all")` includes completed evaluations
 - `load_pending_stage_a(quality_bands={"full","good"})` filters by jd_quality
 - `load_pending_stage_a(max_days=7)` filters by discovered_at freshness
+- `load_pending_stage_b` returns Stage A-completed, Stage B-pending jobs (no threshold filter — service responsibility)
+- `load_pending_stage_b` excludes `stage_b_status = 'skipped_below_threshold'` jobs
 - `load_pending_stage_b(max_days=7)` filters by discovered_at freshness
 
 **Group 12: Enrichment**
@@ -763,6 +778,7 @@ services:
 
   jobfeed-cli:
     environment:
+      JOBFEED_DB__BACKEND: "postgres"
       JOBFEED_DB_URL: "postgresql://jobfeed:jobfeed_dev@postgres:5432/jobfeed_dev"
     depends_on:
       postgres:
@@ -992,7 +1008,15 @@ Both SQLiteStore and PostgresStore implement `BulkImportPort` alongside `JobStor
 - **PostgreSQL:** `disable_triggers` executes `ALTER TABLE jobs DISABLE TRIGGER trg_jobs_seed_status`. `enable_triggers` executes `ALTER TABLE jobs ENABLE TRIGGER trg_jobs_seed_status`. PG natively supports per-trigger enable/disable without DDL drop.
 
 - `async def import_legacy_sqlite(legacy_path: Path, target: BulkImportPort) -> ImportReport`
-- Import flow: `disable_triggers` → `try:` bulk insert tables in FK order (`resume_variants` → `jobs` → `job_status` → `job_status_history` → `evaluations` → `applied` → `resume_snapshots` → `companies` → `cost_ledger` → `state`) → `reset_sequences` → `finally: enable_triggers`. The `try/finally` guarantees triggers are re-enabled even if a bulk insert fails mid-way.
+- Import flow: `disable_triggers` → `begin_import_transaction` → `try:` bulk insert tables in FK order (`resume_variants` → `jobs` → `job_status` → `job_status_history` → `evaluations` → `applied` → `resume_snapshots` → `companies` → `cost_ledger` → `state`) → `reset_sequences` → `commit_import_transaction` → `finally: enable_triggers`. The entire import runs inside **one transaction** — any failure rolls back all tables atomically. `try/finally` guarantees triggers are re-enabled even on rollback.
+
+Add to `BulkImportPort`:
+```python
+async def begin_import_transaction(self) -> None: ...
+async def commit_import_transaction(self) -> None: ...
+async def rollback_import_transaction(self) -> None: ...
+```
+The orchestrator (`import_legacy_sqlite`) calls `begin` before the first `bulk_insert_*`, and `commit` after all succeed. On any exception, it calls `rollback` before re-raising. This guarantees atomicity: either all tables are imported or none are. **PG:** standard `BEGIN`/`COMMIT`/`ROLLBACK`. **SQLite:** `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` (immediate to prevent concurrent writes during import).
 - ID preservation: legacy `jobs.id` values inserted as-is. `evaluations.id` is NOT imported (auto-generated surrogate; legacy has no equivalent). `job_status_history.id` values inserted as-is.
 - For PG, `reset_sequences()` resets **all** serial/sequence columns to `MAX(id) + 1`: `jobs.id`, `evaluations.id`, `job_status_history.id`. Missing any of these causes PK collision on the next INSERT after import.
 - Trigger disabled during import: avoids auto-seed conflict (legacy `job_status` rows imported directly, not generated by trigger).
@@ -1049,7 +1073,13 @@ Checks:
 6. **Normalization presence** — every job has non-empty `company_norm` and `title_norm`.
 7. **ID preservation** — sample N jobs by legacy ID and verify they exist with the same ID in the new store.
 8. **Evaluation score ranges** — all `stage_a_score` values in 0–100.
-9. **Canonical row checksum** — for each core table, read all rows from legacy (with column mapping applied) and from target, compute a per-row canonical hash (sort JSON keys before hashing to handle SQLite TEXT vs PG JSONB key-order differences), compare full-set or sampled-N checksums. This proves actual values are preserved, not just structural integrity.
+9. **Canonical row checksum** — for each core table, read all rows from legacy (with column mapping applied) and from target, compute a per-row canonical hash, compare full-set or sampled-N checksums. **Canonicalization rules** (applied before hashing):
+   - **JSON columns:** `json.dumps(json.loads(value), sort_keys=True)` — normalizes key order (SQLite TEXT stores insertion-order; PG JSONB may reorder keys).
+   - **Timestamp columns:** parse to `datetime`, format as `YYYY-MM-DDTHH:MM:SS.ffffffZ` — normalizes SQLite TEXT (`2026-05-20T14:30:00Z`) vs PG TIMESTAMPTZ (`2026-05-20 14:30:00+00`) vs microsecond precision differences.
+   - **Boolean/integer columns:** `int(value)` — normalizes PG `True`/`False` vs SQLite `1`/`0`.
+   - **NULL handling:** hash `"<NULL>"` sentinel for NULL values.
+   - **Excluded from checksum:** `evaluations.id` (surrogate, different between backends), `updated_at` (may differ by import timing), `stage_a_error_count`/`stage_b_error_count` (not in legacy).
+   This proves actual values are preserved, not just structural integrity.
 
 `ParityReport` dataclass: `passed: bool`, `checks: list[ParityCheck]` where `ParityCheck` has `name: str`, `passed: bool`, `details: str`.
 
