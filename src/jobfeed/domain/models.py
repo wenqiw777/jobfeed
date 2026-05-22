@@ -1,4 +1,4 @@
-"""Domain dataclasses and enums for the Jobfeed Phase 0 pipeline."""
+"""Domain dataclasses and enums for the Jobfeed pipeline."""
 
 from __future__ import annotations
 
@@ -238,7 +238,37 @@ def _validate_score(score: int) -> None:
         raise ValueError("score must be an integer between 0 and 100")
 
 
+from jobfeed.domain.models_application import (  # noqa: E402
+    ApplicationRecord,
+    ApplicationStats,
+    ResumeSnapshot,
+    ResumeVariant,
+    ResumeVariantStats,
+)
+from jobfeed.domain.models_ops import (  # noqa: E402
+    AttentionItem,
+    AttentionReport,
+    CompanyRecord,
+    CostEntry,
+    DigestStats,
+)
+from jobfeed.domain.models_status import (  # noqa: E402
+    AutoDecayResult,
+    StatusInfo,
+    StatusTransition,
+    WorkflowAttention,
+    WorkflowAttentionItem,
+)
+
 __all__ = [
+    "ApplicationRecord",
+    "ApplicationStats",
+    "AttentionItem",
+    "AttentionReport",
+    "AutoDecayResult",
+    "CompanyRecord",
+    "CostEntry",
+    "DigestStats",
     "FitAnalysis",
     "GapItem",
     "JobEvaluation",
@@ -252,8 +282,15 @@ __all__ = [
     "Message",
     "PipelineRun",
     "QualityBand",
+    "ResumeSnapshot",
+    "ResumeVariant",
+    "ResumeVariantStats",
     "SaveJobResult",
     "StageAResult",
     "StageBResult",
+    "StatusInfo",
+    "StatusTransition",
     "Verdict",
+    "WorkflowAttention",
+    "WorkflowAttentionItem",
 ]
