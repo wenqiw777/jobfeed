@@ -1,0 +1,39 @@
+# Python bytecode and local test caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.hypothesis/
+.tox/
+.nox/
+.pytype/
+.pyre/
+.dmypy.json
+dmypy.json
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+test-results/
+junit.xml
+
+# Local environments and packaging output
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# Local runtime state for the Phase 0 walking skeleton
+.jobfeed-dev/
+
+# Local editor and OS metadata
+.DS_Store
+.idea/
+.vscode/
