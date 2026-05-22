@@ -64,7 +64,9 @@ jobfeed/                              # repo root
 │       │       ├── _pg_status.py      # CREATE: PG status/decay/workflow methods
 │       │       ├── _pg_application.py # CREATE: PG application/resume methods
 │       │       ├── _pg_import.py      # CREATE: PG BulkImportPort implementation
-│       │       └── _normalize.py      # CREATE: shared company/title normalization
+│       │       ├── _normalize.py      # CREATE: shared company/title normalization
+│       │       ├── legacy_import.py   # CREATE: legacy SQLite v16 reader + BulkImportPort orchestrator
+│       │       └── parity.py          # CREATE: post-import parity assertion harness
 │       │
 │       ├── cli/
 │       │   └── migrate.py            # CREATE: migrate CLI group (inspect-sqlite,
@@ -98,6 +100,35 @@ jobfeed/                              # repo root
 
 ---
 
+## Implementation Decisions
+
+Four cross-cutting decisions made during plan review. Documented here as standalone rulings — implementers must not re-derive them from inline notes.
+
+**Decision 1: Threshold responsibility belongs to EvaluateService, not the store.**
+`save_stage_a` writes the score and nothing else — it does NOT check whether the score is below a threshold or set `stage_b_status`. The orchestrator (`EvaluateService`) reads the returned score, evaluates the threshold, and calls `mark_stage_b_skipped(job_id)` when the score is too low. Rationale: the threshold is a business rule that may change per run or per config; the store is a persistence layer and must not embed scoring policy. Affected: Task 1 (Protocol adds `mark_stage_b_skipped`), Task 3 (implementation), Task 4 (contract tests Group 2 — tests `mark_stage_b_skipped` explicitly, not implicit threshold in `save_stage_a`).
+
+**Decision 2: `scraped_at` is the authoritative freshness timestamp; legacy `discovered_at` is dropped.**
+Legacy v16 has **both** `scraped_at TEXT NOT NULL` and `discovered_at TEXT` as separate columns in the `jobs` table. `scraped_at` was the original "when was this job first seen" field and is always populated. `discovered_at` was added later and is frequently NULL. The new schema has a single `discovered_at TEXT NOT NULL`. Import maps `scraped_at → discovered_at`. Legacy's own `discovered_at` column is **not imported** — it carries no information that `scraped_at` doesn't already provide. Affected: Task 2 (schema baseline), Task 8 (import column mapping), Task 9 (parity — legacy `discovered_at` excluded from checksum comparison).
+
+**Decision 3: `location` stays `NOT NULL` in new schema; import coerces `NULL → ''`.**
+Legacy allows `location` to be NULL. The new schema defines `location TEXT NOT NULL`. Rather than weakening the new schema's constraint, the import layer applies `COALESCE(location, '')` during migration. Parity checksum treats legacy `NULL` and imported `''` as equivalent for this column. Rationale: downstream code (normalization, location_norm computation, UI display) benefits from a non-NULL guarantee; the few legacy NULL locations carry no semantic meaning worth preserving as NULL. Affected: Task 2 (schema unchanged — keeps NOT NULL), Task 8 (import applies COALESCE), Task 9 (parity checksum exemption for this column).
+
+**Decision 4: `stage_b_blocks_run` is intentionally dropped — derivable from per-block columns.**
+Legacy v16 has `evaluations.stage_b_blocks_run TEXT` which records which Stage B blocks were executed (e.g., `"a,b,c,e"`). The new schema does not carry this column. The same information is derivable: a block was run if and only if its corresponding `stage_b_*_json` column is non-NULL. Import ignores this column entirely. Rationale: the per-block JSON columns are the source of truth for block execution; a redundant text list adds no queryable value and creates a consistency risk. Affected: Task 2 (schema — no column added), Task 8 (import — column skipped), Task 9 (parity — excluded from checksum).
+
+**Decision 5: Intentional behavioral changes from legacy (non-parity improvements).**
+These are deliberate deviations from legacy behavior, documented here to prevent accidental "parity fixes" that revert them:
+
+| Change | Legacy behavior | New behavior | Rationale |
+|---|---|---|---|
+| `auto_decay` scope | Only ghosts `applied` + `interviewing` | Ghosts all 6 DECAY_SOURCES including interview sub-stages | Jobs stuck in `oa`/`hr_call`/etc. should also auto-ghost |
+| `RESPONSE_STATUSES` | `{"interviewing", "offer", "rejected"}` | Adds `oa`, `hr_call`, `second_round`, `final_round` | Interview sub-stages ARE employer responses; legacy undercounted |
+| `upsert_job` soft-key dedup | Same `(platform, company_norm, title_norm)` merges into existing row | No DB-layer soft-key dedup; each `(platform, canonical_id)` is independent | Twin folding belongs in UI/API layer per design spec Section 4 |
+| `record_application` atomicity | Store does INSERT only; caller wraps transition in external transaction | Store method is internally transactional (INSERT + transition) | Eliminates bug surface from split caller responsibility |
+| `ml_gate_fail_reason` persistence | Computed but discarded at DB write time | Persisted as `ml_gate_fail_reason` column | Enables pipeline debugging and false-negative analysis |
+
+---
+
 ## Prerequisite Task: Phase 0 Schema Rename (block columns → semantic names)
 
 **Files (find all via `grep -r "block_[abce]_json" src/ tests/`):**
@@ -121,11 +152,14 @@ Rename Phase 0's opaque block columns to semantic names. This is a Phase 0 fixup
 | `block_e_json` | `stage_b_hooks_json` |
 
 **Steps:**
-- [ ] `schema.sql`: rename 4 columns in evaluations CREATE TABLE
-- [ ] `sqlite.py`: grep and update all SQL strings referencing old names
-- [ ] Tests: update any assertions or fixtures referencing old names
-- [ ] `make quality` passes
-- [ ] Committed as a standalone commit before Phase 1 work begins
+- [x] `schema.sql`: rename 4 columns in evaluations CREATE TABLE
+- [x] `sqlite_sql.py`: update all SQL strings referencing old names
+- [x] `sqlite_stage_b_mapping.py`: update row reader to use new column names
+- [x] Tests: update any assertions or fixtures referencing old names
+- [x] `stage_b_status` CHECK constraint: added `'skipped_below_threshold'`
+- [x] `MLGateResult` model: renamed `fit`→`result`, `probability`→`score`, added feature fields
+- [x] All tests pass (112 passed)
+- [x] Committed as `fix(phase0): rename block columns, expand MLGateResult, add skipped status`
 
 **Why this is a prerequisite, not Phase 1:** Phase 1 schema additions (`ALTER TABLE ADD COLUMN`) assume the canonical names already exist. If this rename were part of Phase 1, it would create a migration step for non-existent production data — unnecessary complexity.
 
@@ -148,20 +182,23 @@ New models in `models.py`:
 - **ResumeSnapshot** — `resume_hash: str` (sha256, PRIMARY KEY), `captured_at: datetime`, `source: str` (literal: "master" | "tailored"), `content: str`, `notes: str | None`. Content-addressed, append-only.
 - **ResumeVariant** — `name: str`, `description: str | None`, `created_at: datetime`.
 - **CompanyRecord** — `slug: str`, `ats_vendor: str | None`, `ats_override: bool`, `last_verified_at: datetime | None`, `last_probe_attempt_at: datetime | None`, `job_count_last_scan: int`, `consecutive_discover_failures: int`, `notes: str | None`.
-- **WorkflowAttentionItem** — `job_id: str`, `title: str`, `company: str`, `status: str`, `reason: str`, `days_since: int`. Single item in a workflow attention list.
+- **WorkflowAttentionItem** — `job_id: str`, `title: str`, `company: str`, `url: str`, `status: str`, `last_status_change_at: datetime`, `next_followup_at: datetime | None`, `notes: str | None`, `reason: str`, `days_since: int`. Single item in a workflow attention list. Fields `url`, `last_status_change_at`, `next_followup_at`, `notes` match legacy return columns; `reason` and `days_since` are computed by the adapter for convenience.
 - **WorkflowAttention** — `follow_up_today: list[WorkflowAttentionItem]`, `interview_prep: list[WorkflowAttentionItem]`, `going_ghosted: list[WorkflowAttentionItem]`. Return type for workflow attention queries.
 - **AutoDecayResult** — `ghosted: int`, `archived: int`. Return type for `auto_decay`.
 - **ResumeVariantStats** — `sent: int`, `responses: int`, `interviews: int`, `offers: int`, `rejections: int`. Per-variant breakdown.
 - **ApplicationStats** — `applied_count: int`, `response_count: int`, `interview_count: int`, `offer_count: int`, `rejection_count: int`, `median_days_to_response: float | None`, `by_resume: dict[str, ResumeVariantStats] | None`. Return type for `application_stats`.
 - **CostEntry** — `day: str` (YYYY-MM-DD), `spent_usd: float`, `calls: int`, `last_updated: datetime`.
 - **StatusInfo** — `job_id: str`, `status: JobStatus`, `next_followup_at: datetime | None`, `resume_variant: str | None`, `notes: str | None`, `last_status_change_at: datetime`. Represents the current state of `job_status` for a job.
+- **DigestStats** — `total_jobs: int`, `scored_today: int`, `stage_b_evaluated: int`, `filtered_count: int`, `llm_calls_today: int`, `total_cost_today_usd: float`. Return type for `digest_stats`.
+- **AttentionItem** — `job_id: str`, `title: str`, `company: str`, `category: str` (e.g., "enrich_error", "low_quality_scored"), `detail: str`.
+- **AttentionReport** — `enrich_errors: list[AttentionItem]`, `low_quality_scored: list[AttentionItem]`. Return type for `needs_attention`. Legacy parity: surfaces pipeline edge cases for CLI/digest.
 
 New module `status.py` — pure domain logic for status transitions:
 - `STATUS_VALUES: frozenset[str]` — all 14 statuses.
 - `ALLOWED_TRANSITIONS: dict[str, frozenset[str]]` — the manual transition graph from the design spec. Terminal statuses (`ignored`, `archived`, `rejected`, `offer`, `ghosted`) map to empty frozensets.
 - `validate_transition(from_status: str, to_status: str, *, force: bool = False, i_mean_it: bool = False) -> str | None` — returns `None` if the transition is valid (either in ALLOWED_TRANSITIONS, or force=True for most forced transitions, or force=True AND i_mean_it=True for the destructive `archived → new`), or an error message string if invalid. Pure validation, no IO, no side effects.
 - `is_terminal(status: str) -> bool`.
-- `DECAY_SOURCES: frozenset[str]` — statuses subject to auto-ghost: `{"applied", "interviewing", "oa", "hr_call", "second_round", "final_round"}`.
+- `DECAY_SOURCES: frozenset[str]` — statuses subject to auto-ghost: `{"applied", "interviewing", "oa", "hr_call", "second_round", "final_round"}`. **Intentional behavior improvement over legacy** (which only ghosts `{"applied", "interviewing"}`): interview sub-stages are now included so jobs stuck in `oa`/`hr_call`/`second_round`/`final_round` also auto-ghost after N days of silence.
 - `RESPONSE_STATUSES: frozenset[str]` — statuses that count as "employer responded" for `application_stats`: `{"interviewing", "oa", "hr_call", "second_round", "final_round", "offer", "rejected"}`. **Intentional behavior improvement over legacy** (which only counted `{"interviewing", "offer", "rejected"}`): interview sub-stages now count as responses, giving more accurate response-rate stats.
 
 **Acceptance criteria:**
@@ -194,8 +231,8 @@ Add these method signatures to the Protocol:
 - `async def get_status(self, job_id: str) -> StatusInfo | None`
 - `async def restore_from_archived(self, job_id: str) -> str` — walks history to find pre-archive status, transitions there.
 - `async def auto_decay(self, *, ghost_days: int = 30, archive_ignored_days: int = 14) -> AutoDecayResult` — returns typed result with `ghosted` and `archived` counts.
-- `async def list_statuses(self, *, statuses: frozenset[str] | None = None, days: int | None = None, limit: int | None = None) -> list[StatusInfo]`
-- `async def append_note(self, *, job_id: str, text: str) -> None` — appends timestamped note, resets ghost clock.
+- `async def list_statuses(self, *, statuses: frozenset[str] | None = None, days: int | None = None, no_response_days: int | None = None, needs_followup: bool = False, notes_contain: str | None = None, limit: int | None = None) -> list[StatusInfo]` — legacy parity filters: `no_response_days` (applied but no response within N days), `needs_followup` (has `next_followup_at` in past/today), `notes_contain` (substring search in notes).
+- `async def append_note(self, *, job_id: str, text: str) -> None` — appends timestamped note (format: `"[YYYY-MM-DD HH:MM] text\n"` using **local time**, matching legacy behavior), resets ghost clock by updating `last_status_change_at` to UTC now.
 
 **Application audit:**
 - `async def record_application(self, record: ApplicationRecord) -> bool` — transactional: write application record + status transition to `applied`. Returns True if new application recorded, False if job already has an applied record (no-op, preserves original audit row).
@@ -212,9 +249,24 @@ Add these method signatures to the Protocol:
 - `async def get_company(self, slug: str) -> CompanyRecord | None`
 - `async def list_companies(self, *, vendor: str | None = None, include_removed: bool = False) -> list[CompanyRecord]`
 - `async def mark_company_removed(self, slug: str) -> bool`
+- `async def bump_discover_failure(self, slug: str) -> int` — increments consecutive discover-failure counter, returns new count. Used by ATS scanner on 404s.
+- `async def reset_discover_failures(self, slug: str) -> None` — zeros the consecutive discover-failure counter after a successful scrape.
+
+**Enrichment:**
+- `async def record_enrichment(self, *, job_id: str, jd_text: str, jd_quality: str, enriched_at: datetime, enrich_source: str, jd_lang: str | None = None) -> None` — stamps a job as enriched with JD body + quality band. Used by enrich pipeline and manual paste.
+- `async def enrich_paste(self, *, platform: str, canonical_id: str, jd_text: str) -> str` — manual JD paste fallback. Assesses quality, stamps `enrich_source='manual-paste'`, returns job_id.
+
+**Evaluation reads:**
+- `async def get_evaluation(self, job_id: str) -> JobEvaluation | None` — fetches a single job's evaluation (Stage A + Stage B). Used by CLI detail views and apply snapshot.
+- `async def top_evaluated_jobs(self, *, min_score: int = 0, limit: int = 100) -> list[JobEvaluation]` — Stage B-completed jobs sorted by score descending. Used by digest rendering.
+- `async def digest_stats(self, *, threshold: int = 60) -> DigestStats` — aggregate counts for digest footer (total jobs, scored today, LLM calls, etc.).
+- `async def needs_attention(self, *, days: int = 7, max_per_category: int = 10) -> AttentionReport` — surfaces pipeline edge cases: enrich errors, low-quality scored jobs.
 
 **ML Gate:**
-- `async def save_ml_gate_result(self, job_id: str, result: MLGateResult) -> None` — persists gate decision AND extracted features in a single write. `MLGateResult` contains: `score: float`, `result: str` ("pass"/"fail"), `fail_reason: str | None` (human-readable explanation when result="fail", e.g., "clearance_required", "not_swe_role" — critical for pipeline debugging and false-negative analysis), `version: str | None`, `is_swe_role: bool | None`, `seniority_level: str | None`, `degree_required: str | None`, `clearance_required: bool | None`, `school_restricted: bool | None`, `yoe_min: int | None`, `domain_tags: list[str] | None`, `tech_required: list[str] | None`, `role_type: str | None`. All feature fields map directly to `jobs` columns added in Phase 1. Note: Phase 0's existing `MLGateResult` model (`domain/models.py`) has `fit`/`probability`/`fail_reason` — Phase 1 expands it with the feature fields and renames `fit` → `result`, `probability` → `score` for clarity. The `fail_reason` is preserved.
+- `async def save_ml_gate_result(self, job_id: str, result: MLGateResult) -> None` — persists gate decision AND extracted features in a single write. `MLGateResult` contains: `score: float`, `result: str` ("pass"/"fail"), `fail_reason: str | None` (**NEW — not in legacy DB**; legacy computes `ml_gate_hard_fail_reason` in predictor but discards it at persistence time; Phase 1 persists it as `ml_gate_fail_reason` for pipeline debugging and false-negative analysis), `version: str | None`, `is_swe_role: bool | None`, `seniority_level: str | None`, `degree_required: str | None`, `clearance_required: bool | None`, `school_restricted: bool | None`, `yoe_min: int | None`, `domain_tags: list[str] | None`, `tech_required: list[str] | None`, `role_type: str | None`. All feature fields (except `fail_reason`) map directly to legacy `jobs` columns added in v15-v16. Note: Phase 0's `MLGateResult` model has been updated — `fit` → `result`, `probability` → `score`, plus feature fields. Legacy has no dedicated `save_ml_gate_result` store method (writes are raw SQL in `main.py`); Phase 1 elevates this to a first-class Protocol method.
+
+**Evaluation pipeline (new in Phase 1):**
+- `async def mark_stage_b_skipped(self, job_id: str) -> None` — sets `stage_b_status = "skipped_below_threshold"` on the evaluation row. Called by the orchestrator (service layer) when Stage A score is below threshold — **the store does NOT know the threshold value**. This separates scoring from skip decisions: `save_stage_a` writes the score, the service checks the threshold, and `mark_stage_b_skipped` records the skip decision.
 
 **Workflow:**
 - `async def workflow_attention(self, *, auto_ghost_days: int = 30, lookahead_days: int = 5) -> WorkflowAttention`
@@ -223,20 +275,24 @@ Add these method signatures to the Protocol:
 **State / cost:**
 - `async def get_state(self, key: str) -> str | None`
 - `async def set_state(self, key: str, value: str) -> None`
-- `async def record_cost(self, *, day: str, spent_usd: float, calls: int) -> None`
+- `async def record_cost(self, *, day: str, spent_usd: float) -> None` — upserts cost_ledger: accumulates `spent_usd` and increments `calls` by 1 per invocation (matching legacy `add_cost` behavior — each call = exactly one LLM call). No explicit `calls` parameter; the counter is always +1.
 - `async def get_cost(self, day: str) -> CostEntry | None` — read today's spend for budget-gate in digest/evaluate.
 - `async def get_cost_range(self, *, since_days: int = 30) -> list[CostEntry]` — for CLI stats display.
 
 **Existing methods to refine (if needed):**
 - `save_job` must implement quality-ladder protection on upsert: incoming quality worse than stored → keep stored jd_text + quality. Compute and persist `company_norm`, `title_norm`, `location_norm` via `_normalize.py` on every save. **No soft-key dedup at DB layer** — each `(platform, canonical_id)` is an independent row; twin folding is UI/API layer only (per design spec Section 4 "Dedupe / Twin Semantics").
 - `job_exists(self, *, platform: str, canonical_id: str) -> bool` — if not already in Phase 0, add it.
+- `load_pending_stage_a` — refine signature to add legacy parity filters: `quality_bands: frozenset[str] | None = None` (filter by jd_quality), `corpus: str = "unrated"` (`"unrated"` = no eval or error; `"all"` = include completed; `"failed"` = errors only), `max_days: int | None = None` (freshness filter on discovered_at). Phase 0's minimal signature only has `limit`.
+- `load_pending_stage_b` — refine signature to add: `max_days: int | None = None` (freshness filter on discovered_at). Phase 0's minimal signature only has `threshold` and `limit`.
 
 **Explicitly deferred (not in Phase 1 Protocol):**
 - `record_llm_usage` — deferred to **Phase 3** (First Real LLM). Phase 1 has `record_cost` for day-level aggregation; per-call usage tracking arrives with real LLM integration.
 - `diff_resume_snapshots` — deferred to **Phase 6** (Status + Apply Audit). Requires resume content diffing which is not needed until the full apply workflow.
-- `list_resume_snapshots(source?)` — deferred to **Phase 6**. Phase 1 only needs `save` + `get` by exact hash.
+- `list_resume_snapshots(source?)` — deferred to **Phase 6**. Phase 1 only needs `save` + `get` by exact hash. Legacy has this method (filters by source).
 - `resolve_hash_prefix(prefix: str)` — deferred to **Phase 6**. Prefix resolution is a CLI convenience for `snapshot show/diff`.
 - `list_applications(resume_hash_prefix?)` — deferred to **Phase 6**. Phase 1's `list_applications(limit)` is sufficient for basic audit; per-resume filtering arrives with full apply workflow.
+- `backfill_scored_status` / `repair_orphan_scored_status` — deferred to **Phase 6** or on-demand repair script. Legacy has these as one-shot data reconciliation tools (move `new` jobs with completed evals to `scored`, and demote `scored` jobs with no evals to `new`). Not needed until status workflow is fully wired.
+- `list_partial_stage_b` — **dropped** (legacy only). Used by the dropped `upgrade-blocks` command; Stage B now always runs full blocks.
 
 **Acceptance criteria:**
 - [ ] All new methods added to Protocol with correct async signatures
@@ -360,9 +416,11 @@ CREATE TABLE IF NOT EXISTS state (
 
 **Columns added to `jobs` in Phase 1:** `company_norm TEXT`, `title_norm TEXT`, `location_norm TEXT`, `jd_lang TEXT`, `enrich_error TEXT`, `quality_rubric_version INTEGER`, `reapply_notice TEXT`, `hard_filter TEXT`, `seniority_level TEXT`, `degree_required TEXT`, `clearance_required INTEGER`, `school_restricted INTEGER`, `domain_tags TEXT`, `tech_required TEXT`, `role_type TEXT`, `yoe_min INTEGER`, `ml_gate_score REAL`, `ml_gate_result TEXT`, `ml_gate_fail_reason TEXT`, `ml_gate_at TEXT`, `ml_gate_version TEXT`, `is_swe_role INTEGER`.
 
-**Phase 0 baseline `evaluations` columns (already exist):** `id`, `job_id`, `stage_a_score`, `stage_a_one_line`, `stage_a_timing_eligible`, `stage_a_status`, `stage_a_error`, `stage_a_model`, `stage_a_cost_usd`, `stage_a_prompt_hash`, `stage_a_resume_hash`, `stage_b_verdict`, `stage_b_jd_summary`, `stage_b_verdict_json`, `stage_b_summary_json`, `stage_b_fit_json`, `stage_b_hooks_json`, `stage_b_status`, `stage_b_error`, `stage_b_model`, `stage_b_cost_usd`, `stage_b_prompt_hash`, `stage_b_resume_hash`. Phase 0 block columns (`block_a_json` etc.) are renamed to semantic names before Phase 1 begins — this is a Phase 0 schema fixup, not a Phase 1 migration.
+**Phase 0 baseline `evaluations` columns (already exist — 25 columns):** `id`, `job_id`, `stage_a_score`, `stage_a_one_line`, `stage_a_timing_eligible`, `stage_a_status`, `stage_a_error`, `stage_a_model`, `stage_a_cost_usd`, `stage_a_prompt_hash`, `stage_a_resume_hash`, `stage_b_verdict`, `stage_b_jd_summary`, `stage_b_verdict_json`, `stage_b_summary_json`, `stage_b_fit_json`, `stage_b_hooks_json`, `stage_b_status`, `stage_b_error`, `stage_b_model`, `stage_b_cost_usd`, `stage_b_prompt_hash`, `stage_b_resume_hash`, `created_at`, `updated_at`. Phase 0 block columns (`block_a_json` etc.) are renamed to semantic names before Phase 1 begins — this is a Phase 0 schema fixup, not a Phase 1 migration.
 
 **Columns added to `evaluations` in Phase 1:** `stage_a_at TEXT`, `stage_b_at TEXT`.
+
+**Evaluations timestamp write paths:** `created_at` is set on row INSERT (SQL DEFAULT); never updated after. `updated_at` is set on INSERT (DEFAULT) and **must be refreshed** on every evaluation write (`save_stage_a`, `save_stage_b`, `save_stage_a_error`, `save_stage_b_error`, `mark_stage_b_skipped`). `stage_a_at` records when Stage A first completed (set by `save_stage_a`, immutable after). `stage_b_at` records when Stage B first completed (set by `save_stage_b`, immutable after). Both adapters must include `updated_at = <now>` in every evaluation UPDATE statement.
 
 **Evaluations status enum (Phase 0 fixup if not already present):** `stage_a_status` and `stage_b_status` allow: `NULL` (pending), `"completed"`, `"error"` (retryable), `"skipped_below_threshold"` (terminal — Stage B only, set when Stage A score < threshold). Legacy v16 writes `skipped_below_threshold`; import and parity depend on this value being preserved.
 
@@ -374,7 +432,7 @@ CREATE TABLE IF NOT EXISTS state (
 
 | Legacy v16 column | New column | Table | Notes |
 |---|---|---|---|
-| `scraped_at` | `discovered_at` | jobs | Rename only |
+| `scraped_at` | `discovered_at` | jobs | Legacy has **both** `scraped_at TEXT NOT NULL` and `discovered_at TEXT` as separate columns. `scraped_at` is the authoritative timestamp (set on first scrape, NOT NULL). Legacy's `discovered_at` was added later and is often NULL. Import maps `scraped_at → discovered_at`. Legacy's own `discovered_at` column is **dropped** (not imported). |
 | `jd_text_quality` | `jd_quality` | jobs | Shortened |
 | `block_a_verdict` | `stage_b_verdict_json` | evaluations | Semantic rename |
 | `block_b_jd_summary` | `stage_b_summary_json` | evaluations | Semantic rename |
@@ -385,6 +443,8 @@ CREATE TABLE IF NOT EXISTS state (
 | `block_a_snapshot` | `verdict_snapshot` | applied | Semantic rename |
 | `block_c_snapshot` | `fit_snapshot` | applied | Semantic rename |
 | `block_e_snapshot` | `hooks_snapshot` | applied | Semantic rename |
+| `location` (nullable) | `location` (NOT NULL) | jobs | Legacy allows NULL; new schema requires NOT NULL. Import applies `COALESCE(location, '')` — empty string, not NULL. Parity checksum treats legacy `NULL` and imported `''` as equivalent for this column. |
+| `stage_b_blocks_run` | *(dropped)* | evaluations | Derivable from which `stage_b_*_json` columns are non-NULL. Not imported as a separate column — the information is implicit in the new schema's per-block columns. Import ignores this column. |
 
 All other columns share the same name between legacy and new schema. The import layer (`legacy_import.py`) applies this mapping dict at read time before passing rows to `BulkImportPort`.
 
@@ -392,7 +452,19 @@ All other columns share the same name between legacy and new schema. The import 
 
 **Trigger: `trg_jobs_seed_status`** — AFTER INSERT ON jobs, auto-seed `(job_id, 'new')` into both `job_status` and `job_status_history`.
 
-**Indexes:** `idx_jobs_dedup_softkey`, `idx_jobs_discovered_at`, `idx_companies_vendor`, `idx_eval_stage_a_score`, `idx_eval_fit_score` (json_extract on `stage_b_fit_json`), `idx_eval_stage_b_queue`, `idx_job_status_status`, `idx_job_status_followup`, `idx_job_status_stale`, `idx_job_status_history_job`.
+**Indexes (full column definitions):**
+```sql
+CREATE INDEX IF NOT EXISTS idx_jobs_dedup_softkey ON jobs(company_norm, title_norm);
+CREATE INDEX IF NOT EXISTS idx_jobs_discovered_at ON jobs(discovered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_companies_vendor ON companies(ats_vendor) WHERE ats_vendor IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_eval_stage_a_score ON evaluations(stage_a_score DESC) WHERE stage_a_status = 'completed';
+CREATE INDEX IF NOT EXISTS idx_eval_fit_score ON evaluations(json_extract(stage_b_fit_json, '$.score_0_100') DESC) WHERE stage_b_status = 'completed';
+CREATE INDEX IF NOT EXISTS idx_eval_stage_b_queue ON evaluations(job_id) WHERE stage_a_status = 'completed' AND stage_b_status IS NULL;
+CREATE INDEX IF NOT EXISTS idx_job_status_status ON job_status(status);
+CREATE INDEX IF NOT EXISTS idx_job_status_followup ON job_status(next_followup_at) WHERE next_followup_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_job_status_stale ON job_status(last_status_change_at) WHERE status IN ('applied', 'interviewing', 'oa', 'hr_call', 'second_round', 'final_round');
+CREATE INDEX IF NOT EXISTS idx_job_status_history_job ON job_status_history(job_id, changed_at DESC);
+```
 
 `_normalize.py` — shared normalization helpers used by both SQLiteStore and PostgresStore:
 - `_NORM_RE`, `_CORP_SUFFIXES` — same as legacy `store.py`.
@@ -442,7 +514,14 @@ Implement all new Protocol methods in SQLiteStore. This is the heaviest implemen
 **Application audit methods:**
 - `record_application` — transactional: INSERT into `applied` + status transition to `"applied"` with `force=True` (legacy parity — allows apply from any status, e.g., `new` or `scored` that haven't been shortlisted). Implementation uses a **private helper** `_transition_status_in_tx(conn, ..., force=True)` that accepts an existing connection/transaction — does NOT call the public `transition_status()` method (which acquires its own connection and would break atomicity or create nested transactions). If `applied` row already exists for this `job_id`, **no-op and return False** (preserves original audit row, matches legacy INSERT OR IGNORE semantics). Returns True on first application.
 - `list_applications` — join `applied` with `jobs`.
-- `application_stats` — aggregate from `job_status_history`: applied count, responses, interviews, offers, rejections, median days-to-response. Optional `by_resume` breakdown.
+- `application_stats(since_days_ago, by_resume)` — aggregate from `job_status_history` within the time window:
+  - **applied**: unique `job_id` with `to_status = 'applied'` AND `changed_at >= datetime('now', '-N days')`.
+  - **responses**: applied jobs that later got `to_status` IN `RESPONSE_STATUSES`. First entry into any response status counts.
+  - **interviews**: applied jobs that reached `interviewing` or `offer`.
+  - **offers**: applied jobs that reached `offer`.
+  - **rejections**: applied jobs that reached `rejected`.
+  - **median_days_to_response**: median of `(first_response.changed_at - applied.changed_at)` in whole days across responding jobs. `None` when no responses. SQLite has no built-in `MEDIAN` — compute in Python by sorting the deltas and picking the middle value.
+  - **by_resume**: when `True`, group by `resume_variant_at_change` from the `to_status = 'applied'` history row (the variant frozen at apply time, not current variant).
 
 **Resume snapshot methods:**
 - `save_resume_snapshot` — INSERT OR IGNORE by `resume_hash` (content-addressed, immutable once written).
@@ -451,18 +530,47 @@ Implement all new Protocol methods in SQLiteStore. This is the heaviest implemen
 
 **Company management methods:**
 - `upsert_company` — COALESCE-style UPDATE or INSERT.
-- `get_company`, `list_companies`, `mark_company_removed` — queries matching legacy behavior.
+- `get_company` — SELECT by slug.
+- `list_companies` — `include_removed=False` (default) filters out rows where `ats_vendor = 'removed'`; `include_removed=True` returns all.
+- `mark_company_removed` — soft-delete via `UPDATE SET ats_vendor = 'removed', ats_override = 0, last_verified_at = NULL`. Legacy parity: row persists so re-bootstrap won't re-add it; daily scans skip it. Returns True if row matched.
+- `bump_discover_failure` — `UPDATE companies SET consecutive_discover_failures = consecutive_discover_failures + 1 WHERE slug = ? RETURNING consecutive_discover_failures`. Returns new failure count.
+- `reset_discover_failures` — `UPDATE companies SET consecutive_discover_failures = 0 WHERE slug = ?`.
+
+**Enrichment methods:**
+- `record_enrichment` — UPDATE on `jobs` setting `jd_text`, `jd_quality`, `enriched_at`, `enrich_source`, optionally `jd_lang`. Clears `enrich_error` on success.
+- `enrich_paste` — looks up job by `(platform, canonical_id)`, calls `assess_quality()` on the pasted text, then calls `record_enrichment` with `enrich_source='manual-paste'`. Returns `job_id`.
+
+**Evaluation read methods:**
+- `get_evaluation` — SELECT single job's evaluation row joined with jobs. Returns `JobEvaluation | None`.
+- `top_evaluated_jobs` — Stage B-completed jobs sorted by `stage_a_score` DESC. Returns `list[JobEvaluation]`. Used by digest.
+- `digest_stats(threshold)` — aggregate queries matching legacy `digest_stats`:
+  - `total_jobs` = `COUNT(*) FROM jobs`
+  - `scored_today` = `COUNT(*) FROM jobs WHERE date(discovered_at, 'localtime') = date('now', 'localtime')` (jobs discovered today, matching legacy `new_today` using `scraped_at`)
+  - `stage_b_evaluated` = `COUNT(*) FROM evaluations WHERE stage_b_status = 'completed'`
+  - `filtered_count` = `COUNT(*) FROM evaluations WHERE stage_b_status = 'completed' AND json_extract(stage_b_fit_json, '$.score_0_100') >= threshold` (above-threshold evaluations)
+  - `llm_calls_today` = `SELECT calls FROM cost_ledger WHERE day = date('now', 'localtime')`
+  - `total_cost_today_usd` = `SELECT spent_usd FROM cost_ledger WHERE day = date('now', 'localtime')`
+- `needs_attention` — queries for `enrich_error IS NOT NULL` and low-quality scored jobs (`jd_quality IN ('stub','partial') AND stage_a_status = 'completed'`). Returns `AttentionReport`.
 
 **ML Gate:**
 - `save_ml_gate_result` — single UPDATE on `jobs` setting all gate + feature columns: `ml_gate_score`, `ml_gate_result`, `ml_gate_fail_reason`, `ml_gate_at`, `ml_gate_version`, `is_swe_role`, `seniority_level`, `degree_required`, `clearance_required`, `school_restricted`, `yoe_min`, `domain_tags` (JSON array as TEXT), `tech_required` (JSON array as TEXT), `role_type`. All from `MLGateResult` fields.
 
+**Evaluation pipeline:**
+- `mark_stage_b_skipped` — single UPDATE on `evaluations`: sets `stage_b_status = "skipped_below_threshold"`, `updated_at = <now>`. The store does not evaluate threshold logic — it only records the skip decision made by the service layer.
+
 **Workflow:**
-- `workflow_attention` — three queries: follow_up_today, interview_prep, going_ghosted. Returns WorkflowAttention.
+- `workflow_attention(auto_ghost_days, lookahead_days)` — three bucket queries, each returning `list[WorkflowAttentionItem]`:
+  - **follow_up_today**: `WHERE status IN ('applied','interviewing') AND next_followup_at IS NOT NULL AND date(next_followup_at) <= date('now','localtime')` ORDER BY `next_followup_at ASC`. `reason` = "follow-up due", `days_since` = days since `next_followup_at`.
+  - **interview_prep**: `WHERE status = 'interviewing'` ORDER BY `last_status_change_at DESC`. `reason` = "interview prep", `days_since` = days since `last_status_change_at`.
+  - **going_ghosted**: `WHERE status IN ('applied','interviewing') AND last_status_change_at < datetime('now', '-{auto_ghost_days - lookahead_days} days')` ORDER BY `last_status_change_at ASC`. `reason` = "going silent", `days_since` = days since `last_status_change_at`. Note: `lookahead_days` provides early warning before `auto_decay` fires.
+  - Same job can appear in multiple buckets (legacy parity).
 - `compute_reapply_notice` — soft-key match for same company_norm with active application.
 
 **State / cost:**
 - `get_state`, `set_state` — key-value on `state` table.
-- `record_cost` — upsert into `cost_ledger`.
+- `record_cost` — upsert into `cost_ledger`: `INSERT ... ON CONFLICT(day) DO UPDATE SET spent_usd = spent_usd + excluded.spent_usd, calls = calls + 1`. Each call increments `calls` by exactly 1 (legacy parity with `add_cost`).
+- `get_cost(day)` — `SELECT * FROM cost_ledger WHERE day = ?`. Returns `CostEntry | None`.
+- `get_cost_range(since_days)` — `SELECT * FROM cost_ledger WHERE day >= date('now', '-N days') ORDER BY day DESC`. Returns `list[CostEntry]`.
 
 **Acceptance criteria:**
 - [ ] `transition_status("scored", "shortlisted")` succeeds
@@ -477,8 +585,16 @@ Implement all new Protocol methods in SQLiteStore. This is the heaviest implemen
 - [ ] `save_resume_snapshot` is idempotent (same hash = no-op)
 - [ ] `application_stats` returns correct counts and median_days_to_response
 - [ ] `append_note` resets ghost clock
+- [ ] `bump_discover_failure` increments and returns new count
+- [ ] `reset_discover_failures` zeros the counter
+- [ ] `record_enrichment` stamps job with JD body + quality + source
+- [ ] `enrich_paste` assesses quality and stamps `enrich_source='manual-paste'`
+- [ ] `get_evaluation` returns full JobEvaluation for a single job
+- [ ] `top_evaluated_jobs` returns Stage B-completed jobs sorted by score
+- [ ] `digest_stats` returns correct aggregate counts
+- [ ] `needs_attention` surfaces enrich errors and low-quality scored jobs
 - [ ] All async, all use aiosqlite
-- [ ] Targeted integration tests for each method group (status, application, company, ML gate)
+- [ ] Targeted integration tests for each method group (status, application, company, ML gate, enrichment, evaluation reads)
 - [ ] All tests pass, committed
 
 ---
@@ -512,8 +628,8 @@ Contract test groups (each group tests one Protocol concern):
 
 **Group 2: Evaluation Pipeline**
 - Insert job → save_stage_a → verify `load_pending_stage_a` no longer returns it
-- Save stage_a with score >= threshold → appears in `load_pending_stage_b`
-- Save stage_a with score < threshold → does NOT appear in `load_pending_stage_b`; `stage_b_status` set to `"skipped_below_threshold"`
+- Save stage_a (any score) → appears in `load_pending_stage_b` (store is threshold-unaware; threshold check is service-layer responsibility)
+- `mark_stage_b_skipped(job_id)` → `stage_b_status` set to `"skipped_below_threshold"`, job no longer appears in `load_pending_stage_b`
 - `load_pending_stage_b` does NOT return jobs with `stage_b_status = "skipped_below_threshold"` (skipped is terminal for Stage B, not retryable)
 - `save_stage_a_error` → job **stays in** pending_stage_a queue (retry semantics, matches legacy behavior: `stage_a_status = 'error'` is retryable, `load_pending_stage_a` returns jobs where `stage_a_status IS NULL OR stage_a_status = 'error'`)
 - `save_stage_b` → `list_evaluated_jobs` includes it with full StageAResult + StageBResult
@@ -555,6 +671,8 @@ Contract test groups (each group tests one Protocol concern):
 - `upsert_company` update → COALESCE semantics (None fields preserved)
 - `list_companies` filters by vendor, excludes removed by default
 - `mark_company_removed` → excluded from default list
+- `bump_discover_failure` increments count and returns new value
+- `reset_discover_failures` zeros the counter
 
 **Group 7: ML Gate**
 - `save_ml_gate_result` with result="pass" → job has ml_gate_score, ml_gate_result="pass", ml_gate_fail_reason=NULL, ml_gate_at set
@@ -563,8 +681,8 @@ Contract test groups (each group tests one Protocol concern):
 
 **Group 8: State / Cost / Pipeline**
 - `set_state` → `get_state` returns it
-- `record_cost` → upserts cost_ledger; `get_cost(day)` returns matching CostEntry
-- `record_cost` twice on same day → upserts (accumulated, not overwritten)
+- `record_cost(day, spent_usd=0.05)` → upserts cost_ledger; `get_cost(day)` returns CostEntry with `calls=1`
+- `record_cost` twice on same day → `spent_usd` accumulated, `calls` incremented to 2
 - `get_cost_range(since_days=7)` → returns entries within range, ordered by day
 - `get_cost` for nonexistent day → returns None
 - `record_pipeline_run` → `get_pipeline_run` returns it
@@ -573,8 +691,36 @@ Contract test groups (each group tests one Protocol concern):
 - `workflow_attention` returns follow_up_today, interview_prep, going_ghosted lists
 - `compute_reapply_notice` detects same-company active application
 
+**Group 10: Status Listing + Filtering**
+- `list_statuses(statuses={"applied"})` returns only applied jobs
+- `list_statuses(days=7)` returns jobs with status changes within 7 days
+- `list_statuses(no_response_days=14)` returns applied jobs with no response for 14 days
+- `list_statuses(needs_followup=True)` returns jobs with `next_followup_at` in past or today
+- `list_statuses(notes_contain="recruiter")` returns jobs whose notes contain substring
+- `list_statuses(limit=5)` caps result count
+
+**Group 11: Pending Load Refinements**
+- `load_pending_stage_a(corpus="unrated")` excludes completed evaluations
+- `load_pending_stage_a(corpus="failed")` returns only errored evaluations
+- `load_pending_stage_a(corpus="all")` includes completed evaluations
+- `load_pending_stage_a(quality_bands={"full","good"})` filters by jd_quality
+- `load_pending_stage_a(max_days=7)` filters by discovered_at freshness
+- `load_pending_stage_b(max_days=7)` filters by discovered_at freshness
+
+**Group 12: Enrichment**
+- `record_enrichment` stamps job with JD body, quality, source, clears enrich_error
+- `enrich_paste` assesses quality and stamps `enrich_source='manual-paste'`
+- `enrich_paste` on nonexistent `(platform, canonical_id)` → raises ValueError
+
+**Group 13: Evaluation Reads**
+- `get_evaluation` returns full JobEvaluation with Stage A + Stage B
+- `get_evaluation` for unevaluated job → returns JobEvaluation with `stage_a=None, stage_b=None`
+- `top_evaluated_jobs(min_score=70)` filters by score threshold
+- `digest_stats` returns correct aggregate counts
+- `needs_attention` surfaces enrich errors and low-quality scored jobs
+
 **Acceptance criteria:**
-- [ ] All contract tests pass against SQLiteStore
+- [ ] All 13 contract test groups pass against SQLiteStore
 - [ ] Tests are parameterized by backend, not hardcoded to SQLite
 - [ ] Each test group is independent — failures in one group don't cascade
 - [ ] No SQLite-specific SQL in contract tests (tests use Protocol methods only)
@@ -615,9 +761,18 @@ services:
       timeout: 3s
       retries: 5
 
+  jobfeed-cli:
+    environment:
+      JOBFEED_DB_URL: "postgresql://jobfeed:jobfeed_dev@postgres:5432/jobfeed_dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
 ```
+
+The `jobfeed-cli` block is a **merge override** — it adds the `JOBFEED_DB_URL` env var and `depends_on` to the base service definition in `docker-compose.yml`. The hostname `postgres` resolves to the PG container via Docker's internal DNS. Local dev (without this override file) uses `localhost` from the config default.
 
 The base `docker-compose.yml` is **unchanged** — it still defines only `jobfeed-cli` with SQLite as default. This preserves Phase 0's default path: `./bin/jobfeed` runs with SQLite, no PG needed.
 
@@ -625,7 +780,7 @@ To use PG: `docker compose -f docker-compose.yml -f docker-compose.postgres.yml 
 
 **pyproject.toml:** Add dependencies: `asyncpg >= 0.30`, `alembic >= 1.15`, `psycopg2-binary >= 2.9` (Alembic DDL runner needs synchronous PG driver). Dev dependency: `testcontainers[postgres] >= 4.0`.
 
-**config.py:** Add `db.url` field (default: `postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev`) and `db.backend` enum (`"sqlite"` | `"postgres"`, default `"sqlite"`). The DI factory (`create_app()`) selects SQLiteStore or PostgresStore based on `db.backend`.
+**config.py:** Add `db.url` field (default: `postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev` for local dev) and `db.backend` enum (`"sqlite"` | `"postgres"`, default `"sqlite"`). The DI factory (`create_app()`) selects SQLiteStore or PostgresStore based on `db.backend`. **URL resolution order:** env var `JOBFEED_DB_URL` takes precedence → config file `db.url` → hardcoded default. The `localhost` default works for local dev (host-network PG or port-forwarded Docker). Inside Docker containers, `docker-compose.postgres.yml` sets `JOBFEED_DB_URL` on the `jobfeed-cli` service to use the `postgres` service hostname.
 
 **Alembic setup:** `alembic.ini` with `sqlalchemy.url` pointing to PG (overridable via env). `env.py` uses synchronous psycopg2 connection for DDL (Alembic's runner is synchronous; the application uses asyncpg). Target metadata is not SQLAlchemy ORM (we don't use ORM) — migrations are hand-written SQL via `op.execute()`.
 
@@ -736,7 +891,7 @@ Add `"postgres"` parameterization to the store contract test fixture. The same c
 - **CI (mandatory):** Set env var `JOBFEED_REQUIRE_POSTGRES=1`. When set, the conftest fixture **fails** (not skips) if testcontainers/Docker is unavailable — prevents silent green CI when PG contract coverage is broken.
 
 **Expected outcomes:**
-- All 9 contract test groups pass on both backends.
+- All 13 contract test groups pass on both backends.
 - Any behavioral difference between SQLite and PG is a bug — fix the adapter, not the test.
 - SQLite-specific behaviors (e.g. `json_extract` vs PG's `->`) are abstracted inside the adapter; contract tests never see dialect differences.
 
@@ -748,8 +903,8 @@ Add `"postgres"` parameterization to the store contract test fixture. The same c
 - SQLite `INSERT OR IGNORE` vs PG `ON CONFLICT DO NOTHING` — adapter handles.
 
 **Acceptance criteria:**
-- [ ] All 9 contract test groups pass against SQLiteStore
-- [ ] All 9 contract test groups pass against PostgresStore
+- [ ] All 13 contract test groups pass against SQLiteStore
+- [ ] All 13 contract test groups pass against PostgresStore
 - [ ] No test has SQLite- or PG-specific assertions
 - [ ] PG tests use testcontainers (no dependency on running Docker Compose PG)
 - [ ] PG tests skipped gracefully when Docker unavailable
@@ -792,6 +947,7 @@ A one-time script (not shipped in production) that reads a legacy database and a
     "job_status_history": {"row_count": <N>},
     "applied": {"row_count": <N>},
     "resume_snapshots": {"row_count": <N>, "hash_list": [...]},
+    "resume_variants": {"row_count": <N>},
     "companies": {"row_count": <N>},
     "cost_ledger": {"row_count": <N>},
     "state": {"row_count": <N>}
@@ -818,6 +974,7 @@ class BulkImportPort(Protocol):
     async def bulk_insert_job_status_history(self, rows: list[StatusHistoryRow]) -> int: ...
     async def bulk_insert_applied(self, rows: list[AppliedRow]) -> int: ...
     async def bulk_insert_resume_snapshots(self, rows: list[ResumeSnapshotRow]) -> int: ...
+    async def bulk_insert_resume_variants(self, rows: list[ResumeVariantRow]) -> int: ...
     async def bulk_insert_companies(self, rows: list[CompanyRow]) -> int: ...
     async def bulk_insert_cost_ledger(self, rows: list[CostLedgerRow]) -> int: ...
     async def bulk_insert_state(self, rows: list[StateRow]) -> int: ...
@@ -884,7 +1041,7 @@ Both SQLiteStore and PostgresStore implement `ParityReadPort` alongside `JobStor
 `async def verify_import_parity(legacy_path: Path, target: ParityReadPort, manifest: dict) -> ParityReport`
 
 Checks:
-1. **Row count match** — per core table (jobs, evaluations, job_status, job_status_history, applied, resume_snapshots, companies, cost_ledger, state). Count from legacy SQLite vs count from target store.
+1. **Row count match** — per core table (jobs, evaluations, job_status, job_status_history, applied, resume_snapshots, resume_variants, companies, cost_ledger, state). Count from legacy SQLite vs count from target store.
 2. **FK integrity** — every `applied.job_id` resolves to a job. Every `evaluations.job_id` resolves to a job. Every `job_status.job_id` resolves to a job. Every `job_status_history.job_id` resolves to a job.
 3. **Resume snapshot hash verification** — for each `resume_snapshots` row, sha256 of the imported `content` matches the stored `resume_hash`.
 4. **Status enum validation** — every `job_status.status` value is in STATUS_VALUES.
@@ -1012,8 +1169,8 @@ Update CI to run the full test suite including PostgreSQL integration tests.
    - Quality-ladder protection identical on both.
 
 5. **Legacy data import:**
-   - `legacy_v16.db` imports into SQLiteStore → all 9 parity checks pass.
-   - `legacy_v16.db` imports into PostgresStore → all 9 parity checks pass.
+   - `legacy_v16.db` imports into SQLiteStore → all parity checks pass.
+   - `legacy_v16.db` imports into PostgresStore → all parity checks pass.
    - Job IDs preserved on both backends.
 
 6. **Architecture boundaries:**
