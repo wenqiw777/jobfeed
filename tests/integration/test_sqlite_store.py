@@ -517,3 +517,57 @@ def _set_eval_column(db_path: Path, job_id: str, column: str, value: str) -> Non
             f"UPDATE evaluations SET {column} = ? WHERE job_id = ?",
             (value, job_id),
         )
+
+
+async def test_auto_seed_trigger_fires_on_insert(store: SQLiteStore) -> None:
+    """Inserting a job should auto-seed job_status and job_status_history."""
+    saved = await store.save_job(make_store_job("trigger-test"))
+    with sqlite3.connect(store.db_path) as db:
+        db.row_factory = sqlite3.Row
+        status_row = db.execute(
+            "SELECT * FROM job_status WHERE job_id = ?",
+            (saved.job_id,),
+        ).fetchone()
+        history_row = db.execute(
+            "SELECT * FROM job_status_history WHERE job_id = ?",
+            (saved.job_id,),
+        ).fetchone()
+    assert status_row is not None
+    assert status_row["status"] == "new"
+    assert history_row is not None
+    assert history_row["to_status"] == "new"
+    assert history_row["from_status"] is None
+
+
+async def test_schema_creates_all_phase1_tables(store: SQLiteStore) -> None:
+    """Schema should create all Phase 1 tables on connect."""
+    expected_tables = {
+        "jobs",
+        "evaluations",
+        "pipeline_runs",
+        "job_status",
+        "job_status_history",
+        "resume_variants",
+        "applied",
+        "resume_snapshots",
+        "companies",
+        "cost_ledger",
+        "state",
+    }
+    with sqlite3.connect(store.db_path) as db:
+        rows = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%'",
+        ).fetchall()
+    table_names = {row[0] for row in rows}
+    assert expected_tables <= table_names
+
+
+async def test_job_status_check_rejects_invalid_status(store: SQLiteStore) -> None:
+    """job_status CHECK should reject invalid status values."""
+    saved = await store.save_job(make_store_job("bad-status"))
+    with sqlite3.connect(store.db_path) as db, pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "UPDATE job_status SET status = 'bogus' WHERE job_id = ?",
+            (saved.job_id,),
+        )
