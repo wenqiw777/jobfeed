@@ -72,17 +72,13 @@ class EvaluateService:
         run = start_pipeline_run("evaluate")
         bind_run_id(run.run_id)
         stage_a_jobs = await self.store.load_pending_stage_a()
-        stage_b_jobs = await self.store.load_pending_stage_b(
-            threshold=self.settings.scoring.stage_a_threshold,
-        )
+        stage_b_jobs = await self.store.load_pending_stage_b()
         if dry_run:
             self._log_dry_run("stage_a", stage_a_jobs)
             self._log_dry_run("stage_b", stage_b_jobs)
         else:
             await self._score_stage_jobs("stage_a", stage_a_jobs, run)
-            stage_b_jobs = await self.store.load_pending_stage_b(
-                threshold=self.settings.scoring.stage_a_threshold,
-            )
+            stage_b_jobs = await self.store.load_pending_stage_b()
             await self._score_stage_jobs("stage_b", stage_b_jobs, run)
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
         run.finished_at = datetime.now(UTC)

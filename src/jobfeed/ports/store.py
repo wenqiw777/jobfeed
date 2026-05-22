@@ -1,31 +1,42 @@
-"""Persistence port protocol for Jobfeed domain objects."""
+"""Persistence port protocols for Jobfeed domain objects."""
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import (
+    AutoDecayResult,
     JobEvaluation,
     JobPosting,
+    MLGateResult,
     PipelineRun,
     SaveJobResult,
     StageAResult,
     StageBResult,
+    StatusInfo,
 )
 
 
 @runtime_checkable
 class JobStore(Protocol):
-    """Persistence capability required by scan, evaluate, and digest services."""
+    """Full persistence capability for the Jobfeed pipeline."""
+
+    async def connect(self) -> None:
+        """Open backing store resources."""
+        ...
+
+    async def close(self) -> None:
+        """Close backing store resources."""
+        ...
 
     async def save_job(self, job: JobPosting) -> SaveJobResult:
-        """Persist or update a source job by natural identity.
+        """Persist or upsert a job by (platform, canonical_id).
 
         Args:
             job: Job posting to persist.
 
         Returns:
-            Upsert result with the store-assigned job identity.
+            Upsert result with store-assigned identity.
         """
         ...
 
@@ -33,21 +44,33 @@ class JobStore(Protocol):
         """Load a job by store identity.
 
         Args:
-            job_id: Store-assigned job identity.
+            job_id: Store-assigned identity.
 
         Returns:
-            Job posting when found; otherwise None.
+            Job posting if found, else None.
         """
         ...
 
     async def list_jobs(self, limit: int = 100) -> list[JobPosting]:
-        """List recently discovered jobs.
+        """List recent jobs.
 
         Args:
-            limit: Maximum jobs to return.
+            limit: Max jobs.
 
         Returns:
-            Job postings ordered by adapter-defined recency.
+            Job postings by recency.
+        """
+        ...
+
+    async def job_exists(self, *, platform: str, canonical_id: str) -> bool:
+        """Check job existence by natural key.
+
+        Args:
+            platform: Source platform.
+            canonical_id: Platform-specific identity.
+
+        Returns:
+            True if the job exists.
         """
         ...
 
@@ -55,17 +78,17 @@ class JobStore(Protocol):
         """Persist a successful Stage A result.
 
         Args:
-            job_id: Store-assigned job identity.
-            result: Stage A result to persist.
+            job_id: Store-assigned identity.
+            result: Stage A result.
         """
         ...
 
     async def save_stage_a_error(self, job_id: str, error: str) -> None:
-        """Persist a Stage A error without modifying Stage B state.
+        """Record a Stage A error (retryable).
 
         Args:
-            job_id: Store-assigned job identity.
-            error: Error detail to persist.
+            job_id: Store-assigned identity.
+            error: Error detail.
         """
         ...
 
@@ -73,25 +96,43 @@ class JobStore(Protocol):
         """Persist a successful Stage B result.
 
         Args:
-            job_id: Store-assigned job identity.
-            result: Stage B result to persist.
+            job_id: Store-assigned identity.
+            result: Stage B result.
         """
         ...
 
     async def save_stage_b_error(self, job_id: str, error: str) -> None:
-        """Persist a Stage B error without modifying Stage A state.
+        """Record a Stage B error (retryable).
 
         Args:
-            job_id: Store-assigned job identity.
-            error: Error detail to persist.
+            job_id: Store-assigned identity.
+            error: Error detail.
         """
         ...
 
-    async def load_pending_stage_a(self, limit: int = 100) -> list[JobPosting]:
-        """Load jobs that have not completed Stage A evaluation.
+    async def mark_stage_b_skipped(self, job_id: str) -> None:
+        """Mark Stage B as skipped (threshold decision by service).
 
         Args:
-            limit: Maximum jobs to return.
+            job_id: Store-assigned identity.
+        """
+        ...
+
+    async def load_pending_stage_a(
+        self,
+        *,
+        limit: int = 100,
+        quality_bands: frozenset[str] | None = None,
+        corpus: str = "unrated",
+        max_days: int | None = None,
+    ) -> list[JobPosting]:
+        """Load jobs pending Stage A evaluation.
+
+        Args:
+            limit: Max jobs.
+            quality_bands: Filter by jd_quality.
+            corpus: "unrated", "all", or "failed".
+            max_days: Freshness filter on discovered_at.
 
         Returns:
             Jobs pending Stage A.
@@ -100,14 +141,15 @@ class JobStore(Protocol):
 
     async def load_pending_stage_b(
         self,
-        threshold: int = 60,
+        *,
         limit: int = 100,
+        max_days: int | None = None,
     ) -> list[JobPosting]:
-        """Load jobs eligible for Stage B evaluation.
+        """Load Stage A-completed, Stage B-pending jobs.
 
         Args:
-            threshold: Minimum Stage A score required for Stage B.
-            limit: Maximum jobs to return.
+            limit: Max jobs.
+            max_days: Freshness filter.
 
         Returns:
             Jobs pending Stage B.
@@ -115,21 +157,64 @@ class JobStore(Protocol):
         ...
 
     async def list_evaluated_jobs(self, limit: int = 100) -> list[JobEvaluation]:
-        """List jobs with persisted evaluation state.
+        """List jobs with evaluations.
 
         Args:
-            limit: Maximum evaluations to return.
+            limit: Max evaluations.
 
         Returns:
-            Job evaluations for digest rendering.
+            Joined evaluations.
         """
         ...
 
-    async def record_pipeline_run(self, run: PipelineRun) -> None:
-        """Persist aggregate pipeline run metrics.
+    async def get_evaluation(self, job_id: str) -> JobEvaluation | None:
+        """Fetch a single job's evaluation.
 
         Args:
-            run: Pipeline run counters and timing.
+            job_id: Store-assigned identity.
+
+        Returns:
+            Evaluation if found, else None.
+        """
+        ...
+
+    async def top_evaluated_jobs(
+        self,
+        *,
+        min_score: int = 0,
+        limit: int = 100,
+    ) -> list[JobEvaluation]:
+        """Stage B-completed jobs by score descending.
+
+        Args:
+            min_score: Score threshold.
+            limit: Max jobs.
+
+        Returns:
+            Sorted evaluations.
+        """
+        ...
+
+    async def save_ml_gate_result(
+        self,
+        job_id: str,
+        result: MLGateResult,
+    ) -> None:
+        """Persist ML gate decision and features.
+
+        Args:
+            job_id: Store-assigned identity.
+            result: Gate decision with features.
+        """
+        ...
+
+    # --- pipeline runs ---
+
+    async def record_pipeline_run(self, run: PipelineRun) -> None:
+        """Persist pipeline run counters.
+
+        Args:
+            run: Pipeline run.
         """
         ...
 
@@ -137,17 +222,77 @@ class JobStore(Protocol):
         """Load a pipeline run by identity.
 
         Args:
-            run_id: Pipeline run identity.
+            run_id: Run identity.
 
         Returns:
-            Pipeline run when found; otherwise None.
+            Pipeline run if found, else None.
         """
         ...
 
-    async def connect(self) -> None:
-        """Open backing store resources."""
+    # --- status management ---
+
+    async def transition_status(
+        self,
+        *,
+        job_id: str,
+        new_status: str,
+        reason: str | None = None,
+        resume_variant: str | None = None,
+        force: bool = False,
+        i_mean_it: bool = False,
+        followup_grace_days: int = 7,
+    ) -> str:
+        """Transition a job's status with validation and history.
+
+        Args:
+            job_id: Store-assigned identity.
+            new_status: Target status.
+            reason: Optional reason tag.
+            resume_variant: Optional variant name.
+            force: Bypass transition graph.
+            i_mean_it: Required with force for archived to new.
+            followup_grace_days: Days until next follow-up.
+
+        Returns:
+            The new status string.
+        """
         ...
 
-    async def close(self) -> None:
-        """Close backing store resources."""
+    async def get_status(self, job_id: str) -> StatusInfo | None:
+        """Get current status for a job.
+
+        Args:
+            job_id: Store-assigned identity.
+
+        Returns:
+            Status info if found, else None.
+        """
+        ...
+
+    async def restore_from_archived(self, job_id: str) -> str:
+        """Restore archived job to pre-archive status.
+
+        Args:
+            job_id: Store-assigned identity.
+
+        Returns:
+            Restored status string.
+        """
+        ...
+
+    async def auto_decay(
+        self,
+        *,
+        ghost_days: int = 30,
+        archive_ignored_days: int = 14,
+    ) -> AutoDecayResult:
+        """Sweep stale jobs to ghosted/archived.
+
+        Args:
+            ghost_days: Days before ghosting.
+            archive_ignored_days: Days before archiving ignored.
+
+        Returns:
+            Counts of ghosted and archived jobs.
+        """
         ...

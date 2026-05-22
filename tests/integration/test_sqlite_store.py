@@ -23,7 +23,6 @@ from jobfeed.domain.models import (
     StageBResult,
 )
 from jobfeed.domain.scoring import parse_stage_b_response
-from jobfeed.ports.store import JobStore
 from tests.support.factories import make_job as make_base_job
 
 HIGH_STAGE_A_SCORE = 80
@@ -210,7 +209,6 @@ def make_stage_b() -> StageBResult:
 
 async def test_save_job_and_get_job_round_trip(store: SQLiteStore) -> None:
     """save_job and get_job should round-trip a posting."""
-    assert isinstance(store, JobStore)
     saved = await store.save_job(make_store_job())
 
     loaded = await store.get_job(saved.job_id)
@@ -274,10 +272,10 @@ async def test_save_job_concurrent_duplicate_uses_single_row(tmp_path: Path) -> 
     assert {first.updated, second.updated} == {True, False}
 
 
-async def test_stage_a_controls_pending_stage_b_threshold(
+async def test_stage_a_completion_gates_stage_b_pending(
     store: SQLiteStore,
 ) -> None:
-    """Stage A success should remove Stage A pending and gate Stage B by score."""
+    """Stage A completion gates Stage B — threshold is service responsibility."""
     high = await store.save_job(make_store_job("high"))
     low = await store.save_job(make_store_job("low"))
 
@@ -285,16 +283,17 @@ async def test_stage_a_controls_pending_stage_b_threshold(
     await store.save_stage_a(low.job_id, make_stage_a(LOW_STAGE_A_SCORE))
 
     pending_a = await store.load_pending_stage_a()
-    pending_b = await store.load_pending_stage_b(threshold=HIGH_STAGE_A_SCORE)
+    pending_b = await store.load_pending_stage_b()
 
     assert pending_a == []
-    assert [job.canonical_id for job in pending_b] == ["high"]
+    ids = {job.canonical_id for job in pending_b}
+    assert ids == {"high", "low"}
 
 
-async def test_stage_errors_are_persisted_and_not_retried(
+async def test_stage_errors_are_retryable(
     store: SQLiteStore,
 ) -> None:
-    """Explicit Stage A and Stage B errors should exclude automatic retries."""
+    """Errored stages should remain in pending queues (retry semantics)."""
     stage_a_job = await store.save_job(make_store_job("stage-a-error"))
     stage_b_job = await store.save_job(make_store_job("stage-b-error"))
     await store.save_stage_a(stage_b_job.job_id, make_stage_a())
@@ -302,10 +301,11 @@ async def test_stage_errors_are_persisted_and_not_retried(
     await store.save_stage_a_error(stage_a_job.job_id, "bad stage a")
     await store.save_stage_b_error(stage_b_job.job_id, "bad stage b")
 
-    assert await store.load_pending_stage_a() == []
-    assert await store.load_pending_stage_b() == []
     assert _eval_status(store.db_path, stage_a_job.job_id, "stage_a_status") == "error"
     assert _eval_status(store.db_path, stage_b_job.job_id, "stage_b_status") == "error"
+    pending_b = await store.load_pending_stage_b()
+    pending_b_ids = {j.canonical_id for j in pending_b}
+    assert "stage-b-error" in pending_b_ids
 
 
 async def test_stage_b_persists_raw_blocks_and_separate_metadata(

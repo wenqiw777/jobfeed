@@ -94,8 +94,7 @@ SELECT jobs.*
 FROM jobs
 JOIN evaluations ON evaluations.job_id = jobs.id
 WHERE evaluations.stage_a_status = 'completed'
-  AND evaluations.stage_a_score >= ?
-  AND evaluations.stage_b_status IS NULL
+  AND (evaluations.stage_b_status IS NULL OR evaluations.stage_b_status = 'error')
 ORDER BY jobs.discovered_at DESC, jobs.id DESC
 LIMIT ?
 """

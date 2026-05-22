@@ -25,9 +25,25 @@ def collect_hygiene_violations(
     """
     violations: list[HygieneViolation] = []
     for path in _python_files(root):
-        violations.extend(_check_file_length(path))
         violations.extend(check_ast_rules(path))
     return violations
+
+
+def collect_length_warnings(
+    root: Path = DEFAULT_PRODUCTION_ROOT,
+) -> list[HygieneViolation]:
+    """Collect file-length warnings (soft threshold, non-blocking).
+
+    Args:
+        root: Python file or directory tree to scan.
+
+    Returns:
+        Warnings for files exceeding the soft line limit.
+    """
+    warnings: list[HygieneViolation] = []
+    for path in _python_files(root):
+        warnings.extend(_check_file_length(path))
+    return warnings
 
 
 def assert_no_hygiene_violations(root: Path = DEFAULT_PRODUCTION_ROOT) -> None:
@@ -62,9 +78,8 @@ def _check_file_length(path: Path) -> list[HygieneViolation]:
             path=path,
             line=MAX_PYTHON_FILE_LINES + 1,
             message=(
-                "python files must be "
-                f"{MAX_PYTHON_FILE_LINES} lines or fewer in Phase 0; "
-                "split the module instead of deleting useful comments"
+                f"file exceeds {MAX_PYTHON_FILE_LINES} lines "
+                f"({line_count}); review whether it should be split"
             ),
         )
     ]

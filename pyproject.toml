@@ -37,6 +37,11 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "C901", "RET", "ARG", "PL", "RUF"]
 ignore = ["PLR0911", "PLR0912", "PLR0915"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/jobfeed/ports/*.py" = ["ARG002", "PLR0913"]
+"src/jobfeed/adapters/store/sqlite.py" = ["ARG002"]
+"tests/**/test_ports.py" = ["ARG002", "PLR0913"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 

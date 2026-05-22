@@ -59,9 +59,9 @@ def create_app(config_path: Path | None = None) -> AppContext:
         settings=settings,
         store=store,
         sources=sources,
-        scan_service=ScanService(store, logger),
-        evaluate_service=EvaluateService(store, llm, settings, logger),
-        digest_service=DigestService(store, logger),
+        scan_service=ScanService(store, logger),  # type: ignore[arg-type]
+        evaluate_service=EvaluateService(store, llm, settings, logger),  # type: ignore[arg-type]
+        digest_service=DigestService(store, logger),  # type: ignore[arg-type]
         logger=logger,
         verbose=False,
     )

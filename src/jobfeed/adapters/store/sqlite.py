@@ -45,23 +45,23 @@ from jobfeed.domain.models import (
 
 
 class SQLiteStore:
-    """SQLite-backed JobStore implementation for Phase 0 local runs."""
+    """SQLite-backed JobStore implementation."""
 
     def __init__(self, db_path: Path) -> None:
         """Create a store for a SQLite database path.
 
         Args:
-            db_path: SQLite file path. Parent directories are created on connect.
+            db_path: SQLite file path.
         """
         self.db_path = db_path
         self._db: aiosqlite.Connection | None = None
         self._connection_lock = asyncio.Lock()
 
     async def connect(self) -> None:
-        """Open the SQLite connection and initialize schema.
+        """Open SQLite connection and initialize schema.
 
         Raises:
-            Exception: If connection initialization or schema setup fails.
+            Exception: If initialization fails.
         """
         async with self._connection_lock:
             if self._db is not None:
@@ -71,7 +71,8 @@ class SQLiteStore:
             try:
                 db.row_factory = sqlite3.Row
                 await db.execute("PRAGMA foreign_keys = ON")
-                await db.executescript(_schema_sql())
+                schema = Path(__file__).with_name("schema.sql").read_text("utf-8")
+                await db.executescript(schema)
             except Exception:
                 await db.close()
                 raise
@@ -92,10 +93,9 @@ class SQLiteStore:
             job: Job posting to persist.
 
         Returns:
-            Upsert flags and store-assigned identity.
-
+            Upsert result.
         Raises:
-            RuntimeError: If a conflict cannot be resolved to an existing row.
+            RuntimeError: Unresolvable conflict.
         """
         async with self._connection_lock:
             db = self._connection()
@@ -109,13 +109,13 @@ class SQLiteStore:
             return result
 
     async def get_job(self, job_id: str) -> JobPosting | None:
-        """Load a job by SQLite row identity.
+        """Load a job by store identity.
 
         Args:
-            job_id: Store-assigned job identity.
+            job_id: Store-assigned identity.
 
         Returns:
-            Job posting when found; otherwise None.
+            Job posting if found, else None.
         """
         row = await self._fetchone(
             "SELECT * FROM jobs WHERE id = ?",
@@ -124,13 +124,13 @@ class SQLiteStore:
         return job_from_row(row_to_dict(row)) if row is not None else None
 
     async def list_jobs(self, limit: int = 100) -> list[JobPosting]:
-        """List jobs ordered by discovery recency.
+        """List recent jobs.
 
         Args:
-            limit: Maximum jobs to return.
+            limit: Max jobs.
 
         Returns:
-            Recent job postings.
+            Job postings by recency.
         """
         rows = await self._fetchall(
             "SELECT * FROM jobs ORDER BY discovered_at DESC, id DESC LIMIT ?",
@@ -139,98 +139,109 @@ class SQLiteStore:
         return [job_from_row(row_to_dict(row)) for row in rows]
 
     async def save_stage_a(self, job_id: str, result: StageAResult) -> None:
-        """Persist a successful Stage A result without touching Stage B.
+        """Persist a successful Stage A result.
 
         Args:
             job_id: Store-assigned job identity.
-            result: Stage A result to persist.
+            result: Stage A result.
         """
         await self._execute(SAVE_STAGE_A_SQL, stage_a_params(job_id, result))
 
     async def save_stage_a_error(self, job_id: str, error: str) -> None:
-        """Persist Stage A failure state without touching Stage B.
+        """Record a Stage A error (retryable).
 
         Args:
             job_id: Store-assigned job identity.
-            error: Error detail to persist.
+            error: Error detail.
         """
-        await self._save_stage_error(SAVE_STAGE_A_ERROR_SQL, job_id, error)
+        await self._execute(SAVE_STAGE_A_ERROR_SQL, (job_id_value(job_id), error))
 
     async def save_stage_b(self, job_id: str, result: StageBResult) -> None:
-        """Persist a successful Stage B result without touching Stage A.
+        """Persist a successful Stage B result.
 
         Args:
             job_id: Store-assigned job identity.
-            result: Stage B result to persist.
+            result: Stage B result.
         """
         await self._execute(SAVE_STAGE_B_SQL, stage_b_params(job_id, result))
 
     async def save_stage_b_error(self, job_id: str, error: str) -> None:
-        """Persist Stage B failure state without touching Stage A.
+        """Record a Stage B error (retryable).
 
         Args:
             job_id: Store-assigned job identity.
-            error: Error detail to persist.
+            error: Error detail.
         """
-        await self._save_stage_error(SAVE_STAGE_B_ERROR_SQL, job_id, error)
+        await self._execute(SAVE_STAGE_B_ERROR_SQL, (job_id_value(job_id), error))
 
-    async def load_pending_stage_a(self, limit: int = 100) -> list[JobPosting]:
-        """Load jobs that have never completed or errored Stage A.
+    async def load_pending_stage_a(
+        self,
+        *,
+        limit: int = 100,
+        quality_bands: frozenset[str] | None = None,
+        corpus: str = "unrated",
+        max_days: int | None = None,
+    ) -> list[JobPosting]:
+        """Load jobs pending Stage A (filters applied in Task 3).
 
         Args:
-            limit: Maximum jobs to return.
+            limit: Max jobs.
+            quality_bands: jd_quality filter.
+            corpus: "unrated", "all", or "failed".
+            max_days: Freshness filter.
 
         Returns:
-            Jobs pending first Stage A attempt.
+            Jobs pending Stage A.
         """
         rows = await self._fetchall(PENDING_STAGE_A_SQL, (limit,))
         return [job_from_row(row_to_dict(row)) for row in rows]
 
     async def load_pending_stage_b(
         self,
-        threshold: int = 60,
+        *,
         limit: int = 100,
+        max_days: int | None = None,
     ) -> list[JobPosting]:
-        """Load above-threshold jobs that have never attempted Stage B.
+        """Load Stage A-completed, Stage B-pending jobs.
 
         Args:
-            threshold: Minimum completed Stage A score.
-            limit: Maximum jobs to return.
+            limit: Max jobs.
+            max_days: Freshness filter.
 
         Returns:
-            Jobs pending first Stage B attempt.
+            Jobs pending Stage B.
         """
-        rows = await self._fetchall(PENDING_STAGE_B_SQL, (threshold, limit))
+        rows = await self._fetchall(PENDING_STAGE_B_SQL, (limit,))
         return [job_from_row(row_to_dict(row)) for row in rows]
 
     async def list_evaluated_jobs(self, limit: int = 100) -> list[JobEvaluation]:
-        """List jobs with persisted evaluation rows.
+        """List jobs with evaluations.
 
         Args:
-            limit: Maximum evaluations to return.
+            limit: Max evaluations.
 
         Returns:
-            Joined job evaluations.
+            Joined evaluations.
         """
         rows = await self._fetchall(LIST_EVALUATED_SQL, (limit,))
         return [evaluation_from_row(row_to_dict(row)) for row in rows]
 
     async def record_pipeline_run(self, run: PipelineRun) -> None:
-        """Persist aggregate pipeline run counters.
+        """Persist pipeline run counters.
 
         Args:
-            run: Pipeline run to persist.
+            run: Pipeline run.
         """
         await self._execute(INSERT_PIPELINE_RUN_SQL, pipeline_run_params(run))
 
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
-        """Load a pipeline run by run identity.
+        """Load a pipeline run by identity.
 
         Args:
-            run_id: Pipeline run identity.
+            run_id: Run identity.
 
         Returns:
-            Pipeline run when found; otherwise None.
+            Pipeline run if found, else None.
         """
         row = await self._fetchone(
             "SELECT * FROM pipeline_runs WHERE run_id = ?",
@@ -264,9 +275,6 @@ class SQLiteStore:
             await db.execute(sql, params)
             await db.commit()
 
-    async def _save_stage_error(self, sql: str, job_id: str, error: str) -> None:
-        await self._execute(sql, (job_id_value(job_id), error))
-
     async def _fetchone(
         self,
         sql: str,
@@ -289,7 +297,3 @@ class SQLiteStore:
         if self._db is None:
             raise RuntimeError("SQLiteStore is not connected")
         return self._db
-
-
-def _schema_sql() -> str:
-    return Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")

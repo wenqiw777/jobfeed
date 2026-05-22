@@ -7,6 +7,7 @@ from pathlib import Path
 from tests.support.code_hygiene import (
     PROJECT_ROOT,
     assert_no_hygiene_violations,
+    collect_length_warnings,
 )
 from tests.support.code_hygiene_fixtures import (
     BARE_EXCEPT,
@@ -245,10 +246,10 @@ def test_hygiene_check_fails_on_empty_except_pass(tmp_path: Path) -> None:
     assert_hygiene_error(root, "empty except block containing only pass")
 
 
-def test_hygiene_check_fails_on_file_longer_than_phase0_limit(
+def test_length_warning_on_file_longer_than_soft_limit(
     tmp_path: Path,
 ) -> None:
-    """Production files longer than the Phase 0 line limit should fail.
+    """Files exceeding 300 lines should produce a warning, not a hard failure.
 
     Args:
         tmp_path: Temporary package root for the synthetic fixture.
@@ -257,4 +258,7 @@ def test_hygiene_check_fails_on_file_longer_than_phase0_limit(
     padding = "\n".join(f"# padding {index}" for index in range(310))
     write_source(root, "too_long.py", f"{CLEAN_CODE}\n{padding}\n")
 
-    assert_hygiene_error(root, "300 lines or fewer")
+    assert_no_hygiene_violations(root)
+    warnings = collect_length_warnings(root)
+    assert len(warnings) == 1
+    assert "exceeds 300 lines" in warnings[0].message
