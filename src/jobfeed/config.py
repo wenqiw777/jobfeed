@@ -140,6 +140,10 @@ def _apply_convenience_env_vars(
     """
     db_url = environ.get("JOBFEED_DB_URL")
     if db_url is not None:
+        # ``_collect_env_overrides`` splits only on ``__``, so ``JOBFEED_DB_URL``
+        # lands as a spurious top-level ``db_url`` key. ``Settings`` forbids extra
+        # fields, so drop that flat key and remap the value to ``db.url`` instead.
+        overrides.pop("db_url", None)
         db_section = overrides.setdefault("db", {})
         if isinstance(db_section, dict):
             db_section.setdefault("url", db_url)

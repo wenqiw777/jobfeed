@@ -119,11 +119,27 @@ def _stage_a_from_record(r: asyncpg.Record) -> StageAResult | None:
     )
 
 
+def _as_json_obj(value: object) -> Any:
+    """Decode a JSON/JSONB column value into a Python object.
+
+    asyncpg returns ``json``/``jsonb`` columns as raw strings unless a custom
+    type codec is registered, which this adapter does not do. Reads therefore
+    decode the string here. Already-decoded values pass through unchanged so the
+    helper stays correct if a codec is added later.
+
+    Args:
+        value: Raw column value from asyncpg (str when no codec is registered).
+
+    Returns:
+        The decoded JSON object, or the value unchanged when already decoded.
+    """
+    if isinstance(value, str):
+        return cast(Any, json.loads(value))
+    return value
+
+
 def _stage_b_from_record(r: asyncpg.Record) -> StageBResult | None:
     """Build a Stage B result when the record has completed Stage B data.
-
-    asyncpg returns JSONB columns as already-parsed Python dicts, so no
-    json.loads() is needed for reading.
 
     Args:
         r: Database record with evaluation columns.
@@ -134,10 +150,10 @@ def _stage_b_from_record(r: asyncpg.Record) -> StageBResult | None:
     if r.get("stage_b_status") != "completed":
         return None
 
-    block_a = r["stage_b_verdict_json"]
-    block_b = r["stage_b_summary_json"]
-    block_c = r["stage_b_fit_json"]
-    block_e = r["stage_b_hooks_json"]
+    block_a = _as_json_obj(r["stage_b_verdict_json"])
+    block_b = _as_json_obj(r["stage_b_summary_json"])
+    block_c = _as_json_obj(r["stage_b_fit_json"])
+    block_e = _as_json_obj(r["stage_b_hooks_json"])
 
     raw_blocks: dict[str, object] = {
         "block_a": block_a,
@@ -1594,6 +1610,10 @@ class PostgresStore:
             resp_ph = ", ".join(
                 f"${resp_offset + i + 1}" for i in range(len(resp_sorted))
             )
+            # The per-job query (step 3) binds only $1 = job_id ahead of the
+            # response statuses, so its placeholders must start at $2 regardless
+            # of how many job ids fill the IN(...) list in step 2.
+            resp_ph_single = ", ".join(f"${i + 2}" for i in range(len(resp_sorted)))
 
             # 2. Response statuses reached
             response_rows = await conn.fetch(
@@ -1624,7 +1644,7 @@ class PostgresStore:
                     continue
                 resp_row = await conn.fetchrow(
                     f"""SELECT changed_at FROM job_status_history
-                        WHERE job_id = $1 AND to_status IN ({resp_ph})
+                        WHERE job_id = $1 AND to_status IN ({resp_ph_single})
                         ORDER BY changed_at ASC LIMIT 1""",
                     jid,
                     *resp_sorted,

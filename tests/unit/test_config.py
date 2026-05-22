@@ -63,6 +63,42 @@ def test_load_settings_env_overrides_file_value(
     assert settings.db.backend == "postgres"
 
 
+def test_load_settings_flat_db_url_alias_maps_to_db_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flat ``JOBFEED_DB_URL`` alias must map to ``db.url`` and validate.
+
+    Regression: ``_collect_env_overrides`` splits only on ``__``, so the flat
+    var also landed as a top-level ``db_url`` key. ``Settings`` forbids extra
+    fields, so config loading failed whenever Docker/CI set ``JOBFEED_DB_URL``.
+
+    Args:
+        monkeypatch: Pytest helper used to set scoped environment variables.
+    """
+    url = "postgresql://jobfeed:jobfeed_dev@postgres:5432/jobfeed_dev"
+    monkeypatch.setenv("JOBFEED_DB_URL", url)
+
+    settings = load_settings()
+
+    assert settings.db.url == url
+
+
+def test_load_settings_nested_db_url_beats_flat_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The nested ``JOBFEED_DB__URL`` form takes precedence over the flat alias.
+
+    Args:
+        monkeypatch: Pytest helper used to set scoped environment variables.
+    """
+    monkeypatch.setenv("JOBFEED_DB_URL", "postgresql://flat@host/db")
+    monkeypatch.setenv("JOBFEED_DB__URL", "postgresql://nested@host/db")
+
+    settings = load_settings()
+
+    assert settings.db.url == "postgresql://nested@host/db"
+
+
 def test_load_settings_env_overrides_nested_numeric_value(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

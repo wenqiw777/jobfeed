@@ -335,10 +335,21 @@ def _get_target_store(ctx: click.Context) -> SQLiteStore:
         SQLiteStore from the configured app context.
 
     Raises:
-        click.ClickException: If the app context is not initialized.
+        click.ClickException: If the app context is not initialized, or the
+            configured backend is not SQLite. Legacy migration relies on the
+            adapter-specific bulk-import and parity-read operations, which only
+            SQLiteStore implements today; a Postgres target would fail with an
+            AttributeError mid-import otherwise.
     """
     app = require_app(ctx)
-    return app["store"]
+    store = app["store"]
+    if not isinstance(store, SQLiteStore):
+        raise click.ClickException(
+            "Legacy migration currently supports only a SQLite target store "
+            f"(configured store: {type(store).__name__}). Postgres bulk import "
+            "is not implemented yet."
+        )
+    return store
 
 
 def _run_verify(

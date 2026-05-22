@@ -6,10 +6,14 @@ from pathlib import Path
 
 from click.testing import CliRunner, Result
 
-from jobfeed.cli import cli
+from jobfeed.adapters.store.postgres import PostgresStore
+from jobfeed.cli import cli, create_app
 
 MOCK_JOB_COUNT = 3
 CLICK_USAGE_ERROR = 2
+FIXTURE_LEGACY_DB = (
+    Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "legacy_v16.db"
+)
 
 
 def test_cli_full_chain_uses_isolated_temp_database(tmp_path: Path) -> None:
@@ -111,8 +115,12 @@ def test_cli_rejects_missing_explicit_config(tmp_path: Path) -> None:
     assert "Traceback" not in result.output
 
 
-def test_cli_rejects_unsupported_db_backend(tmp_path: Path) -> None:
-    """Unsupported db.backend values should fail before command execution.
+def test_create_app_wires_postgres_backend(tmp_path: Path) -> None:
+    """create_app should build a PostgresStore when db.backend is postgres.
+
+    Phase 1 (Task 5) wires both backends into the DI factory, so Phase 0's
+    fail-fast on non-sqlite backends no longer applies. Construction does not
+    open a connection, so this stays offline.
 
     Args:
         tmp_path: Temporary root used for a synthetic config file.
@@ -120,10 +128,37 @@ def test_cli_rejects_unsupported_db_backend(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text('[db]\nbackend = "postgres"\n', encoding="utf-8")
 
-    result = CliRunner().invoke(cli, ["--config", str(config_path), "scan"])
+    app = create_app(config_path)
+
+    assert isinstance(app["store"], PostgresStore)
+
+
+def test_cli_migrate_rejects_postgres_target(tmp_path: Path) -> None:
+    """Legacy migration must reject a Postgres target with a clear message.
+
+    PostgresStore does not implement the bulk-import/parity ports, so the
+    migrate command fails fast instead of erroring mid-import.
+
+    Args:
+        tmp_path: Temporary root used for a synthetic config file.
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[db]\nbackend = "postgres"\n', encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--config",
+            str(config_path),
+            "migrate",
+            "import-sqlite",
+            "--from",
+            str(FIXTURE_LEGACY_DB),
+        ],
+    )
 
     assert result.exit_code == 1
-    assert "Phase 0 supports only sqlite db backend" in result.output
+    assert "only a SQLite target store" in result.output
     assert "Traceback" not in result.output
 
 
