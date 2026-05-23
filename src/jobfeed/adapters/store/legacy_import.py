@@ -367,7 +367,7 @@ def _map_job_row(row: dict[str, Any]) -> JobRow:
         yoe_min=row["yoe_min"],
         ml_gate_score=row["ml_gate_score"],
         ml_gate_result=row["ml_gate_result"],
-        ml_gate_fail_reason=row["ml_gate_fail_reason"],
+        ml_gate_fail_reason=row.get("ml_gate_fail_reason"),
         ml_gate_at=row["ml_gate_at"],
         ml_gate_version=row["ml_gate_version"],
         is_swe_role=row["is_swe_role"],
@@ -399,12 +399,12 @@ def _map_evaluation_row(row: dict[str, Any]) -> EvaluationRow:
         stage_a_status=row["stage_a_status"],
         stage_a_error=row["stage_a_error"],
         stage_a_model=row["stage_a_model"],
-        stage_a_cost_usd=row["stage_a_cost_usd"],
+        stage_a_cost_usd=row.get("stage_a_cost_usd"),
         stage_a_prompt_hash=row["stage_a_prompt_hash"],
         # resume_hash -> stage_a_resume_hash
         stage_a_resume_hash=row["resume_hash"],
-        stage_b_verdict=row["stage_b_verdict"],
-        stage_b_jd_summary=row["stage_b_jd_summary"],
+        stage_b_verdict=row.get("stage_b_verdict"),
+        stage_b_jd_summary=row.get("stage_b_jd_summary"),
         # block_a_verdict -> stage_b_verdict_json
         stage_b_verdict_json=row["block_a_verdict"],
         # block_b_jd_summary -> stage_b_summary_json
@@ -417,7 +417,7 @@ def _map_evaluation_row(row: dict[str, Any]) -> EvaluationRow:
         stage_b_status=row["stage_b_status"],
         stage_b_error=row["stage_b_error"],
         stage_b_model=row["stage_b_model"],
-        stage_b_cost_usd=row["stage_b_cost_usd"],
+        stage_b_cost_usd=row.get("stage_b_cost_usd"),
         stage_b_prompt_hash=row["stage_b_prompt_hash"],
         # stage_b_resume_hash: copy from resume_hash if stage_b done
         stage_b_resume_hash=(
