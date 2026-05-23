@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -69,11 +70,32 @@ from jobfeed.domain.models import (
     StatusInfo,
     WorkflowAttention,
 )
+from jobfeed.domain.quality import quality_rank
 
 # Bumped when schema.sql changes in a way that fresh and existing databases
 # must agree on. Phase 1 hardening is version 1; Phase 0 databases carry the
 # implicit version 0 (no user_version stamp) and have no in-place upgrade path.
 SCHEMA_VERSION = 1
+
+
+def _apply_quality_ladder(job: JobPosting, stored_quality: object) -> JobPosting:
+    """Drop the incoming JD when its quality is below the stored one.
+
+    Clearing jd_text/jd_quality lets UPDATE_JOB_SQL's COALESCE keep the better
+    stored values (the Phase 1 quality-ladder contract: a worse rescrape must
+    not overwrite a richer stored JD).
+
+    Args:
+        job: Incoming job posting.
+        stored_quality: jd_quality currently stored for this job, or None.
+
+    Returns:
+        The job unchanged, or a copy with jd_text/jd_quality cleared.
+    """
+    stored = str(stored_quality) if stored_quality is not None else None
+    if quality_rank(job.jd_quality) >= quality_rank(stored):
+        return job
+    return replace(job, jd_text=None, jd_quality=None)
 
 
 class SQLiteStore:
@@ -1378,14 +1400,16 @@ class SQLiteStore:
                 updated=False,
             )
         row = await self._connection().execute(
-            "SELECT id FROM jobs WHERE platform = ? AND canonical_id = ?",
+            "SELECT id, jd_quality FROM jobs WHERE platform = ? AND canonical_id = ?",
             (job.platform, job.canonical_id),
         )
         existing = await row.fetchone()
         if existing is None:
             raise RuntimeError("job upsert conflict did not resolve to a row")
-        job_id = cast(int, row_to_dict(existing)["id"])
-        await db.execute(UPDATE_JOB_SQL, (*job_params(job), job_id))
+        existing_dict = row_to_dict(existing)
+        job_id = cast(int, existing_dict["id"])
+        write_job = _apply_quality_ladder(job, existing_dict.get("jd_quality"))
+        await db.execute(UPDATE_JOB_SQL, (*job_params(write_job), job_id))
         return SaveJobResult(job_id=str(job_id), inserted=False, updated=True)
 
     async def _execute(self, sql: str, params: tuple[object, ...]) -> None:

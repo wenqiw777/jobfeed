@@ -53,7 +53,7 @@ from jobfeed.domain.models import (
     WorkflowAttention,
     WorkflowAttentionItem,
 )
-from jobfeed.domain.quality import assess_quality
+from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.domain.status import (
     ACTIVE_APPLICATION_STATUSES,
     DECAY_SOURCES,
@@ -1083,8 +1083,22 @@ class PostgresStore:
                        title = EXCLUDED.title,
                        company = EXCLUDED.company,
                        location = EXCLUDED.location,
-                       jd_text = COALESCE(EXCLUDED.jd_text, jobs.jd_text),
-                       jd_quality = COALESCE(EXCLUDED.jd_quality, jobs.jd_quality),
+                       jd_text = CASE
+                           WHEN $16::int >= (CASE jobs.jd_quality
+                               WHEN 'full' THEN 5 WHEN 'good' THEN 4
+                               WHEN 'partial' THEN 3 WHEN 'stub' THEN 2
+                               WHEN 'missing' THEN 1 WHEN 'abandoned' THEN 0
+                               ELSE -1 END)
+                           THEN COALESCE(EXCLUDED.jd_text, jobs.jd_text)
+                           ELSE jobs.jd_text END,
+                       jd_quality = CASE
+                           WHEN $16::int >= (CASE jobs.jd_quality
+                               WHEN 'full' THEN 5 WHEN 'good' THEN 4
+                               WHEN 'partial' THEN 3 WHEN 'stub' THEN 2
+                               WHEN 'missing' THEN 1 WHEN 'abandoned' THEN 0
+                               ELSE -1 END)
+                           THEN COALESCE(EXCLUDED.jd_quality, jobs.jd_quality)
+                           ELSE jobs.jd_quality END,
                        posted_at = COALESCE(EXCLUDED.posted_at, jobs.posted_at),
                        discovered_at = EXCLUDED.discovered_at,
                        enriched_at = COALESCE(EXCLUDED.enriched_at, jobs.enriched_at),
@@ -1108,6 +1122,7 @@ class PostgresStore:
                 normalize_company(job.company),
                 normalize(job.title),
                 normalize(job.location),
+                quality_rank(job.jd_quality),
             )
             assert row is not None  # RETURNING always produces a row
             inserted = bool(row["inserted"])

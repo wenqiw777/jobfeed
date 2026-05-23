@@ -15,6 +15,7 @@ from jobfeed.domain.models import (
     CompanyRecord,
     MLGateResult,
     PipelineRun,
+    QualityBand,
     ResumeSnapshot,
     StageAResult,
     StageBResult,
@@ -221,6 +222,34 @@ class TestJobCRUD:
 
         jobs = await contract_store.list_jobs()
         assert len(jobs) == 1
+
+    async def test_upsert_keeps_higher_quality_jd(self, contract_store):
+        """A worse-quality rescrape must not overwrite a better stored JD."""
+        await contract_store.save_job(
+            make_job("ql-1", jd_text=JD_TEXT_FULL, jd_quality=QualityBand.FULL)
+        )
+        result = await contract_store.save_job(
+            make_job("ql-1", jd_text=JD_TEXT_STUB, jd_quality=QualityBand.STUB)
+        )
+
+        loaded = await contract_store.get_job(result.job_id)
+        assert loaded is not None
+        assert loaded.jd_quality == QualityBand.FULL
+        assert loaded.jd_text == JD_TEXT_FULL
+
+    async def test_upsert_takes_higher_quality_jd(self, contract_store):
+        """A better-quality rescrape replaces a worse stored JD."""
+        first = await contract_store.save_job(
+            make_job("ql-2", jd_text=JD_TEXT_STUB, jd_quality=QualityBand.STUB)
+        )
+        await contract_store.save_job(
+            make_job("ql-2", jd_text=JD_TEXT_FULL, jd_quality=QualityBand.FULL)
+        )
+
+        loaded = await contract_store.get_job(first.job_id)
+        assert loaded is not None
+        assert loaded.jd_quality == QualityBand.FULL
+        assert loaded.jd_text == JD_TEXT_FULL
 
     async def test_different_id_same_company_separate(self, contract_store):
         """Different canonical_id with same company should create separate rows."""

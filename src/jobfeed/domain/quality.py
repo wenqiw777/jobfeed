@@ -33,4 +33,30 @@ def assess_quality(jd_text: str | None) -> QualityBand:
     return QualityBand.FULL
 
 
-__all__ = ["assess_quality"]
+# Higher rank = better JD. Used by save_job's quality ladder so a worse incoming
+# scrape never overwrites a better stored one. Unknown/None ranks lowest.
+_QUALITY_RANK: dict[str, int] = {
+    QualityBand.FULL.value: 5,
+    QualityBand.GOOD.value: 4,
+    QualityBand.PARTIAL.value: 3,
+    QualityBand.STUB.value: 2,
+    QualityBand.MISSING.value: 1,
+    QualityBand.ABANDONED.value: 0,
+}
+
+
+def quality_rank(quality: QualityBand | str | None) -> int:
+    """Return an orderable rank for a JD quality band (higher = better).
+
+    Args:
+        quality: A QualityBand, its string value, or None.
+
+    Returns:
+        Integer rank; -1 for None or an unrecognized value.
+    """
+    if quality is None:
+        return -1
+    return _QUALITY_RANK.get(str(quality), -1)
+
+
+__all__ = ["assess_quality", "quality_rank"]
