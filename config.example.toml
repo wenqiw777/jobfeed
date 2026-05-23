@@ -16,3 +16,10 @@ default_runner = "in_process"
 [observability]
 log_level = "info"
 log_format = "human"
+
+[sources.ats]
+enabled = true
+max_concurrent = 10
+probe_ttl_days = 7
+failure_threshold = 3
+seed_companies = ["anthropic", "openai", "palantir"]

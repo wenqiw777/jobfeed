@@ -10,7 +10,9 @@ requires-python = ">=3.11"
 dependencies = [
     "alembic >= 1.15",
     "asyncpg >= 0.30",
+    "beautifulsoup4 >= 4.12",
     "click",
+    "httpx >= 0.28",
     "psycopg2-binary >= 2.9",
     "pydantic",
     "structlog",
@@ -22,6 +24,7 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-asyncio",
+    "respx >= 0.22",
     "ruff",
     "testcontainers[postgres] >= 4.0",
 ]
@@ -65,3 +68,8 @@ mypy_path = "src"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "postgres: requires PostgreSQL (Docker)",
+    "live: requires real HTTP to external APIs (manual only)",
+]
+addopts = "-m 'not postgres and not live'"

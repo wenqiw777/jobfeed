@@ -64,6 +64,28 @@ class ObservabilitySettings(BaseModel):
     log_format: Literal["human", "json"] = "human"
 
 
+class SourcesATSConfig(BaseModel):
+    """Runtime limits and tuning knobs for the ATS source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    max_concurrent: int = Field(default=10, ge=1)
+    probe_ttl_days: int = Field(default=7, ge=0)
+    failure_threshold: int = Field(default=3, ge=1)
+    probe_timeout_s: float = Field(default=5.0, gt=0)
+    scan_timeout_s: float = Field(default=30.0, gt=0)
+    seed_companies: list[str] = Field(default_factory=list)
+
+
+class SourcesConfig(BaseModel):
+    """Container for all job-data source configurations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ats: SourcesATSConfig = Field(default_factory=SourcesATSConfig)
+
+
 class Settings(BaseModel):
     """Validated top-level application settings."""
 
@@ -74,6 +96,7 @@ class Settings(BaseModel):
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
+    sources: SourcesConfig = Field(default_factory=SourcesConfig)
 
 
 def load_settings(config_path: Path | None = None) -> Settings:
@@ -185,5 +208,7 @@ __all__ = [
     "ObservabilitySettings",
     "ScoringSettings",
     "Settings",
+    "SourcesATSConfig",
+    "SourcesConfig",
     "load_settings",
 ]
