@@ -30,28 +30,6 @@ _CORP_SUFFIXES = frozenset(
     }
 )
 
-QUALITY_RANK: dict[str | None, int] = {
-    None: -1,
-    "abandoned": 0,
-    "missing": 0,
-    "stub": 1,
-    "partial": 2,
-    "good": 3,
-    "full": 4,
-}
-
-
-def quality_rank(quality: str | None) -> int:
-    """Return the numeric rank for a quality band.
-
-    Args:
-        quality: Quality band string or None.
-
-    Returns:
-        Integer rank for comparison.
-    """
-    return QUALITY_RANK.get(quality, -1)
-
 
 def normalize(value: str | None) -> str:
     """Lowercase, collapse non-alphanumeric to spaces, strip.
@@ -86,8 +64,6 @@ def normalize_company(value: str | None) -> str:
 
 
 __all__ = [
-    "QUALITY_RANK",
     "normalize",
     "normalize_company",
-    "quality_rank",
 ]

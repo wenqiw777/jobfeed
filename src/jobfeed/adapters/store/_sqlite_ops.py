@@ -12,7 +12,6 @@ from jobfeed.adapters.store.sqlite_mapping import (
     evaluation_from_row,
     row_to_dict,
 )
-from jobfeed.adapters.store.sqlite_sql import MAX_STAGE_RETRIES
 from jobfeed.domain.models import (
     AttentionItem,
     AttentionReport,
@@ -23,6 +22,7 @@ from jobfeed.domain.models import (
     MLGateResult,
 )
 from jobfeed.domain.quality import assess_quality
+from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 
 
 async def job_exists(
@@ -558,8 +558,7 @@ async def digest_stats(
         total = await _count(db, "SELECT COUNT(*) FROM jobs")
         scored_today = await _count(
             db,
-            "SELECT COUNT(*) FROM jobs "
-            "WHERE date(discovered_at, 'localtime') = date('now', 'localtime')",
+            "SELECT COUNT(*) FROM jobs WHERE date(discovered_at) = date('now')",
         )
         stage_b_evaluated = await _count(
             db,
@@ -574,8 +573,7 @@ async def digest_stats(
         )
         cost_row = await (
             await db.execute(
-                "SELECT calls, spent_usd FROM cost_ledger "
-                "WHERE day = date('now', 'localtime')",
+                "SELECT calls, spent_usd FROM cost_ledger WHERE day = date('now')",
             )
         ).fetchone()
     llm_calls = int(cost_row[0]) if cost_row else 0

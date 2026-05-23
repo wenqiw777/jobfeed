@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from jobfeed.domain.scoring import MAX_STAGE_RETRIES
+
 INSERT_JOB_DO_NOTHING_SQL = """
 INSERT INTO jobs (
     platform, canonical_id, url, title, company, location, jd_text, jd_quality,
@@ -102,10 +104,9 @@ _PENDING_STAGE_B_BASE = (
 )
 _ORDER_LIMIT = "ORDER BY jobs.discovered_at DESC, jobs.id DESC\nLIMIT ?"
 
-# Error rows over this retry cap stay terminally in 'error' status and drop out
-# of the pending queues (plan Task 1); they surface in needs_attention for
+# Error rows over MAX_STAGE_RETRIES stay terminally in 'error' status and drop
+# out of the pending queues (plan Task 1); they surface in needs_attention for
 # manual triage instead of retrying (and burning LLM calls) forever.
-MAX_STAGE_RETRIES = 3
 _STAGE_A_UNDER_CAP = (
     f"(evaluations.stage_a_status IS NOT 'error' "
     f"OR evaluations.stage_a_error_count < {MAX_STAGE_RETRIES})"

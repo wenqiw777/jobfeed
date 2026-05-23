@@ -54,6 +54,7 @@ from jobfeed.domain.models import (
     WorkflowAttentionItem,
 )
 from jobfeed.domain.quality import assess_quality, quality_rank
+from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.domain.status import (
     ACTIVE_APPLICATION_STATUSES,
     DECAY_SOURCES,
@@ -403,16 +404,15 @@ def _block_json(raw_blocks: dict[str, object] | None, key: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-# Error rows over this retry cap drop out of the pending queues (plan Task 1);
+# Error rows over MAX_STAGE_RETRIES drop out of the pending queues (plan Task 1);
 # they stay terminally in 'error' for manual triage instead of retrying forever.
-_PG_MAX_STAGE_RETRIES = 3
 _PG_STAGE_A_UNDER_CAP = (
     "(evaluations.stage_a_status IS DISTINCT FROM 'error' "
-    f"OR evaluations.stage_a_error_count < {_PG_MAX_STAGE_RETRIES})"
+    f"OR evaluations.stage_a_error_count < {MAX_STAGE_RETRIES})"
 )
 _PG_STAGE_B_UNDER_CAP = (
     "(evaluations.stage_b_status IS DISTINCT FROM 'error' "
-    f"OR evaluations.stage_b_error_count < {_PG_MAX_STAGE_RETRIES})"
+    f"OR evaluations.stage_b_error_count < {MAX_STAGE_RETRIES})"
 )
 
 
@@ -2831,7 +2831,7 @@ class PostgresStore:
                    WHERE e.stage_a_error_count >= $1
                       OR e.stage_b_error_count >= $1
                    LIMIT $2""",
-                _PG_MAX_STAGE_RETRIES,
+                MAX_STAGE_RETRIES,
                 max_per_category,
             )
 

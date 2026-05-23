@@ -5,7 +5,6 @@ from __future__ import annotations
 from jobfeed.adapters.store._normalize import (
     normalize,
     normalize_company,
-    quality_rank,
 )
 
 
@@ -31,18 +30,3 @@ def test_normalize_company_keeps_last_token() -> None:
     """Single-token company names should not be stripped even if in suffix list."""
     assert normalize_company("Inc") == "inc"
     assert normalize_company("Technologies") == "technologies"
-
-
-def test_quality_rank_ordering() -> None:
-    """Quality ladder should preserve documented ordering."""
-    assert quality_rank("full") > quality_rank("good")
-    assert quality_rank("good") > quality_rank("partial")
-    assert quality_rank("partial") > quality_rank("stub")
-    assert quality_rank("stub") > quality_rank("missing")
-    assert quality_rank("missing") == quality_rank("abandoned")
-    assert quality_rank(None) < quality_rank("missing")
-
-
-def test_quality_rank_unknown_returns_negative() -> None:
-    """Unknown quality values should rank below None."""
-    assert quality_rank("bogus") == quality_rank(None)

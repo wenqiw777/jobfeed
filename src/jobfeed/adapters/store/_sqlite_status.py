@@ -507,7 +507,7 @@ async def workflow_attention(
                FROM job_status s JOIN jobs j ON j.id = s.job_id
                WHERE s.status IN ('applied','interviewing')
                  AND s.next_followup_at IS NOT NULL
-                 AND date(s.next_followup_at) <= date('now','localtime')
+                 AND date(s.next_followup_at) <= date('now')
                ORDER BY s.next_followup_at ASC""",
         )
         follow_up = [_attention_item(r, "follow-up due") for r in await cur.fetchall()]
