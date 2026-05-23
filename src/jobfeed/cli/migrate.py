@@ -202,17 +202,17 @@ def inspect_sqlite(path: Path) -> None:
     help="Print import plan without writing any data.",
 )
 @click.option(
-    "--verify",
-    is_flag=True,
-    default=False,
-    help="Run parity assertion harness after import.",
+    "--verify/--no-verify",
+    "verify",
+    default=True,
+    help="Run parity verification after import (default: on; --no-verify skips).",
 )
 @click.option(
     "--manifest",
     "manifest_path",
     type=click.Path(exists=True, path_type=Path),
     default=None,
-    help="Path to manifest JSON for --verify parity checks.",
+    help="Manifest JSON of expected counts. Default: derive from the source DB.",
 )
 @click.pass_context
 def import_sqlite(
@@ -232,8 +232,10 @@ def import_sqlite(
         ctx: Click invocation context.
         from_path: Path to the legacy v16 .db file.
         dry_run: If True, print plan without writing.
-        verify: If True, run parity checks after import.
-        manifest_path: Optional path to manifest JSON for parity checks.
+        verify: If True (default), run parity checks after import; --no-verify
+            skips them.
+        manifest_path: Optional manifest JSON; when omitted, expected counts are
+            derived from the source database.
     """
     version, counts = _validate_legacy_source(from_path)
 
@@ -363,7 +365,7 @@ def _run_verify(
     Raises:
         click.ClickException: If parity verification fails.
     """
-    manifest = _load_manifest(manifest_path)
+    manifest = _resolve_manifest(from_path, manifest_path)
     parity_report = asyncio.run(_do_verify(from_path, store, manifest))
 
     click.echo("")
@@ -378,11 +380,52 @@ def _run_verify(
     click.echo("All parity checks passed.")
 
 
-def _load_manifest(manifest_path: Path | None) -> dict[str, Any]:
-    """Load the manifest JSON for parity verification.
+def _resolve_manifest(from_path: Path, manifest_path: Path | None) -> dict[str, Any]:
+    """Resolve the parity manifest: explicit file, else derive from the source.
 
     Args:
-        manifest_path: Explicit path, or None to use the default fixture.
+        from_path: Legacy v16 source database.
+        manifest_path: Optional explicit manifest JSON path.
+
+    Returns:
+        Parity manifest dict (expected per-table row counts).
+    """
+    if manifest_path is not None:
+        return _load_manifest(manifest_path)
+    return _derive_manifest(from_path)
+
+
+def _derive_manifest(from_path: Path) -> dict[str, Any]:
+    """Derive expected row counts from the source database for parity checks.
+
+    Avoids depending on a checked-in test fixture: the legacy source is the
+    authority for what should land in the target after a 1:1 import.
+
+    Args:
+        from_path: Legacy v16 source database.
+
+    Returns:
+        Manifest dict with schema_version and per-table row counts.
+    """
+    conn = _open_legacy_readonly(from_path)
+    try:
+        version = _read_schema_version(conn)
+        counts = _read_table_counts(conn)
+    finally:
+        conn.close()
+    return {
+        "schema_version": int(version) if version is not None else None,
+        "tables": {
+            table: {"row_count": count} for table, count in counts.items() if count >= 0
+        },
+    }
+
+
+def _load_manifest(manifest_path: Path) -> dict[str, Any]:
+    """Load an explicit manifest JSON for parity verification.
+
+    Args:
+        manifest_path: Path to a manifest JSON file.
 
     Returns:
         Parsed manifest dict.
@@ -390,16 +433,6 @@ def _load_manifest(manifest_path: Path | None) -> dict[str, Any]:
     Raises:
         click.ClickException: If the manifest file cannot be loaded.
     """
-    if manifest_path is None:
-        # Default to the test fixture manifest
-        default = (
-            Path(__file__).resolve().parent.parent.parent.parent
-            / "tests"
-            / "fixtures"
-            / "legacy_v16_manifest.json"
-        )
-        manifest_path = default
-
     if not manifest_path.exists():
         raise click.ClickException(f"Manifest not found: {manifest_path}")
 

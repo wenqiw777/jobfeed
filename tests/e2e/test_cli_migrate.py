@@ -85,6 +85,63 @@ def test_import_sqlite_with_verify_exits_zero(tmp_path: Path) -> None:
     assert "All parity checks passed" in result.output
 
 
+def test_import_sqlite_verifies_by_default_with_derived_manifest(
+    tmp_path: Path,
+) -> None:
+    """Default import (no --verify, no --manifest) still runs parity.
+
+    Verification is on by default and derives expected counts from the source
+    DB, so no checked-in fixture manifest is needed.
+
+    Args:
+        tmp_path: Temporary directory for the target store.
+    """
+    runner = CliRunner()
+    config_path = _write_import_config(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "--config",
+            str(config_path),
+            "migrate",
+            "import-sqlite",
+            "--from",
+            str(LEGACY_DB),
+        ],
+    )
+
+    assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+    assert "All parity checks passed" in result.output
+
+
+def test_import_sqlite_no_verify_skips_parity(tmp_path: Path) -> None:
+    """--no-verify imports without running parity checks.
+
+    Args:
+        tmp_path: Temporary directory for the target store.
+    """
+    runner = CliRunner()
+    config_path = _write_import_config(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "--config",
+            str(config_path),
+            "migrate",
+            "import-sqlite",
+            "--from",
+            str(LEGACY_DB),
+            "--no-verify",
+        ],
+    )
+
+    assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+    assert "Import completed successfully" in result.output
+    assert "parity" not in result.output.lower()
+
+
 def test_import_sqlite_nonexistent_db_exits_one() -> None:
     """import-sqlite --from nonexistent.db exits 1 with a clear error."""
     runner = CliRunner()
