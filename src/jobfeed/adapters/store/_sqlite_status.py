@@ -18,7 +18,11 @@ from jobfeed.domain.models import (
     WorkflowAttention,
     WorkflowAttentionItem,
 )
-from jobfeed.domain.status import DECAY_SOURCES, validate_transition
+from jobfeed.domain.status import (
+    ACTIVE_APPLICATION_STATUSES,
+    DECAY_SOURCES,
+    validate_transition,
+)
 
 # -- helpers -----------------------------------------------------------------
 
@@ -560,17 +564,22 @@ async def compute_reapply_notice(
         if not company_norm:
             return None
 
-        # Find active applications at same company (excluding this job)
+        # Find active applications at same company (excluding this job). Active
+        # covers applied plus every interview substage (plan status model), not
+        # just 'applied'.
+        active = sorted(ACTIVE_APPLICATION_STATUSES)
+        status_ph = ", ".join("?" for _ in active)
         cursor = await db.execute(
-            """SELECT j.id, j.title, s.status
+            f"""SELECT j.id, j.title, s.status
                FROM jobs j
                JOIN job_status s ON s.job_id = j.id
                WHERE (j.company_norm = ? OR ? = '')
                  AND j.id != ?
-                 AND s.status = 'applied'
-                 AND s.last_status_change_at >= datetime('now', ? || ' days')
+                 AND s.status IN ({status_ph})
+                 AND julianday(s.last_status_change_at)
+                     >= julianday(datetime('now', ? || ' days'))
                LIMIT 1""",
-            (company_norm, company_norm, int(job_id), f"-{lookback_days}"),
+            (company_norm, company_norm, int(job_id), *active, f"-{lookback_days}"),
         )
         match = await cursor.fetchone()
 

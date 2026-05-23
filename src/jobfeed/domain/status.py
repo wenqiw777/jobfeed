@@ -87,6 +87,11 @@ DECAY_SOURCES: frozenset[str] = frozenset(
     }
 )
 
+# Statuses where an application is still active (post-submit, pre-terminal).
+# Identical to DECAY_SOURCES: an application is "active" exactly while it remains
+# subject to ghost/auto-decay. Used for the same-company reapply guard.
+ACTIVE_APPLICATION_STATUSES: frozenset[str] = DECAY_SOURCES
+
 RESPONSE_STATUSES: frozenset[str] = frozenset(
     {
         "interviewing",

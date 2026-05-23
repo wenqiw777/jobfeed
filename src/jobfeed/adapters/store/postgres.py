@@ -55,6 +55,7 @@ from jobfeed.domain.models import (
 )
 from jobfeed.domain.quality import assess_quality
 from jobfeed.domain.status import (
+    ACTIVE_APPLICATION_STATUSES,
     DECAY_SOURCES,
     RESPONSE_STATUSES,
     is_terminal,
@@ -2024,12 +2025,13 @@ class PostgresStore:
                    JOIN job_status s ON s.job_id = j.id
                    WHERE (j.company_norm = $1 OR $1 = '')
                      AND j.id != $2
-                     AND s.status = 'applied'
+                     AND s.status = ANY($4)
                      AND s.last_status_change_at >= now() - ($3 || ' days')::interval
                    LIMIT 1""",
                 company_norm,
                 int(job_id),
                 str(lookback_days),
+                sorted(ACTIVE_APPLICATION_STATUSES),
             )
 
         if match is None:

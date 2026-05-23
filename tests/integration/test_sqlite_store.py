@@ -431,6 +431,41 @@ async def test_stage_completion_timestamps_are_stamped_and_immutable(
     assert after_b["stage_a_at"] == first["stage_a_at"]
 
 
+async def test_reapply_notice_detects_interview_substage(store: SQLiteStore) -> None:
+    """Reapply notice flags an active same-company app in an interview substage.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    first = await store.save_job(make_store_job("co-first"))
+    second = await store.save_job(make_store_job("co-second"))
+    await store.transition_status(job_id=first.job_id, new_status="applied", force=True)
+    await store.transition_status(job_id=first.job_id, new_status="oa")
+
+    notice = await store.compute_reapply_notice(job_id=second.job_id)
+
+    assert notice is not None
+    assert "oa" in notice
+
+
+async def test_ml_gate_rejects_invalid_score(store: SQLiteStore) -> None:
+    """The schema CHECK rejects an out-of-range ML gate score on jobs.
+
+    The domain model also guards this; corrupting the row at the SQL boundary
+    proves the schema constraint exists independently.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    saved = await store.save_job(make_store_job("ml-bad"))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await store._connection().execute(
+            "UPDATE jobs SET ml_gate_score = 1.4 WHERE id = ?",
+            (int(saved.job_id),),
+        )
+
+
 async def test_stage_b_persists_raw_blocks_and_separate_metadata(
     store: SQLiteStore,
 ) -> None:

@@ -271,6 +271,18 @@ def test_remaining_domain_models_are_instantiable() -> None:
     assert JobEvaluation(job=job, stage_a=stage_a, stage_b=None).stage_b is None
 
 
+def test_ml_gate_result_rejects_out_of_range_score() -> None:
+    """A score outside [0, 1] is rejected at construction."""
+    with pytest.raises(ValueError, match="out of range"):
+        MLGateResult(score=1.4, result="pass")
+
+
+def test_ml_gate_result_rejects_unknown_result() -> None:
+    """A result other than pass/fail is rejected at construction."""
+    with pytest.raises(ValueError, match="pass"):
+        MLGateResult(score=0.5, result="maybe")
+
+
 def test_models_module_imports_only_allowed_stdlib_dependencies() -> None:
     """The domain models module should remain free of adapter dependencies."""
     module_path = Path(__file__).resolve().parents[2] / "src/jobfeed/domain/models.py"
@@ -289,6 +301,7 @@ def test_models_module_imports_only_allowed_stdlib_dependencies() -> None:
         "datetime",
         "enum",
         "jobfeed.domain.models_application",
+        "jobfeed.domain.models_llm",
         "jobfeed.domain.models_ops",
         "jobfeed.domain.models_status",
         "jobfeed.domain.types",

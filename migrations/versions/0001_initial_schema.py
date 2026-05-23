@@ -53,8 +53,12 @@ def upgrade() -> None:
         tech_required TEXT,
         role_type TEXT,
         yoe_min INTEGER,
-        ml_gate_score DOUBLE PRECISION,
-        ml_gate_result TEXT,
+        ml_gate_score DOUBLE PRECISION CHECK (
+            ml_gate_score IS NULL OR (ml_gate_score >= 0 AND ml_gate_score <= 1)
+        ),
+        ml_gate_result TEXT CHECK (
+            ml_gate_result IS NULL OR ml_gate_result IN ('pass', 'fail')
+        ),
         ml_gate_fail_reason TEXT,
         ml_gate_at TIMESTAMPTZ,
         ml_gate_version TEXT,
