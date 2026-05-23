@@ -59,6 +59,9 @@ class AttentionReport:
 
     enrich_errors: list[AttentionItem] = field(default_factory=list)
     low_quality_scored: list[AttentionItem] = field(default_factory=list)
+    # Jobs stuck in 'error' past the Stage A/B retry cap: no longer retried, so
+    # they need manual triage (plan Task 1).
+    stuck_scoring: list[AttentionItem] = field(default_factory=list)
 
 
 __all__ = [

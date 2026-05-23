@@ -37,6 +37,7 @@ COST_AMOUNT_FIRST = 0.05
 COST_AMOUNT_SECOND = 0.03
 COST_CALLS_AFTER_TWO = 2
 TWO_APPLIED_JOBS = 2
+RETRY_CAP = 3
 DECAY_GHOST_DAYS = 30
 DECAY_ARCHIVE_DAYS = 14
 FOLLOWUP_GRACE_DAYS = 7
@@ -305,6 +306,18 @@ class TestEvaluationPipeline:
         pending_b = await contract_store.load_pending_stage_b()
         pending_ids = {j.id for j in pending_b}
         assert job_id not in pending_ids
+
+    async def test_mark_stage_b_skipped_preserves_completed(self, contract_store):
+        """mark_stage_b_skipped must not overwrite a completed Stage B verdict."""
+        job_id, _ = await _insert_job(contract_store, "skip-keep")
+        await contract_store.save_stage_a(job_id, _make_stage_a())
+        await contract_store.save_stage_b(job_id, _make_stage_b())
+
+        await contract_store.mark_stage_b_skipped(job_id)
+
+        evaluation = await contract_store.get_evaluation(job_id)
+        assert evaluation is not None
+        assert evaluation.stage_b is not None
 
     async def test_stage_a_error_records_status(self, contract_store):
         """Stage A error should record error status on the evaluation row."""
@@ -1282,3 +1295,13 @@ class TestEvaluationReads:
         # If the store surfaced low_quality_scored items, they should be categorized
         if report.low_quality_scored:
             assert "low_quality_scored" in categories
+
+    async def test_needs_attention_surfaces_capped_errors(self, contract_store):
+        """Jobs stuck past the Stage A retry cap appear in stuck_scoring."""
+        job_id, _ = await _insert_job(contract_store, "attn-stuck")
+        for _ in range(RETRY_CAP):
+            await contract_store.save_stage_a_error(job_id, "boom")
+
+        report = await contract_store.needs_attention()
+
+        assert job_id in {item.job_id for item in report.stuck_scoring}

@@ -1307,7 +1307,8 @@ class PostgresStore:
                 """UPDATE evaluations SET
                        stage_b_status = 'skipped_below_threshold',
                        updated_at = now()
-                   WHERE job_id = $1""",
+                   WHERE job_id = $1
+                     AND stage_b_status IS DISTINCT FROM 'completed'""",
                 int(job_id),
             )
 
@@ -2806,6 +2807,19 @@ class PostgresStore:
                 max_per_category,
             )
 
+            # Jobs stuck in error past the retry cap (any age — no longer retried).
+            stuck_rows = await conn.fetch(
+                """SELECT j.id, j.title, j.company,
+                          e.stage_a_error_count, e.stage_b_error_count
+                   FROM jobs j
+                   JOIN evaluations e ON e.job_id = j.id
+                   WHERE e.stage_a_error_count >= $1
+                      OR e.stage_b_error_count >= $1
+                   LIMIT $2""",
+                _PG_MAX_STAGE_RETRIES,
+                max_per_category,
+            )
+
         enrich_errors = [
             AttentionItem(
                 job_id=str(r["id"]),
@@ -2826,9 +2840,23 @@ class PostgresStore:
             )
             for r in low_q_rows
         ]
+        stuck_scoring = [
+            AttentionItem(
+                job_id=str(r["id"]),
+                title=str(r["title"]),
+                company=str(r["company"]),
+                category="stuck_scoring",
+                detail=(
+                    f"stage_a_errors={r['stage_a_error_count']}, "
+                    f"stage_b_errors={r['stage_b_error_count']}"
+                ),
+            )
+            for r in stuck_rows
+        ]
         return AttentionReport(
             enrich_errors=enrich_errors,
             low_quality_scored=low_quality,
+            stuck_scoring=stuck_scoring,
         )
 
     # ------------------------------------------------------------------

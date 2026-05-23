@@ -398,6 +398,51 @@ async def test_evaluate_service_skips_preexisting_below_threshold_stage_b(
     assert await store.load_pending_stage_b() == []
 
 
+async def test_evaluate_dry_run_excludes_below_threshold_stage_b(
+    store: SQLiteStore,
+) -> None:
+    """dry-run excludes below-threshold Stage B jobs and mutates nothing.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    low = StageAResult(
+        score=40,
+        one_line="weak",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    await store.save_stage_a(job.id, low)
+    assert len(await store.load_pending_stage_b()) == 1
+
+    logger = RecordingLogger()
+    service = EvaluateService(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+        logger,
+    )
+    await service.run(dry_run=True)
+
+    # Dry run writes nothing: the below-threshold row stays pending (not skipped).
+    assert len(await store.load_pending_stage_b()) == 1
+    # And it is not reported as a Stage B dry-run candidate.
+    stage_b_logged = [
+        kwargs.get("job_id")
+        for event, kwargs in logger.events
+        if event == "evaluate_dry_run_job" and kwargs.get("stage") == "stage_b"
+    ]
+    assert job.id not in stage_b_logged
+
+
 async def test_evaluate_service_persists_parse_failures_and_continues(
     store: SQLiteStore,
 ) -> None:

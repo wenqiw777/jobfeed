@@ -12,6 +12,7 @@ from jobfeed.adapters.store.sqlite_mapping import (
     evaluation_from_row,
     row_to_dict,
 )
+from jobfeed.adapters.store.sqlite_sql import MAX_STAGE_RETRIES
 from jobfeed.domain.models import (
     AttentionItem,
     AttentionReport,
@@ -108,11 +109,14 @@ async def mark_stage_b_skipped(
         job_id: Store-assigned job identity.
     """
     async with lock:
+        # Never overwrite a completed Stage B verdict: skipping is only valid
+        # for rows that have not produced a Stage B result yet.
         await db.execute(
             """UPDATE evaluations SET
                 stage_b_status = 'skipped_below_threshold',
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            WHERE job_id = ?""",
+            WHERE job_id = ?
+              AND stage_b_status IS NOT 'completed'""",
             (int(job_id),),
         )
         await db.commit()
@@ -625,6 +629,18 @@ async def needs_attention(
         )
         low_q_rows = await low_q_cursor.fetchall()
 
+        # Jobs stuck in error past the retry cap (any age — they no longer retry).
+        stuck_cursor = await db.execute(
+            """SELECT j.id, j.title, j.company,
+                      e.stage_a_error_count, e.stage_b_error_count
+               FROM jobs j
+               JOIN evaluations e ON e.job_id = j.id
+               WHERE e.stage_a_error_count >= ? OR e.stage_b_error_count >= ?
+               LIMIT ?""",
+            (MAX_STAGE_RETRIES, MAX_STAGE_RETRIES, max_per_category),
+        )
+        stuck_rows = await stuck_cursor.fetchall()
+
     enrich_errors = [
         AttentionItem(
             job_id=str(r[0]),
@@ -645,7 +661,21 @@ async def needs_attention(
         )
         for r in low_q_rows
     ]
-    return AttentionReport(enrich_errors=enrich_errors, low_quality_scored=low_quality)
+    stuck_scoring = [
+        AttentionItem(
+            job_id=str(r[0]),
+            title=str(r[1]),
+            company=str(r[2]),
+            category="stuck_scoring",
+            detail=f"stage_a_errors={r[3]}, stage_b_errors={r[4]}",
+        )
+        for r in stuck_rows
+    ]
+    return AttentionReport(
+        enrich_errors=enrich_errors,
+        low_quality_scored=low_quality,
+        stuck_scoring=stuck_scoring,
+    )
 
 
 async def record_enrichment(

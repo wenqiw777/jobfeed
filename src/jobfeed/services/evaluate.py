@@ -75,7 +75,11 @@ class EvaluateService:
         stage_b_jobs = await self.store.load_pending_stage_b()
         if dry_run:
             self._log_dry_run("stage_a", stage_a_jobs)
-            self._log_dry_run("stage_b", stage_b_jobs)
+            below = await self._below_threshold_ids(stage_b_jobs)
+            eligible_b = [
+                job for job in stage_b_jobs if _require_job_id(job) not in below
+            ]
+            self._log_dry_run("stage_b", eligible_b)
         else:
             await self._score_stage_jobs("stage_a", stage_a_jobs, run)
             stage_b_jobs = await self.store.load_pending_stage_b()
@@ -86,8 +90,34 @@ class EvaluateService:
         await self.store.record_pipeline_run(run)
         return run
 
+    async def _below_threshold_ids(self, jobs: list[JobPosting]) -> set[str]:
+        """Return ids of pending Stage B jobs below the Stage A threshold.
+
+        Read-only: callers decide whether to mark them skipped (real run) or
+        just exclude them from a preview (dry run).
+
+        Args:
+            jobs: Stage B pending jobs.
+
+        Returns:
+            Job ids whose Stage A score is below the threshold.
+        """
+        threshold = self.settings.scoring.stage_a_threshold
+        below: set[str] = set()
+        for job in jobs:
+            job_id = _require_job_id(job)
+            evaluation = await self.store.get_evaluation(job_id)
+            score = (
+                evaluation.stage_a.score
+                if evaluation is not None and evaluation.stage_a is not None
+                else None
+            )
+            if score is not None and score < threshold:
+                below.add(job_id)
+        return below
+
     async def _skip_below_threshold(self, jobs: list[JobPosting]) -> list[JobPosting]:
-        """Skip pending Stage B rows whose Stage A score is below threshold.
+        """Mark below-threshold pending Stage B rows skipped; return the rest.
 
         The save_stage_a path skips below-threshold jobs scored in this run, but
         rows that became Stage A-completed without it (legacy import, or scored
@@ -100,21 +130,10 @@ class EvaluateService:
         Returns:
             Jobs whose Stage A score meets the threshold.
         """
-        threshold = self.settings.scoring.stage_a_threshold
-        eligible: list[JobPosting] = []
-        for job in jobs:
-            job_id = _require_job_id(job)
-            evaluation = await self.store.get_evaluation(job_id)
-            score = (
-                evaluation.stage_a.score
-                if evaluation is not None and evaluation.stage_a is not None
-                else None
-            )
-            if score is not None and score < threshold:
-                await self.store.mark_stage_b_skipped(job_id)
-            else:
-                eligible.append(job)
-        return eligible
+        below = await self._below_threshold_ids(jobs)
+        for job_id in below:
+            await self.store.mark_stage_b_skipped(job_id)
+        return [job for job in jobs if _require_job_id(job) not in below]
 
     async def _score_stage_jobs(
         self,
