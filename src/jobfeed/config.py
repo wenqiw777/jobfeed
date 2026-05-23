@@ -12,17 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 CONFIG_ENV_PREFIX = "JOBFEED_"
 ENV_NESTED_DELIMITER = "__"
-DEFAULT_SQLITE_PATH = Path(".jobfeed-dev/dev.db")
 
 
 class DBSettings(BaseModel):
-    """Persistence backend settings validated after TOML and env merging."""
+    """PostgreSQL connection settings validated after TOML and env merging.
+
+    Postgres is the only supported backend. ``url`` is the asyncpg/libpq DSN;
+    when omitted, the CLI falls back to its built-in development DSN.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    backend: Literal["sqlite", "postgres"] = "sqlite"
     url: str | None = None
-    sqlite_path: Path = DEFAULT_SQLITE_PATH
 
 
 class LLMSettings(BaseModel):
@@ -90,6 +91,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
     """
     file_data = _load_toml_file(config_path)
     env_data = _collect_env_overrides(os.environ)
+    _apply_convenience_env_vars(os.environ, env_data)
     merged = _merge_dicts(file_data, env_data)
     return Settings.model_validate(merged)
 
@@ -127,6 +129,27 @@ def _collect_env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
     return overrides
 
 
+def _apply_convenience_env_vars(
+    environ: Mapping[str, str],
+    overrides: dict[str, object],
+) -> None:
+    """Apply convenience (non-nested) env var aliases into the overrides dict.
+
+    ``JOBFEED_DB_URL`` is a flat env var that maps to ``db.url`` for ergonomic
+    use in Docker Compose and shell scripts.  The nested form
+    ``JOBFEED_DB__URL`` takes precedence if both are set.
+    """
+    db_url = environ.get("JOBFEED_DB_URL")
+    if db_url is not None:
+        # ``_collect_env_overrides`` splits only on ``__``, so ``JOBFEED_DB_URL``
+        # lands as a spurious top-level ``db_url`` key. ``Settings`` forbids extra
+        # fields, so drop that flat key and remap the value to ``db.url`` instead.
+        overrides.pop("db_url", None)
+        db_section = overrides.setdefault("db", {})
+        if isinstance(db_section, dict):
+            db_section.setdefault("url", db_url)
+
+
 def _set_nested_value(target: dict[str, object], path: list[str], value: str) -> None:
     current = target
     for part in path[:-1]:
@@ -156,7 +179,6 @@ def _merge_dicts(
 
 
 __all__ = [
-    "DEFAULT_SQLITE_PATH",
     "DBSettings",
     "ExecutionSettings",
     "LLMSettings",

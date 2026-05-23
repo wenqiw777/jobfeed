@@ -10,10 +10,11 @@ import click
 
 from jobfeed.adapters.llm.mock import MockLLM
 from jobfeed.adapters.sources.mock import MockSource
-from jobfeed.adapters.store.sqlite import SQLiteStore
+from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import Settings, load_settings
 from jobfeed.observability import JobfeedLogger, configure_logging, get_logger
 from jobfeed.ports.source import SimpleSource
+from jobfeed.ports.store import JobStore
 from jobfeed.services.digest import DigestService
 from jobfeed.services.evaluate import EvaluateService
 from jobfeed.services.scan import ScanService
@@ -25,7 +26,7 @@ class AppContext(TypedDict):
     """Runtime dependency graph shared by Click commands."""
 
     settings: Settings
-    store: SQLiteStore
+    store: JobStore
     sources: dict[str, SimpleSource]
     scan_service: ScanService
     evaluate_service: EvaluateService
@@ -35,7 +36,10 @@ class AppContext(TypedDict):
 
 
 def create_app(config_path: Path | None = None) -> AppContext:
-    """Build the Phase 0 dependency graph.
+    """Build the application dependency graph.
+
+    Wires the PostgreSQL store (the only supported backend) from
+    ``settings.db.url``, falling back to the built-in development DSN.
 
     Args:
         config_path: Optional path to the TOML configuration file.
@@ -44,7 +48,6 @@ def create_app(config_path: Path | None = None) -> AppContext:
         App context containing settings, adapters, services, and logger.
 
     Raises:
-        ValueError: If config requests a backend outside Phase 0 support.
         FileNotFoundError: If an explicit config path does not exist.
     """
     settings = load_settings(config_path)
@@ -52,7 +55,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
         settings.observability.log_level, settings.observability.log_format
     )
     logger = get_logger()
-    store = _sqlite_store(settings)
+    store = _create_store(settings)
     llm = MockLLM()
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
     return AppContext(
@@ -157,22 +160,23 @@ def _enable_verbose_logging(app: AppContext) -> None:
     app["logger"].debug("cli_verbose_enabled")
 
 
-def _sqlite_store(settings: Settings) -> SQLiteStore:
-    if settings.db.backend != "sqlite":
-        raise ValueError(
-            "Phase 0 supports only sqlite db backend; "
-            f"configured backend: {settings.db.backend}"
-        )
-    return SQLiteStore(settings.db.sqlite_path)
+DEFAULT_POSTGRES_URL = "postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev"
+
+
+def _create_store(settings: Settings) -> JobStore:
+    dsn = settings.db.url or DEFAULT_POSTGRES_URL
+    return PostgresStore(dsn)
 
 
 from jobfeed.cli.digest import digest  # noqa: E402
 from jobfeed.cli.evaluate import evaluate  # noqa: E402
+from jobfeed.cli.migrate import migrate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
 
 cli.add_command(scan)
 cli.add_command(evaluate)
 cli.add_command(digest)
+cli.add_command(migrate)
 
 
 __all__ = [

@@ -1,6 +1,7 @@
 [db]
-backend = "sqlite"
-sqlite_path = ".jobfeed-dev/dev.db"
+# PostgreSQL DSN. Omit to use the CLI's built-in development DSN, or override
+# at runtime with JOBFEED_DB_URL / JOBFEED_DB__URL.
+url = "postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev"
 
 [llm]
 stage_a = "mock/stage-a"
