@@ -11,6 +11,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PRODUCTION_ROOT = PROJECT_ROOT / "src" / "jobfeed"
 MAX_PYTHON_FILE_LINES = 300
 
+# The persistence/migration adapter layer is exempt from the blocking
+# file-length gate: a full JobStore implementation per backend is inherently
+# large, and shredding it into <=300-line fragments harms readability. Every
+# other layer stays bound by MAX_PYTHON_FILE_LINES. Documented in
+# docs/engineering-standards.md.
+_LENGTH_EXEMPT_SUBSTR = "/adapters/store/"
+_LENGTH_EXEMPT_SUFFIX = "/cli/migrate.py"
+
 
 def collect_hygiene_violations(
     root: Path = DEFAULT_PRODUCTION_ROOT,
@@ -56,9 +64,34 @@ def assert_no_hygiene_violations(root: Path = DEFAULT_PRODUCTION_ROOT) -> None:
         AssertionError: If any hygiene violation is found.
     """
     violations = collect_hygiene_violations(root)
+    violations.extend(collect_length_violations(root))
     if violations:
         formatted = "\n".join(violation.format() for violation in violations)
         raise AssertionError(f"Code hygiene violations found:\n{formatted}")
+
+
+def _is_length_exempt(path: Path) -> bool:
+    posix = path.as_posix()
+    return _LENGTH_EXEMPT_SUBSTR in posix or posix.endswith(_LENGTH_EXEMPT_SUFFIX)
+
+
+def collect_length_violations(
+    root: Path = DEFAULT_PRODUCTION_ROOT,
+) -> list[HygieneViolation]:
+    """Collect blocking file-length violations, excluding exempt layers.
+
+    Args:
+        root: Python file or directory tree to scan.
+
+    Returns:
+        File-length violations for non-exempt files.
+    """
+    violations: list[HygieneViolation] = []
+    for path in _python_files(root):
+        if _is_length_exempt(path):
+            continue
+        violations.extend(_check_file_length(path))
+    return violations
 
 
 def _python_files(root: Path) -> list[Path]:

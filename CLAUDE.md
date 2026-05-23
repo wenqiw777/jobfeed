@@ -39,7 +39,7 @@ Read `docs/engineering-standards.md` before editing code. Key enforced rules:
 
 - Cyclomatic complexity hard max: 10. Nesting depth max: 2. Max args: 5.
 - No bare `except`. No silent `pass` in exception handlers.
-- Production files under `src/jobfeed/` must be ≤300 lines (Phase 0 gate).
+- Production files under `src/jobfeed/` must be ≤300 lines, enforced as a blocking gate. **Exempt:** the `adapters/store/` layer and `cli/migrate.py` — a full multi-backend `JobStore` plus the legacy-migration surface is inherently large, and fragmenting it into ≤300-line shards harms readability. The gate stays blocking for `domain/`, `services/`, `ports/`, and the rest of `cli/`. (Phase 1 amendment, approved 2026-05-22.)
 - Nested loops forbidden in `cli/` and `services/`. Allowed elsewhere only in named helpers with documented time complexity.
 - `snake_case` for modules/functions/variables. `PascalCase` for classes/protocols/enums.
 - Boolean names: `is_`, `has_`, `can_`, `should_`, `needs_` prefixes.

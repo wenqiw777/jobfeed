@@ -17,6 +17,7 @@ These standards are the Phase 0 engineering contract for Jobfeed. Rules that can
 - Nesting depth max: 2. Prefer guard clauses and early returns.
 - Positional/keyword arguments max: 5. Use a dataclass or config object beyond that.
 - Statements target: <= 40.
+- File length: <= 300 lines, enforced as a blocking hygiene gate. Exempt: the `adapters/store/` layer and `cli/migrate.py`. A full multi-backend `JobStore` and the legacy-migration surface are inherently large; fragmenting them into <=300-line shards harms readability. The gate stays blocking everywhere else. (Phase 1 amendment, approved 2026-05-22.)
 - Functions should have a single clear responsibility.
 - Avoid nested loops in application/service code.
 - If nested loops are necessary in algorithmic or data-processing code, extract them into a named helper and document time complexity.

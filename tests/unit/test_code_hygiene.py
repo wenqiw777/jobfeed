@@ -246,10 +246,8 @@ def test_hygiene_check_fails_on_empty_except_pass(tmp_path: Path) -> None:
     assert_hygiene_error(root, "empty except block containing only pass")
 
 
-def test_length_warning_on_file_longer_than_soft_limit(
-    tmp_path: Path,
-) -> None:
-    """Files exceeding 300 lines should produce a warning, not a hard failure.
+def test_length_violation_blocks_non_exempt_file(tmp_path: Path) -> None:
+    """Files over 300 lines outside the adapter layer fail the gate.
 
     Args:
         tmp_path: Temporary package root for the synthetic fixture.
@@ -258,7 +256,19 @@ def test_length_warning_on_file_longer_than_soft_limit(
     padding = "\n".join(f"# padding {index}" for index in range(310))
     write_source(root, "too_long.py", f"{CLEAN_CODE}\n{padding}\n")
 
-    assert_no_hygiene_violations(root)
+    assert_hygiene_error(root, "exceeds 300 lines")
     warnings = collect_length_warnings(root)
     assert len(warnings) == 1
-    assert "exceeds 300 lines" in warnings[0].message
+
+
+def test_length_gate_exempts_store_adapter(tmp_path: Path) -> None:
+    """The store/migration adapter layer is exempt from the file-length gate.
+
+    Args:
+        tmp_path: Temporary package root for the synthetic fixture.
+    """
+    root = tmp_path / "src" / "jobfeed"
+    padding = "\n".join(f"# padding {index}" for index in range(310))
+    write_source(root, "adapters/store/big_store.py", f"{CLEAN_CODE}\n{padding}\n")
+
+    assert_no_hygiene_violations(root)
