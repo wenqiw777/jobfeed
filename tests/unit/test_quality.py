@@ -8,6 +8,7 @@ from jobfeed.domain.quality import (
     PARTIAL_MAX_CHARS,
     STUB_MAX_CHARS,
     assess_quality,
+    quality_rank,
 )
 
 FULL_TEXT_LENGTH = 1500
@@ -45,3 +46,19 @@ def test_assess_quality_preserves_boundary_values() -> None:
     assert assess_quality("x" * (PARTIAL_MAX_CHARS + 1)) is QualityBand.GOOD
     assert assess_quality("x" * GOOD_MAX_CHARS) is QualityBand.GOOD
     assert assess_quality("x" * (GOOD_MAX_CHARS + 1)) is QualityBand.FULL
+
+
+def test_quality_rank_orders_bands_high_to_low() -> None:
+    """quality_rank ranks FULL highest down to ABANDONED, with None lowest."""
+    assert quality_rank(QualityBand.FULL) > quality_rank(QualityBand.GOOD)
+    assert quality_rank(QualityBand.GOOD) > quality_rank(QualityBand.PARTIAL)
+    assert quality_rank(QualityBand.PARTIAL) > quality_rank(QualityBand.STUB)
+    assert quality_rank(QualityBand.STUB) > quality_rank(QualityBand.MISSING)
+    assert quality_rank(QualityBand.MISSING) > quality_rank(QualityBand.ABANDONED)
+    assert quality_rank(None) < quality_rank(QualityBand.ABANDONED)
+
+
+def test_quality_rank_accepts_strings_and_unknowns() -> None:
+    """quality_rank accepts band strings; unknown/None rank below all bands."""
+    assert quality_rank("full") == quality_rank(QualityBand.FULL)
+    assert quality_rank("bogus") == quality_rank(None)

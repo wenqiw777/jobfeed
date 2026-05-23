@@ -9,15 +9,18 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import pytest
 
 from jobfeed.domain.models import (
+    AutoDecayResult,
     JobEvaluation,
     JobPosting,
     LLMRequest,
     LLMResponse,
+    MLGateResult,
     PipelineRun,
     QualityBand,
     SaveJobResult,
     StageAResult,
     StageBResult,
+    StatusInfo,
 )
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.source import (
@@ -104,11 +107,21 @@ class FakeStore:
             error: Error message to persist.
         """
 
-    async def load_pending_stage_a(self, limit: int = 100) -> list[JobPosting]:
+    async def load_pending_stage_a(
+        self,
+        *,
+        limit: int = 100,
+        quality_bands: frozenset[str] | None = None,
+        corpus: str = "unrated",
+        max_days: int | None = None,
+    ) -> list[JobPosting]:
         """Load jobs pending Stage A.
 
         Args:
             limit: Maximum jobs to return.
+            quality_bands: Filter by jd_quality.
+            corpus: "unrated", "all", or "failed".
+            max_days: Freshness filter.
 
         Returns:
             Job postings pending Stage A.
@@ -117,19 +130,20 @@ class FakeStore:
 
     async def load_pending_stage_b(
         self,
-        threshold: int = 60,
+        *,
         limit: int = 100,
+        max_days: int | None = None,
     ) -> list[JobPosting]:
-        """Load jobs pending Stage B.
+        """Load Stage A-completed, Stage B-pending jobs.
 
         Args:
-            threshold: Minimum Stage A score for Stage B.
             limit: Maximum jobs to return.
+            max_days: Freshness filter.
 
         Returns:
             Job postings pending Stage B.
         """
-        return [make_job()][:limit] if threshold <= MAX_STAGE_A_SCORE else []
+        return [make_job()][:limit]
 
     async def list_evaluated_jobs(self, limit: int = 100) -> list[JobEvaluation]:
         """List evaluated jobs for digest rendering.
@@ -159,6 +173,136 @@ class FakeStore:
             Pipeline run when found.
         """
         return PipelineRun(run_id=run_id, started_at=fixed_time(), source="scan")
+
+    async def job_exists(
+        self,
+        *,
+        platform: str,
+        canonical_id: str,
+    ) -> bool:
+        """Check job existence by natural key.
+
+        Args:
+            platform: Source platform.
+            canonical_id: Platform-specific identity.
+
+        Returns:
+            True if exists.
+        """
+        return False
+
+    async def mark_stage_b_skipped(self, job_id: str) -> None:
+        """Mark Stage B as skipped.
+
+        Args:
+            job_id: Store-assigned job identity.
+        """
+
+    async def get_evaluation(self, job_id: str) -> JobEvaluation | None:
+        """Fetch evaluation for a job.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Evaluation if found.
+        """
+        return None
+
+    async def top_evaluated_jobs(
+        self,
+        *,
+        min_score: int = 0,
+        limit: int = 100,
+    ) -> list[JobEvaluation]:
+        """Stage B-completed jobs by score.
+
+        Args:
+            min_score: Score threshold.
+            limit: Max results.
+
+        Returns:
+            Sorted evaluations.
+        """
+        return []
+
+    async def save_ml_gate_result(
+        self,
+        job_id: str,
+        result: MLGateResult,
+    ) -> None:
+        """Persist ML gate decision.
+
+        Args:
+            job_id: Store-assigned job identity.
+            result: Gate decision.
+        """
+
+    async def transition_status(
+        self,
+        *,
+        job_id: str,
+        new_status: str,
+        reason: str | None = None,
+        resume_variant: str | None = None,
+        force: bool = False,
+        i_mean_it: bool = False,
+        followup_grace_days: int = 7,
+    ) -> str:
+        """Transition job status.
+
+        Args:
+            job_id: Store-assigned job identity.
+            new_status: Target status.
+            reason: Optional reason.
+            resume_variant: Optional variant.
+            force: Bypass graph.
+            i_mean_it: Double-gate for archived → new.
+            followup_grace_days: Days until follow-up.
+
+        Returns:
+            New status string.
+        """
+        return new_status
+
+    async def get_status(self, job_id: str) -> StatusInfo | None:
+        """Get current status.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Status info if found.
+        """
+        return None
+
+    async def restore_from_archived(self, job_id: str) -> str:
+        """Restore archived job.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Restored status.
+        """
+        return "scored"
+
+    async def auto_decay(
+        self,
+        *,
+        ghost_days: int = 30,
+        archive_ignored_days: int = 14,
+    ) -> AutoDecayResult:
+        """Sweep stale jobs.
+
+        Args:
+            ghost_days: Ghost threshold.
+            archive_ignored_days: Archive threshold.
+
+        Returns:
+            Decay counts.
+        """
+        return AutoDecayResult(ghosted=0, archived=0)
 
     async def connect(self) -> None:
         """Open backing store resources."""
@@ -251,18 +395,27 @@ class FakeSessionSource:
 
 
 def test_job_store_protocol_has_required_async_methods() -> None:
-    """JobStore should expose the full Phase 0 async persistence contract."""
+    """JobStore should expose the full async persistence contract."""
     required_methods = [
         "save_job",
         "get_job",
         "list_jobs",
+        "job_exists",
         "save_stage_a",
         "save_stage_a_error",
         "save_stage_b",
         "save_stage_b_error",
+        "mark_stage_b_skipped",
         "load_pending_stage_a",
         "load_pending_stage_b",
         "list_evaluated_jobs",
+        "get_evaluation",
+        "top_evaluated_jobs",
+        "save_ml_gate_result",
+        "transition_status",
+        "get_status",
+        "restore_from_archived",
+        "auto_decay",
         "record_pipeline_run",
         "get_pipeline_run",
         "connect",

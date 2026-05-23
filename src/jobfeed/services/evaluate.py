@@ -25,6 +25,7 @@ from jobfeed.domain.types import StageName
 from jobfeed.observability import JobfeedLogger, bind_run_id
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.store import JobStore
+from jobfeed.ports.store_ext import StoreEvaluationBatchMixin
 from jobfeed.services.error_handler import ServiceErrorHandler
 from jobfeed.services.runs import start_pipeline_run
 
@@ -72,22 +73,65 @@ class EvaluateService:
         run = start_pipeline_run("evaluate")
         bind_run_id(run.run_id)
         stage_a_jobs = await self.store.load_pending_stage_a()
-        stage_b_jobs = await self.store.load_pending_stage_b(
-            threshold=self.settings.scoring.stage_a_threshold,
-        )
+        stage_b_jobs = await self.store.load_pending_stage_b()
         if dry_run:
             self._log_dry_run("stage_a", stage_a_jobs)
-            self._log_dry_run("stage_b", stage_b_jobs)
+            below = await self._below_threshold_ids(stage_b_jobs)
+            eligible_b = [
+                job for job in stage_b_jobs if _require_job_id(job) not in below
+            ]
+            self._log_dry_run("stage_b", eligible_b)
         else:
             await self._score_stage_jobs("stage_a", stage_a_jobs, run)
-            stage_b_jobs = await self.store.load_pending_stage_b(
-                threshold=self.settings.scoring.stage_a_threshold,
-            )
+            stage_b_jobs = await self.store.load_pending_stage_b()
+            stage_b_jobs = await self._skip_below_threshold(stage_b_jobs)
             await self._score_stage_jobs("stage_b", stage_b_jobs, run)
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
         run.finished_at = datetime.now(UTC)
         await self.store.record_pipeline_run(run)
         return run
+
+    async def _below_threshold_ids(self, jobs: list[JobPosting]) -> set[str]:
+        """Return ids of pending Stage B jobs below the Stage A threshold.
+
+        Read-only: callers decide whether to mark them skipped (real run) or
+        just exclude them from a preview (dry run).
+
+        Args:
+            jobs: Stage B pending jobs.
+
+        Returns:
+            Job ids whose Stage A score is below the threshold.
+        """
+        threshold = self.settings.scoring.stage_a_threshold
+        job_ids = [_require_job_id(job) for job in jobs]
+        batch_store: StoreEvaluationBatchMixin = self.store  # type: ignore[assignment]
+        scores = await batch_store.get_stage_a_scores(job_ids)
+        return {
+            jid
+            for jid, score in scores.items()
+            if score is not None and score < threshold
+        }
+
+    async def _skip_below_threshold(self, jobs: list[JobPosting]) -> list[JobPosting]:
+        """Mark below-threshold pending Stage B rows skipped; return the rest.
+
+        The save_stage_a path skips below-threshold jobs scored in this run, but
+        rows that became Stage A-completed without it (legacy import, or scored
+        before the gate existed) still surface in the Stage B queue. Mark those
+        skipped here so they never reach Stage B (plan Decision 1).
+
+        Args:
+            jobs: Stage B pending jobs.
+
+        Returns:
+            Jobs whose Stage A score meets the threshold.
+        """
+        below = await self._below_threshold_ids(jobs)
+        if below:
+            batch_store: StoreEvaluationBatchMixin = self.store  # type: ignore[assignment]
+            await batch_store.mark_stage_b_skipped_batch(sorted(below))
+        return [job for job in jobs if _require_job_id(job) not in below]
 
     async def _score_stage_jobs(
         self,
@@ -179,6 +223,11 @@ class EvaluateService:
             if not isinstance(result, StageAResult):
                 raise TypeError("stage_a parser returned non-StageAResult")
             await self.store.save_stage_a(job_id, result)
+            # Threshold is a service-side policy, not a store concern: below the
+            # configured Stage A threshold the job is terminally skipped so it
+            # never enters the Stage B queue (plan Decision 1 / Task 1).
+            if result.score < self.settings.scoring.stage_a_threshold:
+                await self.store.mark_stage_b_skipped(job_id)
             return
         if not isinstance(result, StageBResult):
             raise TypeError("stage_b parser returned non-StageBResult")

@@ -1,11 +1,10 @@
-"""Domain dataclasses and enums for the Jobfeed Phase 0 pipeline."""
+"""Domain dataclasses and enums for the Jobfeed pipeline."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
 
 from jobfeed.domain.types import Severity
 
@@ -134,22 +133,33 @@ class StageBResult:
 class MLGateResult:
     """Machine-learning gate decision before paid LLM scoring."""
 
-    fit: bool
-    probability: float
+    score: float
+    result: str
     fail_reason: str | None = None
+    version: str | None = None
+    is_swe_role: bool | None = None
+    seniority_level: str | None = None
+    degree_required: str | None = None
+    clearance_required: bool | None = None
+    school_restricted: bool | None = None
+    yoe_min: int | None = None
+    domain_tags: list[str] | None = None
+    tech_required: list[str] | None = None
+    role_type: str | None = None
 
+    def __post_init__(self) -> None:
+        """Validate the gate score range and result enum.
 
-@dataclass(kw_only=True)
-class LLMUsage:
-    """Token, cost, cache, and latency metrics for one LLM call."""
-
-    model: str
-    input_tokens: int
-    output_tokens: int
-    cost_usd: float
-    cached: bool
-    latency_ms: int
-    timestamp: datetime
+        Raises:
+            ValueError: If score is outside [0, 1] or result is not a recognized
+                pass/fail value.
+        """
+        if not 0.0 <= self.score <= 1.0:
+            raise ValueError(f"ml gate score out of range [0, 1]: {self.score}")
+        if self.result not in ("pass", "fail"):
+            raise ValueError(
+                f"ml gate result must be 'pass' or 'fail': {self.result!r}"
+            )
 
 
 @dataclass(kw_only=True)
@@ -182,37 +192,6 @@ class PipelineRun:
 
 
 @dataclass(kw_only=True)
-class Message:
-    """Adapter-neutral LLM chat message."""
-
-    role: Literal["system", "user", "assistant"]
-    content: str
-
-
-@dataclass(kw_only=True)
-class LLMRequest:
-    """Adapter-neutral LLM completion request."""
-
-    messages: list[Message]
-    model: str
-    temperature: float = 0.0
-    max_tokens: int = 4096
-    response_schema: dict[str, object] | None = None
-
-
-@dataclass(kw_only=True)
-class LLMResponse:
-    """Adapter-neutral LLM completion response."""
-
-    content: str
-    model: str
-    input_tokens: int
-    output_tokens: int
-    cost_usd: float | None = None
-    cached: bool = False
-
-
-@dataclass(kw_only=True)
 class JobEvaluation:
     """A job with optional Stage A and Stage B evaluation results."""
 
@@ -228,7 +207,43 @@ def _validate_score(score: int) -> None:
         raise ValueError("score must be an integer between 0 and 100")
 
 
+from jobfeed.domain.models_application import (  # noqa: E402
+    ApplicationRecord,
+    ApplicationStats,
+    ResumeSnapshot,
+    ResumeVariant,
+    ResumeVariantStats,
+)
+from jobfeed.domain.models_llm import (  # noqa: E402
+    LLMRequest,
+    LLMResponse,
+    LLMUsage,
+    Message,
+)
+from jobfeed.domain.models_ops import (  # noqa: E402
+    AttentionItem,
+    AttentionReport,
+    CompanyRecord,
+    CostEntry,
+    DigestStats,
+)
+from jobfeed.domain.models_status import (  # noqa: E402
+    AutoDecayResult,
+    StatusInfo,
+    StatusTransition,
+    WorkflowAttention,
+    WorkflowAttentionItem,
+)
+
 __all__ = [
+    "ApplicationRecord",
+    "ApplicationStats",
+    "AttentionItem",
+    "AttentionReport",
+    "AutoDecayResult",
+    "CompanyRecord",
+    "CostEntry",
+    "DigestStats",
     "FitAnalysis",
     "GapItem",
     "JobEvaluation",
@@ -242,8 +257,15 @@ __all__ = [
     "Message",
     "PipelineRun",
     "QualityBand",
+    "ResumeSnapshot",
+    "ResumeVariant",
+    "ResumeVariantStats",
     "SaveJobResult",
     "StageAResult",
     "StageBResult",
+    "StatusInfo",
+    "StatusTransition",
     "Verdict",
+    "WorkflowAttention",
+    "WorkflowAttentionItem",
 ]
