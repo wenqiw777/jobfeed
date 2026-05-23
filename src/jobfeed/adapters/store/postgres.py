@@ -14,6 +14,18 @@ except ImportError as _exc:  # pragma: no cover
     ) from _exc
 
 from jobfeed.adapters.store._normalize import normalize, normalize_company
+from jobfeed.adapters.store.legacy_import import (
+    AppliedRow,
+    CompanyRow,
+    CostLedgerRow,
+    EvaluationRow,
+    JobRow,
+    JobStatusRow,
+    ResumeSnapshotRow,
+    ResumeVariantRow,
+    StateRow,
+    StatusHistoryRow,
+)
 from jobfeed.domain.models import (
     ApplicationRecord,
     ApplicationStats,
@@ -534,6 +546,11 @@ class PostgresStore:
         self._dsn = dsn
         self._pool_kwargs = pool_kwargs
         self._pool: asyncpg.Pool | None = None
+        # Dedicated connection + transaction held across a bulk-import run so all
+        # bulk_insert_* calls share one transaction (the pool would otherwise
+        # hand each call a different connection).
+        self._import_conn: asyncpg.Connection | None = None
+        self._import_tx: Any = None
 
     async def connect(self) -> None:
         """Open the asyncpg connection pool.
@@ -564,6 +581,476 @@ class PostgresStore:
         if self._pool is None:
             raise RuntimeError("PostgresStore is not connected")
         return self._pool
+
+    # ------------------------------------------------------------------
+    # BulkImportPort + ParityReadPort (legacy migration)
+    # ------------------------------------------------------------------
+
+    _PARITY_TABLES = frozenset(
+        {
+            "jobs",
+            "evaluations",
+            "job_status",
+            "job_status_history",
+            "applied",
+            "resume_snapshots",
+            "resume_variants",
+            "companies",
+            "cost_ledger",
+            "state",
+            "pipeline_runs",
+        }
+    )
+
+    def _import_connection(self) -> asyncpg.Connection:
+        """Return the connection bound to the active import transaction.
+
+        Returns:
+            The held asyncpg connection.
+
+        Raises:
+            RuntimeError: If called outside an import transaction.
+        """
+        if self._import_conn is None:
+            raise RuntimeError("bulk import called outside an import transaction")
+        return self._import_conn
+
+    async def begin_import_transaction(self) -> None:
+        """Acquire a dedicated connection and open an import transaction."""
+        conn = await self._get_pool().acquire()
+        tx = conn.transaction()
+        await tx.start()
+        self._import_conn = conn
+        self._import_tx = tx
+
+    async def commit_import_transaction(self) -> None:
+        """Commit the import transaction and release its connection."""
+        if self._import_tx is None or self._import_conn is None:
+            return
+        await self._import_tx.commit()
+        await self._get_pool().release(self._import_conn)
+        self._import_tx = None
+        self._import_conn = None
+
+    async def rollback_import_transaction(self) -> None:
+        """Roll back the import transaction and release its connection."""
+        if self._import_tx is None or self._import_conn is None:
+            return
+        await self._import_tx.rollback()
+        await self._get_pool().release(self._import_conn)
+        self._import_tx = None
+        self._import_conn = None
+
+    async def disable_triggers(self) -> None:
+        """Disable the auto-seed trigger on jobs during import."""
+        async with self._get_pool().acquire() as conn:
+            await conn.execute("ALTER TABLE jobs DISABLE TRIGGER USER")
+
+    async def enable_triggers(self) -> None:
+        """Re-enable the auto-seed trigger on jobs after import."""
+        async with self._get_pool().acquire() as conn:
+            await conn.execute("ALTER TABLE jobs ENABLE TRIGGER USER")
+
+    async def reset_sequences(self) -> None:
+        """Advance SERIAL sequences past the explicitly imported ids."""
+        conn = self._import_connection()
+        for table in ("jobs", "job_status_history"):
+            await conn.execute(
+                f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                f"(SELECT COALESCE(MAX(id), 0) + 1 FROM {table}), false)"
+            )
+
+    async def bulk_insert_jobs(self, rows: list[JobRow]) -> int:
+        """Insert job rows in bulk (legacy timestamps cast text -> timestamptz).
+
+        Args:
+            rows: Job rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO jobs (
+                id, platform, canonical_id, url, title, company, location,
+                jd_text, jd_quality, posted_at, discovered_at, enriched_at,
+                enrich_source, company_norm, title_norm, location_norm,
+                jd_lang, enrich_error, quality_rubric_version, reapply_notice,
+                hard_filter, seniority_level, degree_required, clearance_required,
+                school_restricted, domain_tags, tech_required, role_type, yoe_min,
+                ml_gate_score, ml_gate_result, ml_gate_fail_reason, ml_gate_at,
+                ml_gate_version, is_swe_role
+            ) VALUES (
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text::timestamptz,$11::text::timestamptz,
+                $12::text::timestamptz,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
+                $24,$25,$26,$27,$28,$29,$30,$31,$32,$33::text::timestamptz,$34,$35
+            )""",
+            [
+                (
+                    row["id"],
+                    row["platform"],
+                    row["canonical_id"],
+                    row["url"],
+                    row["title"],
+                    row["company"],
+                    row["location"],
+                    row.get("jd_text"),
+                    row.get("jd_quality"),
+                    row.get("posted_at"),
+                    row["discovered_at"],
+                    row.get("enriched_at"),
+                    row.get("enrich_source"),
+                    row.get("company_norm"),
+                    row.get("title_norm"),
+                    row.get("location_norm"),
+                    row.get("jd_lang"),
+                    row.get("enrich_error"),
+                    row.get("quality_rubric_version"),
+                    row.get("reapply_notice"),
+                    row.get("hard_filter"),
+                    row.get("seniority_level"),
+                    row.get("degree_required"),
+                    row.get("clearance_required"),
+                    row.get("school_restricted"),
+                    row.get("domain_tags"),
+                    row.get("tech_required"),
+                    row.get("role_type"),
+                    row.get("yoe_min"),
+                    row.get("ml_gate_score"),
+                    row.get("ml_gate_result"),
+                    row.get("ml_gate_fail_reason"),
+                    row.get("ml_gate_at"),
+                    row.get("ml_gate_version"),
+                    row.get("is_swe_role"),
+                )
+                for row in rows
+            ],
+        )
+        return len(rows)
+
+    async def bulk_insert_evaluations(self, rows: list[EvaluationRow]) -> int:
+        """Insert evaluation rows in bulk (id auto-generated).
+
+        Args:
+            rows: Evaluation rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO evaluations (
+                job_id, stage_a_score, stage_a_one_line, stage_a_timing_eligible,
+                stage_a_status, stage_a_error, stage_a_model, stage_a_cost_usd,
+                stage_a_prompt_hash, stage_a_resume_hash,
+                stage_b_verdict, stage_b_jd_summary,
+                stage_b_verdict_json, stage_b_summary_json,
+                stage_b_fit_json, stage_b_hooks_json,
+                stage_b_status, stage_b_error, stage_b_model, stage_b_cost_usd,
+                stage_b_prompt_hash, stage_b_resume_hash, created_at, updated_at
+            ) VALUES (
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+                $13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,
+                $17,$18,$19,$20,$21,$22,$23::text::timestamptz,$24::text::timestamptz
+            )""",
+            [
+                (
+                    row["job_id"],
+                    row.get("stage_a_score"),
+                    row.get("stage_a_one_line"),
+                    row.get("stage_a_timing_eligible"),
+                    row.get("stage_a_status"),
+                    row.get("stage_a_error"),
+                    row.get("stage_a_model"),
+                    row.get("stage_a_cost_usd"),
+                    row.get("stage_a_prompt_hash"),
+                    row.get("stage_a_resume_hash"),
+                    row.get("stage_b_verdict"),
+                    row.get("stage_b_jd_summary"),
+                    row.get("stage_b_verdict_json"),
+                    row.get("stage_b_summary_json"),
+                    row.get("stage_b_fit_json"),
+                    row.get("stage_b_hooks_json"),
+                    row.get("stage_b_status"),
+                    row.get("stage_b_error"),
+                    row.get("stage_b_model"),
+                    row.get("stage_b_cost_usd"),
+                    row.get("stage_b_prompt_hash"),
+                    row.get("stage_b_resume_hash"),
+                    row["created_at"],
+                    row["updated_at"],
+                )
+                for row in rows
+            ],
+        )
+        return len(rows)
+
+    async def bulk_insert_job_status(self, rows: list[JobStatusRow]) -> int:
+        """Insert job_status rows in bulk.
+
+        Args:
+            rows: Job status rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO job_status (
+                job_id, status, next_followup_at, resume_variant, notes,
+                last_status_change_at
+            ) VALUES ($1,$2,$3::text::timestamptz,$4,$5,$6::text::timestamptz)""",
+            [
+                (
+                    row["job_id"],
+                    row["status"],
+                    row.get("next_followup_at"),
+                    row.get("resume_variant"),
+                    row.get("notes"),
+                    row["last_status_change_at"],
+                )
+                for row in rows
+            ],
+        )
+        return len(rows)
+
+    async def bulk_insert_job_status_history(self, rows: list[StatusHistoryRow]) -> int:
+        """Insert job_status_history rows in bulk with preserved ids.
+
+        Args:
+            rows: Status history rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO job_status_history (
+                id, job_id, from_status, to_status, changed_at, reason,
+                resume_variant_at_change
+            ) VALUES ($1,$2,$3,$4,$5::text::timestamptz,$6,$7)""",
+            [
+                (
+                    row["id"],
+                    row["job_id"],
+                    row.get("from_status"),
+                    row["to_status"],
+                    row["changed_at"],
+                    row.get("reason"),
+                    row.get("resume_variant_at_change"),
+                )
+                for row in rows
+            ],
+        )
+        return len(rows)
+
+    async def bulk_insert_applied(self, rows: list[AppliedRow]) -> int:
+        """Insert applied rows in bulk.
+
+        Args:
+            rows: Applied rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO applied (
+                job_id, applied_at, notes, master_resume_hash,
+                tailored_resume_hash, cover_letter, application_method,
+                verdict_snapshot, fit_snapshot, hooks_snapshot
+            ) VALUES ($1,$2::text::timestamptz,$3,$4,$5,$6,$7,$8,$9,$10)""",
+            [
+                (
+                    row["job_id"],
+                    row["applied_at"],
+                    row.get("notes"),
+                    row.get("master_resume_hash"),
+                    row.get("tailored_resume_hash"),
+                    row.get("cover_letter"),
+                    row.get("application_method"),
+                    row.get("verdict_snapshot"),
+                    row.get("fit_snapshot"),
+                    row.get("hooks_snapshot"),
+                )
+                for row in rows
+            ],
+        )
+        return len(rows)
+
+    async def bulk_insert_resume_snapshots(self, rows: list[ResumeSnapshotRow]) -> int:
+        """Insert resume_snapshots rows in bulk.
+
+        Args:
+            rows: Resume snapshot rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO resume_snapshots (
+                resume_hash, captured_at, source, content, notes
+            ) VALUES ($1,$2::text::timestamptz,$3,$4,$5)""",
+            [
+                (
+                    row["resume_hash"],
+                    row["captured_at"],
+                    row["source"],
+                    row["content"],
+                    row.get("notes"),
+                )
+                for row in rows
+            ],
+        )
+        return len(rows)
+
+    async def bulk_insert_resume_variants(self, rows: list[ResumeVariantRow]) -> int:
+        """Insert resume_variants rows in bulk.
+
+        Args:
+            rows: Resume variant rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO resume_variants (name, description, created_at)
+               VALUES ($1,$2,$3::text::timestamptz)""",
+            [(row["name"], row.get("description"), row["created_at"]) for row in rows],
+        )
+        return len(rows)
+
+    async def bulk_insert_companies(self, rows: list[CompanyRow]) -> int:
+        """Insert companies rows in bulk.
+
+        Args:
+            rows: Company rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO companies (
+                slug, ats_vendor, ats_override, last_verified_at,
+                last_probe_attempt_at, job_count_last_scan, notes,
+                consecutive_discover_failures
+            ) VALUES ($1,$2,$3,$4::text::timestamptz,$5::text::timestamptz,$6,$7,$8)""",
+            [
+                (
+                    row["slug"],
+                    row.get("ats_vendor"),
+                    row.get("ats_override", 0),
+                    row.get("last_verified_at"),
+                    row.get("last_probe_attempt_at"),
+                    row.get("job_count_last_scan", 0),
+                    row.get("notes"),
+                    row.get("consecutive_discover_failures", 0),
+                )
+                for row in rows
+            ],
+        )
+        return len(rows)
+
+    async def bulk_insert_cost_ledger(self, rows: list[CostLedgerRow]) -> int:
+        """Insert cost_ledger rows in bulk.
+
+        Args:
+            rows: Cost ledger rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO cost_ledger (day, spent_usd, calls, last_updated)
+               VALUES ($1,$2,$3,$4::text::timestamptz)""",
+            [
+                (
+                    row["day"],
+                    row["spent_usd"],
+                    row.get("calls", 0),
+                    row["last_updated"],
+                )
+                for row in rows
+            ],
+        )
+        return len(rows)
+
+    async def bulk_insert_state(self, rows: list[StateRow]) -> int:
+        """Insert state rows in bulk (upsert on key).
+
+        Args:
+            rows: State rows to insert.
+
+        Returns:
+            Count of rows inserted.
+        """
+        if not rows:
+            return 0
+        conn = self._import_connection()
+        await conn.executemany(
+            """INSERT INTO state (key, value) VALUES ($1,$2)
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""",
+            [(row["key"], row["value"]) for row in rows],
+        )
+        return len(rows)
+
+    async def read_all_rows(self, table: str) -> list[dict[str, Any]]:
+        """Read all rows from a table as dicts for parity verification.
+
+        Args:
+            table: Table name to read from.
+
+        Returns:
+            List of row dicts.
+
+        Raises:
+            ValueError: If table name is not in the allowlist.
+        """
+        if table not in self._PARITY_TABLES:
+            raise ValueError(f"Table {table!r} not allowed for parity reads")
+        async with self._get_pool().acquire() as conn:
+            records = await conn.fetch(f"SELECT * FROM {table}")
+        return [dict(r) for r in records]
+
+    async def count_rows(self, table: str) -> int:
+        """Count rows in a table for parity verification.
+
+        Args:
+            table: Table name to count rows in.
+
+        Returns:
+            Row count.
+
+        Raises:
+            ValueError: If table name is not in the allowlist.
+        """
+        if table not in self._PARITY_TABLES:
+            raise ValueError(f"Table {table!r} not allowed for parity reads")
+        async with self._get_pool().acquire() as conn:
+            value = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
+        return int(value) if value is not None else 0
 
     # ------------------------------------------------------------------
     # JobStore core methods

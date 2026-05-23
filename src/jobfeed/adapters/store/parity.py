@@ -10,7 +10,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -162,6 +162,10 @@ def _canonicalize_value(key: str, value: object) -> str:
             return str(value)
 
     if key in _TIMESTAMP_COLUMNS:
+        # Postgres returns timestamptz columns as aware datetimes; SQLite/legacy
+        # return ISO/space-separated text. Normalize both to one UTC string.
+        if isinstance(value, datetime):
+            return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         try:
             # Try multiple formats
             for fmt in (

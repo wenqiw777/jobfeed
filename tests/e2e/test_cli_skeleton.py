@@ -133,11 +133,11 @@ def test_create_app_wires_postgres_backend(tmp_path: Path) -> None:
     assert isinstance(app["store"], PostgresStore)
 
 
-def test_cli_migrate_rejects_postgres_target(tmp_path: Path) -> None:
-    """Legacy migration must reject a Postgres target with a clear message.
+def test_cli_migrate_dry_run_needs_no_target_store(tmp_path: Path) -> None:
+    """migrate import-sqlite --dry-run prints a plan without touching the store.
 
-    PostgresStore does not implement the bulk-import/parity ports, so the
-    migrate command fails fast instead of erroring mid-import.
+    Runs under the Postgres backend to confirm the dry-run path never reaches
+    the store (which would require a live database).
 
     Args:
         tmp_path: Temporary root used for a synthetic config file.
@@ -154,11 +154,11 @@ def test_cli_migrate_rejects_postgres_target(tmp_path: Path) -> None:
             "import-sqlite",
             "--from",
             str(FIXTURE_LEGACY_DB),
+            "--dry-run",
         ],
     )
 
-    assert result.exit_code == 1
-    assert "only a SQLite target store" in result.output
+    assert result.exit_code == 0
     assert "Traceback" not in result.output
 
 

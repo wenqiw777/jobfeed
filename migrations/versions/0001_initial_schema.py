@@ -53,7 +53,7 @@ def upgrade() -> None:
         tech_required TEXT,
         role_type TEXT,
         yoe_min INTEGER,
-        ml_gate_score REAL,
+        ml_gate_score DOUBLE PRECISION,
         ml_gate_result TEXT,
         ml_gate_fail_reason TEXT,
         ml_gate_at TIMESTAMPTZ,
@@ -79,7 +79,7 @@ def upgrade() -> None:
         ),
         stage_a_error TEXT,
         stage_a_model TEXT,
-        stage_a_cost_usd REAL,
+        stage_a_cost_usd DOUBLE PRECISION,
         stage_a_prompt_hash TEXT,
         stage_a_resume_hash TEXT,
         stage_b_verdict TEXT CHECK (
@@ -97,7 +97,7 @@ def upgrade() -> None:
         ),
         stage_b_error TEXT,
         stage_b_model TEXT,
-        stage_b_cost_usd REAL,
+        stage_b_cost_usd DOUBLE PRECISION,
         stage_b_prompt_hash TEXT,
         stage_b_resume_hash TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -124,7 +124,7 @@ def upgrade() -> None:
         stage_a_scored INTEGER DEFAULT 0,
         stage_b_scored INTEGER DEFAULT 0,
         jobs_scored INTEGER DEFAULT 0,
-        total_llm_cost_usd REAL DEFAULT 0.0,
+        total_llm_cost_usd DOUBLE PRECISION DEFAULT 0.0,
         errors INTEGER DEFAULT 0,
         finished_at TIMESTAMPTZ
     )
@@ -214,7 +214,7 @@ def upgrade() -> None:
     op.execute("""
     CREATE TABLE cost_ledger (
         day TEXT PRIMARY KEY,
-        spent_usd REAL NOT NULL DEFAULT 0.0,
+        spent_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0,
         calls INTEGER NOT NULL DEFAULT 0,
         last_updated TIMESTAMPTZ NOT NULL DEFAULT now()
     )
