@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from pathlib import Path
 
 import pytest
-import pytest_asyncio
 
 from jobfeed.adapters.llm.mock import MockLLM
 from jobfeed.adapters.sources.mock import MockSource
-from jobfeed.adapters.store.sqlite import SQLiteStore
+from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import LLMSettings, ScoringSettings, Settings
 from jobfeed.domain.models import LLMRequest, LLMResponse, StageAResult
 from jobfeed.observability import configure_logging, get_logger
@@ -202,26 +199,8 @@ class SlowLLM:
         )
 
 
-@pytest_asyncio.fixture
-async def store(tmp_path: Path) -> AsyncIterator[SQLiteStore]:
-    """Create a connected temp SQLite store.
-
-    Args:
-        tmp_path: Temporary directory for the database file.
-
-    Yields:
-        Connected SQLite store.
-    """
-    sqlite_store = SQLiteStore(tmp_path / "services.db")
-    await sqlite_store.connect()
-    try:
-        yield sqlite_store
-    finally:
-        await sqlite_store.close()
-
-
 async def test_scan_service_saves_mock_jobs_and_single_source_name(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """ScanService should save mock jobs and set single-source run source."""
     service = ScanService(store, RecordingLogger())
@@ -236,7 +215,7 @@ async def test_scan_service_saves_mock_jobs_and_single_source_name(
 
 
 async def test_scan_service_uses_aggregate_source_for_multiple_sources(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """Multi-source scans should use aggregate pipeline source name."""
     service = ScanService(store, RecordingLogger())
@@ -252,7 +231,7 @@ async def test_scan_service_uses_aggregate_source_for_multiple_sources(
     assert run.jobs_discovered == SINGLE_SOURCE_COUNT * STAGE_COUNT_MULTIPLIER
 
 
-async def test_scan_service_tracks_idempotent_updates(store: SQLiteStore) -> None:
+async def test_scan_service_tracks_idempotent_updates(store: PostgresStore) -> None:
     """Repeated scans should count existing rows as updated."""
     service = ScanService(store, RecordingLogger())
     await service.run([("mock", MockSource(), {"count": SINGLE_SOURCE_COUNT})])
@@ -263,7 +242,7 @@ async def test_scan_service_tracks_idempotent_updates(store: SQLiteStore) -> Non
     assert second.jobs_updated == SINGLE_SOURCE_COUNT
 
 
-async def test_scan_service_continues_on_source_failure(store: SQLiteStore) -> None:
+async def test_scan_service_continues_on_source_failure(store: PostgresStore) -> None:
     """One failing source should not stop other sources from being saved."""
     service = ScanService(store, RecordingLogger())
 
@@ -279,7 +258,7 @@ async def test_scan_service_continues_on_source_failure(store: SQLiteStore) -> N
 
 
 async def test_evaluate_service_scores_stage_a_and_stage_b(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """EvaluateService should score pending jobs through both stages."""
     await ScanService(store, RecordingLogger()).run(
@@ -298,8 +277,153 @@ async def test_evaluate_service_scores_stage_a_and_stage_b(
     assert all(item.stage_b is not None for item in evaluations)
 
 
+async def test_evaluate_service_skips_stage_b_below_threshold(
+    store: PostgresStore,
+) -> None:
+    """Stage A scores below the threshold are gated out of Stage B.
+
+    CountingLLM scores Stage A at 75; with a threshold of 80 every job is
+    marked skipped, so Stage B is never called (no error) and its queue drains.
+
+    Args:
+        store: Connected PostgresStore.
+    """
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": MOCK_COUNT})]
+    )
+    service = EvaluateService(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+        RecordingLogger(),
+    )
+
+    run = await service.run()
+    pending_b = await store.load_pending_stage_b()
+
+    assert run.stage_a_scored == MOCK_COUNT
+    assert run.stage_b_scored == 0
+    assert run.errors == 0
+    assert pending_b == []
+
+
+async def test_evaluate_service_sends_stage_b_at_or_above_threshold(
+    store: PostgresStore,
+) -> None:
+    """Stage A scores at or above the threshold proceed to Stage B (not gated).
+
+    Score 75 >= threshold 70, so jobs are not skipped and Stage B is attempted;
+    here it errors on the Stage-A-shaped payload, proving the gate let them
+    through rather than skipping them.
+
+    Args:
+        store: Connected PostgresStore.
+    """
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": MOCK_COUNT})]
+    )
+    service = EvaluateService(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=70)),
+        RecordingLogger(),
+    )
+
+    run = await service.run()
+
+    assert run.stage_a_scored == MOCK_COUNT
+    assert run.errors == MOCK_COUNT
+    assert run.stage_b_scored == 0
+
+
+async def test_evaluate_service_skips_preexisting_below_threshold_stage_b(
+    store: PostgresStore,
+) -> None:
+    """Pre-existing below-threshold Stage A rows are gated out of Stage B.
+
+    Simulates a row scored below threshold without the in-run skip path (legacy
+    import / pre-gate scoring): it sits in the Stage B queue until the service
+    marks it skipped.
+
+    Args:
+        store: Connected PostgresStore.
+    """
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    low = StageAResult(
+        score=40,
+        one_line="weak",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    await store.save_stage_a(job.id, low)
+    assert len(await store.load_pending_stage_b()) == 1
+
+    service = EvaluateService(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+        RecordingLogger(),
+    )
+    run = await service.run()
+
+    assert run.stage_b_scored == 0
+    assert await store.load_pending_stage_b() == []
+
+
+async def test_evaluate_dry_run_excludes_below_threshold_stage_b(
+    store: PostgresStore,
+) -> None:
+    """dry-run excludes below-threshold Stage B jobs and mutates nothing.
+
+    Args:
+        store: Connected PostgresStore.
+    """
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    low = StageAResult(
+        score=40,
+        one_line="weak",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    await store.save_stage_a(job.id, low)
+    assert len(await store.load_pending_stage_b()) == 1
+
+    logger = RecordingLogger()
+    service = EvaluateService(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+        logger,
+    )
+    await service.run(dry_run=True)
+
+    # Dry run writes nothing: the below-threshold row stays pending (not skipped).
+    assert len(await store.load_pending_stage_b()) == 1
+    # And it is not reported as a Stage B dry-run candidate.
+    stage_b_logged = [
+        kwargs.get("job_id")
+        for event, kwargs in logger.events
+        if event == "evaluate_dry_run_job" and kwargs.get("stage") == "stage_b"
+    ]
+    assert job.id not in stage_b_logged
+
+
 async def test_evaluate_service_persists_parse_failures_and_continues(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """Parse failures should persist explicit errors and increment run errors."""
     await ScanService(store, RecordingLogger()).run(
@@ -312,12 +436,14 @@ async def test_evaluate_service_persists_parse_failures_and_continues(
     evaluations = await store.list_evaluated_jobs()
 
     assert run.errors == SINGLE_SOURCE_COUNT
-    assert pending == []
+    # Stage A errors are retryable: the default "unrated" corpus includes
+    # errored rows (plan Task 1), so a later run re-attempts them.
+    assert len(pending) == SINGLE_SOURCE_COUNT
     assert all(item.stage_a is None for item in evaluations)
 
 
 async def test_evaluate_service_respects_max_concurrent(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """Evaluation should use the configured LLM concurrency cap."""
     await ScanService(store, RecordingLogger()).run(
@@ -342,7 +468,7 @@ async def test_evaluate_service_respects_max_concurrent(
 
 
 async def test_evaluate_service_persists_llm_timeout_and_continues(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """LLM timeout failures should persist explicit stage errors."""
     await ScanService(store, RecordingLogger()).run(
@@ -360,12 +486,14 @@ async def test_evaluate_service_persists_llm_timeout_and_continues(
     evaluations = await store.list_evaluated_jobs()
 
     assert run.errors == SINGLE_SOURCE_COUNT
-    assert pending == []
+    # Stage A errors are retryable: the default "unrated" corpus includes
+    # errored rows (plan Task 1), so a later run re-attempts them.
+    assert len(pending) == SINGLE_SOURCE_COUNT
     assert all(item.stage_a is None for item in evaluations)
 
 
 async def test_evaluate_service_dry_run_does_not_call_llm(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """dry_run should log pending jobs without calling the LLM."""
     await ScanService(store, RecordingLogger()).run(
@@ -382,7 +510,7 @@ async def test_evaluate_service_dry_run_does_not_call_llm(
 
 
 async def test_evaluate_service_dry_run_logs_stage_b_pending_jobs(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """dry_run should include jobs already eligible for Stage B."""
     await ScanService(store, RecordingLogger()).run(
@@ -406,7 +534,7 @@ async def test_evaluate_service_dry_run_logs_stage_b_pending_jobs(
 
 
 async def test_digest_service_returns_markdown_with_mock_job_data(
-    store: SQLiteStore,
+    store: PostgresStore,
 ) -> None:
     """DigestService should render Markdown from real stored evaluations."""
     await ScanService(store, RecordingLogger()).run(
@@ -422,7 +550,7 @@ async def test_digest_service_returns_markdown_with_mock_job_data(
 
 
 async def test_structlog_entries_include_run_id(
-    store: SQLiteStore,
+    store: PostgresStore,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Service logs emitted through structlog should include bound run_id."""
