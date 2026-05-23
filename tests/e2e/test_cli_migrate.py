@@ -55,15 +55,17 @@ def test_inspect_sqlite_shows_table_counts() -> None:
     assert "15" in result.output
 
 
-def test_import_sqlite_with_verify_exits_zero(tmp_path: Path) -> None:
+def test_import_sqlite_with_verify_exits_zero(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
     """import-sqlite --from fixture --verify exits 0 and parity passes.
 
     Args:
-        tmp_path: Temporary directory for the target store.
+        tmp_path: Temporary directory for the config file.
+        fresh_pg_dsn: DSN of a freshly migrated, empty Postgres database.
     """
     runner = CliRunner()
-    # Use a config that points the store to tmp_path so import writes there
-    config_path = _write_import_config(tmp_path)
+    config_path = _write_import_config(tmp_path, fresh_pg_dsn)
 
     result = runner.invoke(
         cli,
@@ -86,7 +88,7 @@ def test_import_sqlite_with_verify_exits_zero(tmp_path: Path) -> None:
 
 
 def test_import_sqlite_verifies_by_default_with_derived_manifest(
-    tmp_path: Path,
+    tmp_path: Path, fresh_pg_dsn: str
 ) -> None:
     """Default import (no --verify, no --manifest) still runs parity.
 
@@ -94,10 +96,11 @@ def test_import_sqlite_verifies_by_default_with_derived_manifest(
     DB, so no checked-in fixture manifest is needed.
 
     Args:
-        tmp_path: Temporary directory for the target store.
+        tmp_path: Temporary directory for the config file.
+        fresh_pg_dsn: DSN of a freshly migrated, empty Postgres database.
     """
     runner = CliRunner()
-    config_path = _write_import_config(tmp_path)
+    config_path = _write_import_config(tmp_path, fresh_pg_dsn)
 
     result = runner.invoke(
         cli,
@@ -115,14 +118,17 @@ def test_import_sqlite_verifies_by_default_with_derived_manifest(
     assert "All parity checks passed" in result.output
 
 
-def test_import_sqlite_no_verify_skips_parity(tmp_path: Path) -> None:
+def test_import_sqlite_no_verify_skips_parity(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
     """--no-verify imports without running parity checks.
 
     Args:
-        tmp_path: Temporary directory for the target store.
+        tmp_path: Temporary directory for the config file.
+        fresh_pg_dsn: DSN of a freshly migrated, empty Postgres database.
     """
     runner = CliRunner()
-    config_path = _write_import_config(tmp_path)
+    config_path = _write_import_config(tmp_path, fresh_pg_dsn)
 
     result = runner.invoke(
         cli,
@@ -155,13 +161,16 @@ def test_import_sqlite_nonexistent_db_exits_one() -> None:
 
 
 def test_import_sqlite_dry_run_exits_zero_no_data_written(tmp_path: Path) -> None:
-    """import-sqlite --dry-run prints plan without writing any data.
+    """import-sqlite --dry-run prints plan without opening the target store.
+
+    The dry-run path never connects, so this uses an unreachable DSN to prove
+    no database access happens.
 
     Args:
-        tmp_path: Temporary directory for the target store.
+        tmp_path: Temporary directory for the config file.
     """
     runner = CliRunner()
-    config_path = _write_import_config(tmp_path)
+    config_path = _write_import_config(tmp_path, "postgresql://unused/none")
 
     result = runner.invoke(
         cli,
@@ -181,13 +190,6 @@ def test_import_sqlite_dry_run_exits_zero_no_data_written(tmp_path: Path) -> Non
     assert "Tables to import:" in result.output
     assert "jobs" in result.output
 
-    # Verify no data was written: the import target dir should not exist
-    import_dir = tmp_path / ".jobfeed-imported"
-    if import_dir.exists():
-        # If directory exists, there should be no DB file with data
-        db_files = list(import_dir.glob("*.db"))
-        assert len(db_files) == 0, "Dry run should not create database files"
-
 
 def test_inspect_sqlite_nonexistent_path_exits_nonzero() -> None:
     """inspect-sqlite on a nonexistent path exits non-zero."""
@@ -201,14 +203,12 @@ def test_inspect_sqlite_nonexistent_path_exits_nonzero() -> None:
     assert result.exit_code != 0
 
 
-def _write_import_config(tmp_path: Path) -> Path:
-    """Write a config file for import tests.
-
-    The config sets the SQLite store to a path inside tmp_path so that
-    import operations are isolated.
+def _write_import_config(tmp_path: Path, dsn: str) -> Path:
+    """Write a config file pointing the import target at a Postgres database.
 
     Args:
         tmp_path: Temporary directory for the test.
+        dsn: PostgreSQL DSN the import target store should connect to.
 
     Returns:
         Path to the written TOML config file.
@@ -216,13 +216,11 @@ def _write_import_config(tmp_path: Path) -> Path:
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "config.toml"
-    db_path = tmp_path / ".jobfeed-dev" / "test.db"
     config_path.write_text(
         "\n".join(
             [
                 "[db]",
-                'backend = "sqlite"',
-                f'sqlite_path = "{db_path}"',
+                f'url = "{dsn}"',
                 "",
                 "[observability]",
                 'log_level = "warning"',

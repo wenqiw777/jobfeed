@@ -12,17 +12,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 CONFIG_ENV_PREFIX = "JOBFEED_"
 ENV_NESTED_DELIMITER = "__"
-DEFAULT_SQLITE_PATH = Path(".jobfeed-dev/dev.db")
 
 
 class DBSettings(BaseModel):
-    """Persistence backend settings validated after TOML and env merging."""
+    """PostgreSQL connection settings validated after TOML and env merging.
+
+    Postgres is the only supported backend. ``url`` is the asyncpg/libpq DSN;
+    when omitted, the CLI falls back to its built-in development DSN.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    backend: Literal["sqlite", "postgres"] = "sqlite"
     url: str | None = None
-    sqlite_path: Path = DEFAULT_SQLITE_PATH
 
 
 class LLMSettings(BaseModel):
@@ -178,7 +179,6 @@ def _merge_dicts(
 
 
 __all__ = [
-    "DEFAULT_SQLITE_PATH",
     "DBSettings",
     "ExecutionSettings",
     "LLMSettings",

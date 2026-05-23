@@ -43,12 +43,9 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/jobfeed/ports/*.py" = ["ARG002", "PLR0913"]
-"src/jobfeed/adapters/store/sqlite.py" = ["ARG002", "E501", "PLR0913"]
-"src/jobfeed/adapters/store/_sqlite_*.py" = ["PLR0913"]
 "src/jobfeed/adapters/store/postgres.py" = ["ARG002", "E501", "PLR0913", "SIM117"]
 "tests/**/test_ports.py" = ["ARG002", "PLR0913"]
 "tests/conftest.py" = ["PLC0415"]
-"tests/e2e/test_legacy_import_postgres.py" = ["PLC0415"]
 "tests/fixtures/generate_legacy_fixture.py" = ["PLR2004", "E501", "C901", "PLC0415"]
 "migrations/env.py" = ["PLC0415"]
 "migrations/versions/*.py" = ["E501"]
@@ -69,5 +66,3 @@ mypy_path = "src"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-markers = ["postgres: requires PostgreSQL (Docker)"]
-addopts = "-m 'not postgres'"

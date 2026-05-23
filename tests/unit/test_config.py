@@ -16,12 +16,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_load_settings_returns_defaults_without_config_file() -> None:
-    """Omitting config should fall back to repo-local Phase 0 defaults."""
+    """Omitting config should fall back to repo-local defaults (no DSN set)."""
     settings = load_settings()
 
-    assert settings.db.backend == "sqlite"
-    assert settings.db.sqlite_path == Path(".jobfeed-dev/dev.db")
-    assert "~/.jobfeed" not in str(settings.db.sqlite_path)
+    assert settings.db.url is None
     assert settings.llm.stage_a == "mock/stage-a"
 
 
@@ -39,7 +37,8 @@ def test_load_settings_accepts_config_example() -> None:
     """The checked-in example config should validate successfully."""
     settings = load_settings(REPO_ROOT / "config.example.toml")
 
-    assert settings.db.backend == "sqlite"
+    assert settings.db.url is not None
+    assert settings.db.url.startswith("postgresql://")
     assert settings.scoring.stage_a_threshold == DEFAULT_STAGE_A_THRESHOLD
     assert settings.observability.log_format == "human"
 
@@ -55,12 +54,14 @@ def test_load_settings_env_overrides_file_value(
         monkeypatch: Pytest helper used to set scoped environment variables.
     """
     config_path = tmp_path / "config.toml"
-    config_path.write_text('[db]\nbackend = "sqlite"\n', encoding="utf-8")
-    monkeypatch.setenv("JOBFEED_DB__BACKEND", "postgres")
+    config_path.write_text(
+        '[db]\nurl = "postgresql://file@host/db"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("JOBFEED_DB__URL", "postgresql://env@host/db")
 
     settings = load_settings(config_path)
 
-    assert settings.db.backend == "postgres"
+    assert settings.db.url == "postgresql://env@host/db"
 
 
 def test_load_settings_flat_db_url_alias_maps_to_db_url(

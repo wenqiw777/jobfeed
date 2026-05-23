@@ -13,7 +13,6 @@ import click
 from jobfeed.adapters.store.legacy_import import ImportReport, import_legacy_sqlite
 from jobfeed.adapters.store.parity import verify_import_parity
 from jobfeed.adapters.store.postgres import PostgresStore
-from jobfeed.adapters.store.sqlite import SQLiteStore
 from jobfeed.cli import require_app
 
 # ---- Helpers ----
@@ -222,7 +221,7 @@ def import_sqlite(
     verify: bool,
     manifest_path: Path | None,
 ) -> None:
-    """Import a legacy SQLite v16 database into a fresh SQLiteStore.
+    """Import a legacy SQLite v16 database into a fresh PostgreSQL store.
 
     Uses asyncio.run() to bridge the async store operations into the
     synchronous Click command handler. The target store is taken from the
@@ -328,16 +327,15 @@ def _print_import_report(report: ImportReport) -> None:
         raise click.ClickException("Import completed with errors")
 
 
-def _get_target_store(ctx: click.Context) -> SQLiteStore | PostgresStore:
+def _get_target_store(ctx: click.Context) -> PostgresStore:
     """Get the target store from the Click app context.
 
     Args:
         ctx: Click invocation context.
 
     Returns:
-        The configured migration target store (SQLite or Postgres). Both
-        implement the bulk-import and parity-read operations the migration
-        pipeline relies on.
+        The configured PostgreSQL migration target store, which implements the
+        bulk-import and parity-read operations the migration pipeline relies on.
 
     Raises:
         click.ClickException: If the app context is not initialized or the
@@ -345,7 +343,7 @@ def _get_target_store(ctx: click.Context) -> SQLiteStore | PostgresStore:
     """
     app = require_app(ctx)
     store = app["store"]
-    if isinstance(store, SQLiteStore | PostgresStore):
+    if isinstance(store, PostgresStore):
         return store
     raise click.ClickException(
         f"Unsupported migration target store: {type(store).__name__}"
@@ -353,7 +351,7 @@ def _get_target_store(ctx: click.Context) -> SQLiteStore | PostgresStore:
 
 
 def _run_verify(
-    from_path: Path, store: SQLiteStore | PostgresStore, manifest_path: Path | None
+    from_path: Path, store: PostgresStore, manifest_path: Path | None
 ) -> None:
     """Run parity verification and print results.
 
@@ -442,9 +440,7 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
         raise click.ClickException(f"Cannot load manifest: {exc}") from exc
 
 
-async def _do_import(
-    from_path: Path, store: SQLiteStore | PostgresStore
-) -> ImportReport:
+async def _do_import(from_path: Path, store: PostgresStore) -> ImportReport:
     """Run the async import pipeline.
 
     Args:
@@ -462,7 +458,7 @@ async def _do_import(
 
 
 async def _do_verify(
-    from_path: Path, store: SQLiteStore | PostgresStore, manifest: dict[str, Any]
+    from_path: Path, store: PostgresStore, manifest: dict[str, Any]
 ) -> Any:
     """Run the async parity verification.
 

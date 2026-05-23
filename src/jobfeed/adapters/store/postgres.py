@@ -322,7 +322,7 @@ def _company_from_record(r: asyncpg.Record) -> CompanyRecord:
 
 
 # ---------------------------------------------------------------------------
-# Private helpers for application stats (mirrors _sqlite_application logic)
+# Private helpers for application stats
 # ---------------------------------------------------------------------------
 
 _INTERVIEW_STATUSES = {"interviewing", "offer"}
