@@ -1462,6 +1462,30 @@ class PostgresStore:
             return None
         return _evaluation_from_record(row)
 
+    async def get_stage_a_scores(
+        self,
+        job_ids: list[str],
+    ) -> dict[str, int | None]:
+        """Batch-fetch Stage A scores for the given jobs.
+
+        Args:
+            job_ids: Store-assigned job identities.
+
+        Returns:
+            Mapping of job_id → stage_a_score (None when unevaluated).
+        """
+        if not job_ids:
+            return {}
+        int_ids = [int(jid) for jid in job_ids]
+        async with self._get_pool().acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT job_id, stage_a_score
+                   FROM evaluations
+                   WHERE job_id = ANY($1)""",
+                int_ids,
+            )
+        return {str(row["job_id"]): row["stage_a_score"] for row in rows}
+
     async def top_evaluated_jobs(
         self,
         *,

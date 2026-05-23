@@ -1,4 +1,4 @@
-"""Extended store port: status/workflow and application audit trail."""
+"""Extended store port: batch evaluation, status/workflow, application audit."""
 
 from __future__ import annotations
 
@@ -11,6 +11,22 @@ from jobfeed.domain.models import (
     StatusInfo,
     WorkflowAttention,
 )
+
+
+@runtime_checkable
+class StoreEvaluationBatchMixin(Protocol):
+    """Batch evaluation queries for service-layer efficiency."""
+
+    async def get_stage_a_scores(self, job_ids: list[str]) -> dict[str, int | None]:
+        """Batch-fetch Stage A scores.
+
+        Args:
+            job_ids: Store-assigned job identities.
+
+        Returns:
+            Mapping of job_id to stage_a_score (None if unevaluated).
+        """
+        ...
 
 
 @runtime_checkable

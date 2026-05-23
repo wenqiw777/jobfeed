@@ -1275,6 +1275,23 @@ class TestEvaluationReads:
         assert ev.stage_a is None
         assert ev.stage_b is None
 
+    async def test_get_stage_a_scores_batch(self, contract_store):
+        """get_stage_a_scores returns scores for evaluated jobs, None for others."""
+        scored_id, _ = await _insert_job(contract_store, "scored-batch")
+        await contract_store.save_stage_a(scored_id, _make_stage_a(HIGH_STAGE_A_SCORE))
+
+        unscored_id, _ = await _insert_job(contract_store, "unscored-batch")
+
+        scores = await contract_store.get_stage_a_scores([scored_id, unscored_id])
+
+        assert scores[scored_id] == HIGH_STAGE_A_SCORE
+        assert scores.get(unscored_id) is None
+
+    async def test_get_stage_a_scores_empty_list(self, contract_store):
+        """get_stage_a_scores with empty input returns empty dict."""
+        scores = await contract_store.get_stage_a_scores([])
+        assert scores == {}
+
     async def test_top_evaluated_jobs_filter(self, contract_store):
         """top_evaluated_jobs with min_score should filter by stage_a_score."""
         # Insert a high-score job

@@ -25,6 +25,7 @@ from jobfeed.domain.types import StageName
 from jobfeed.observability import JobfeedLogger, bind_run_id
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.store import JobStore
+from jobfeed.ports.store_ext import StoreEvaluationBatchMixin
 from jobfeed.services.error_handler import ServiceErrorHandler
 from jobfeed.services.runs import start_pipeline_run
 
@@ -103,18 +104,14 @@ class EvaluateService:
             Job ids whose Stage A score is below the threshold.
         """
         threshold = self.settings.scoring.stage_a_threshold
-        below: set[str] = set()
-        for job in jobs:
-            job_id = _require_job_id(job)
-            evaluation = await self.store.get_evaluation(job_id)
-            score = (
-                evaluation.stage_a.score
-                if evaluation is not None and evaluation.stage_a is not None
-                else None
-            )
-            if score is not None and score < threshold:
-                below.add(job_id)
-        return below
+        job_ids = [_require_job_id(job) for job in jobs]
+        batch_store: StoreEvaluationBatchMixin = self.store  # type: ignore[assignment]
+        scores = await batch_store.get_stage_a_scores(job_ids)
+        return {
+            jid
+            for jid, score in scores.items()
+            if score is not None and score < threshold
+        }
 
     async def _skip_below_threshold(self, jobs: list[JobPosting]) -> list[JobPosting]:
         """Mark below-threshold pending Stage B rows skipped; return the rest.
