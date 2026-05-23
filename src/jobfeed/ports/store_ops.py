@@ -1,0 +1,204 @@
+"""Operational store port: company, enrichment, cost, state, health."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Protocol, runtime_checkable
+
+from jobfeed.domain.models import (
+    AttentionReport,
+    CompanyRecord,
+    CostEntry,
+    DigestStats,
+)
+
+
+@runtime_checkable
+class StoreOpsMixin(Protocol):
+    """Company, enrichment, cost, state, and pipeline health."""
+
+    async def upsert_company(self, company: CompanyRecord) -> None:
+        """Insert or update a company record.
+
+        Args:
+            company: Company record.
+        """
+        ...
+
+    async def get_company(self, slug: str) -> CompanyRecord | None:
+        """Load a company by slug.
+
+        Args:
+            slug: Company slug.
+
+        Returns:
+            Company record if found, else None.
+        """
+        ...
+
+    async def list_companies(
+        self,
+        *,
+        vendor: str | None = None,
+        include_removed: bool = False,
+    ) -> list[CompanyRecord]:
+        """List companies with optional filters.
+
+        Args:
+            vendor: Filter by ATS vendor.
+            include_removed: Include soft-deleted.
+
+        Returns:
+            Matching company records.
+        """
+        ...
+
+    async def mark_company_removed(self, slug: str) -> bool:
+        """Soft-delete via ats_vendor='removed'.
+
+        Args:
+            slug: Company slug.
+
+        Returns:
+            True if matched.
+        """
+        ...
+
+    async def bump_discover_failure(self, slug: str) -> int:
+        """Increment consecutive discover-failure counter.
+
+        Args:
+            slug: Company slug.
+
+        Returns:
+            New failure count.
+        """
+        ...
+
+    async def reset_discover_failures(self, slug: str) -> None:
+        """Zero the discover-failure counter.
+
+        Args:
+            slug: Company slug.
+        """
+        ...
+
+    async def record_enrichment(
+        self,
+        *,
+        job_id: str,
+        jd_text: str,
+        jd_quality: str,
+        enriched_at: datetime,
+        enrich_source: str,
+        jd_lang: str | None = None,
+    ) -> None:
+        """Stamp a job as enriched with JD body and quality.
+
+        Args:
+            job_id: Store-assigned job identity.
+            jd_text: JD body text.
+            jd_quality: Quality band string.
+            enriched_at: Enrichment timestamp.
+            enrich_source: Source label.
+            jd_lang: Optional detected language.
+        """
+        ...
+
+    async def enrich_paste(
+        self,
+        *,
+        platform: str,
+        canonical_id: str,
+        jd_text: str,
+    ) -> str:
+        """Manual JD paste fallback.
+
+        Args:
+            platform: Source platform.
+            canonical_id: Platform-specific identity.
+            jd_text: Pasted JD text.
+
+        Returns:
+            Store-assigned job identity.
+        """
+        ...
+
+    async def get_state(self, key: str) -> str | None:
+        """Read a key-value state entry.
+
+        Args:
+            key: State key.
+
+        Returns:
+            Value if found, else None.
+        """
+        ...
+
+    async def set_state(self, key: str, value: str) -> None:
+        """Write a key-value state entry.
+
+        Args:
+            key: State key.
+            value: State value.
+        """
+        ...
+
+    async def record_cost(self, *, day: str, spent_usd: float) -> None:
+        """Upsert daily cost ledger (calls +1 per invocation).
+
+        Args:
+            day: YYYY-MM-DD date string.
+            spent_usd: Cost to accumulate.
+        """
+        ...
+
+    async def get_cost(self, day: str) -> CostEntry | None:
+        """Read a single day's cost entry.
+
+        Args:
+            day: YYYY-MM-DD date.
+
+        Returns:
+            Cost entry if found, else None.
+        """
+        ...
+
+    async def get_cost_range(self, *, since_days: int = 30) -> list[CostEntry]:
+        """Read cost entries within a date range.
+
+        Args:
+            since_days: Days to look back.
+
+        Returns:
+            Cost entries ordered by day descending.
+        """
+        ...
+
+    async def digest_stats(self, *, threshold: int = 60) -> DigestStats:
+        """Aggregate counts for digest footer.
+
+        Args:
+            threshold: Score threshold for filtered_count.
+
+        Returns:
+            Digest statistics.
+        """
+        ...
+
+    async def needs_attention(
+        self,
+        *,
+        days: int = 7,
+        max_per_category: int = 10,
+    ) -> AttentionReport:
+        """Surface pipeline health concerns.
+
+        Args:
+            days: Look-back window.
+            max_per_category: Max items per category.
+
+        Returns:
+            Attention report.
+        """
+        ...

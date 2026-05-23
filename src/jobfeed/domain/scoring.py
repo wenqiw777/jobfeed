@@ -22,6 +22,10 @@ JsonObject = dict[str, object]
 STAGE_A_SYSTEM_PROMPT = "You are a precise job fit scoring assistant."
 STAGE_B_SYSTEM_PROMPT = "You are a precise job application review assistant."
 MIN_FENCED_JSON_LINES = 2
+# Stage A/B retry cap: a job that has errored this many times stops being
+# retried (drops out of the pending queues) and surfaces in needs_attention.
+# Single source of truth shared by the store and service layers.
+MAX_STAGE_RETRIES = 3
 STAGE_A_JSON_CONTRACT = (
     'Return only JSON: {"score": 0, "one_line": "short reason", '
     '"timing_eligible": "eligible|maybe|ineligible"}. '
@@ -280,6 +284,7 @@ def _require_severity(item: JsonObject) -> Severity:
 
 
 __all__ = [
+    "MAX_STAGE_RETRIES",
     "parse_stage_a_response",
     "parse_stage_b_response",
     "render_stage_a_prompt",
