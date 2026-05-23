@@ -1,6 +1,6 @@
 # Engineering Standards
 
-These standards are the Phase 0 engineering contract for Jobfeed. Rules that can be automated must be enforced by `make quality` and CI. Task 1 must wire these same thresholds into `pyproject.toml`, `Makefile`, and CI without weakening them.
+These standards are the engineering contract for Jobfeed. Rules that can be automated must be enforced by `make quality` and CI. Task 1 must wire these same thresholds into `pyproject.toml`, `Makefile`, and CI without weakening them.
 
 ## Naming
 

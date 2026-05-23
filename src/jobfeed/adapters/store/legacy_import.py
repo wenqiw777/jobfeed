@@ -290,7 +290,7 @@ class BulkImportPort(Protocol):
         ...
 
     async def reset_sequences(self) -> None:
-        """Reset serial/sequence columns to MAX(id)+1. No-op for SQLite."""
+        """Reset serial/sequence columns to MAX(id)+1."""
         ...
 
     async def disable_triggers(self) -> None:

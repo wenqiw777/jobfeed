@@ -286,7 +286,7 @@ async def test_evaluate_service_skips_stage_b_below_threshold(
     marked skipped, so Stage B is never called (no error) and its queue drains.
 
     Args:
-        store: Connected temp SQLite store.
+        store: Connected PostgresStore.
     """
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": MOCK_COUNT})]
@@ -317,7 +317,7 @@ async def test_evaluate_service_sends_stage_b_at_or_above_threshold(
     through rather than skipping them.
 
     Args:
-        store: Connected temp SQLite store.
+        store: Connected PostgresStore.
     """
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": MOCK_COUNT})]
@@ -346,7 +346,7 @@ async def test_evaluate_service_skips_preexisting_below_threshold_stage_b(
     marks it skipped.
 
     Args:
-        store: Connected temp SQLite store.
+        store: Connected PostgresStore.
     """
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": 1})]
@@ -383,7 +383,7 @@ async def test_evaluate_dry_run_excludes_below_threshold_stage_b(
     """dry-run excludes below-threshold Stage B jobs and mutates nothing.
 
     Args:
-        store: Connected temp SQLite store.
+        store: Connected PostgresStore.
     """
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": 1})]

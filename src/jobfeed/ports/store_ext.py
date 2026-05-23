@@ -28,6 +28,14 @@ class StoreEvaluationBatchMixin(Protocol):
         """
         ...
 
+    async def mark_stage_b_skipped_batch(self, job_ids: list[str]) -> None:
+        """Mark multiple Stage B evaluations as skipped in a single operation.
+
+        Args:
+            job_ids: Store-assigned job identities to skip.
+        """
+        ...
+
 
 @runtime_checkable
 class StoreStatusMixin(Protocol):

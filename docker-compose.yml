@@ -4,5 +4,3 @@ services:
       context: .
       dockerfile: Dockerfile
     working_dir: /app
-    volumes:
-      - ./.jobfeed-dev:/app/.jobfeed-dev

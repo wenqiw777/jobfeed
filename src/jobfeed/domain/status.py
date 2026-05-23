@@ -104,9 +104,8 @@ RESPONSE_STATUSES: frozenset[str] = frozenset(
     }
 )
 
-# Status-decay / follow-up policy defaults. Single source of truth shared by both
-# store backends (the concrete impl defaults are what callers get, so duplicating
-# the literals risks the backends silently disagreeing on the policy).
+# Status-decay / follow-up policy defaults. Single source of truth for the
+# store and service layers.
 DEFAULT_FOLLOWUP_GRACE_DAYS = 7
 DEFAULT_GHOST_DAYS = 30
 DEFAULT_ARCHIVE_IGNORED_DAYS = 14

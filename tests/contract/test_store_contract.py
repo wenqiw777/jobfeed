@@ -1,8 +1,7 @@
-"""Shared contract test suite for JobStore implementations.
+"""Shared contract test suite for the JobStore protocol (PostgreSQL backend).
 
-Every test uses the ``contract_store`` fixture defined in ``tests/conftest.py``,
-which is parametrized by backend (currently ``"sqlite"``; ``"postgres"`` added
-later).  Tests exercise **Protocol methods only** — no adapter-specific SQL.
+Every test uses the ``contract_store`` fixture defined in ``tests/conftest.py``.
+Tests exercise **Protocol methods only** — no adapter-specific SQL.
 """
 
 import json

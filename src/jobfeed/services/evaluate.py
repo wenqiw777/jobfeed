@@ -128,8 +128,9 @@ class EvaluateService:
             Jobs whose Stage A score meets the threshold.
         """
         below = await self._below_threshold_ids(jobs)
-        for job_id in below:
-            await self.store.mark_stage_b_skipped(job_id)
+        if below:
+            batch_store: StoreEvaluationBatchMixin = self.store  # type: ignore[assignment]
+            await batch_store.mark_stage_b_skipped_batch(sorted(below))
         return [job for job in jobs if _require_job_id(job) not in below]
 
     async def _score_stage_jobs(

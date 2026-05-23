@@ -560,8 +560,7 @@ class PostgresStore:
         """Open the asyncpg connection pool.
 
         Pins the session timezone to UTC so CURRENT_DATE / ::date truncation use
-        UTC day boundaries, matching the SQLite adapter (which compares against
-        UTC date('now')). Without this, date-bucketing queries (digest_stats,
+        UTC day boundaries. Without this, date-bucketing queries (digest_stats,
         follow-up due, cost range) would diverge on a non-UTC Postgres server.
 
         Raises:
@@ -1339,6 +1338,26 @@ class PostgresStore:
                 int(job_id),
             )
 
+    async def mark_stage_b_skipped_batch(self, job_ids: list[str]) -> None:
+        """Mark multiple Stage B evaluations as skipped in a single UPDATE.
+
+        Args:
+            job_ids: Store-assigned job identities to skip.
+        """
+        if not job_ids:
+            return
+        int_ids = [int(jid) for jid in job_ids]
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE evaluations SET
+                       stage_b_status = 'skipped_below_threshold',
+                       updated_at = now()
+                   WHERE job_id = ANY($1)
+                     AND stage_b_status IS DISTINCT FROM 'completed'""",
+                int_ids,
+            )
+
     async def load_pending_stage_a(
         self,
         *,
@@ -1965,7 +1984,7 @@ class PostgresStore:
             job_id: Store-assigned job identity.
             text: Note text to append.
         """
-        prefix = datetime.now().strftime("[%Y-%m-%d %H:%M] ")
+        prefix = datetime.now(UTC).strftime("[%Y-%m-%d %H:%M] ")
         line = prefix + text + "\n"
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -2125,7 +2144,7 @@ class PostgresStore:
             async with conn.transaction():
                 # Insert application first (ON CONFLICT DO NOTHING for idempotence).
                 # A duplicate is a no-op regardless of current status, so the
-                # terminal guard must come after this (matches the SQLite path).
+                # terminal guard must come after this for idempotence.
                 result = await conn.execute(
                     """INSERT INTO applied
                            (job_id, applied_at, notes,
@@ -2283,11 +2302,6 @@ class PostgresStore:
             resp_ph = ", ".join(
                 f"${resp_offset + i + 1}" for i in range(len(resp_sorted))
             )
-            # The per-job query (step 3) binds only $1 = job_id ahead of the
-            # response statuses, so its placeholders must start at $2 regardless
-            # of how many job ids fill the IN(...) list in step 2.
-            resp_ph_single = ", ".join(f"${i + 2}" for i in range(len(resp_sorted)))
-
             # 2. Response statuses reached
             response_rows = await conn.fetch(
                 f"""SELECT DISTINCT job_id, to_status
@@ -2304,30 +2318,27 @@ class PostgresStore:
 
             resp_ct, int_ct, off_ct, rej_ct = _count_outcomes(job_resp)
 
-            # 3. Median days to first response
-            deltas: list[int] = []
-            for jid in job_resp:
-                applied_row = await conn.fetchrow(
-                    """SELECT changed_at FROM job_status_history
-                       WHERE job_id = $1 AND to_status = 'applied'
-                       ORDER BY changed_at ASC LIMIT 1""",
-                    jid,
-                )
-                if applied_row is None:
-                    continue
-                resp_row = await conn.fetchrow(
-                    f"""SELECT changed_at FROM job_status_history
-                        WHERE job_id = $1 AND to_status IN ({resp_ph_single})
-                        ORDER BY changed_at ASC LIMIT 1""",
-                    jid,
-                    *resp_sorted,
-                )
-                if resp_row is None:
-                    continue
-                applied_dt: datetime = applied_row["changed_at"]
-                resp_dt: datetime = resp_row["changed_at"]
-                deltas.append((resp_dt - applied_dt).days)
-
+            # 3. Median days to first response (single CTE query)
+            resp_job_ids = sorted(job_resp.keys())
+            delta_rows = await conn.fetch(
+                """WITH applied_ts AS (
+                       SELECT job_id, MIN(changed_at) AS applied_at
+                       FROM job_status_history
+                       WHERE job_id = ANY($1) AND to_status = 'applied'
+                       GROUP BY job_id
+                   ), resp_ts AS (
+                       SELECT job_id, MIN(changed_at) AS resp_at
+                       FROM job_status_history
+                       WHERE job_id = ANY($1) AND to_status = ANY($2)
+                       GROUP BY job_id
+                   )
+                   SELECT EXTRACT(DAY FROM r.resp_at - a.applied_at)::integer AS days
+                   FROM applied_ts a
+                   JOIN resp_ts r ON r.job_id = a.job_id""",
+                resp_job_ids,
+                resp_sorted,
+            )
+            deltas = [row["days"] for row in delta_rows]
             median_days = _median(deltas)
 
             # 4. Per-variant breakdown (optional)
@@ -2793,7 +2804,9 @@ class PostgresStore:
             total = await self._count(conn, "SELECT COUNT(*) FROM jobs")
             scored_today = await self._count(
                 conn,
-                "SELECT COUNT(*) FROM jobs WHERE discovered_at::date = CURRENT_DATE",
+                "SELECT COUNT(*) FROM jobs"
+                " WHERE discovered_at >= CURRENT_DATE"
+                " AND discovered_at < CURRENT_DATE + INTERVAL '1 day'",
             )
             stage_b_evaluated = await self._count(
                 conn,

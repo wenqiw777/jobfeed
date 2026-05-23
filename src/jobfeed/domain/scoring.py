@@ -24,7 +24,7 @@ STAGE_B_SYSTEM_PROMPT = "You are a precise job application review assistant."
 MIN_FENCED_JSON_LINES = 2
 # Stage A/B retry cap: a job that has errored this many times stops being
 # retried (drops out of the pending queues) and surfaces in needs_attention.
-# Single source of truth shared by both store backends.
+# Single source of truth shared by the store and service layers.
 MAX_STAGE_RETRIES = 3
 STAGE_A_JSON_CONTRACT = (
     'Return only JSON: {"score": 0, "one_line": "short reason", '
