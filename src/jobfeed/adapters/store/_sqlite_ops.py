@@ -608,7 +608,7 @@ async def needs_attention(
         enrich_cursor = await db.execute(
             """SELECT id, title, company, enrich_error FROM jobs
             WHERE enrich_error IS NOT NULL
-            AND discovered_at >= datetime('now', ?)
+            AND julianday(discovered_at) >= julianday(datetime('now', ?))
             LIMIT ?""",
             (f"-{days} days", max_per_category),
         )
@@ -619,7 +619,7 @@ async def needs_attention(
             JOIN evaluations e ON e.job_id = j.id
             WHERE j.jd_quality IN ('stub', 'partial')
             AND e.stage_a_status = 'completed'
-            AND j.discovered_at >= datetime('now', ?)
+            AND julianday(j.discovered_at) >= julianday(datetime('now', ?))
             LIMIT ?""",
             (f"-{days} days", max_per_category),
         )

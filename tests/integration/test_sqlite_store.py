@@ -466,6 +466,31 @@ async def test_ml_gate_rejects_invalid_score(store: SQLiteStore) -> None:
         )
 
 
+async def test_transition_followup_lifecycle(store: SQLiteStore) -> None:
+    """next_followup_at is set on applied, kept across substages, cleared on close.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    saved = await store.save_job(make_store_job("followup"))
+    await store.transition_status(job_id=saved.job_id, new_status="applied", force=True)
+    applied = await store.get_status(saved.job_id)
+    assert applied is not None
+    assert applied.next_followup_at is not None
+
+    await store.transition_status(job_id=saved.job_id, new_status="oa")
+    advanced = await store.get_status(saved.job_id)
+    assert advanced is not None
+    assert advanced.next_followup_at == applied.next_followup_at
+
+    await store.transition_status(
+        job_id=saved.job_id, new_status="rejected", force=True
+    )
+    closed = await store.get_status(saved.job_id)
+    assert closed is not None
+    assert closed.next_followup_at is None
+
+
 async def test_stage_b_persists_raw_blocks_and_separate_metadata(
     store: SQLiteStore,
 ) -> None:

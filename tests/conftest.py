@@ -10,7 +10,48 @@ import pytest
 import pytest_asyncio
 import structlog
 
+from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.adapters.store.sqlite import SQLiteStore
+
+
+async def _migrated_pg_store(url: str) -> PostgresStore:
+    """Connect a PostgresStore at url and apply the Alembic schema.
+
+    Args:
+        url: PostgreSQL DSN.
+
+    Returns:
+        Connected, migrated PostgresStore.
+    """
+    import subprocess
+
+    store = PostgresStore(url)
+    await store.connect()
+    subprocess.run(
+        ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"],
+        env={**os.environ, "JOBFEED_DB_URL": url},
+        check=True,
+        capture_output=True,
+    )
+    return store
+
+
+async def _reset_pg_schema(url: str) -> None:
+    """Drop and recreate the public schema for per-test isolation.
+
+    Used when reusing a long-lived Postgres (e.g. the CI service) so each test
+    starts from an empty schema without launching a new container.
+
+    Args:
+        url: PostgreSQL DSN.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(url)
+    try:
+        await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+    finally:
+        await conn.close()
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +92,17 @@ async def contract_store(
             await s.close()
     elif request.param == "postgres":
         _require_pg = os.environ.get("JOBFEED_REQUIRE_POSTGRES") == "1"
+        dsn = os.environ.get("JOBFEED_PG_DSN")
+        if dsn:
+            # Reuse a provisioned Postgres (e.g. the CI service) instead of
+            # launching a container per test; reset the schema for isolation.
+            await _reset_pg_schema(dsn)
+            store = await _migrated_pg_store(dsn)
+            try:
+                yield store
+            finally:
+                await store.close()
+            return
         try:
             from testcontainers.postgres import PostgresContainer
         except ImportError:
@@ -63,20 +115,7 @@ async def contract_store(
                 "postgresql+psycopg2://",
                 "postgresql://",
             )
-            from jobfeed.adapters.store.postgres import PostgresStore
-
-            store = PostgresStore(url)
-            await store.connect()
-
-            import subprocess
-
-            subprocess.run(
-                ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"],
-                env={**os.environ, "JOBFEED_DB_URL": url},
-                check=True,
-                capture_output=True,
-            )
-
+            store = await _migrated_pg_store(url)
             try:
                 yield store
             finally:

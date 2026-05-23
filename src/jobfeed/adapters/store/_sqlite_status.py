@@ -104,9 +104,14 @@ async def _transition_status_in_tx(
     if err is not None:
         raise ValueError(err)
 
-    # Compute next_followup_at for applied transition
+    # next_followup_at: set on transition to applied, cleared when leaving the
+    # active-application states (e.g. rejected/offer/ghosted/archived), and left
+    # untouched while moving between interview substages. set_followup gates the
+    # write so the "leave untouched" case preserves the existing value.
     followup_val: str | None = None
+    set_followup = new_status not in ACTIVE_APPLICATION_STATUSES
     if new_status == "applied":
+        set_followup = True
         followup_dt = datetime.now(UTC) + timedelta(days=followup_grace_days)
         followup_val = followup_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -117,11 +122,11 @@ async def _transition_status_in_tx(
     await db.execute(
         """UPDATE job_status
            SET status = ?,
-               next_followup_at = COALESCE(?, next_followup_at),
+               next_followup_at = CASE WHEN ? THEN ? ELSE next_followup_at END,
                resume_variant = COALESCE(?, resume_variant),
                last_status_change_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
            WHERE job_id = ?""",
-        (new_status, followup_val, resume_variant, int(job_id)),
+        (new_status, set_followup, followup_val, resume_variant, int(job_id)),
     )
     await db.execute(
         """INSERT INTO job_status_history
@@ -376,12 +381,18 @@ async def list_statuses(
         params.extend(sorted(statuses))
 
     if days is not None:
-        clauses.append("s.last_status_change_at >= datetime('now', ? || ' days')")
+        clauses.append(
+            "julianday(s.last_status_change_at) "
+            ">= julianday(datetime('now', ? || ' days'))"
+        )
         params.append(f"-{days}")
 
     if no_response_days is not None:
         clauses.append("s.status = 'applied'")
-        clauses.append("s.last_status_change_at < datetime('now', ? || ' days')")
+        clauses.append(
+            "julianday(s.last_status_change_at) "
+            "< julianday(datetime('now', ? || ' days'))"
+        )
         params.append(f"-{no_response_days}")
 
     if needs_followup:
@@ -520,7 +531,8 @@ async def workflow_attention(
                         AS INTEGER) AS days_since
                FROM job_status s JOIN jobs j ON j.id = s.job_id
                WHERE s.status IN ('applied','interviewing')
-                 AND s.last_status_change_at < datetime('now', ? || ' days')
+                 AND julianday(s.last_status_change_at)
+                     < julianday(datetime('now', ? || ' days'))
                ORDER BY s.last_status_change_at ASC""",
             (f"-{warn_days}",),
         )

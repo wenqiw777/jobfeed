@@ -1618,9 +1618,12 @@ class PostgresStore:
         if err is not None:
             raise ValueError(err)
 
-        # Compute next_followup_at for applied transition
+        # next_followup_at: set on transition to applied, cleared when leaving
+        # the active-application states, untouched between interview substages.
         followup_val: datetime | None = None
+        set_followup = new_status not in ACTIVE_APPLICATION_STATUSES
         if new_status == "applied":
+            set_followup = True
             followup_val = datetime.now(UTC) + timedelta(days=followup_grace_days)
 
         reason_tag = reason
@@ -1630,11 +1633,12 @@ class PostgresStore:
         await conn.execute(
             """UPDATE job_status
                SET status = $1,
-                   next_followup_at = COALESCE($2, next_followup_at),
-                   resume_variant = COALESCE($3, resume_variant),
+                   next_followup_at = CASE WHEN $2 THEN $3 ELSE next_followup_at END,
+                   resume_variant = COALESCE($4, resume_variant),
                    last_status_change_at = now()
-               WHERE job_id = $4""",
+               WHERE job_id = $5""",
             new_status,
+            set_followup,
             followup_val,
             resume_variant,
             int(job_id),
