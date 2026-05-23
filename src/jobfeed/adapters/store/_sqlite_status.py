@@ -21,6 +21,9 @@ from jobfeed.domain.models import (
 from jobfeed.domain.status import (
     ACTIVE_APPLICATION_STATUSES,
     DECAY_SOURCES,
+    DEFAULT_ARCHIVE_IGNORED_DAYS,
+    DEFAULT_FOLLOWUP_GRACE_DAYS,
+    DEFAULT_GHOST_DAYS,
     validate_transition,
 )
 
@@ -71,7 +74,7 @@ async def _transition_status_in_tx(
     resume_variant: str | None = None,
     force: bool = False,
     i_mean_it: bool = False,
-    followup_grace_days: int = 7,
+    followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
 ) -> str:
     """Write status transition inside an existing transaction (no lock/commit).
 
@@ -150,7 +153,7 @@ async def transition_status(
     resume_variant: str | None = None,
     force: bool = False,
     i_mean_it: bool = False,
-    followup_grace_days: int = 7,
+    followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
 ) -> str:
     """Transition a job's status with validation and history.
 
@@ -280,8 +283,8 @@ async def auto_decay(
     db: aiosqlite.Connection,
     lock: asyncio.Lock,
     *,
-    ghost_days: int = 30,
-    archive_ignored_days: int = 14,
+    ghost_days: int = DEFAULT_GHOST_DAYS,
+    archive_ignored_days: int = DEFAULT_ARCHIVE_IGNORED_DAYS,
 ) -> AutoDecayResult:
     """Sweep stale jobs to ghosted or archived.
 
@@ -484,7 +487,7 @@ async def workflow_attention(
     db: aiosqlite.Connection,
     lock: asyncio.Lock,
     *,
-    auto_ghost_days: int = 30,
+    auto_ghost_days: int = DEFAULT_GHOST_DAYS,
     lookahead_days: int = 5,
 ) -> WorkflowAttention:
     """Three-bucket workflow attention report.

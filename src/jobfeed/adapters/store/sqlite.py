@@ -71,6 +71,11 @@ from jobfeed.domain.models import (
     WorkflowAttention,
 )
 from jobfeed.domain.quality import quality_rank
+from jobfeed.domain.status import (
+    DEFAULT_ARCHIVE_IGNORED_DAYS,
+    DEFAULT_FOLLOWUP_GRACE_DAYS,
+    DEFAULT_GHOST_DAYS,
+)
 
 # Bumped when schema.sql changes in a way that fresh and existing databases
 # must agree on. Phase 1 hardening is version 1; Phase 0 databases carry the
@@ -377,7 +382,7 @@ class SQLiteStore:
         resume_variant: str | None = None,
         force: bool = False,
         i_mean_it: bool = False,
-        followup_grace_days: int = 7,
+        followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
     ) -> str:
         """Delegate to status mixin.
 
@@ -430,7 +435,10 @@ class SQLiteStore:
         )
 
     async def auto_decay(
-        self, *, ghost_days: int = 30, archive_ignored_days: int = 14
+        self,
+        *,
+        ghost_days: int = DEFAULT_GHOST_DAYS,
+        archive_ignored_days: int = DEFAULT_ARCHIVE_IGNORED_DAYS,
     ) -> AutoDecayResult:
         """Delegate to status mixin.
 
@@ -494,7 +502,7 @@ class SQLiteStore:
         )
 
     async def workflow_attention(
-        self, *, auto_ghost_days: int = 30, lookahead_days: int = 5
+        self, *, auto_ghost_days: int = DEFAULT_GHOST_DAYS, lookahead_days: int = 5
     ) -> WorkflowAttention:
         """Delegate to status mixin.
 

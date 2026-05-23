@@ -149,6 +149,50 @@ _TIMESTAMP_COLUMNS = frozenset(
 )
 
 
+_CANONICAL_TS = "%Y-%m-%dT%H:%M:%S.%fZ"
+_LEGACY_TS_FORMATS = (
+    "%Y-%m-%dT%H:%M:%S.%fZ",
+    "%Y-%m-%dT%H:%M:%SZ",
+    "%Y-%m-%dT%H:%M:%S.%f",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S.%f+00",
+    "%Y-%m-%d %H:%M:%S+00",
+)
+
+
+def _canonicalize_timestamp(value: object) -> str:
+    """Normalize a timestamp (datetime or text) to one UTC canonical string.
+
+    Postgres returns timestamptz columns as aware datetimes; SQLite/legacy return
+    ISO or space-separated text in varied offset forms ('Z', '+00:00', naive).
+    fromisoformat handles all ISO offset forms so the same instant collapses to
+    the same string regardless of backend, keeping cross-backend checksums equal.
+
+    Args:
+        value: A datetime or a timestamp string.
+
+    Returns:
+        Canonical UTC timestamp string, or str(value) if unparseable.
+    """
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).strftime(_CANONICAL_TS)
+    text = str(value)
+    try:
+        parsed: datetime | None = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+    if parsed is not None:
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(UTC)
+        return parsed.strftime(_CANONICAL_TS)
+    for fmt in _LEGACY_TS_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).strftime(_CANONICAL_TS)
+        except ValueError:
+            continue
+    return text
+
+
 def _canonicalize_value(key: str, value: object) -> str:
     """Canonicalize a value for checksum computation."""
     if value is None:
@@ -162,29 +206,7 @@ def _canonicalize_value(key: str, value: object) -> str:
             return str(value)
 
     if key in _TIMESTAMP_COLUMNS:
-        # Postgres returns timestamptz columns as aware datetimes; SQLite/legacy
-        # return ISO/space-separated text. Normalize both to one UTC string.
-        if isinstance(value, datetime):
-            return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        try:
-            # Try multiple formats
-            for fmt in (
-                "%Y-%m-%dT%H:%M:%S.%fZ",
-                "%Y-%m-%dT%H:%M:%SZ",
-                "%Y-%m-%dT%H:%M:%S.%f",
-                "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%d %H:%M:%S.%f+00",
-                "%Y-%m-%d %H:%M:%S+00",
-            ):
-                try:
-                    dt = datetime.strptime(str(value), fmt)
-                    return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                except ValueError:
-                    continue
-            # Fallback: return as-is
-            return str(value)
-        except Exception:
-            return str(value)
+        return _canonicalize_timestamp(value)
 
     if isinstance(value, bool):
         return str(int(value))

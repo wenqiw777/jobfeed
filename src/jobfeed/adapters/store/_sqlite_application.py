@@ -18,7 +18,11 @@ from jobfeed.domain.models_application import (
     ResumeSnapshot,
     ResumeVariantStats,
 )
-from jobfeed.domain.status import RESPONSE_STATUSES, is_terminal
+from jobfeed.domain.status import (
+    DEFAULT_FOLLOWUP_GRACE_DAYS,
+    RESPONSE_STATUSES,
+    is_terminal,
+)
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -66,7 +70,7 @@ async def _transition_in_tx(
     # Compute follow-up for applied transitions
     followup_val: str | None = None
     if new_status == "applied":
-        followup_dt = datetime.now(UTC) + timedelta(days=7)
+        followup_dt = datetime.now(UTC) + timedelta(days=DEFAULT_FOLLOWUP_GRACE_DAYS)
         followup_val = followup_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     # Update current status row

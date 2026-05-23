@@ -58,6 +58,9 @@ from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.domain.status import (
     ACTIVE_APPLICATION_STATUSES,
     DECAY_SOURCES,
+    DEFAULT_ARCHIVE_IGNORED_DAYS,
+    DEFAULT_FOLLOWUP_GRACE_DAYS,
+    DEFAULT_GHOST_DAYS,
     RESPONSE_STATUSES,
     is_terminal,
     validate_transition,
@@ -556,12 +559,21 @@ class PostgresStore:
     async def connect(self) -> None:
         """Open the asyncpg connection pool.
 
+        Pins the session timezone to UTC so CURRENT_DATE / ::date truncation use
+        UTC day boundaries, matching the SQLite adapter (which compares against
+        UTC date('now')). Without this, date-bucketing queries (digest_stats,
+        follow-up due, cost range) would diverge on a non-UTC Postgres server.
+
         Raises:
             Exception: If pool creation fails.
         """
         if self._pool is not None:
             return
-        self._pool = await asyncpg.create_pool(self._dsn, **self._pool_kwargs)
+        pool_kwargs = dict(self._pool_kwargs)
+        server_settings = {"timezone": "UTC", **pool_kwargs.pop("server_settings", {})}
+        self._pool = await asyncpg.create_pool(
+            self._dsn, server_settings=server_settings, **pool_kwargs
+        )
 
     async def close(self) -> None:
         """Close the asyncpg connection pool when open."""
@@ -1597,7 +1609,7 @@ class PostgresStore:
         resume_variant: str | None = None,
         force: bool = False,
         i_mean_it: bool = False,
-        followup_grace_days: int = 7,
+        followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
     ) -> str:
         """Write status transition inside an existing transaction.
 
@@ -1681,7 +1693,7 @@ class PostgresStore:
         resume_variant: str | None = None,
         force: bool = False,
         i_mean_it: bool = False,
-        followup_grace_days: int = 7,
+        followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
     ) -> str:
         """Transition a job's status with validation and history.
 
@@ -1785,8 +1797,8 @@ class PostgresStore:
     async def auto_decay(
         self,
         *,
-        ghost_days: int = 30,
-        archive_ignored_days: int = 14,
+        ghost_days: int = DEFAULT_GHOST_DAYS,
+        archive_ignored_days: int = DEFAULT_ARCHIVE_IGNORED_DAYS,
     ) -> AutoDecayResult:
         """Sweep stale jobs to ghosted/archived.
 
@@ -1945,7 +1957,7 @@ class PostgresStore:
     async def workflow_attention(
         self,
         *,
-        auto_ghost_days: int = 30,
+        auto_ghost_days: int = DEFAULT_GHOST_DAYS,
         lookahead_days: int = 5,
     ) -> WorkflowAttention:
         """Three-bucket workflow attention report.
@@ -2126,7 +2138,7 @@ class PostgresStore:
 
                 # Transition status to applied
                 now = datetime.now(UTC)
-                followup_val = now + timedelta(days=7)
+                followup_val = now + timedelta(days=DEFAULT_FOLLOWUP_GRACE_DAYS)
                 from_status: str | None = status_row["status"] if status_row else None
 
                 await conn.execute(

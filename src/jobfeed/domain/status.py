@@ -104,6 +104,13 @@ RESPONSE_STATUSES: frozenset[str] = frozenset(
     }
 )
 
+# Status-decay / follow-up policy defaults. Single source of truth shared by both
+# store backends (the concrete impl defaults are what callers get, so duplicating
+# the literals risks the backends silently disagreeing on the policy).
+DEFAULT_FOLLOWUP_GRACE_DAYS = 7
+DEFAULT_GHOST_DAYS = 30
+DEFAULT_ARCHIVE_IGNORED_DAYS = 14
+
 
 def is_terminal(status: str) -> bool:
     """Check whether a status has no allowed outgoing transitions.
@@ -160,8 +167,12 @@ def validate_transition(
 
 
 __all__ = [
+    "ACTIVE_APPLICATION_STATUSES",
     "ALLOWED_TRANSITIONS",
     "DECAY_SOURCES",
+    "DEFAULT_ARCHIVE_IGNORED_DAYS",
+    "DEFAULT_FOLLOWUP_GRACE_DAYS",
+    "DEFAULT_GHOST_DAYS",
     "RESPONSE_STATUSES",
     "STATUS_VALUES",
     "is_terminal",
