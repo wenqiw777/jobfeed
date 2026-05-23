@@ -21,6 +21,8 @@ from jobfeed.adapters.store.parity import verify_import_parity
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.domain.models import JobPosting
 
+pytestmark = pytest.mark.postgres
+
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 LEGACY_DB = FIXTURE_DIR / "legacy_v16.db"
 MANIFEST_JSON = FIXTURE_DIR / "legacy_v16_manifest.json"

@@ -20,6 +20,8 @@ from jobfeed.domain.models import QualityBand, StageAResult, StageBResult
 from jobfeed.domain.scoring import parse_stage_b_response
 from tests.support.factories import make_job
 
+pytestmark = pytest.mark.postgres
+
 HIGH_STAGE_A_SCORE = 80
 LOW_STAGE_A_SCORE = 40
 STAGE_B_SCORE = 72

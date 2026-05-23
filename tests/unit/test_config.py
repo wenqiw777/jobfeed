@@ -6,13 +6,22 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from jobfeed.config import load_settings
+from jobfeed.config import SourcesATSConfig, SourcesConfig, load_settings
 from jobfeed.observability import bind_run_id, configure_logging, get_logger
 
 DEFAULT_STAGE_A_THRESHOLD = 60
 ENV_MAX_CONCURRENT = 7
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# ATS config default values (mirrors SourcesATSConfig defaults)
+ATS_DEFAULT_MAX_CONCURRENT = 10
+ATS_DEFAULT_PROBE_TTL_DAYS = 7
+ATS_DEFAULT_FAILURE_THRESHOLD = 3
+ATS_DEFAULT_PROBE_TIMEOUT_S = 5.0
+ATS_DEFAULT_SCAN_TIMEOUT_S = 30.0
+ATS_ENV_MAX_CONCURRENT = 5
 
 
 def test_load_settings_returns_defaults_without_config_file() -> None:
@@ -148,3 +157,109 @@ def test_configure_logging_human_outputs_readable_event(
     assert "human-check" in output
     assert "component" in output
     assert "\x1b[" not in output
+
+
+# --- SourcesATSConfig / SourcesConfig tests ---
+
+
+def test_sources_ats_config_defaults() -> None:
+    """SourcesATSConfig should produce correct defaults when created bare."""
+    cfg = SourcesATSConfig()
+
+    assert cfg.enabled is True
+    assert cfg.max_concurrent == ATS_DEFAULT_MAX_CONCURRENT
+    assert cfg.probe_ttl_days == ATS_DEFAULT_PROBE_TTL_DAYS
+    assert cfg.failure_threshold == ATS_DEFAULT_FAILURE_THRESHOLD
+    assert cfg.probe_timeout_s == ATS_DEFAULT_PROBE_TIMEOUT_S
+    assert cfg.scan_timeout_s == ATS_DEFAULT_SCAN_TIMEOUT_S
+    assert cfg.seed_companies == []
+
+
+def test_sources_config_wraps_ats_config() -> None:
+    """SourcesConfig should nest SourcesATSConfig under the ``ats`` key."""
+    cfg = SourcesConfig()
+
+    assert isinstance(cfg.ats, SourcesATSConfig)
+
+
+def test_settings_has_sources_field() -> None:
+    """Root Settings should expose a ``sources`` field of type SourcesConfig."""
+    settings = load_settings()
+
+    assert isinstance(settings.sources, SourcesConfig)
+    assert isinstance(settings.sources.ats, SourcesATSConfig)
+
+
+def test_load_settings_parses_ats_section(tmp_path: Path) -> None:
+    """load_settings should populate sources.ats from a [sources.ats] TOML section.
+
+    Args:
+        tmp_path: Temporary directory for a synthetic config file.
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[sources.ats]\nseed_companies = ["anthropic", "openai"]\n'
+        f"max_concurrent = {ATS_ENV_MAX_CONCURRENT}\n",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.sources.ats.seed_companies == ["anthropic", "openai"]
+    assert settings.sources.ats.max_concurrent == ATS_ENV_MAX_CONCURRENT
+
+
+def test_load_settings_example_config_has_ats_seed_companies() -> None:
+    """The checked-in example config should include ATS seed companies."""
+    settings = load_settings(REPO_ROOT / "config.example.toml")
+
+    assert "anthropic" in settings.sources.ats.seed_companies
+    assert "openai" in settings.sources.ats.seed_companies
+    assert "palantir" in settings.sources.ats.seed_companies
+
+
+def test_load_settings_env_overrides_ats_max_concurrent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JOBFEED_SOURCES__ATS__MAX_CONCURRENT env var should override the config value.
+
+    Args:
+        monkeypatch: Pytest helper used to set scoped environment variables.
+    """
+    monkeypatch.setenv(
+        "JOBFEED_SOURCES__ATS__MAX_CONCURRENT", str(ATS_ENV_MAX_CONCURRENT)
+    )
+
+    settings = load_settings()
+
+    assert settings.sources.ats.max_concurrent == ATS_ENV_MAX_CONCURRENT
+
+
+def test_sources_ats_config_rejects_max_concurrent_zero() -> None:
+    """max_concurrent=0 should fail Pydantic validation (ge=1 constraint)."""
+    with pytest.raises(ValidationError):
+        SourcesATSConfig(max_concurrent=0)
+
+
+def test_sources_ats_config_rejects_failure_threshold_zero() -> None:
+    """failure_threshold=0 should fail Pydantic validation (ge=1 constraint)."""
+    with pytest.raises(ValidationError):
+        SourcesATSConfig(failure_threshold=0)
+
+
+def test_sources_ats_config_rejects_negative_probe_ttl_days() -> None:
+    """probe_ttl_days < 0 should fail Pydantic validation (ge=0 constraint)."""
+    with pytest.raises(ValidationError):
+        SourcesATSConfig(probe_ttl_days=-1)
+
+
+def test_sources_ats_config_rejects_nonpositive_probe_timeout() -> None:
+    """probe_timeout_s <= 0 should fail Pydantic validation (gt=0 constraint)."""
+    with pytest.raises(ValidationError):
+        SourcesATSConfig(probe_timeout_s=0.0)
+
+
+def test_sources_ats_config_rejects_nonpositive_scan_timeout() -> None:
+    """scan_timeout_s <= 0 should fail Pydantic validation (gt=0 constraint)."""
+    with pytest.raises(ValidationError):
+        SourcesATSConfig(scan_timeout_s=0.0)

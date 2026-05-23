@@ -1,0 +1,78 @@
+[
+  {
+    "id": "e5f6a7b8-c9d0-1234-efab-345678901234",
+    "text": "Software Engineer, Backend",
+    "hostedUrl": "https://jobs.lever.co/testcorp/e5f6a7b8-c9d0-1234-efab-345678901234",
+    "categories": {
+      "location": "San Francisco, CA",
+      "team": "Engineering",
+      "commitment": "Full-time"
+    },
+    "descriptionPlain": "Build the backend services that power our platform. You will design RESTful and GraphQL APIs, own microservices end-to-end, and contribute to architectural decisions. We use Python and Go in production, run on AWS, and ship continuously via CI/CD pipelines.",
+    "lists": [
+      {
+        "text": "Requirements",
+        "content": "<ul><li>3+ years of backend engineering experience</li><li>Proficiency in Python or Go</li><li>Experience with relational databases (PostgreSQL preferred)</li><li>Comfort with cloud platforms (AWS, GCP, or Azure)</li><li>Strong communication and collaboration skills</li></ul>"
+      },
+      {
+        "text": "Nice to Have",
+        "content": "<ul><li>Experience with distributed systems and message queues (Kafka, SQS)</li><li>Familiarity with Kubernetes and container orchestration</li><li>Open source contributions</li></ul>"
+      }
+    ],
+    "createdAt": 1716400800000
+  },
+  {
+    "id": "f6a7b8c9-d0e1-2345-fabc-456789012345",
+    "text": "Data Scientist",
+    "hostedUrl": "https://jobs.lever.co/testcorp/f6a7b8c9-d0e1-2345-fabc-456789012345",
+    "categories": {
+      "location": null,
+      "team": "Data Science",
+      "commitment": "Full-time"
+    },
+    "descriptionPlain": "Use statistical modeling and machine learning to generate insights that drive product and business decisions. You will partner with engineering and product teams, run experiments, build predictive models, and communicate findings to stakeholders at all levels.",
+    "lists": [
+      {
+        "text": "Requirements",
+        "content": "<ul><li>MS or PhD in Statistics, Computer Science, or related field</li><li>Strong Python skills (NumPy, pandas, scikit-learn)</li><li>Experience with A/B testing and causal inference</li><li>Proficiency in SQL and working with large datasets</li></ul>"
+      }
+    ],
+    "createdAt": 1716487200000
+  },
+  {
+    "id": "a7b8c9d0-e1f2-3456-abcd-567890123456",
+    "text": "Engineering Manager",
+    "hostedUrl": "https://jobs.lever.co/testcorp/a7b8c9d0-e1f2-3456-abcd-567890123456",
+    "categories": {
+      "location": "New York, NY",
+      "team": "Engineering",
+      "commitment": "Full-time"
+    },
+    "descriptionPlain": "Lead a team of 6-8 engineers building our core infrastructure products. You will hire, mentor, and grow engineers, drive technical strategy, and partner with product to define the roadmap. We value engineering managers who stay close to the code, lead by example, and create an inclusive team environment.",
+    "lists": [
+      {
+        "text": "What We Look For",
+        "content": "<ul><li>5+ years of software engineering experience, 2+ years in management</li><li>Experience managing distributed teams across time zones</li><li>Track record of growing engineers' careers</li><li>Strong technical judgment and system design instincts</li></ul>"
+      }
+    ],
+    "createdAt": 1716573600000
+  },
+  {
+    "id": "b8c9d0e1-f2a3-4567-bcde-678901234567",
+    "text": "Technical Recruiter",
+    "hostedUrl": "https://jobs.lever.co/testcorp/b8c9d0e1-f2a3-4567-bcde-678901234567",
+    "categories": {
+      "location": "Remote",
+      "team": "People",
+      "commitment": "Full-time"
+    },
+    "descriptionPlain": "Partner with engineering leaders to identify, attract, and hire top technical talent. You will manage the full recruiting lifecycle, build sourcing pipelines, and create an exceptional candidate experience that reflects our engineering culture.",
+    "lists": [
+      {
+        "text": "Responsibilities",
+        "content": "<ul><li>Full-cycle technical recruiting for software engineering and data roles</li><li>Develop proactive sourcing strategies for hard-to-fill roles</li><li>Partner with hiring managers to define requirements and interview processes</li><li>Track recruiting metrics and continuously improve processes</li></ul>"
+      }
+    ],
+    "createdAt": 1716660000000
+  }
+]

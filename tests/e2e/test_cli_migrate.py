@@ -55,6 +55,7 @@ def test_inspect_sqlite_shows_table_counts() -> None:
     assert "15" in result.output
 
 
+@pytest.mark.postgres
 def test_import_sqlite_with_verify_exits_zero(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:
@@ -87,6 +88,7 @@ def test_import_sqlite_with_verify_exits_zero(
     assert "All parity checks passed" in result.output
 
 
+@pytest.mark.postgres
 def test_import_sqlite_verifies_by_default_with_derived_manifest(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:
@@ -118,6 +120,7 @@ def test_import_sqlite_verifies_by_default_with_derived_manifest(
     assert "All parity checks passed" in result.output
 
 
+@pytest.mark.postgres
 def test_import_sqlite_no_verify_skips_parity(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:

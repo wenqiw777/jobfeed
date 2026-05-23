@@ -1,0 +1,41 @@
+{
+  "jobs": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "title": "Senior Software Engineer",
+      "jobUrl": "https://jobs.ashbyhq.com/testcorp/a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "location": "San Francisco, CA",
+      "descriptionPlain": "We are seeking a Senior Software Engineer to help us build and scale our core platform. You will work on challenging distributed systems problems, design robust APIs, and collaborate with product and design teams to ship impactful features. Our engineering culture values pragmatism, ownership, and continuous learning. Qualifications: 5+ years of software engineering experience, proficiency in at least one of Python, Go, or Java, experience with cloud infrastructure (AWS or GCP), and strong communication skills. We offer full remote flexibility, generous PTO, and a competitive equity package.",
+      "descriptionHtml": "<p>We are seeking a Senior Software Engineer...</p>",
+      "publishedAt": "2026-05-01T08:00:00Z"
+    },
+    {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "title": "Machine Learning Engineer",
+      "jobUrl": "https://jobs.ashbyhq.com/testcorp/b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "location": null,
+      "descriptionPlain": null,
+      "descriptionHtml": "<p>Join our ML team to build and deploy production machine learning models that power our recommendation and ranking systems. You will work closely with data scientists and platform engineers to move models from research to production reliably and at scale. Ideal candidates have experience with PyTorch or TensorFlow, MLflow or similar experiment tracking, and production deployment using Kubernetes or similar orchestration. We value engineers who can bridge research and engineering, shipping models that are both accurate and efficient. Our team operates with high autonomy and ships iteratively.</p>",
+      "publishedAt": "2026-05-03T10:30:00Z"
+    },
+    {
+      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "title": "Product Designer",
+      "jobUrl": "https://jobs.ashbyhq.com/testcorp/c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "location": "New York, NY",
+      "descriptionPlain": "Shape the visual language and interaction design of our consumer-facing products. You will partner with PMs and engineers from early concept through final implementation, conducting user research, creating wireframes and prototypes, and iterating based on feedback. We are looking for a designer with 4+ years of product design experience, a strong portfolio demonstrating end-to-end design ownership, and proficiency with Figma. Experience with design systems and working in an agile team is highly valued. You will also contribute to our growing design system and mentor junior designers.",
+      "descriptionHtml": "<p>Shape the visual language...</p>",
+      "publishedAt": "2026-05-05T12:00:00Z"
+    },
+    {
+      "id": "d4e5f6a7-b8c9-0123-defa-234567890123",
+      "title": "Site Reliability Engineer",
+      "jobUrl": "https://jobs.ashbyhq.com/testcorp/d4e5f6a7-b8c9-0123-defa-234567890123",
+      "location": "Remote - US",
+      "descriptionPlain": "Own the reliability and scalability of our production infrastructure. You will build and maintain observability systems, manage Kubernetes clusters, automate operational toil, and respond to incidents. Strong background in Linux, networking, and cloud infrastructure (AWS preferred) is required. Experience with Terraform, Prometheus, and Grafana is a strong plus. We run a lean SRE team with a strong on-call rotation and a blameless postmortem culture. You will have significant ownership and the ability to drive major infrastructure initiatives from design to delivery.",
+      "descriptionHtml": "<p>Own the reliability...</p>",
+      "publishedAt": "2026-05-07T14:00:00Z"
+    }
+  ],
+  "apiVersion": "v1"
+}
