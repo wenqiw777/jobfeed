@@ -1,5 +1,4 @@
 #!/bin/sh
 set -eu
 
-mkdir -p .jobfeed-dev
 exec docker compose run --rm jobfeed-cli jobfeed "$@"
