@@ -2714,7 +2714,7 @@ class PostgresStore:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """SELECT * FROM cost_ledger
-                   WHERE day >= (CURRENT_DATE - $1 * interval '1 day')::text
+                   WHERE day::date >= CURRENT_DATE - $1::int
                    ORDER BY day DESC""",
                 since_days,
             )

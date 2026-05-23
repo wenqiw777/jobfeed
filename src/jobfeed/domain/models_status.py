@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from jobfeed.domain.models import JobStatus
+if TYPE_CHECKING:
+    # Imported only for annotations (postponed via __future__): a runtime import
+    # would create a cycle, since jobfeed.domain.models re-exports this module.
+    from jobfeed.domain.models import JobStatus
 
 
 @dataclass(kw_only=True)

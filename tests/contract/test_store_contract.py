@@ -938,6 +938,18 @@ class TestStateCostPipeline:
         assert abs(entry.spent_usd - expected) < FLOAT_TOLERANCE
         assert entry.calls == COST_CALLS_AFTER_TWO
 
+    async def test_get_cost_range_includes_boundary_day(self, contract_store):
+        """get_cost_range(since_days=0) includes today's row (lower bound inclusive).
+
+        Uses the UTC date to match the stores' date('now')/CURRENT_DATE clock.
+        """
+        today = datetime.now(UTC).date().isoformat()
+        await contract_store.record_cost(day=today, spent_usd=COST_AMOUNT_FIRST)
+
+        entries = await contract_store.get_cost_range(since_days=0)
+
+        assert today in {entry.day for entry in entries}
+
     async def test_get_cost_missing_day(self, contract_store):
         """get_cost for a day with no entries should return None."""
         result = await contract_store.get_cost("1999-01-01")

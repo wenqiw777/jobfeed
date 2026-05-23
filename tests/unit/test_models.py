@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 from dataclasses import fields, is_dataclass
 from pathlib import Path
 
@@ -281,6 +283,17 @@ def test_ml_gate_result_rejects_unknown_result() -> None:
     """A result other than pass/fail is rejected at construction."""
     with pytest.raises(ValueError, match="pass"):
         MLGateResult(score=0.5, result="maybe")
+
+
+def test_models_status_is_independently_importable() -> None:
+    """domain.models_status must import standalone (no models re-export cycle)."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import jobfeed.domain.models_status"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_models_module_imports_only_allowed_stdlib_dependencies() -> None:
