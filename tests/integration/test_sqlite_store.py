@@ -491,6 +491,29 @@ async def test_transition_followup_lifecycle(store: SQLiteStore) -> None:
     assert closed.next_followup_at is None
 
 
+async def test_workflow_attention_warns_interview_substage(store: SQLiteStore) -> None:
+    """going_ghosted warns on decay-eligible substages (oa), not just applied.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    saved = await store.save_job(make_store_job("ghost-oa"))
+    await store.transition_status(job_id=saved.job_id, new_status="applied", force=True)
+    await store.transition_status(job_id=saved.job_id, new_status="oa")
+    # Backdate into the going-ghosted warn window (warn_days = 30 - 5 = 25).
+    conn = store._connection()
+    await conn.execute(
+        "UPDATE job_status SET last_status_change_at = ? WHERE job_id = ?",
+        ((datetime.now(UTC) - timedelta(days=29)).isoformat(), int(saved.job_id)),
+    )
+    await conn.commit()
+
+    attention = await store.workflow_attention(auto_ghost_days=30, lookahead_days=5)
+
+    ghost_ids = {item.job_id for item in attention.going_ghosted}
+    assert saved.job_id in ghost_ids
+
+
 async def test_stage_b_persists_raw_blocks_and_separate_metadata(
     store: SQLiteStore,
 ) -> None:

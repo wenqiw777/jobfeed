@@ -523,18 +523,21 @@ async def workflow_attention(
         )
         interview = [_attention_item(r, "interview prep") for r in await cur.fetchall()]
 
-        # Bucket 3: going_ghosted
+        # Bucket 3: going_ghosted — every decay-eligible status, not just
+        # applied/interviewing, so substages (oa/hr_call/...) warn before ghosting.
         warn_days = auto_ghost_days - lookahead_days
+        decay = sorted(DECAY_SOURCES)
+        decay_ph = ",".join("?" for _ in decay)
         cur = await db.execute(
             f"""SELECT {_ATTENTION_COLS},
                    CAST(julianday('now') - julianday(s.last_status_change_at)
                         AS INTEGER) AS days_since
                FROM job_status s JOIN jobs j ON j.id = s.job_id
-               WHERE s.status IN ('applied','interviewing')
+               WHERE s.status IN ({decay_ph})
                  AND julianday(s.last_status_change_at)
                      < julianday(datetime('now', ? || ' days'))
                ORDER BY s.last_status_change_at ASC""",
-            (f"-{warn_days}",),
+            (*decay, f"-{warn_days}"),
         )
         ghosting = [_attention_item(r, "going silent") for r in await cur.fetchall()]
 

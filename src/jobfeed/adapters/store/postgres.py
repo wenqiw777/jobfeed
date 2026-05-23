@@ -1972,16 +1972,18 @@ class PostgresStore:
                 _attention_item_from_record(r, "interview prep") for r in interview_rows
             ]
 
-            # Bucket 3: going_ghosted
+            # Bucket 3: going_ghosted — every decay-eligible status, not just
+            # applied/interviewing, so substages warn before they are ghosted.
             warn_days = auto_ghost_days - lookahead_days
             ghosting_rows = await conn.fetch(
                 f"""SELECT {_cols},
                        EXTRACT(DAY FROM now() - s.last_status_change_at)::integer AS days_since
                    FROM job_status s JOIN jobs j ON j.id = s.job_id
-                   WHERE s.status IN ('applied','interviewing')
+                   WHERE s.status = ANY($2)
                      AND s.last_status_change_at < now() - ($1 || ' days')::interval
                    ORDER BY s.last_status_change_at ASC""",
                 str(warn_days),
+                sorted(DECAY_SOURCES),
             )
             ghosting = [
                 _attention_item_from_record(r, "going silent") for r in ghosting_rows
@@ -2069,17 +2071,9 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             async with conn.transaction():
-                # Check terminal status guard
-                status_row = await conn.fetchrow(
-                    "SELECT status FROM job_status WHERE job_id = $1",
-                    job_id_int,
-                )
-                if status_row is not None and is_terminal(status_row["status"]):
-                    raise ValueError(
-                        f"cannot apply from terminal status '{status_row['status']}'"
-                    )
-
-                # Insert application (ON CONFLICT DO NOTHING for idempotence)
+                # Insert application first (ON CONFLICT DO NOTHING for idempotence).
+                # A duplicate is a no-op regardless of current status, so the
+                # terminal guard must come after this (matches the SQLite path).
                 result = await conn.execute(
                     """INSERT INTO applied
                            (job_id, applied_at, notes,
@@ -2103,6 +2097,16 @@ class PostgresStore:
                 # asyncpg returns status string like "INSERT 0 1" or "INSERT 0 0"
                 if result == "INSERT 0 0":
                     return False
+
+                # New application: guard against applying from a terminal status.
+                status_row = await conn.fetchrow(
+                    "SELECT status FROM job_status WHERE job_id = $1",
+                    job_id_int,
+                )
+                if status_row is not None and is_terminal(status_row["status"]):
+                    raise ValueError(
+                        f"cannot apply from terminal status '{status_row['status']}'"
+                    )
 
                 # Transition status to applied
                 now = datetime.now(UTC)

@@ -622,6 +622,25 @@ class TestApplicationAudit:
         assert stats.by_resume is not None
         assert sum(v.sent for v in stats.by_resume.values()) >= TWO_APPLIED_JOBS
 
+    async def test_duplicate_application_after_terminal_is_noop(self, contract_store):
+        """A duplicate record_application after a terminal status stays a no-op.
+
+        Reproduces a Postgres divergence: the terminal-status guard must not turn
+        a duplicate (already-applied) call into an error.
+        """
+        job_id, _ = await _insert_job(contract_store, "app-term")
+        first = await contract_store.record_application(
+            ApplicationRecord(job_id=job_id, applied_at=FIXED_TIME)
+        )
+        assert first is True
+
+        await contract_store.transition_status(job_id=job_id, new_status="rejected")
+
+        again = await contract_store.record_application(
+            ApplicationRecord(job_id=job_id, applied_at=FIXED_TIME + timedelta(hours=1))
+        )
+        assert again is False
+
 
 # ===========================================================================
 # Group 5: Resume Snapshots
