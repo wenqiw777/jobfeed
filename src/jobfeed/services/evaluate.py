@@ -79,11 +79,42 @@ class EvaluateService:
         else:
             await self._score_stage_jobs("stage_a", stage_a_jobs, run)
             stage_b_jobs = await self.store.load_pending_stage_b()
+            stage_b_jobs = await self._skip_below_threshold(stage_b_jobs)
             await self._score_stage_jobs("stage_b", stage_b_jobs, run)
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
         run.finished_at = datetime.now(UTC)
         await self.store.record_pipeline_run(run)
         return run
+
+    async def _skip_below_threshold(self, jobs: list[JobPosting]) -> list[JobPosting]:
+        """Skip pending Stage B rows whose Stage A score is below threshold.
+
+        The save_stage_a path skips below-threshold jobs scored in this run, but
+        rows that became Stage A-completed without it (legacy import, or scored
+        before the gate existed) still surface in the Stage B queue. Mark those
+        skipped here so they never reach Stage B (plan Decision 1).
+
+        Args:
+            jobs: Stage B pending jobs.
+
+        Returns:
+            Jobs whose Stage A score meets the threshold.
+        """
+        threshold = self.settings.scoring.stage_a_threshold
+        eligible: list[JobPosting] = []
+        for job in jobs:
+            job_id = _require_job_id(job)
+            evaluation = await self.store.get_evaluation(job_id)
+            score = (
+                evaluation.stage_a.score
+                if evaluation is not None and evaluation.stage_a is not None
+                else None
+            )
+            if score is not None and score < threshold:
+                await self.store.mark_stage_b_skipped(job_id)
+            else:
+                eligible.append(job)
+        return eligible
 
     async def _score_stage_jobs(
         self,

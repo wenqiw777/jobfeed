@@ -357,6 +357,47 @@ async def test_evaluate_service_sends_stage_b_at_or_above_threshold(
     assert run.stage_b_scored == 0
 
 
+async def test_evaluate_service_skips_preexisting_below_threshold_stage_b(
+    store: SQLiteStore,
+) -> None:
+    """Pre-existing below-threshold Stage A rows are gated out of Stage B.
+
+    Simulates a row scored below threshold without the in-run skip path (legacy
+    import / pre-gate scoring): it sits in the Stage B queue until the service
+    marks it skipped.
+
+    Args:
+        store: Connected temp SQLite store.
+    """
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    low = StageAResult(
+        score=40,
+        one_line="weak",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    await store.save_stage_a(job.id, low)
+    assert len(await store.load_pending_stage_b()) == 1
+
+    service = EvaluateService(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+        RecordingLogger(),
+    )
+    run = await service.run()
+
+    assert run.stage_b_scored == 0
+    assert await store.load_pending_stage_b() == []
+
+
 async def test_evaluate_service_persists_parse_failures_and_continues(
     store: SQLiteStore,
 ) -> None:
