@@ -1,0 +1,38 @@
+{
+  "jobs": [
+    {
+      "id": 10001,
+      "title": "Senior Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/testcorp/jobs/10001",
+      "location": {"name": "San Francisco, CA"},
+      "content": "<p>We are looking for a Senior Backend Engineer to join our distributed systems team. You will design and build highly scalable APIs, own critical infrastructure components, and mentor junior engineers. Our stack includes Python, Go, and Kubernetes. The ideal candidate has 5+ years of production backend experience, strong understanding of distributed systems concepts, and a track record of shipping reliable services at scale. You will collaborate closely with product and data teams to deliver features that serve millions of users daily. Responsibilities include system design, code review, incident response, and contributing to our engineering culture. We offer competitive compensation, comprehensive benefits, and remote-friendly work options.</p>",
+      "updated_at": "2026-05-10T14:30:00Z",
+      "company_name": "Testcorp Inc"
+    },
+    {
+      "id": 10002,
+      "title": "Product Manager, Growth",
+      "absolute_url": "https://boards.greenhouse.io/testcorp/jobs/10002",
+      "location": {"name": null},
+      "content": "<p>Drive growth initiatives across our consumer product suite. You will own the end-to-end product lifecycle from discovery through launch, working with engineering, design, and data science to define and ship features that move key metrics. The ideal candidate has 3+ years of PM experience in a consumer or B2C environment, strong analytical skills, and comfort working in ambiguous fast-moving environments. You will run experiments, analyze results, and iterate quickly based on user feedback.</p>",
+      "updated_at": "2026-05-08T09:00:00Z"
+    },
+    {
+      "id": 10003,
+      "title": "Staff Data Engineer",
+      "absolute_url": "https://boards.greenhouse.io/testcorp/jobs/10003",
+      "location": {"name": "New York, NY"},
+      "content": "<p>Build the data infrastructure that powers Testcorp&apos;s analytics &amp; ML platforms. You will architect data pipelines using Spark &amp; dbt, ensure data quality with rigorous testing, and collaborate with ML engineers to ship models to production. Experience with large-scale data processing (&gt;10TB/day), strong SQL skills, and familiarity with cloud data warehouses (Snowflake, BigQuery) are required. We value engineers who can balance technical depth with pragmatic delivery. Our team ships fast, learns from data, and iterates continuously. Join us to build the foundation that every team at Testcorp depends on.</p>",
+      "updated_at": "2026-05-12T11:15:00Z",
+      "company_name": "Testcorp Data"
+    },
+    {
+      "id": 10004,
+      "title": "Frontend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/testcorp/jobs/10004",
+      "location": {"name": "Remote"},
+      "content": "<p>Join our frontend team to build beautiful, performant user interfaces used by millions. You are comfortable with React and TypeScript, care about accessibility and user experience, and enjoy collaborating with designers to bring pixel-perfect designs to life. We work in a fast-paced agile environment with short release cycles and strong automated test coverage. Experience with performance optimization, bundlers (Webpack, Vite), and modern CSS patterns is a plus. We are a distributed team across multiple time zones and value clear async communication. You will also participate in design reviews and contribute to our shared component library.</p>",
+      "updated_at": "2026-05-14T16:45:00Z"
+    }
+  ]
+}

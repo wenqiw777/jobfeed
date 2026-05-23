@@ -23,6 +23,8 @@ from jobfeed.domain.models import (
 from jobfeed.domain.scoring import parse_stage_b_response
 from tests.support.factories import FIXED_TIME, make_job
 
+pytestmark = pytest.mark.postgres
+
 # ---------------------------------------------------------------------------
 # Constants (no magic numbers)
 # ---------------------------------------------------------------------------

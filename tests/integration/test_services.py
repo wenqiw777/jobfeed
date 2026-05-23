@@ -17,6 +17,8 @@ from jobfeed.services.digest import DigestService
 from jobfeed.services.evaluate import EvaluateService
 from jobfeed.services.scan import ScanService
 
+pytestmark = pytest.mark.postgres
+
 MOCK_COUNT = 3
 SINGLE_SOURCE_COUNT = 2
 EXPECTED_ERROR_COUNT = 1

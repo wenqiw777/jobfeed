@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner, Result
 
 from jobfeed.adapters.store.postgres import PostgresStore
@@ -16,6 +17,7 @@ FIXTURE_LEGACY_DB = (
 )
 
 
+@pytest.mark.postgres
 def test_cli_full_chain_uses_configured_database(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:
@@ -40,6 +42,7 @@ def test_cli_full_chain_uses_configured_database(
     assert "Backend Platform Intern" in digest.output
 
 
+@pytest.mark.postgres
 def test_cli_dry_run_does_not_persist_evaluations(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:
@@ -60,6 +63,7 @@ def test_cli_dry_run_does_not_persist_evaluations(
     assert "Backend Platform Intern" not in digest.output
 
 
+@pytest.mark.postgres
 def test_cli_digest_accepts_timezone_aware_cutoff(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:
@@ -81,6 +85,7 @@ def test_cli_digest_accepts_timezone_aware_cutoff(
     assert "Backend Platform Intern" in digest.output
 
 
+@pytest.mark.postgres
 def test_cli_verbose_enables_debug_output(tmp_path: Path, fresh_pg_dsn: str) -> None:
     """--verbose should add debug log output without changing command behavior.
 
