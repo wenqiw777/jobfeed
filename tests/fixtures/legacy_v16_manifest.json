@@ -1,0 +1,35 @@
+{
+  "schema_version": 16,
+  "tables": {
+    "resume_variants": {
+      "row_count": 3
+    },
+    "resume_snapshots": {
+      "row_count": 3
+    },
+    "jobs": {
+      "row_count": 20
+    },
+    "evaluations": {
+      "row_count": 15
+    },
+    "job_status": {
+      "row_count": 10
+    },
+    "job_status_history": {
+      "row_count": 15
+    },
+    "applied": {
+      "row_count": 5
+    },
+    "companies": {
+      "row_count": 3
+    },
+    "cost_ledger": {
+      "row_count": 3
+    },
+    "state": {
+      "row_count": 5
+    }
+  }
+}
