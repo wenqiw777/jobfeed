@@ -36,6 +36,7 @@ STAGE_B_FIT_SCORE = 72
 COST_AMOUNT_FIRST = 0.05
 COST_AMOUNT_SECOND = 0.03
 COST_CALLS_AFTER_TWO = 2
+TWO_APPLIED_JOBS = 2
 DECAY_GHOST_DAYS = 30
 DECAY_ARCHIVE_DAYS = 14
 FOLLOWUP_GRACE_DAYS = 7
@@ -595,6 +596,31 @@ class TestApplicationAudit:
 
         stats = await contract_store.application_stats(since_days_ago=365)
         assert stats.applied_count >= 1
+
+    async def test_application_stats_by_resume(self, contract_store):
+        """application_stats(by_resume=True) returns per-variant counts.
+
+        Two applied jobs (one advanced to a response) exercise the by-resume
+        breakdown path, which previously failed on Postgres because the query
+        bound response-status params it did not reference.
+        """
+        job_a, _ = await _insert_job(contract_store, "stats-resume-a")
+        job_b, _ = await _insert_job(contract_store, "stats-resume-b")
+        await contract_store.record_application(
+            ApplicationRecord(job_id=job_a, applied_at=FIXED_TIME)
+        )
+        await contract_store.record_application(
+            ApplicationRecord(job_id=job_b, applied_at=FIXED_TIME)
+        )
+        await contract_store.transition_status(job_id=job_a, new_status="oa")
+
+        stats = await contract_store.application_stats(
+            since_days_ago=365, by_resume=True
+        )
+
+        assert stats.applied_count >= TWO_APPLIED_JOBS
+        assert stats.by_resume is not None
+        assert sum(v.sent for v in stats.by_resume.values()) >= TWO_APPLIED_JOBS
 
 
 # ===========================================================================

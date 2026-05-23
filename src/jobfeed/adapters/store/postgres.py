@@ -2278,9 +2278,8 @@ class PostgresStore:
                         FROM job_status_history
                         WHERE job_id IN ({id_ph})
                           AND to_status = 'applied'
-                          AND changed_at >= ${resp_offset + len(resp_sorted) + 1}""",
+                          AND changed_at >= ${len(id_list) + 1}""",
                     *id_list,
-                    *resp_sorted,
                     cutoff,
                 )
                 variant_rows = [
