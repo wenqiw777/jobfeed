@@ -1,4 +1,4 @@
-.PHONY: test lint fmt quality docker-build docker-quality
+.PHONY: test lint fmt quality docker-build docker-quality update-prices
 
 test:
 	pytest
@@ -17,3 +17,7 @@ docker-build:
 
 docker-quality: docker-build
 	docker compose run --rm jobfeed-cli make quality
+
+update-prices:
+	curl -sL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
+	  -o src/jobfeed/adapters/llm/model_prices.json
