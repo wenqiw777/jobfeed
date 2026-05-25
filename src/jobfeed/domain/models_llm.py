@@ -53,6 +53,7 @@ class LLMResponse:
     output_tokens: int
     cost_usd: float | None = None
     cached: bool = False
+    latency_ms: int = 0
 
 
 __all__ = ["LLMRequest", "LLMResponse", "LLMUsage", "Message"]
