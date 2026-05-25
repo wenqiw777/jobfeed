@@ -417,7 +417,7 @@ async def fetch_jobs(
     """GET jobs endpoint (response is top-level array, no envelope), parse each."""
 ```
 
-Parse logic: response is `list[dict]` (no `{"jobs": [...]}` wrapper). `job["id"]`, `job["text"]` (not `title`), `job["hostedUrl"]`, `job["categories"]["location"]`, `job["descriptionPlain"]` + `job["lists"]` content → `html_to_text()` for HTML segments, `datetime.fromtimestamp(job["createdAt"] / 1000, tz=UTC)`. Platform = `"lever"`. Company = slug. Handle missing/null/malformed `categories.location` gracefully (default to `""`). Invalid/missing `createdAt` becomes `posted_at=None`.
+Parse logic: response is `list[dict]` (no `{"jobs": [...]}` wrapper). `job["id"]`, `job["text"]` (not `title`), `job["hostedUrl"]`, `job["categories"]["location"]`, `job["descriptionPlain"]` + each `job["lists"][*].text` heading + each `job["lists"][*].content` → `html_to_text()` for HTML segments while preserving headings such as `Requirements:`, `datetime.fromtimestamp(job["createdAt"] / 1000, tz=UTC)`. Platform = `"lever"`. Company = slug. Handle missing/null/malformed `categories.location` gracefully (default to `""`). Invalid/missing `createdAt` becomes `posted_at=None`.
 
 **Shared per-job error isolation:** Each vendor's `fetch_jobs` wraps individual job parsing in try/except. A single malformed job object logs a warning and is skipped; the remaining jobs are still returned. This matches legacy behavior. **Required field validation:** before `str()` conversion, check that `job["id"]` is not None/missing — `str(None)` silently produces `"None"` as a canonical_id. After conversion, strip string fields and skip the job if `canonical_id`, `title`, `url`, or `jd_text` is blank. Jobs with missing IDs must be skipped, not silently accepted.
 
@@ -436,6 +436,7 @@ definitive slug misses.
 - [ ] Ashby `fetch_jobs` prefers `descriptionPlain`, falls back to HTML → text
 - [ ] Ashby `probe` uses GET (not HEAD), returns True on 2xx without requiring job parsing
 - [ ] Lever `fetch_jobs` handles top-level array (no envelope), parses epoch ms timestamps
+- [ ] Lever `jd_text` preserves `lists[].text` headings as well as HTML-stripped `lists[].content`
 - [ ] Lever `probe` validates response JSON is parseable; invalid 2xx JSON raises `ProbeIndeterminateError`, not False
 - [ ] All three probe functions raise `ProbeNetworkError` for network/timeout/DNS, raise `ProbeIndeterminateError` for 403/429/5xx/other ambiguous responses, and return False only for definitive 404/410 misses
 - [ ] All three: malformed single job is skipped, rest returned (per-job error isolation)
@@ -782,6 +783,7 @@ Also test edge cases embedded in fixtures:
 - Job with `null` location → `location = ""`
 - Greenhouse JD with HTML entities (`&amp;`, `&lt;`) → correctly unescaped in `jd_text`
 - Lever timestamp as epoch ms → correct `posted_at` datetime
+- Lever `lists[].text` headings → preserved in `jd_text` alongside HTML-stripped `lists[].content`
 - Ashby job with `descriptionPlain = null` → falls back to `descriptionHtml` → text
 
 **Acceptance criteria:**
@@ -789,7 +791,7 @@ Also test edge cases embedded in fixtures:
 - [ ] Fixtures are anonymized (no real company data)
 - [ ] Contract test for each vendor: frozen fixture → parse → exact field match
 - [ ] Contract tests use a fixed `discovered_at` and assert `discovered_at`, `enriched_at`, `enrich_source`, and `jd_quality`
-- [ ] Edge cases covered: null location, HTML entities, epoch timestamps, description fallback
+- [ ] Edge cases covered: null location, HTML entities, epoch timestamps, Lever list headings, description fallback
 - [ ] Tests fail if field mapping is changed (regression guard)
 - [ ] Tests use respx (no real HTTP)
 - [ ] All committed
