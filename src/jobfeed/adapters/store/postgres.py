@@ -167,46 +167,99 @@ def _stage_b_from_record(r: asyncpg.Record) -> StageBResult | None:
     if r.get("stage_b_status") != "completed":
         return None
 
-    block_a = _as_json_obj(r["stage_b_verdict_json"])
-    block_b = _as_json_obj(r["stage_b_summary_json"])
-    block_c = _as_json_obj(r["stage_b_fit_json"])
-    block_e = _as_json_obj(r["stage_b_hooks_json"])
+    verdict_json = _as_json_obj(r["stage_b_verdict_json"])
+    jd_summary_json = _as_json_obj(r["stage_b_summary_json"])
+    fit_json = _as_json_obj(r["stage_b_fit_json"])
+    hooks_json = _as_json_obj(r["stage_b_hooks_json"])
 
     raw_blocks: dict[str, object] = {
-        "block_a": block_a,
-        "block_b": block_b,
-        "block_c": block_c,
-        "block_e": block_e,
+        "verdict": verdict_json,
+        "jd_summary": jd_summary_json,
+        "fit_analysis": fit_json,
+        "resume_hooks": hooks_json,
     }
 
     strengths = [
-        MatchItem(requirement=m["requirement"], evidence=m["evidence"])
-        for m in block_c["strong_match"]
+        MatchItem(
+            requirement=m["requirement"],
+            evidence=m.get("evidence_from_resume", m.get("evidence", "")),
+        )
+        for m in fit_json["strong_match"]
     ]
     gaps = [
         GapItem(
             requirement=g["requirement"],
-            severity=_validated_severity(g["severity"]),
-            mitigation=g["mitigation"],
+            severity=_map_legacy_severity(g["severity"]),
+            mitigation=g.get("mitigation") or "",
         )
-        for g in block_c["gaps"]
+        for g in fit_json["gaps"]
     ]
+
+    resume_hooks = _read_legacy_hooks(hooks_json)
 
     return StageBResult(
         verdict=Verdict(r["stage_b_verdict"]),
         jd_summary=r["stage_b_jd_summary"],
         fit_analysis=FitAnalysis(
-            score=block_c["score_0_100"],
+            score=fit_json["score_0_100"],
             strengths=strengths,
             gaps=gaps,
         ),
-        resume_hooks=list(block_e["hooks"]),
+        resume_hooks=resume_hooks,
         model=r["stage_b_model"],
         prompt_hash=r["stage_b_prompt_hash"],
         resume_hash=r["stage_b_resume_hash"],
         cost_usd=r["stage_b_cost_usd"],
         raw_blocks=raw_blocks,
     )
+
+
+_LEGACY_SEVERITY_MAP: dict[str, str] = {
+    "blocker": "critical",
+    "notable": "major",
+    "minor": "minor",
+}
+
+
+def _map_legacy_severity(value: str) -> Severity:
+    """Map legacy severity vocabulary to domain vocabulary.
+
+    Args:
+        value: Raw severity string (legacy or domain vocabulary).
+
+    Returns:
+        Typed Severity value.
+
+    Raises:
+        ValueError: If the severity value is not recognized.
+    """
+    mapped = _LEGACY_SEVERITY_MAP.get(value, value)
+    if mapped not in VALID_SEVERITIES:
+        raise ValueError(f"invalid gap severity: {value}")
+    return cast(Severity, mapped)
+
+
+def _read_legacy_hooks(hooks_json: dict[str, object]) -> list[str]:
+    """Read resume hooks from legacy or Phase 0 JSON structure.
+
+    Args:
+        hooks_json: Parsed hooks JSON object.
+
+    Returns:
+        Flat list of hook strings.
+    """
+    if "lead_with" in hooks_json:
+        lead = hooks_json["lead_with"]
+        supporting = hooks_json.get("supporting", [])
+        result = [str(lead)] if lead else []
+        if isinstance(supporting, list):
+            result.extend(str(s) for s in supporting)
+        return result
+    if "hooks" in hooks_json:
+        raw_hooks = hooks_json["hooks"]
+        if isinstance(raw_hooks, list):
+            return [str(h) for h in raw_hooks]
+    return []
 
 
 def _validated_severity(value: str) -> Severity:
@@ -1289,10 +1342,10 @@ class PostgresStore:
                 int(job_id),
                 result.verdict.value,
                 result.jd_summary,
-                _block_json(result.raw_blocks, "block_a"),
-                _block_json(result.raw_blocks, "block_b"),
-                _block_json(result.raw_blocks, "block_c"),
-                _block_json(result.raw_blocks, "block_e"),
+                _block_json(result.raw_blocks, "verdict"),
+                _block_json(result.raw_blocks, "jd_summary"),
+                _block_json(result.raw_blocks, "fit_analysis"),
+                _block_json(result.raw_blocks, "resume_hooks"),
                 result.model,
                 result.cost_usd,
                 result.prompt_hash,

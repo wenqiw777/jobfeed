@@ -11,6 +11,8 @@ import pytest
 from jobfeed.domain.errors import ScoringParseError
 from jobfeed.domain.models import Verdict
 from jobfeed.domain.scoring import (
+    compute_prompt_hash,
+    compute_resume_hash,
     parse_stage_a_response,
     parse_stage_b_response,
     render_stage_a_prompt,
@@ -19,6 +21,7 @@ from jobfeed.domain.scoring import (
 
 STAGE_A_SCORE = 85
 STAGE_B_SCORE = 92
+SHA256_HEX_LENGTH = 64
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -26,17 +29,26 @@ def make_stage_b_payload() -> dict[str, object]:
     """Create a canonical raw Stage B payload for parser tests.
 
     Returns:
-        Raw block object matching the Phase 0 Stage B LLM contract.
+        Raw block object matching the legacy Stage B LLM contract.
     """
     return {
-        "block_a": {"verdict": "apply"},
-        "block_b": {"summary": "Builds Python services for hiring workflows."},
-        "block_c": {
+        "verdict": {
+            "recommendation": "apply",
+            "confidence": 4,
+            "one_line": "Strong Python match for hiring workflow role.",
+        },
+        "jd_summary": {
+            "role_in_3_lines": "Builds Python services for hiring workflows.",
+            "must_haves": ["Python"],
+            "nice_to_haves": [],
+            "red_flags_in_jd": [],
+        },
+        "fit_analysis": {
             "score_0_100": STAGE_B_SCORE,
             "strong_match": [
                 {
                     "requirement": "Python",
-                    "evidence": "Built Python data pipelines.",
+                    "evidence_from_resume": "Built Python data pipelines.",
                 }
             ],
             "gaps": [
@@ -47,7 +59,11 @@ def make_stage_b_payload() -> dict[str, object]:
                 }
             ],
         },
-        "block_e": {"hooks": ["Mention local-first job automation."]},
+        "resume_hooks": {
+            "lead_with": "Mention local-first job automation.",
+            "supporting": [],
+            "avoid_mentioning": [],
+        },
     }
 
 
@@ -109,6 +125,15 @@ def test_parse_stage_a_response_handles_markdown_json_fence() -> None:
     assert result.score == STAGE_A_SCORE
 
 
+def test_parse_stage_a_accepts_legacy_timing_vocabulary() -> None:
+    """Stage A parser should accept legacy timing_eligible vocabulary."""
+    raw = '{"score": 85, "one_line": "Good fit", "timing_eligible": "mismatch"}'
+    result = parse_stage_a_response(
+        raw, model="mock", prompt_hash="h1", resume_hash="h2"
+    )
+    assert result.timing_eligible == "mismatch"
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -129,6 +154,20 @@ def test_parse_stage_a_response_rejects_invalid_payloads(raw: str) -> None:
     assert exc_info.value.raw_response == raw
 
 
+def test_parse_stage_a_response_detects_refusal_variants() -> None:
+    """Stage A parser should detect various refusal patterns."""
+    refusals = [
+        "I'm sorry, I cannot evaluate this.",
+        "I apologize but I cannot help.",
+        "Sure, as an AI assistant I can help",
+    ]
+    for raw in refusals:
+        with pytest.raises(ScoringParseError, match="LLM refusal"):
+            parse_stage_a_response(
+                raw, model="mock", prompt_hash="h1", resume_hash="h2"
+            )
+
+
 def test_parse_stage_b_response_builds_fit_analysis() -> None:
     """Stage B JSON should parse into normalized fit analysis fields."""
     raw = json.dumps(make_stage_b_payload())
@@ -141,12 +180,41 @@ def test_parse_stage_b_response_builds_fit_analysis() -> None:
     )
 
     assert result.verdict == Verdict.APPLY
-    assert result.jd_summary == "Builds Python services for hiring workflows."
+    assert "Builds Python services for hiring workflows." in result.jd_summary
     assert result.fit_analysis.score == STAGE_B_SCORE
     assert result.fit_analysis.strengths[0].requirement == "Python"
+    assert result.fit_analysis.strengths[0].evidence == "Built Python data pipelines."
     assert result.fit_analysis.gaps[0].severity == "minor"
     assert result.resume_hooks == ["Mention local-first job automation."]
     assert result.cost_usd is None
+
+
+def test_parse_stage_b_response_maps_legacy_severity() -> None:
+    """Stage B parser should map blocker->critical, notable->major."""
+    payload = make_stage_b_payload()
+    fit = payload["fit_analysis"]
+    assert isinstance(fit, dict)
+    fit["gaps"] = [
+        {
+            "requirement": "Critical skill",
+            "severity": "blocker",
+            "mitigation": None,
+        },
+        {
+            "requirement": "Important skill",
+            "severity": "notable",
+            "mitigation": "Frame existing work.",
+        },
+    ]
+
+    result = parse_stage_b_response(
+        json.dumps(payload), model="mock", prompt_hash="h1", resume_hash="h2"
+    )
+
+    assert result.fit_analysis.gaps[0].severity == "critical"
+    assert result.fit_analysis.gaps[0].mitigation == ""
+    assert result.fit_analysis.gaps[1].severity == "major"
+    assert result.fit_analysis.gaps[1].mitigation == "Frame existing work."
 
 
 def test_parse_stage_b_response_preserves_raw_blocks() -> None:
@@ -162,12 +230,12 @@ def test_parse_stage_b_response_preserves_raw_blocks() -> None:
     assert result.raw_blocks == payload
 
 
-def test_parse_stage_b_response_rejects_missing_block_c_keys() -> None:
-    """Stage B parser should reject missing required block_c fields."""
+def test_parse_stage_b_response_rejects_missing_fit_keys() -> None:
+    """Stage B parser should reject missing required fit_analysis fields."""
     payload = make_stage_b_payload()
-    block_c = payload["block_c"]
-    assert isinstance(block_c, dict)
-    del block_c["score_0_100"]
+    fit = payload["fit_analysis"]
+    assert isinstance(fit, dict)
+    del fit["score_0_100"]
 
     with pytest.raises(ScoringParseError):
         parse_stage_b_response(
@@ -178,7 +246,9 @@ def test_parse_stage_b_response_rejects_missing_block_c_keys() -> None:
         )
 
 
-@pytest.mark.parametrize("missing_block", ["block_a", "block_b", "block_e"])
+@pytest.mark.parametrize(
+    "missing_block", ["verdict", "jd_summary", "fit_analysis", "resume_hooks"]
+)
 def test_parse_stage_b_response_rejects_missing_required_blocks(
     missing_block: str,
 ) -> None:
@@ -202,6 +272,28 @@ def test_parse_stage_b_response_rejects_missing_required_blocks(
     assert exc_info.value.raw_response == raw
 
 
+def test_compute_prompt_hash_is_deterministic() -> None:
+    """compute_prompt_hash should return the same hash for the same input."""
+    h1 = compute_prompt_hash("test prompt")
+    h2 = compute_prompt_hash("test prompt")
+    assert h1 == h2
+    assert len(h1) == SHA256_HEX_LENGTH
+
+
+def test_compute_prompt_hash_changes_with_input() -> None:
+    """compute_prompt_hash should change when the prompt changes."""
+    h1 = compute_prompt_hash("prompt A")
+    h2 = compute_prompt_hash("prompt B")
+    assert h1 != h2
+
+
+def test_compute_resume_hash_is_deterministic() -> None:
+    """compute_resume_hash should return the same hash for the same input."""
+    h1 = compute_resume_hash("my resume")
+    h2 = compute_resume_hash("my resume")
+    assert h1 == h2
+
+
 def test_domain_scoring_has_no_external_imports() -> None:
     """Domain scoring should only import standard library and domain modules."""
     path = PROJECT_ROOT / "src/jobfeed/domain/scoring.py"
@@ -221,6 +313,6 @@ def test_domain_scoring_has_no_external_imports() -> None:
 
 
 def _is_allowed_import(module: str) -> bool:
-    return module in {"__future__", "json", "typing"} or module.startswith(
+    return module in {"__future__", "json", "typing", "hashlib"} or module.startswith(
         "jobfeed.domain."
     )

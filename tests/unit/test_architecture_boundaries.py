@@ -13,6 +13,7 @@ DOMAIN_ALLOWED_IMPORTS = {
     "dataclasses",
     "datetime",
     "enum",
+    "hashlib",
     "json",
     "typing",
 }

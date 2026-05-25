@@ -55,6 +55,10 @@ async def test_mock_llm_stage_b_response_matches_parser_contract() -> None:
 
     assert result.verdict.value == "consider"
     assert result.fit_analysis.score == MOCK_STAGE_B_SCORE
+    assert result.fit_analysis.strengths[0].evidence == (
+        "Resume shows production Python work."
+    )
+    assert result.resume_hooks == ["Mention the local-first job pipeline."]
     assert result.raw_blocks is not None
 
 
