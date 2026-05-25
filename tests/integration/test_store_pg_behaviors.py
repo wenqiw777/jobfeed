@@ -78,12 +78,24 @@ def make_stage_b_raw() -> str:
     """
     return json.dumps(
         {
-            "block_a": {"verdict": "consider"},
-            "block_b": {"summary": "Detailed summary"},
-            "block_c": {
+            "verdict": {
+                "recommendation": "consider",
+                "confidence": 3,
+                "one_line": "Reasonable fit.",
+            },
+            "jd_summary": {
+                "role_in_3_lines": "Detailed summary",
+                "must_haves": ["Python"],
+                "nice_to_haves": ["Kubernetes"],
+                "red_flags_in_jd": [],
+            },
+            "fit_analysis": {
                 "score_0_100": STAGE_B_SCORE,
                 "strong_match": [
-                    {"requirement": "Python", "evidence": "Built Python services."}
+                    {
+                        "requirement": "Python",
+                        "evidence_from_resume": "Built Python services.",
+                    }
                 ],
                 "gaps": [
                     {
@@ -93,7 +105,11 @@ def make_stage_b_raw() -> str:
                     }
                 ],
             },
-            "block_e": {"hooks": ["Mention automation."]},
+            "resume_hooks": {
+                "lead_with": "Mention automation.",
+                "supporting": [],
+                "avoid_mentioning": [],
+            },
         }
     )
 
