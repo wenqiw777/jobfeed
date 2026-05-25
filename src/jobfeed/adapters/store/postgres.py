@@ -53,6 +53,7 @@ from jobfeed.domain.models import (
     WorkflowAttention,
     WorkflowAttentionItem,
 )
+from jobfeed.domain.models_llm import LLMUsage
 from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.domain.status import (
@@ -2975,6 +2976,30 @@ class PostgresStore:
             low_quality_scored=low_quality,
             stuck_scoring=stuck_scoring,
         )
+
+    async def record_llm_usage(self, usage: LLMUsage) -> None:
+        """Record a single LLM call's usage metrics.
+
+        Args:
+            usage: LLM usage metrics for one call.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO llm_usage (model, input_tokens, output_tokens, cost_usd,
+                   cached, latency_ms, timestamp, job_id, stage, run_id)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
+                usage.model,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cost_usd,
+                usage.cached,
+                usage.latency_ms,
+                usage.timestamp,
+                int(usage.job_id) if usage.job_id is not None else None,
+                usage.stage,
+                usage.run_id,
+            )
 
     # ------------------------------------------------------------------
     # Private helpers

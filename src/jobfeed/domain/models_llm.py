@@ -22,6 +22,9 @@ class LLMUsage:
     cached: bool
     latency_ms: int
     timestamp: datetime
+    job_id: str | None = None
+    stage: str | None = None
+    run_id: str | None = None
 
 
 @dataclass(kw_only=True)

@@ -11,6 +11,7 @@ from jobfeed.domain.models import (
     CostEntry,
     DigestStats,
 )
+from jobfeed.domain.models_llm import LLMUsage
 
 
 @runtime_checkable
@@ -161,6 +162,14 @@ class StoreOpsMixin(Protocol):
 
         Returns:
             Cost entry if found, else None.
+        """
+        ...
+
+    async def record_llm_usage(self, usage: LLMUsage) -> None:
+        """Record a single LLM call's usage metrics.
+
+        Args:
+            usage: LLM usage metrics for one call.
         """
         ...
 
