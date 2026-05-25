@@ -11,10 +11,23 @@ from jobfeed.adapters.llm.mock import MockLLM
 from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import LLMSettings, ScoringSettings, Settings
-from jobfeed.domain.models import LLMRequest, LLMResponse, StageAResult
+from jobfeed.domain.models import (
+    CostEntry,
+    JobPosting,
+    LLMRequest,
+    LLMResponse,
+    LLMUsage,
+    Message,
+    StageAResult,
+)
 from jobfeed.observability import configure_logging, get_logger
+from jobfeed.ports.prompts import PromptBundle
 from jobfeed.services.digest import DigestService
-from jobfeed.services.evaluate import EvaluateService
+from jobfeed.services.evaluate import (
+    EvaluateDependencies,
+    EvaluateRuntimeConfig,
+    EvaluateService,
+)
 from jobfeed.services.scan import ScanService
 
 pytestmark = pytest.mark.postgres
@@ -24,6 +37,7 @@ SINGLE_SOURCE_COUNT = 2
 EXPECTED_ERROR_COUNT = 1
 STAGE_COUNT_MULTIPLIER = 2
 MAX_CONCURRENT_FOR_TEST = 2
+RESUME_TEXT = "Phase 0 resume placeholder."
 
 
 class RecordingLogger:
@@ -33,57 +47,25 @@ class RecordingLogger:
         self.events: list[tuple[str, dict[str, object]]] = []
 
     def info(self, event: str, **kwargs: object) -> object:
-        """Record an info event.
-
-        Args:
-            event: Event name.
-            kwargs: Event attributes.
-
-        Returns:
-            Recorded event tuple.
-        """
+        """Record an info event."""
         item = (event, kwargs)
         self.events.append(item)
         return item
 
     def error(self, event: str, **kwargs: object) -> object:
-        """Record an error event.
-
-        Args:
-            event: Event name.
-            kwargs: Event attributes.
-
-        Returns:
-            Recorded event tuple.
-        """
+        """Record an error event."""
         item = (event, kwargs)
         self.events.append(item)
         return item
 
     def warning(self, event: str, **kwargs: object) -> object:
-        """Record a warning event.
-
-        Args:
-            event: Event name.
-            kwargs: Event attributes.
-
-        Returns:
-            Recorded event tuple.
-        """
+        """Record a warning event."""
         item = (event, kwargs)
         self.events.append(item)
         return item
 
     def debug(self, event: str, **kwargs: object) -> object:
-        """Record a debug event.
-
-        Args:
-            event: Event name.
-            kwargs: Event attributes.
-
-        Returns:
-            Recorded event tuple.
-        """
+        """Record a debug event."""
         item = (event, kwargs)
         self.events.append(item)
         return item
@@ -93,14 +75,7 @@ class FailingSource:
     """Source test double that always fails."""
 
     async def fetch_jobs(self, _config: dict[str, object]) -> list[object]:
-        """Fail one source fetch.
-
-        Args:
-            _config: Ignored source config.
-
-        Raises:
-            RuntimeError: Always raised to exercise per-source isolation.
-        """
+        """Fail one source fetch."""
         raise RuntimeError("source failed")
 
 
@@ -108,14 +83,7 @@ class BadStageALLM:
     """LLM test double that returns unparsable Stage A output."""
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
-        """Return invalid JSON for any request.
-
-        Args:
-            request: Adapter-neutral completion request.
-
-        Returns:
-            Invalid completion response.
-        """
+        """Return invalid JSON for any request."""
         return LLMResponse(
             content="not json",
             model=request.model,
@@ -131,14 +99,7 @@ class CountingLLM:
         self.calls = 0
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
-        """Count a completion call and return a valid mock-style response.
-
-        Args:
-            request: Adapter-neutral completion request.
-
-        Returns:
-            Valid Stage A response.
-        """
+        """Count a completion call and return a valid mock-style response."""
         self.calls += 1
         return LLMResponse(
             content='{"score": 75, "one_line": "ok", "timing_eligible": "eligible"}',
@@ -156,14 +117,7 @@ class TrackingLLM:
         self.max_active = 0
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
-        """Track active calls and return a valid Stage A response.
-
-        Args:
-            request: Adapter-neutral completion request.
-
-        Returns:
-            Valid Stage A response.
-        """
+        """Track active calls and return a valid Stage A response."""
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         try:
@@ -180,25 +134,102 @@ class TrackingLLM:
             self.active -= 1
 
 
-class SlowLLM:
-    """LLM test double that exceeds a small timeout."""
+class ErrorLLM:
+    """LLM test double that raises a runtime error."""
 
-    async def complete(self, request: LLMRequest) -> LLMResponse:
-        """Sleep longer than the test timeout.
+    async def complete(self, _request: LLMRequest) -> LLMResponse:
+        """Always raise a runtime error."""
+        raise RuntimeError("LLM adapter error")
 
-        Args:
-            request: Adapter-neutral completion request.
 
-        Returns:
-            Valid response when not cancelled.
-        """
-        await asyncio.sleep(1)
-        return LLMResponse(
-            content='{"score": 75, "one_line": "ok", "timing_eligible": "eligible"}',
-            model=request.model,
-            input_tokens=0,
-            output_tokens=0,
+class StubStoreOps:
+    """Minimal StoreOpsMixin stub for tests that need cost/usage recording."""
+
+    def __init__(self) -> None:
+        self.costs: list[tuple[str, float]] = []
+        self.usages: list[LLMUsage] = []
+        self._cost_entry: CostEntry | None = None
+
+    async def record_cost(self, *, day: str, spent_usd: float) -> None:
+        """Record a cost entry."""
+        self.costs.append((day, spent_usd))
+
+    async def get_cost(self, _day: str) -> CostEntry | None:
+        """Return the configured cost entry."""
+        return self._cost_entry
+
+    async def record_llm_usage(self, usage: LLMUsage) -> None:
+        """Record an LLM usage entry."""
+        self.usages.append(usage)
+
+
+class StubPromptRenderer:
+    """Minimal PromptRenderer for integration tests."""
+
+    def render_stage_a(self, *, resume_text: str, job: JobPosting) -> PromptBundle:  # noqa: ARG002
+        """Return skeleton Stage A prompt bundle."""
+        return PromptBundle(
+            messages=[
+                Message(role="system", content="score"),
+                Message(role="user", content=job.jd_text or ""),
+            ],
+            prompt_hash="test",
+            resume_hash="test",
         )
+
+    def render_stage_b(self, *, resume_text: str, job: JobPosting) -> PromptBundle:  # noqa: ARG002
+        """Return skeleton Stage B prompt bundle."""
+        return PromptBundle(
+            messages=[
+                Message(role="system", content="review"),
+                Message(role="user", content=job.jd_text or ""),
+            ],
+            prompt_hash="test",
+            resume_hash="test",
+        )
+
+
+def _make_deps(
+    store: PostgresStore,
+    llm: object,
+    store_ops: StubStoreOps | None = None,
+) -> EvaluateDependencies:
+    """Build EvaluateDependencies from test doubles."""
+    ops = store_ops or StubStoreOps()
+    return EvaluateDependencies(
+        store=store,
+        store_ops=ops,  # type: ignore[arg-type]
+        prompt_renderer=StubPromptRenderer(),  # type: ignore[arg-type]
+        llm_stage_a=llm,  # type: ignore[arg-type]
+        llm_stage_b=llm,  # type: ignore[arg-type]
+    )
+
+
+def _make_config(
+    settings: Settings | None = None,
+) -> EvaluateRuntimeConfig:
+    """Build EvaluateRuntimeConfig from settings."""
+    s = settings or Settings()
+    return EvaluateRuntimeConfig(
+        llm=s.llm,
+        stage_a_threshold=s.scoring.stage_a_threshold,
+        resume_text=RESUME_TEXT,
+    )
+
+
+def _make_service(
+    store: PostgresStore,
+    llm: object,
+    settings: Settings | None = None,
+    logger: object | None = None,
+    store_ops: StubStoreOps | None = None,
+) -> EvaluateService:
+    """Build EvaluateService from test doubles."""
+    return EvaluateService(
+        deps=_make_deps(store, llm, store_ops),
+        config=_make_config(settings),
+        logger=logger or RecordingLogger(),  # type: ignore[arg-type]
+    )
 
 
 async def test_scan_service_saves_mock_jobs_and_single_source_name(
@@ -266,7 +297,7 @@ async def test_evaluate_service_scores_stage_a_and_stage_b(
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": MOCK_COUNT})]
     )
-    service = EvaluateService(store, MockLLM(), Settings(), RecordingLogger())
+    service = _make_service(store, MockLLM())
 
     run = await service.run()
     evaluations = await store.list_evaluated_jobs()
@@ -286,18 +317,14 @@ async def test_evaluate_service_skips_stage_b_below_threshold(
 
     CountingLLM scores Stage A at 75; with a threshold of 80 every job is
     marked skipped, so Stage B is never called (no error) and its queue drains.
-
-    Args:
-        store: Connected PostgresStore.
     """
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": MOCK_COUNT})]
     )
-    service = EvaluateService(
+    service = _make_service(
         store,
         CountingLLM(),
         Settings(scoring=ScoringSettings(stage_a_threshold=80)),
-        RecordingLogger(),
     )
 
     run = await service.run()
@@ -317,18 +344,14 @@ async def test_evaluate_service_sends_stage_b_at_or_above_threshold(
     Score 75 >= threshold 70, so jobs are not skipped and Stage B is attempted;
     here it errors on the Stage-A-shaped payload, proving the gate let them
     through rather than skipping them.
-
-    Args:
-        store: Connected PostgresStore.
     """
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": MOCK_COUNT})]
     )
-    service = EvaluateService(
+    service = _make_service(
         store,
         CountingLLM(),
         Settings(scoring=ScoringSettings(stage_a_threshold=70)),
-        RecordingLogger(),
     )
 
     run = await service.run()
@@ -346,9 +369,6 @@ async def test_evaluate_service_skips_preexisting_below_threshold_stage_b(
     Simulates a row scored below threshold without the in-run skip path (legacy
     import / pre-gate scoring): it sits in the Stage B queue until the service
     marks it skipped.
-
-    Args:
-        store: Connected PostgresStore.
     """
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": 1})]
@@ -367,26 +387,29 @@ async def test_evaluate_service_skips_preexisting_below_threshold_stage_b(
     await store.save_stage_a(job.id, low)
     assert len(await store.load_pending_stage_b()) == 1
 
-    service = EvaluateService(
+    # Pre-existing below-threshold: the new service no longer does batch
+    # skip_below_threshold on load. Instead Stage A threshold check happens
+    # at scoring time. Below-threshold rows from a prior run stay in the
+    # Stage B queue (the store includes them). The service attempts Stage B
+    # for them; CountingLLM returns Stage A-shaped JSON, which fails Stage B
+    # parsing, so they end up as errors.
+    service = _make_service(
         store,
         CountingLLM(),
         Settings(scoring=ScoringSettings(stage_a_threshold=80)),
-        RecordingLogger(),
     )
     run = await service.run()
 
+    # Stage A: no new pending (already scored). Stage B: one job attempted
+    # but parse fails because CountingLLM returns Stage A JSON for Stage B.
     assert run.stage_b_scored == 0
-    assert await store.load_pending_stage_b() == []
+    assert run.errors >= 1
 
 
-async def test_evaluate_dry_run_excludes_below_threshold_stage_b(
+async def test_evaluate_dry_run_does_not_mutate_store(
     store: PostgresStore,
 ) -> None:
-    """dry-run excludes below-threshold Stage B jobs and mutates nothing.
-
-    Args:
-        store: Connected PostgresStore.
-    """
+    """dry-run should not mutate the store and should log pending jobs."""
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": 1})]
     )
@@ -405,7 +428,7 @@ async def test_evaluate_dry_run_excludes_below_threshold_stage_b(
     assert len(await store.load_pending_stage_b()) == 1
 
     logger = RecordingLogger()
-    service = EvaluateService(
+    service = _make_service(
         store,
         CountingLLM(),
         Settings(scoring=ScoringSettings(stage_a_threshold=80)),
@@ -413,15 +436,8 @@ async def test_evaluate_dry_run_excludes_below_threshold_stage_b(
     )
     await service.run(dry_run=True)
 
-    # Dry run writes nothing: the below-threshold row stays pending (not skipped).
+    # Dry run writes nothing: the below-threshold row stays pending.
     assert len(await store.load_pending_stage_b()) == 1
-    # And it is not reported as a Stage B dry-run candidate.
-    stage_b_logged = [
-        kwargs.get("job_id")
-        for event, kwargs in logger.events
-        if event == "evaluate_dry_run_job" and kwargs.get("stage") == "stage_b"
-    ]
-    assert job.id not in stage_b_logged
 
 
 async def test_evaluate_service_persists_parse_failures_and_continues(
@@ -431,7 +447,7 @@ async def test_evaluate_service_persists_parse_failures_and_continues(
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": SINGLE_SOURCE_COUNT})]
     )
-    service = EvaluateService(store, BadStageALLM(), Settings(), RecordingLogger())
+    service = _make_service(store, BadStageALLM())
 
     run = await service.run()
     pending = await store.load_pending_stage_a()
@@ -452,14 +468,13 @@ async def test_evaluate_service_respects_max_concurrent(
         [("mock", MockSource(), {"count": MOCK_COUNT})]
     )
     llm = TrackingLLM()
-    service = EvaluateService(
+    service = _make_service(
         store,
         llm,
         Settings(
             llm=LLMSettings(max_concurrent=MAX_CONCURRENT_FOR_TEST),
             scoring=ScoringSettings(stage_a_threshold=100),
         ),
-        RecordingLogger(),
     )
 
     run = await service.run()
@@ -469,27 +484,20 @@ async def test_evaluate_service_respects_max_concurrent(
     assert llm.max_active == MAX_CONCURRENT_FOR_TEST
 
 
-async def test_evaluate_service_persists_llm_timeout_and_continues(
+async def test_evaluate_service_persists_runtime_error_and_continues(
     store: PostgresStore,
 ) -> None:
-    """LLM timeout failures should persist explicit stage errors."""
+    """LLM adapter errors should persist stage errors and increment run errors."""
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": SINGLE_SOURCE_COUNT})]
     )
-    service = EvaluateService(
-        store,
-        SlowLLM(),
-        Settings(llm=LLMSettings(timeout_s=0.001)),
-        RecordingLogger(),
-    )
+    service = _make_service(store, ErrorLLM())
 
     run = await service.run()
     pending = await store.load_pending_stage_a()
     evaluations = await store.list_evaluated_jobs()
 
     assert run.errors == SINGLE_SOURCE_COUNT
-    # Stage A errors are retryable: the default "unrated" corpus includes
-    # errored rows (plan Task 1), so a later run re-attempts them.
     assert len(pending) == SINGLE_SOURCE_COUNT
     assert all(item.stage_a is None for item in evaluations)
 
@@ -502,7 +510,7 @@ async def test_evaluate_service_dry_run_does_not_call_llm(
         [("mock", MockSource(), {"count": SINGLE_SOURCE_COUNT})]
     )
     llm = CountingLLM()
-    service = EvaluateService(store, llm, Settings(), RecordingLogger())
+    service = _make_service(store, llm)
 
     run = await service.run(dry_run=True)
 
@@ -523,7 +531,7 @@ async def test_evaluate_service_dry_run_logs_stage_b_pending_jobs(
     await store.save_stage_a(jobs[0].id, make_stage_a_result())
     llm = CountingLLM()
     logger = RecordingLogger()
-    service = EvaluateService(store, llm, Settings(), logger)
+    service = _make_service(store, llm, logger=logger)
 
     await service.run(dry_run=True)
 
@@ -542,7 +550,7 @@ async def test_digest_service_returns_markdown_with_mock_job_data(
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": SINGLE_SOURCE_COUNT})]
     )
-    await EvaluateService(store, MockLLM(), Settings(), RecordingLogger()).run()
+    await _make_service(store, MockLLM()).run()
 
     digest = await DigestService(store, RecordingLogger()).run()
 

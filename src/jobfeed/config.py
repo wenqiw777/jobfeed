@@ -33,7 +33,6 @@ class LLMSettings(BaseModel):
 
     stage_a: str = "mock/stage-a"
     stage_b: str = "mock/stage-b"
-    timeout_s: float = 60.0
     codex_timeout_s: float = 60.0
     claude_timeout_s: float = 210.0
     max_concurrent: int = 4

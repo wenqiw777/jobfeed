@@ -12,11 +12,18 @@ from jobfeed.adapters.llm.mock import MockLLM
 from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import Settings, load_settings
+from jobfeed.domain.models import JobPosting
+from jobfeed.domain.scoring import render_stage_a_prompt, render_stage_b_prompt
 from jobfeed.observability import JobfeedLogger, configure_logging, get_logger
+from jobfeed.ports.prompts import PromptBundle
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.services.digest import DigestService
-from jobfeed.services.evaluate import EvaluateService
+from jobfeed.services.evaluate import (
+    EvaluateDependencies,
+    EvaluateRuntimeConfig,
+    EvaluateService,
+)
 from jobfeed.services.scan import ScanService
 
 T = TypeVar("T")
@@ -33,6 +40,20 @@ class AppContext(TypedDict):
     digest_service: DigestService
     logger: JobfeedLogger
     verbose: bool
+
+
+class _MockPromptRenderer:
+    """Minimal PromptRenderer for the mock LLM path."""
+
+    def render_stage_a(self, *, resume_text: str, job: JobPosting) -> PromptBundle:
+        """Return a skeleton prompt bundle for Stage A."""
+        msgs = render_stage_a_prompt(job.jd_text or "", resume_text, "")
+        return PromptBundle(messages=msgs, prompt_hash="mock", resume_hash="mock")
+
+    def render_stage_b(self, *, resume_text: str, job: JobPosting) -> PromptBundle:
+        """Return a skeleton prompt bundle for Stage B."""
+        msgs = render_stage_b_prompt(job.jd_text or "", resume_text, "")
+        return PromptBundle(messages=msgs, prompt_hash="mock", resume_hash="mock")
 
 
 def create_app(config_path: Path | None = None) -> AppContext:
@@ -58,12 +79,28 @@ def create_app(config_path: Path | None = None) -> AppContext:
     store = _create_store(settings)
     llm = MockLLM()
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
+    deps = EvaluateDependencies(
+        store=store,
+        store_ops=store,  # type: ignore[arg-type]
+        prompt_renderer=_MockPromptRenderer(),
+        llm_stage_a=llm,
+        llm_stage_b=llm,
+    )
+    eval_config = EvaluateRuntimeConfig(
+        llm=settings.llm,
+        stage_a_threshold=settings.scoring.stage_a_threshold,
+        resume_text="Phase 0 resume placeholder.",
+    )
     return AppContext(
         settings=settings,
         store=store,
         sources=sources,
         scan_service=ScanService(store, logger),
-        evaluate_service=EvaluateService(store, llm, settings, logger),
+        evaluate_service=EvaluateService(
+            deps=deps,
+            config=eval_config,
+            logger=logger,
+        ),
         digest_service=DigestService(store, logger),
         logger=logger,
         verbose=False,
