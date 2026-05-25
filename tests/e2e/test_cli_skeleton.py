@@ -223,6 +223,9 @@ def invoke_ok(
 def write_config(tmp_path: Path, name: str, dsn: str) -> Path:
     """Write an isolated CLI config pointing at the test Postgres database.
 
+    Creates a mock resume file so that the evaluate command's lazy
+    construction can validate it exists.
+
     Args:
         tmp_path: Temporary root owned by pytest.
         name: Unique config namespace for one test flow.
@@ -233,12 +236,19 @@ def write_config(tmp_path: Path, name: str, dsn: str) -> Path:
     """
     config_dir = tmp_path / name
     config_dir.mkdir(parents=True, exist_ok=True)
+
+    resume_path = config_dir / "resume.md"
+    resume_path.write_text("Test resume for E2E.", encoding="utf-8")
+
     config_path = config_dir / "config.toml"
     config_path.write_text(
         "\n".join(
             [
                 "[db]",
                 f'url = "{dsn}"',
+                "",
+                "[llm]",
+                f'master_resume_path = "{resume_path}"',
                 "",
                 "[observability]",
                 'log_level = "warning"',
