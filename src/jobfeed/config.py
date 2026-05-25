@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CONFIG_ENV_PREFIX = "JOBFEED_"
 ENV_NESTED_DELIMITER = "__"
@@ -33,18 +33,31 @@ class LLMSettings(BaseModel):
 
     stage_a: str = "mock/stage-a"
     stage_b: str = "mock/stage-b"
-    max_concurrent: int = 2
     timeout_s: float = 60.0
+    codex_timeout_s: float = 60.0
+    claude_timeout_s: float = 210.0
+    max_concurrent: int = 4
+    master_resume_path: str = ".jobfeed-dev/resume.md"
+    preamble_personal_path: str | None = None
+    max_daily_score_calls: int = 150
+    max_daily_cost_usd: float = 10.0
+
+    @field_validator("stage_a", "stage_b")
+    @classmethod
+    def _validate_provider_format(cls, v: str) -> str:
+        if "/" not in v:
+            msg = f"must be in 'backend/model' format, got {v!r}"
+            raise ValueError(msg)
+        return v
 
 
 class ScoringSettings(BaseModel):
-    """Scoring gates and Phase 0 call-budget controls."""
+    """Scoring gates used by evaluation services."""
 
     model_config = ConfigDict(extra="forbid")
 
     stage_a_threshold: int = 60
     ml_gate_enabled: bool = False
-    max_daily_score_calls: int = 100
 
 
 class ExecutionSettings(BaseModel):
