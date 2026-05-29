@@ -16,6 +16,7 @@ These standards are the engineering contract for Jobfeed. Rules that can be auto
 - Cyclomatic complexity target: <= 8; hard max: 10.
 - Nesting depth max: 2. Prefer guard clauses and early returns.
 - Positional/keyword arguments max: 5. Use a dataclass or config object beyond that.
+- Line length: <= 88 characters (`line-length = 88` in `pyproject.toml`, Ruff-enforced via format check + `E501`).
 - Statements target: <= 40.
 - File length: <= 300 lines, enforced as a blocking hygiene gate. Exempt: the `adapters/store/` layer and `cli/migrate.py`. The PostgresStore and legacy-migration surface are inherently large; fragmenting them into <=300-line shards harms readability. The gate stays blocking everywhere else. (Phase 1 amendment, approved 2026-05-22.)
 - Functions should have a single clear responsibility.
@@ -24,6 +25,17 @@ These standards are the engineering contract for Jobfeed. Rules that can be auto
 - Avoid mixing validation, transformation, IO, and persistence in one function.
 
 The hard automated rules are complexity hard max, nesting depth, argument count, and layer-specific nested-loop rules. The target and responsibility rules are review standards: they should trigger refactoring discussion, not mechanical rewrites that make code harder to read.
+
+### Scoped rule relaxations
+
+The thresholds above are global defaults. A small set of scoped relaxations live in `pyproject.toml` and must stay in sync with this document (adding or widening one requires explicit approval, per the "do not weaken quality gates" constraint):
+
+- **Global `ignore`:** `PLR0911`/`PLR0912`/`PLR0915` (too-many-returns/branches/statements) are disabled project-wide — these overlap the cyclomatic-complexity and statements-target review rules above rather than adding a separate hard gate.
+- **`per-file-ignores`:**
+  - `ports/*.py` — `ARG002` (Protocol methods legitimately have unused args), `PLR0913` (capability signatures can exceed 5 args).
+  - `adapters/store/postgres.py` — `ARG002`, `E501`, `PLR0913`, `SIM117` (the 300-line-exempt store surface; large SQL-bearing methods).
+  - `tests/**/test_ports.py` — `ARG002`, `PLR0913`. `tests/conftest.py` / `migrations/env.py` — `PLC0415`. `migrations/versions/*.py` — `E501`. `tests/fixtures/generate_legacy_fixture.py` — `PLR2004`, `E501`, `C901`, `PLC0415`.
+- **Targeted `# noqa`:** for a one-off legitimate exceedance outside the scoped paths, a per-line `# noqa: <rule>` is the escape hatch rather than a new per-file ignore (e.g. `adapters/sources/_http.py` `fetch_json` / `probe_url` carry `# noqa: PLR0913` — low-level HTTP helpers with `client`/`url`/`slug`/`vendor`/`timeout`/`retries`).
 
 ## Documentation And Comments
 
