@@ -20,4 +20,4 @@ docker-quality: docker-build
 
 update-prices:
 	curl -sL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
-	  -o src/jobfeed/adapters/llm/model_prices.json
+	  | python3 scripts/update_prices.py

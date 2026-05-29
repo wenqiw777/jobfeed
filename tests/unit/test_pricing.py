@@ -17,7 +17,7 @@ from jobfeed.adapters.llm._pricing import (
 # Constants
 # ---------------------------------------------------------------------------
 
-KNOWN_MODEL = "claude-haiku-4-5-20251001"
+KNOWN_MODEL = "gpt-5.4-mini"
 UNKNOWN_MODEL = "nonexistent/model-xyz-99"
 
 TOKEN_COUNT_1K = 1_000
@@ -51,7 +51,7 @@ def test_load_price_table_returns_nonempty_dict(
 def test_load_price_table_contains_known_model(
     price_table: dict[str, ModelPricing],
 ) -> None:
-    """Table should contain a well-known Anthropic model."""
+    """Table should contain a well-known OpenAI model."""
     assert KNOWN_MODEL in price_table
 
 
