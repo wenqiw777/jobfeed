@@ -419,6 +419,23 @@ LinkedIn/ATS run concurrently with each other (different platforms). Indeed runs
 
 Individual failures retry independently. DB stores all source rows (no cross-source dedup at scan time).
 
+**ATS fetch resilience (degraded-vendor policy).** A vendor's public API can go
+intermittently degraded without being down. Observed 2026-05-28: Ashby's
+`posting-api` returned *valid* boards slowly (Notion 2.3 MB in 10.2s, Ramp
+1.9 MB in 17.7s) while others exceeded 30s, and the set of succeeding slugs
+flapped run-to-run. Non-existent slugs kept returning 404 in <100ms throughout —
+ruling out IP-ban / rate-limit; this was upstream slowness, not a client problem.
+The policy that follows:
+
+- **Keep the per-fetch timeout generous (30s); do NOT shorten it to "fail fast."**
+  A short timeout silently drops slow-but-valid large boards.
+- **Retry transport errors (timeout/connect/read/DNS) once** at the `fetch_json`
+  layer — a slug that times out one moment often answers on the next. HTTP status
+  errors (404/410/5xx) and JSON-decode failures are never retried (definitive).
+- **Per-slug concurrency** (the parallel ATS policy above) bounds wall-time so one
+  hanging board can't serialize the batch. A *serial* fetch loop turned one
+  degraded-Ashby scan into a 45-minute wall (150+ slugs × up-to-30s).
+
 Scheduling: Temporal Schedule (when using TemporalRunner) replaces external cron.
 
 See **Temporal Flow Detail** above for full workflow/activity diagrams.
