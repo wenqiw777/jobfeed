@@ -78,9 +78,9 @@ Output JSON only. No markdown fence, no preamble, no explanation around it.
   - `minor` = JD requirement that's listed but probably not deal-breaking.
 - `mitigation` is concrete framing advice for cover-letter use, or `null` if
   the gap genuinely can't be papered over.
-- `score_0_100` MUST agree with the Stage A rough score within ±15 points.
-  If you'd score significantly lower than Stage A, weight the `blocker`-
-  severity gaps more heavily.
+- If the job data includes a Stage A rough score, `score_0_100` MUST agree
+  with it within ±15 points. If you'd score significantly lower than Stage A,
+  weight the `blocker`-severity gaps more heavily.
 {% endif %}
 {% if "resume_hooks" in blocks %}
 **`resume_hooks`** — cover letter raw material

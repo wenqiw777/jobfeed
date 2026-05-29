@@ -23,7 +23,7 @@ class LLMUsage:
     latency_ms: int
     timestamp: datetime
     job_id: str | None = None
-    stage: str | None = None
+    stage: Literal["a", "b"] | None = None
     run_id: str | None = None
 
 

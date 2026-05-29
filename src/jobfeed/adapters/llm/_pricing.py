@@ -33,6 +33,20 @@ class ModelPricing:
     reasoning_output_cost_per_token: float | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class TokenUsage:
+    """Token counts used for cost estimation.
+
+    ``input_tokens`` is the provider-reported total input count; cached input
+    tokens are subtracted before applying the non-cached input rate.
+    """
+
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int = 0
+    reasoning_output_tokens: int = 0
+
+
 def load_price_table(path: Path | None = None) -> dict[str, ModelPricing]:
     """Load the vendored LiteLLM price table.
 
@@ -69,12 +83,9 @@ def load_price_table(path: Path | None = None) -> dict[str, ModelPricing]:
     return table
 
 
-def estimate_cost(  # noqa: PLR0913
+def estimate_cost(
     model: str,
-    input_tokens: int,
-    output_tokens: int,
-    cached_input_tokens: int = 0,
-    reasoning_output_tokens: int = 0,
+    usage: TokenUsage,
     *,
     price_table: dict[str, ModelPricing],
 ) -> float:
@@ -82,10 +93,7 @@ def estimate_cost(  # noqa: PLR0913
 
     Args:
         model: Model identifier matching a key in *price_table*.
-        input_tokens: Number of non-cached input tokens.
-        output_tokens: Number of non-reasoning output tokens.
-        cached_input_tokens: Input tokens served from the provider cache.
-        reasoning_output_tokens: Output tokens classified as reasoning.
+        usage: Token counts split by billing category.
         price_table: Pre-loaded model pricing table (from ``load_price_table``).
 
     Returns:
@@ -108,11 +116,12 @@ def estimate_cost(  # noqa: PLR0913
         else pricing.output_cost_per_token
     )
 
+    billable_input_tokens = max(usage.input_tokens - usage.cached_input_tokens, 0)
     return (
-        input_tokens * pricing.input_cost_per_token
-        + output_tokens * pricing.output_cost_per_token
-        + cached_input_tokens * cached_rate
-        + reasoning_output_tokens * reasoning_rate
+        billable_input_tokens * pricing.input_cost_per_token
+        + usage.output_tokens * pricing.output_cost_per_token
+        + usage.cached_input_tokens * cached_rate
+        + usage.reasoning_output_tokens * reasoning_rate
     )
 
 
@@ -123,4 +132,4 @@ def _opt_float(value: object) -> float | None:
     return float(value)  # type: ignore[arg-type]
 
 
-__all__ = ["ModelPricing", "estimate_cost", "load_price_table"]
+__all__ = ["ModelPricing", "TokenUsage", "estimate_cost", "load_price_table"]

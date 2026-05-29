@@ -145,12 +145,13 @@ class StoreOpsMixin(Protocol):
         """
         ...
 
-    async def record_cost(self, *, day: str, spent_usd: float) -> None:
-        """Upsert daily cost ledger (calls +1 per invocation).
+    async def record_cost(self, *, day: str, spent_usd: float, calls: int = 1) -> None:
+        """Upsert daily cost ledger spend and attempted call count.
 
         Args:
             day: YYYY-MM-DD date string.
             spent_usd: Cost to accumulate.
+            calls: Attempted LLM calls to accumulate.
         """
         ...
 
@@ -169,6 +170,22 @@ class StoreOpsMixin(Protocol):
         """Record a single LLM call's usage metrics.
 
         Args:
+            usage: LLM usage metrics for one call.
+        """
+        ...
+
+    async def record_llm_usage_with_cost(
+        self,
+        *,
+        day: str,
+        spent_usd: float,
+        usage: LLMUsage,
+    ) -> None:
+        """Atomically record LLM usage and same-call ledger spend.
+
+        Args:
+            day: YYYY-MM-DD cost ledger day.
+            spent_usd: Cost to accumulate.
             usage: LLM usage metrics for one call.
         """
         ...

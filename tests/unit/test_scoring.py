@@ -15,8 +15,6 @@ from jobfeed.domain.scoring import (
     compute_resume_hash,
     parse_stage_a_response,
     parse_stage_b_response,
-    render_stage_a_prompt,
-    render_stage_b_prompt,
 )
 
 STAGE_A_SCORE = 85
@@ -67,30 +65,6 @@ def make_stage_b_payload() -> dict[str, object]:
     }
 
 
-def test_render_stage_a_prompt_returns_messages() -> None:
-    """Stage A prompt rendering should produce adapter-neutral messages."""
-    messages = render_stage_a_prompt("JD", "Resume", "Rubric")
-
-    assert messages[0].role == "system"
-    assert messages[1].role == "user"
-    assert "JD" in messages[1].content
-    assert "score" in messages[1].content
-    assert "0 to 100" in messages[1].content
-    assert "timing_eligible" in messages[1].content
-
-
-def test_render_stage_b_prompt_declares_canonical_json_shape() -> None:
-    """Stage B prompt should name the exact JSON blocks the parser expects."""
-    messages = render_stage_b_prompt("JD", "Resume", "Rubric")
-    content = messages[1].content
-
-    assert "block_a.verdict" in content
-    assert "block_c.score_0_100" in content
-    assert "block_c.strong_match[]" in content
-    assert "block_e.hooks[]" in content
-    assert "skip" in content
-
-
 def test_parse_stage_a_response_returns_result() -> None:
     """Stage A JSON should parse into a StageAResult with caller metadata."""
     result = parse_stage_a_response(
@@ -105,6 +79,44 @@ def test_parse_stage_a_response_returns_result() -> None:
     assert result.prompt_hash == "h1"
     assert result.resume_hash == "h2"
     assert result.cost_usd is None
+
+
+def test_parse_stage_a_allows_ai_phrase_inside_valid_json() -> None:
+    """Refusal heuristics should allow non-refusal AI role phrasing."""
+    raw = json.dumps(
+        {
+            "score": 85,
+            "one_line": "Good fit as an AI platform engineer.",
+            "timing_eligible": "eligible",
+        }
+    )
+
+    result = parse_stage_a_response(
+        raw, model="mock", prompt_hash="h1", resume_hash="h2"
+    )
+
+    assert result.one_line == "Good fit as an AI platform engineer."
+
+
+@pytest.mark.parametrize(
+    "one_line",
+    [
+        "As an AI language model, I cannot evaluate this job.",
+        "I cannot evaluate this job posting.",
+    ],
+)
+def test_parse_stage_a_rejects_structured_json_refusal(one_line: str) -> None:
+    """Schema-valid refusal JSON should not be accepted as a real score."""
+    raw = json.dumps(
+        {
+            "score": 0,
+            "one_line": one_line,
+            "timing_eligible": "unclear",
+        }
+    )
+
+    with pytest.raises(ScoringParseError, match="LLM refusal"):
+        parse_stage_a_response(raw, model="mock", prompt_hash="h1", resume_hash="h2")
 
 
 def test_parse_stage_a_response_handles_markdown_json_fence() -> None:
@@ -132,6 +144,25 @@ def test_parse_stage_a_accepts_legacy_timing_vocabulary() -> None:
         raw, model="mock", prompt_hash="h1", resume_hash="h2"
     )
     assert result.timing_eligible == "mismatch"
+
+
+def test_parse_stage_a_rejects_unknown_timing_vocabulary() -> None:
+    """Stage A parser should reject unknown timing_eligible values."""
+    raw = '{"score": 85, "one_line": "Good fit", "timing_eligible": "yes"}'
+
+    with pytest.raises(ScoringParseError, match="invalid timing_eligible"):
+        parse_stage_a_response(raw, model="mock", prompt_hash="h1", resume_hash="h2")
+
+
+def test_parse_stage_a_rejects_extra_keys() -> None:
+    """Stage A parser should enforce the prompt-declared exact key set."""
+    raw = (
+        '{"score": 85, "one_line": "Good fit", '
+        '"timing_eligible": "eligible", "notes": "extra"}'
+    )
+
+    with pytest.raises(ScoringParseError, match="stage_a keys invalid"):
+        parse_stage_a_response(raw, model="mock", prompt_hash="h1", resume_hash="h2")
 
 
 @pytest.mark.parametrize(
@@ -228,6 +259,168 @@ def test_parse_stage_b_response_preserves_raw_blocks() -> None:
     )
 
     assert result.raw_blocks == payload
+
+
+def test_parse_stage_b_allows_ai_phrase_inside_valid_json() -> None:
+    """Refusal heuristics should allow non-refusal Stage B phrasing."""
+    payload = make_stage_b_payload()
+    verdict = payload["verdict"]
+    assert isinstance(verdict, dict)
+    verdict["one_line"] = "Strong fit as an AI platform engineer."
+
+    result = parse_stage_b_response(
+        json.dumps(payload),
+        model="mock",
+        prompt_hash="h1",
+        resume_hash="h2",
+    )
+
+    assert result.raw_blocks == payload
+
+
+@pytest.mark.parametrize(
+    "one_line",
+    [
+        "As an AI assistant, I am unable to evaluate this job.",
+        "I'm sorry, I cannot evaluate this job posting.",
+    ],
+)
+def test_parse_stage_b_rejects_structured_json_refusal(one_line: str) -> None:
+    """Schema-valid Stage B refusal JSON should not be accepted."""
+    payload = make_stage_b_payload()
+    verdict = payload["verdict"]
+    assert isinstance(verdict, dict)
+    verdict["one_line"] = one_line
+
+    with pytest.raises(ScoringParseError, match="LLM refusal"):
+        parse_stage_b_response(
+            json.dumps(payload),
+            model="mock",
+            prompt_hash="h1",
+            resume_hash="h2",
+        )
+
+
+def test_parse_stage_b_response_rejects_malformed_summary_lists() -> None:
+    """Stage B parser should require jd_summary list fields to be string lists."""
+    payload = make_stage_b_payload()
+    jd_summary = payload["jd_summary"]
+    assert isinstance(jd_summary, dict)
+    jd_summary["must_haves"] = "Python"
+
+    with pytest.raises(ScoringParseError, match="missing or invalid list"):
+        parse_stage_b_response(
+            json.dumps(payload),
+            model="mock",
+            prompt_hash="h1",
+            resume_hash="h2",
+        )
+
+
+def test_parse_stage_b_response_rejects_non_string_summary_items() -> None:
+    """Stage B parser should reject non-string jd_summary list items."""
+    payload = make_stage_b_payload()
+    jd_summary = payload["jd_summary"]
+    assert isinstance(jd_summary, dict)
+    jd_summary["must_haves"] = ["Python", 42]
+
+    with pytest.raises(ScoringParseError, match="invalid string item"):
+        parse_stage_b_response(
+            json.dumps(payload),
+            model="mock",
+            prompt_hash="h1",
+            resume_hash="h2",
+        )
+
+
+@pytest.mark.parametrize(
+    ("block", "key", "error"),
+    [
+        ("verdict", "confidence", "verdict keys invalid"),
+        ("verdict", "one_line", "verdict keys invalid"),
+        ("resume_hooks", "avoid_mentioning", "resume_hooks keys invalid"),
+    ],
+)
+def test_parse_stage_b_response_rejects_missing_prompt_declared_fields(
+    block: str,
+    key: str,
+    error: str,
+) -> None:
+    """Stage B parser should require fields that are preserved in raw blocks."""
+    payload = make_stage_b_payload()
+    target = payload[block]
+    assert isinstance(target, dict)
+    del target[key]
+
+    with pytest.raises(ScoringParseError, match=error):
+        parse_stage_b_response(
+            json.dumps(payload),
+            model="mock",
+            prompt_hash="h1",
+            resume_hash="h2",
+        )
+
+
+def test_parse_stage_b_response_rejects_extra_nested_keys() -> None:
+    """Stage B parser should reject extra keys at nested prompt blocks."""
+    payload = make_stage_b_payload()
+    verdict = payload["verdict"]
+    assert isinstance(verdict, dict)
+    verdict["debug"] = "extra"
+
+    with pytest.raises(ScoringParseError, match="verdict keys invalid"):
+        parse_stage_b_response(
+            json.dumps(payload),
+            model="mock",
+            prompt_hash="h1",
+            resume_hash="h2",
+        )
+
+
+def test_parse_stage_b_response_rejects_non_string_verdict_summary() -> None:
+    """Stage B parser should validate verdict.one_line type before persisting."""
+    payload = make_stage_b_payload()
+    verdict = payload["verdict"]
+    assert isinstance(verdict, dict)
+    verdict["one_line"] = 123
+
+    with pytest.raises(ScoringParseError, match="missing or invalid string: one_line"):
+        parse_stage_b_response(
+            json.dumps(payload),
+            model="mock",
+            prompt_hash="h1",
+            resume_hash="h2",
+        )
+
+
+def test_parse_stage_b_response_rejects_invalid_avoid_mentioning_items() -> None:
+    """Stage B parser should validate ignored raw-list fields before persisting."""
+    payload = make_stage_b_payload()
+    hooks = payload["resume_hooks"]
+    assert isinstance(hooks, dict)
+    hooks["avoid_mentioning"] = ["Coursework", 42]
+
+    with pytest.raises(ScoringParseError, match="invalid string item"):
+        parse_stage_b_response(
+            json.dumps(payload),
+            model="mock",
+            prompt_hash="h1",
+            resume_hash="h2",
+        )
+
+
+def test_parse_stage_b_response_rejects_extra_top_level_keys() -> None:
+    """Stage B parser should reject top-level keys outside the prompt contract."""
+    payload = make_stage_b_payload()
+    payload["commentary"] = "extra"
+
+    with pytest.raises(ScoringParseError, match="stage_b keys invalid"):
+        parse_stage_b_response(
+            json.dumps(payload),
+            model="mock",
+            prompt_hash="h1",
+            resume_hash="h2",
+        )
 
 
 def test_parse_stage_b_response_rejects_missing_fit_keys() -> None:

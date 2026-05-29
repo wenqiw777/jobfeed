@@ -42,7 +42,7 @@ def test_load_settings_returns_defaults_without_config_file() -> None:
     settings = load_settings()
 
     assert settings.db.url is None
-    assert settings.llm.stage_a == "mock/stage-a"
+    assert settings.llm.stage_a == "codex-cli/gpt-5.4-mini"
 
 
 def test_load_settings_rejects_missing_explicit_config(tmp_path: Path) -> None:
@@ -104,6 +104,17 @@ def test_load_settings_flat_db_url_alias_maps_to_db_url(
     settings = load_settings()
 
     assert settings.db.url == url
+
+
+def test_load_settings_ignores_flat_compose_plumbing_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flat non-alias JOBFEED vars are Docker plumbing, not app config."""
+    monkeypatch.setenv("JOBFEED_POSTGRES_PORT", "55432")
+
+    settings = load_settings()
+
+    assert settings.db.url is None
 
 
 def test_load_settings_nested_db_url_beats_flat_alias(
@@ -179,8 +190,8 @@ def test_llm_settings_defaults() -> None:
     """LLMSettings defaults should match Phase 3 plan values."""
     cfg = LLMSettings()
 
-    assert cfg.stage_a == "mock/stage-a"
-    assert cfg.stage_b == "mock/stage-b"
+    assert cfg.stage_a == "codex-cli/gpt-5.4-mini"
+    assert cfg.stage_b == "codex-cli/gpt-5.5"
     assert cfg.codex_timeout_s == LLM_DEFAULT_CODEX_TIMEOUT_S
     assert cfg.claude_timeout_s == LLM_DEFAULT_CLAUDE_TIMEOUT_S
     assert cfg.max_concurrent == LLM_DEFAULT_MAX_CONCURRENT
@@ -211,6 +222,16 @@ def test_llm_settings_rejects_extra_fields() -> None:
     """extra='forbid' should reject unknown fields."""
     with pytest.raises(ValidationError):
         LLMSettings(nonexistent_field="value")  # type: ignore[call-arg]
+
+
+def test_llm_settings_rejects_negative_budget_limits() -> None:
+    """Daily LLM budget settings should allow zero but reject negatives."""
+    LLMSettings(max_daily_score_calls=0, max_daily_cost_usd=0.0)
+
+    with pytest.raises(ValidationError):
+        LLMSettings(max_daily_score_calls=-1)
+    with pytest.raises(ValidationError):
+        LLMSettings(max_daily_cost_usd=-0.01)
 
 
 LLM_TOML_CODEX_TIMEOUT = 90.0

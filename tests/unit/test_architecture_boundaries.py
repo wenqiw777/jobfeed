@@ -18,6 +18,7 @@ DOMAIN_ALLOWED_IMPORTS = {
     "typing",
 }
 ADAPTER_IMPORT_PREFIX = "jobfeed.adapters"
+SERVICE_FORBIDDEN_IMPORTS = (ADAPTER_IMPORT_PREFIX, "jobfeed.config")
 
 
 @dataclass(frozen=True)
@@ -51,12 +52,12 @@ def test_ports_do_not_import_adapters() -> None:
     assert not violations, format_violations(violations)
 
 
-def test_services_do_not_import_concrete_adapters() -> None:
-    """Services orchestrate ports and domain logic without concrete adapters."""
+def test_services_do_not_import_infrastructure_modules() -> None:
+    """Services orchestrate ports and domain logic without infrastructure."""
     violations = [
         reference
         for reference in imports_under(SOURCE_ROOT / "services")
-        if reference.module.startswith(ADAPTER_IMPORT_PREFIX)
+        if is_service_import_forbidden(reference.module)
     ]
 
     assert not violations, format_violations(violations)
@@ -162,6 +163,21 @@ def is_domain_import_allowed(module: str) -> bool:
         True when the import is stdlib-only or another domain module.
     """
     return module in DOMAIN_ALLOWED_IMPORTS or module.startswith("jobfeed.domain")
+
+
+def is_service_import_forbidden(module: str) -> bool:
+    """Return whether a service import crosses into infrastructure packages.
+
+    Args:
+        module: Fully qualified import path.
+
+    Returns:
+        True when the service layer imports forbidden infrastructure.
+    """
+    return any(
+        module == forbidden or module.startswith(f"{forbidden}.")
+        for forbidden in SERVICE_FORBIDDEN_IMPORTS
+    )
 
 
 def format_violations(violations: list[ImportReference]) -> str:

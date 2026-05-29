@@ -12,10 +12,6 @@ import click
 from jobfeed.cli import AppContext, require_app, run_with_store
 from jobfeed.domain.models import PipelineRun
 
-# Sweep adapter uses a large timeout instead of unbounded None because the
-# adapter constructors accept ``float`` (not ``float | None``).
-_SWEEP_TIMEOUT_S = 3600.0
-
 
 def _templates_dir() -> Path:
     """Resolve the package templates directory.
@@ -47,8 +43,8 @@ class _EvalParams:
     "-j",
     "--parallel",
     default=None,
-    type=int,
-    help="LLM concurrency (default: from config).",
+    type=click.IntRange(min=1, max=32),
+    help="LLM concurrency, 1-32 (default: from config).",
 )
 @click.option(
     "--stage",
@@ -65,19 +61,19 @@ class _EvalParams:
 @click.option(
     "--limit",
     default=None,
-    type=int,
+    type=click.IntRange(min=0),
     help="Maximum jobs to evaluate per stage.",
 )
 @click.option(
     "--max-days",
     default=None,
-    type=int,
+    type=click.IntRange(min=0),
     help="Freshness filter on discovered_at.",
 )
 @click.option(
     "--threshold",
     default=None,
-    type=int,
+    type=click.IntRange(min=0, max=100),
     help="Stage A threshold override.",
 )
 @click.option(
@@ -86,16 +82,7 @@ class _EvalParams:
     help="List pending work without calling the LLM.",
 )
 @click.pass_context
-def evaluate(  # noqa: PLR0913 - Click handler receives one param per flag
-    ctx: click.Context,
-    parallel: int | None,
-    stage: str,
-    corpus: str,
-    limit: int | None,
-    max_days: int | None,
-    threshold: int | None,
-    dry_run: bool,
-) -> None:
+def evaluate(ctx: click.Context, /, **kwargs: object) -> None:
     """Run pending evaluation stages and print counters.
 
     LLM clients, prompt renderer, and EvaluateService are built lazily
@@ -103,28 +90,37 @@ def evaluate(  # noqa: PLR0913 - Click handler receives one param per flag
 
     Args:
         ctx: Click invocation context.
-        parallel: LLM concurrency override.
-        stage: Which stage(s) to run.
-        corpus: Which jobs to select.
-        limit: Max jobs per stage.
-        max_days: Freshness filter.
-        threshold: Stage A score threshold override.
-        dry_run: Skip LLM calls and persistence of scores.
+        kwargs: Click option values keyed by option name.
     """
     app = require_app(ctx)
-    params = _EvalParams(
-        stage=stage,
-        corpus=corpus,
-        limit=limit,
-        max_days=max_days,
-        parallel=parallel,
-        threshold=threshold,
-        dry_run=dry_run,
-    )
+    params = _params_from_click(kwargs)
     run = asyncio.run(_run_evaluate(app, params))
+    if params.dry_run:
+        _print_dry_run_preview(run)
     click.echo(
         f"Evaluated {run.stage_a_scored} (Stage A), {run.stage_b_scored} (Stage B)"
     )
+
+
+def _params_from_click(values: dict[str, object]) -> _EvalParams:
+    """Normalize Click's untyped option mapping into typed evaluate params."""
+    return _EvalParams(
+        stage=cast(str, values["stage"]),
+        corpus=cast(str, values["corpus"]),
+        limit=cast(int | None, values["limit"]),
+        max_days=cast(int | None, values["max_days"]),
+        parallel=cast(int | None, values["parallel"]),
+        threshold=cast(int | None, values["threshold"]),
+        dry_run=cast(bool, values["dry_run"]),
+    )
+
+
+def _print_dry_run_preview(run: PipelineRun) -> None:
+    for item in run.dry_run_preview:
+        job_id = item.job_id or "unpersisted"
+        click.echo(
+            f"Would evaluate {item.stage}: {item.title} @ {item.company} [{job_id}]"
+        )
 
 
 async def _run_evaluate(
@@ -164,6 +160,7 @@ async def _build_and_run(
         Pipeline run with counters.
     """
     from jobfeed.adapters.llm._factory import (  # noqa: PLC0415
+        LLMClientBuildOptions,
         build_llm_client,
     )
     from jobfeed.adapters.llm._pricing import (  # noqa: PLC0415
@@ -172,11 +169,15 @@ async def _build_and_run(
     from jobfeed.adapters.llm._prompts import (  # noqa: PLC0415
         JinjaPromptRenderer,
     )
+    from jobfeed.adapters.llm.mock import MockLLM  # noqa: PLC0415
     from jobfeed.ports.store_ops import StoreOpsMixin  # noqa: PLC0415
     from jobfeed.services.evaluate import (  # noqa: PLC0415
-        EvaluateDependencies,
-        EvaluateRuntimeConfig,
         EvaluateService,
+    )
+    from jobfeed.services.evaluate_types import (  # noqa: PLC0415
+        EvaluateDependencies,
+        EvaluateLLMConfig,
+        EvaluateRuntimeConfig,
     )
 
     settings = app["settings"]
@@ -186,41 +187,51 @@ async def _build_and_run(
             update={"max_concurrent": params.parallel},
         )
 
-    # Validate resume file
-    resume_path = Path(llm_settings.master_resume_path)
-    if not resume_path.is_file():
-        raise click.ClickException(f"Resume file not found: {resume_path}")
-    resume_text = resume_path.read_text(encoding="utf-8")
+    resume_text = ""
+    if not params.dry_run:
+        resume_path = Path(llm_settings.master_resume_path)
+        if not resume_path.is_file():
+            raise click.ClickException(f"Resume file not found: {resume_path}")
+        resume_text = resume_path.read_text(encoding="utf-8")
 
-    # Build LLM clients lazily
-    price_table = load_price_table()
     logger = app["logger"]
-    llm_a = build_llm_client(
-        llm_settings.stage_a,
-        settings=llm_settings,
-        price_table=price_table,
-        logger=logger,
+    price_table = load_price_table()
+    unused_llm = MockLLM()
+    needs_stage_a = not params.dry_run and params.stage != "b"
+    needs_stage_b = not params.dry_run and params.stage != "a"
+    primary_options = LLMClientBuildOptions(max_retries=0)
+    llm_a = (
+        build_llm_client(
+            llm_settings.stage_a,
+            settings=llm_settings,
+            price_table=price_table,
+            logger=logger,
+            options=primary_options,
+        )
+        if needs_stage_a
+        else unused_llm
     )
-    llm_b = build_llm_client(
-        llm_settings.stage_b,
-        settings=llm_settings,
-        price_table=price_table,
-        logger=logger,
+    llm_b = (
+        build_llm_client(
+            llm_settings.stage_b,
+            settings=llm_settings,
+            price_table=price_table,
+            logger=logger,
+            options=primary_options,
+        )
+        if needs_stage_b
+        else unused_llm
     )
 
-    # Build sweep adapter with large timeout (Decision 12)
-    sweep_settings = llm_settings.model_copy(
-        update={
-            "codex_timeout_s": _SWEEP_TIMEOUT_S,
-            "claude_timeout_s": _SWEEP_TIMEOUT_S,
-        },
-    )
-    llm_b_sweep = build_llm_client(
-        llm_settings.stage_b,
-        settings=sweep_settings,
-        price_table=price_table,
-        logger=logger,
-    )
+    llm_b_sweep = None
+    if needs_stage_b:
+        llm_b_sweep = build_llm_client(
+            llm_settings.stage_b,
+            settings=llm_settings,
+            price_table=price_table,
+            logger=logger,
+            options=LLMClientBuildOptions(timeout_s=None, max_retries=0),
+        )
 
     preamble = (
         Path(llm_settings.preamble_personal_path)
@@ -248,7 +259,13 @@ async def _build_and_run(
             llm_stage_b_sweep=llm_b_sweep,
         ),
         config=EvaluateRuntimeConfig(
-            llm=llm_settings,
+            llm=EvaluateLLMConfig(
+                stage_a=llm_settings.stage_a,
+                stage_b=llm_settings.stage_b,
+                max_concurrent=llm_settings.max_concurrent,
+                max_daily_score_calls=llm_settings.max_daily_score_calls,
+                max_daily_cost_usd=llm_settings.max_daily_cost_usd,
+            ),
             stage_a_threshold=threshold,
             resume_text=resume_text,
         ),

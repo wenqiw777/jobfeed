@@ -144,12 +144,14 @@ class JobStore(Protocol):
         *,
         limit: int = 100,
         max_days: int | None = None,
+        stage_a_threshold: int | None = None,
     ) -> list[JobPosting]:
         """Load Stage A-completed, Stage B-pending jobs.
 
         Args:
             limit: Max jobs.
             max_days: Freshness filter.
+            stage_a_threshold: Optional minimum Stage A score.
 
         Returns:
             Jobs pending Stage B.

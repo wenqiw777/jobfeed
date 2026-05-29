@@ -19,10 +19,12 @@ import structlog
 
 from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.llm._prompts import render_stage_a_prompt, render_stage_b_prompt
+from jobfeed.adapters.llm._subprocess import SubprocessError
 from jobfeed.adapters.llm.claude import ClaudeCliLLM
-from jobfeed.adapters.llm.codex import CodexCliLLM
-from jobfeed.domain.models import JobPosting, LLMRequest, Verdict
+from jobfeed.adapters.llm.codex import CodexApiError, CodexCliLLM
+from jobfeed.domain.models import JobPosting, LLMRequest, LLMResponse, Verdict
 from jobfeed.domain.scoring_parse import parse_stage_a_response, parse_stage_b_response
+from jobfeed.ports.llm import LLMClient
 
 pytestmark = pytest.mark.live
 
@@ -37,6 +39,23 @@ RESUME_TEXT = (
 )
 STAGE_A_MIN_SCORE = 0
 STAGE_A_MAX_SCORE = 100
+STAGE_A_REFERENCE_SCORE = 75
+CODEX_STAGE_A_MODEL = "gpt-5.4-mini"
+CODEX_STAGE_B_MODEL = "gpt-5.5"
+CLAUDE_STAGE_A_MODEL = "claude-haiku-4-5"
+CLAUDE_STAGE_B_MODEL = "claude-sonnet-4-6"
+AUTH_FAILURE_MARKERS = (
+    "api key",
+    "auth",
+    "authentication",
+    "login",
+    "not logged in",
+    "unauthorized",
+    "401",
+    "403",
+    "anthropic_api_key",
+    "openai_api_key",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +88,20 @@ def _skip_if_missing(binary: str) -> None:
         pytest.skip(f"{binary} not found on PATH")
 
 
+async def _complete_or_skip_auth(
+    llm: LLMClient,
+    request: LLMRequest,
+) -> LLMResponse:
+    """Run a live completion, skipping when local CLI auth is unavailable."""
+    try:
+        return await llm.complete(request)
+    except (CodexApiError, SubprocessError) as exc:
+        message = str(exc).lower()
+        if any(marker in message for marker in AUTH_FAILURE_MARKERS):
+            pytest.skip(f"LLM CLI authentication unavailable: {exc}")
+        raise
+
+
 # ===========================================================================
 # Live smoke tests
 # ===========================================================================
@@ -85,7 +118,7 @@ class TestLLMLiveSmoke:
         price_table = load_price_table()
         logger = structlog.get_logger()
         llm = CodexCliLLM(
-            model="gpt-5.4-mini",
+            model=CODEX_STAGE_A_MODEL,
             timeout_s=60,
             price_table=price_table,
             logger=logger,
@@ -94,11 +127,11 @@ class TestLLMLiveSmoke:
         messages, phash, rhash = render_stage_a_prompt(
             RESUME_TEXT, job, TEMPLATES_DIR, None
         )
-        request = LLMRequest(messages=messages, model="gpt-5.4-mini")
-        response = await llm.complete(request)
+        request = LLMRequest(messages=messages, model=CODEX_STAGE_A_MODEL)
+        response = await _complete_or_skip_auth(llm, request)
         result = parse_stage_a_response(
             response.content,
-            model="gpt-5.4-mini",
+            model=CODEX_STAGE_A_MODEL,
             prompt_hash=phash,
             resume_hash=rhash,
         )
@@ -110,20 +143,20 @@ class TestLLMLiveSmoke:
         price_table = load_price_table()
         logger = structlog.get_logger()
         llm = CodexCliLLM(
-            model="gpt-5.4-mini",
+            model=CODEX_STAGE_B_MODEL,
             timeout_s=90,
             price_table=price_table,
             logger=logger,
         )
         job = _make_test_job()
         messages, phash, rhash = render_stage_b_prompt(
-            RESUME_TEXT, job, TEMPLATES_DIR, None
+            RESUME_TEXT, job, TEMPLATES_DIR, None, STAGE_A_REFERENCE_SCORE
         )
-        request = LLMRequest(messages=messages, model="gpt-5.4-mini")
-        response = await llm.complete(request)
+        request = LLMRequest(messages=messages, model=CODEX_STAGE_B_MODEL)
+        response = await _complete_or_skip_auth(llm, request)
         result = parse_stage_b_response(
             response.content,
-            model="gpt-5.4-mini",
+            model=CODEX_STAGE_B_MODEL,
             prompt_hash=phash,
             resume_hash=rhash,
         )
@@ -137,7 +170,7 @@ class TestLLMLiveSmoke:
         _skip_if_missing("claude")
         logger = structlog.get_logger()
         llm = ClaudeCliLLM(
-            model="claude-haiku-4-5",
+            model=CLAUDE_STAGE_A_MODEL,
             timeout_s=210,
             logger=logger,
         )
@@ -145,11 +178,11 @@ class TestLLMLiveSmoke:
         messages, phash, rhash = render_stage_a_prompt(
             RESUME_TEXT, job, TEMPLATES_DIR, None
         )
-        request = LLMRequest(messages=messages, model="claude-haiku-4-5")
-        response = await llm.complete(request)
+        request = LLMRequest(messages=messages, model=CLAUDE_STAGE_A_MODEL)
+        response = await _complete_or_skip_auth(llm, request)
         result = parse_stage_a_response(
             response.content,
-            model="claude-haiku-4-5",
+            model=CLAUDE_STAGE_A_MODEL,
             prompt_hash=phash,
             resume_hash=rhash,
         )
@@ -160,19 +193,19 @@ class TestLLMLiveSmoke:
         _skip_if_missing("claude")
         logger = structlog.get_logger()
         llm = ClaudeCliLLM(
-            model="claude-haiku-4-5",
+            model=CLAUDE_STAGE_B_MODEL,
             timeout_s=210,
             logger=logger,
         )
         job = _make_test_job()
         messages, phash, rhash = render_stage_b_prompt(
-            RESUME_TEXT, job, TEMPLATES_DIR, None
+            RESUME_TEXT, job, TEMPLATES_DIR, None, STAGE_A_REFERENCE_SCORE
         )
-        request = LLMRequest(messages=messages, model="claude-haiku-4-5")
-        response = await llm.complete(request)
+        request = LLMRequest(messages=messages, model=CLAUDE_STAGE_B_MODEL)
+        response = await _complete_or_skip_auth(llm, request)
         result = parse_stage_b_response(
             response.content,
-            model="claude-haiku-4-5",
+            model=CLAUDE_STAGE_B_MODEL,
             prompt_hash=phash,
             resume_hash=rhash,
         )

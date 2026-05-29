@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 import pytest
 
-from jobfeed.adapters.llm._factory import LLMRuntimeUnavailable, build_llm_client
+from jobfeed.adapters.llm._factory import (
+    LLMClientBuildOptions,
+    LLMRuntimeUnavailable,
+    build_llm_client,
+)
 from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.llm.claude import ClaudeCliLLM
 from jobfeed.adapters.llm.codex import CodexCliLLM
@@ -20,6 +24,7 @@ from jobfeed.observability import get_logger
 
 CODEX_PATH = "/usr/local/bin/codex"
 CLAUDE_PATH = "/usr/local/bin/claude"
+DEFAULT_ADAPTER_RETRIES = 2
 
 
 @pytest.fixture()
@@ -53,6 +58,7 @@ def test_codex_backend_returns_codex_cli_llm(settings, price_table, logger):
         )
 
     assert isinstance(client, CodexCliLLM)
+    assert client._max_retries == DEFAULT_ADAPTER_RETRIES
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +77,37 @@ def test_claude_backend_returns_claude_cli_llm(settings, price_table, logger):
         )
 
     assert isinstance(client, ClaudeCliLLM)
+    assert client._max_retries == DEFAULT_ADAPTER_RETRIES
+
+
+def test_build_options_override_retry_and_timeout(settings, price_table, logger):
+    """Factory should pass per-client retry and timeout policy to adapters."""
+    with patch("jobfeed.adapters.llm._factory.shutil.which", return_value=CODEX_PATH):
+        client = build_llm_client(
+            "codex-cli/gpt-5.4-mini",
+            settings=settings,
+            price_table=price_table,
+            logger=logger,
+            options=LLMClientBuildOptions(timeout_s=None, max_retries=0),
+        )
+
+    assert isinstance(client, CodexCliLLM)
+    assert client._timeout_s is None
+    assert client._max_retries == 0
+
+
+def test_codex_backend_rejects_unpriced_model(settings, logger):
+    """codex-cli/model should fail before paid calls when pricing is unknown."""
+    with (
+        patch("jobfeed.adapters.llm._factory.shutil.which", return_value=CODEX_PATH),
+        pytest.raises(ValueError, match="no vendored pricing"),
+    ):
+        build_llm_client(
+            "codex-cli/not-in-price-table",
+            settings=settings,
+            price_table={},
+            logger=logger,
+        )
 
 
 # ---------------------------------------------------------------------------

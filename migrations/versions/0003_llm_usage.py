@@ -21,14 +21,19 @@ def upgrade() -> None:
     CREATE TABLE llm_usage (
         id SERIAL PRIMARY KEY,
         model TEXT NOT NULL,
-        input_tokens INTEGER NOT NULL,
-        output_tokens INTEGER NOT NULL,
-        cost_usd REAL NOT NULL DEFAULT 0.0,
+        input_tokens INTEGER NOT NULL
+            CONSTRAINT llm_usage_input_tokens_nonnegative CHECK (input_tokens >= 0),
+        output_tokens INTEGER NOT NULL
+            CONSTRAINT llm_usage_output_tokens_nonnegative CHECK (output_tokens >= 0),
+        cost_usd REAL NOT NULL DEFAULT 0.0
+            CONSTRAINT llm_usage_cost_usd_nonnegative CHECK (cost_usd >= 0),
         cached BOOLEAN NOT NULL DEFAULT FALSE,
-        latency_ms INTEGER NOT NULL DEFAULT 0,
+        latency_ms INTEGER NOT NULL DEFAULT 0
+            CONSTRAINT llm_usage_latency_ms_nonnegative CHECK (latency_ms >= 0),
         timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         job_id INTEGER REFERENCES jobs(id),
-        stage TEXT,
+        stage TEXT
+            CONSTRAINT llm_usage_stage_valid CHECK (stage IS NULL OR stage IN ('a', 'b')),
         run_id TEXT
     )
     """)

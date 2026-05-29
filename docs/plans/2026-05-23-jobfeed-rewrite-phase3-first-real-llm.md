@@ -145,9 +145,9 @@ Prompt passed via **stdin**: `<system>\n{system_prompt}\n</system>\n\n{user_prom
 **Command construction:**
 ```bash
 claude -p --no-session-persistence --tools "" --output-format json \
-  --model <model> --system-prompt <system_prompt> <user_prompt>
+  --model <model> --system-prompt <system_prompt>
 ```
-Prompt passed as **positional argument** (not stdin). **ARG_MAX note:** very long JD text (10K+ chars) combined with a long resume could approach OS `ARG_MAX` limits (~256KB on macOS). In practice, typical prompts are 5-20KB total which is safe. If ARG_MAX becomes an issue, fall back to piping the user prompt via stdin with `-` as the positional arg.
+System prompt is passed through `--system-prompt`; user prompt is passed through **stdin** so long JD/resume content does not consume argv space.
 
 **Response parsing (single JSON object):**
 ```json

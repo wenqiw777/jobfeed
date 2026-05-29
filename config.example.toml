@@ -4,8 +4,8 @@
 url = "postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev"
 
 [llm]
-stage_a = "mock/stage-a"                   # or "codex-cli/gpt-5.4-mini", "claude-cli/claude-haiku-4-5"
-stage_b = "mock/stage-b"                   # or "codex-cli/gpt-5.5", "claude-cli/claude-sonnet-4-6"
+stage_a = "codex-cli/gpt-5.4-mini"         # or "claude-cli/claude-haiku-4-5", "mock/stage-a"
+stage_b = "codex-cli/gpt-5.5"              # or "claude-cli/claude-sonnet-4-6", "mock/stage-b"
 codex_timeout_s = 60
 claude_timeout_s = 210
 max_daily_score_calls = 150

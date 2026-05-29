@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 import time
 from dataclasses import dataclass
 
@@ -16,6 +18,8 @@ class SubprocessOptions:
     input_text: str | None = None
     timeout_s: float | None = None
     start_new_session: bool = False
+    cwd: str | None = None
+    env: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -76,6 +80,8 @@ async def run_subprocess(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=options.start_new_session,
+        cwd=options.cwd,
+        env=options.env,
     )
 
     input_bytes = (
@@ -88,7 +94,7 @@ async def run_subprocess(
             timeout=options.timeout_s,
         )
     except TimeoutError:
-        process.kill()
+        _kill_timed_out_process(process, options)
         await process.wait()
         raise SubprocessTimeout(
             f"{cmd[0]} timed out after {options.timeout_s}s",
@@ -114,6 +120,19 @@ async def run_subprocess(
         returncode=process.returncode or 0,
         elapsed_ms=elapsed_ms,
     )
+
+
+def _kill_timed_out_process(
+    process: asyncio.subprocess.Process,
+    options: SubprocessOptions,
+) -> None:
+    if options.start_new_session:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        return
+    process.kill()
 
 
 _DEFAULT_RETRY = RetryOptions()

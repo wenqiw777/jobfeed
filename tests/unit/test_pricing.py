@@ -8,6 +8,7 @@ import pytest
 
 from jobfeed.adapters.llm._pricing import (
     ModelPricing,
+    TokenUsage,
     estimate_cost,
     load_price_table,
 )
@@ -75,8 +76,10 @@ def test_estimate_cost_known_model_returns_positive(
     """Cost for a known model with non-zero tokens should be positive."""
     cost = estimate_cost(
         KNOWN_MODEL,
-        input_tokens=TOKEN_COUNT_1K,
-        output_tokens=TOKEN_COUNT_500,
+        TokenUsage(
+            input_tokens=TOKEN_COUNT_1K,
+            output_tokens=TOKEN_COUNT_500,
+        ),
         price_table=price_table,
     )
     assert cost > 0.0
@@ -95,8 +98,10 @@ def test_estimate_cost_unknown_model_returns_zero(
     with caplog.at_level(logging.WARNING):
         cost = estimate_cost(
             UNKNOWN_MODEL,
-            input_tokens=TOKEN_COUNT_1K,
-            output_tokens=TOKEN_COUNT_500,
+            TokenUsage(
+                input_tokens=TOKEN_COUNT_1K,
+                output_tokens=TOKEN_COUNT_500,
+            ),
             price_table=price_table,
         )
     assert cost == 0.0
@@ -118,15 +123,16 @@ def test_estimate_cost_cached_tokens_cheaper_than_uncached(
 
     cost_uncached = estimate_cost(
         KNOWN_MODEL,
-        input_tokens=TOKEN_COUNT_1K,
-        output_tokens=0,
+        TokenUsage(input_tokens=TOKEN_COUNT_1K, output_tokens=0),
         price_table=price_table,
     )
     cost_cached = estimate_cost(
         KNOWN_MODEL,
-        input_tokens=0,
-        output_tokens=0,
-        cached_input_tokens=TOKEN_COUNT_1K,
+        TokenUsage(
+            input_tokens=0,
+            output_tokens=0,
+            cached_input_tokens=TOKEN_COUNT_1K,
+        ),
         price_table=price_table,
     )
     assert cost_cached < cost_uncached
@@ -143,12 +149,39 @@ def test_estimate_cost_cached_fallback_when_no_cached_rate() -> None:
     }
     cost = estimate_cost(
         "test-model",
-        input_tokens=0,
-        output_tokens=0,
-        cached_input_tokens=TOKEN_COUNT_1K,
+        TokenUsage(
+            input_tokens=0,
+            output_tokens=0,
+            cached_input_tokens=TOKEN_COUNT_1K,
+        ),
         price_table=table,
     )
     expected = TOKEN_COUNT_1K * 0.01
+    assert cost == pytest.approx(expected)
+
+
+def test_estimate_cost_cached_tokens_not_charged_twice() -> None:
+    """Cached tokens included in input_tokens should use only the cached rate."""
+    table = {
+        "test-model": ModelPricing(
+            input_cost_per_token=0.01,
+            output_cost_per_token=0.02,
+            cached_input_cost_per_token=0.001,
+        ),
+    }
+
+    cost = estimate_cost(
+        "test-model",
+        TokenUsage(
+            input_tokens=TOKEN_COUNT_1K,
+            output_tokens=0,
+            cached_input_tokens=TOKEN_COUNT_200,
+        ),
+        price_table=table,
+    )
+
+    expected = (TOKEN_COUNT_1K - TOKEN_COUNT_200) * 0.01
+    expected += TOKEN_COUNT_200 * 0.001
     assert cost == pytest.approx(expected)
 
 
@@ -170,9 +203,11 @@ def test_estimate_cost_reasoning_tokens_use_dedicated_rate() -> None:
     }
     cost = estimate_cost(
         "test-model",
-        input_tokens=0,
-        output_tokens=0,
-        reasoning_output_tokens=TOKEN_COUNT_200,
+        TokenUsage(
+            input_tokens=0,
+            output_tokens=0,
+            reasoning_output_tokens=TOKEN_COUNT_200,
+        ),
         price_table=table,
     )
     expected = TOKEN_COUNT_200 * reasoning_rate
@@ -191,9 +226,11 @@ def test_estimate_cost_reasoning_fallback_when_no_reasoning_rate() -> None:
     }
     cost = estimate_cost(
         "test-model",
-        input_tokens=0,
-        output_tokens=0,
-        reasoning_output_tokens=TOKEN_COUNT_200,
+        TokenUsage(
+            input_tokens=0,
+            output_tokens=0,
+            reasoning_output_tokens=TOKEN_COUNT_200,
+        ),
         price_table=table,
     )
     expected = TOKEN_COUNT_200 * output_rate

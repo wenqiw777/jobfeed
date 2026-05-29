@@ -87,6 +87,7 @@ def render_stage_b_prompt(
     job: JobPosting,
     templates_dir: Path,
     preamble_path: Path | None,
+    stage_a_score: int | None = None,
 ) -> tuple[list[Message], str, str]:
     """Render the Stage B prompt via Jinja2.
 
@@ -95,6 +96,7 @@ def render_stage_b_prompt(
         job: Job posting to evaluate.
         templates_dir: Directory containing Jinja2 templates.
         preamble_path: Optional personal preamble file.
+        stage_a_score: Optional Stage A rough score for calibration.
 
     Returns:
         Tuple of (messages, prompt_hash, resume_hash).
@@ -105,7 +107,7 @@ def render_stage_b_prompt(
         preamble_path=preamble_path,
         blocks=DEFAULT_BLOCKS,
     )
-    user_msg = render_user_message(resume_text, job)
+    user_msg = render_user_message(resume_text, job, stage_a_score=stage_a_score)
     messages = [
         Message(role="system", content=system_prompt),
         Message(role="user", content=user_msg),
@@ -150,7 +152,13 @@ class JinjaPromptRenderer:
             resume_hash=resume_hash,
         )
 
-    def render_stage_b(self, *, resume_text: str, job: JobPosting) -> PromptBundle:
+    def render_stage_b(
+        self,
+        *,
+        resume_text: str,
+        job: JobPosting,
+        stage_a_score: int | None = None,
+    ) -> PromptBundle:
         """Render Stage B prompt bundle.
 
         Args:
@@ -161,7 +169,7 @@ class JinjaPromptRenderer:
             PromptBundle with messages and hashes.
         """
         messages, prompt_hash, resume_hash = render_stage_b_prompt(
-            resume_text, job, self._templates_dir, self._preamble_path
+            resume_text, job, self._templates_dir, self._preamble_path, stage_a_score
         )
         return PromptBundle(
             messages=messages,

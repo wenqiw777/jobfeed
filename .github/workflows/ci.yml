@@ -59,6 +59,8 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
+    env:
+      JOBFEED_POSTGRES_PORT: "55432"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -71,3 +73,22 @@ jobs:
 
       - name: Verify CLI help
         run: docker compose run --rm jobfeed-cli jobfeed --help
+
+      - name: Verify canonical Docker CLI smoke
+        run: |
+          docker compose run --rm jobfeed-cli alembic -c migrations/alembic.ini upgrade head
+          ./bin/jobfeed --help
+          ./bin/jobfeed --config tests/fixtures/docker-smoke.toml scan --source mock
+          ./bin/jobfeed --config tests/fixtures/docker-smoke.toml evaluate --limit 3
+          ./bin/jobfeed --config tests/fixtures/docker-smoke.toml digest
+
+      - name: Verify canonical Docker real-backend failure
+        run: |
+          set +e
+          output=$(./bin/jobfeed --config tests/fixtures/docker-real-backend-missing.toml evaluate --stage a --limit 1 2>&1)
+          status=$?
+          echo "$output"
+          test "$status" -ne 0
+          echo "$output" | grep -q "codex-cli backend requires 'codex'"
+          echo "$output" | grep -q "jobfeed-cli runtime"
+          ! echo "$output" | grep -q "Traceback"

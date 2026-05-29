@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -47,6 +48,7 @@ def _make_process(
     proc.wait = AsyncMock()
     proc.kill = MagicMock()
     proc.returncode = returncode
+    proc.pid = 12345
     return proc
 
 
@@ -95,6 +97,28 @@ async def test_run_subprocess_raises_timeout() -> None:
         )
 
     proc.kill.assert_called_once()
+    proc.wait.assert_awaited_once()
+
+
+async def test_run_subprocess_timeout_kills_process_group() -> None:
+    """start_new_session timeout kills the subprocess process group."""
+    proc = _make_process()
+    proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    logger = _make_logger()
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        patch("jobfeed.adapters.llm._subprocess.os.killpg") as killpg,
+        pytest.raises(SubprocessTimeout),
+    ):
+        await run_subprocess(
+            CMD,
+            options=SubprocessOptions(timeout_s=1.0, start_new_session=True),
+            logger=logger,
+        )
+
+    killpg.assert_called_once_with(proc.pid, signal.SIGKILL)
+    proc.kill.assert_not_called()
     proc.wait.assert_awaited_once()
 
 
@@ -200,6 +224,25 @@ async def test_start_new_session_passed_through() -> None:
 
     _, kwargs = mock_exec.call_args
     assert kwargs["start_new_session"] is True
+
+
+async def test_cwd_and_env_passed_through() -> None:
+    """cwd and env options are forwarded to create_subprocess_exec."""
+    proc = _make_process()
+    logger = _make_logger()
+    mock_exec = AsyncMock(return_value=proc)
+    env = {"PATH": "/bin"}
+
+    with patch("asyncio.create_subprocess_exec", mock_exec):
+        await run_subprocess(
+            CMD,
+            options=SubprocessOptions(cwd="/tmp/jobfeed-empty", env=env),
+            logger=logger,
+        )
+
+    _, kwargs = mock_exec.call_args
+    assert kwargs["cwd"] == "/tmp/jobfeed-empty"
+    assert kwargs["env"] == env
 
 
 # ---------------------------------------------------------------------------

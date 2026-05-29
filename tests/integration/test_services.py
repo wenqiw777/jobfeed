@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -22,11 +23,13 @@ from jobfeed.domain.models import (
 )
 from jobfeed.observability import configure_logging, get_logger
 from jobfeed.ports.prompts import PromptBundle
+from jobfeed.services import _evaluate_claims as claim_helpers
 from jobfeed.services.digest import DigestService
-from jobfeed.services.evaluate import (
+from jobfeed.services.evaluate import EvaluateService
+from jobfeed.services.evaluate_types import (
     EvaluateDependencies,
+    EvaluateLLMConfig,
     EvaluateRuntimeConfig,
-    EvaluateService,
 )
 from jobfeed.services.scan import ScanService
 
@@ -37,7 +40,11 @@ SINGLE_SOURCE_COUNT = 2
 EXPECTED_ERROR_COUNT = 1
 STAGE_COUNT_MULTIPLIER = 2
 MAX_CONCURRENT_FOR_TEST = 2
+STAGE_RETRY_CALLS = 2
+LLM_USAGE_STAGE_COUNT = 2
+MIN_HEARTBEAT_REFRESH_CALLS = 2
 RESUME_TEXT = "Phase 0 resume placeholder."
+TEST_LLM_SETTINGS = LLMSettings(stage_a="mock/stage-a", stage_b="mock/stage-b")
 
 
 class RecordingLogger:
@@ -92,6 +99,83 @@ class BadStageALLM:
         )
 
 
+class CostlyBadStageALLM:
+    """LLM test double that returns invalid Stage A output with usage cost."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Return invalid JSON and non-zero usage cost."""
+        self.calls += 1
+        return LLMResponse(
+            content="not json",
+            model=request.model,
+            input_tokens=10,
+            output_tokens=5,
+            cost_usd=0.25,
+        )
+
+
+class CostlyBadStageBLLM:
+    """LLM test double that returns invalid Stage B output with usage cost."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Return invalid JSON and non-zero usage cost."""
+        self.calls += 1
+        return LLMResponse(
+            content="not json",
+            model=request.model,
+            input_tokens=10,
+            output_tokens=5,
+            cost_usd=0.25,
+        )
+
+
+class AgingStageBErrorLLM:
+    """Stage B LLM double that ages the claim before failing."""
+
+    def __init__(self, store: PostgresStore, job_id: str) -> None:
+        self._store = store
+        self._job_id = job_id
+
+    async def complete(self, _request: LLMRequest) -> LLMResponse:
+        """Age the active claim and raise a runtime failure."""
+        await _age_evaluation_claim(self._store, self._job_id)
+        raise RuntimeError("primary stage_b failed")
+
+
+class ReclaimProbeSweepLLM(MockLLM):
+    """Sweep LLM double that checks whether another runner can reclaim."""
+
+    def __init__(self, store: PostgresStore, threshold: int) -> None:
+        self._store = store
+        self._threshold = threshold
+        self.reclaimed_ids: list[str | None] = []
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Probe Stage B reclaimability, then return a valid sweep result."""
+        reclaimed = await self._store.claim_pending_stage_b(
+            limit=1,
+            stage_a_threshold=self._threshold,
+        )
+        self.reclaimed_ids = [job.id for job in reclaimed]
+        return await super().complete(request)
+
+
+class YieldingMockLLM(MockLLM):
+    """Mock LLM that yields so lease-heartbeat tests can run background work."""
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Yield control before returning the deterministic mock response."""
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return await super().complete(request)
+
+
 class CountingLLM:
     """LLM test double that records whether it was called."""
 
@@ -107,6 +191,18 @@ class CountingLLM:
             input_tokens=0,
             output_tokens=0,
         )
+
+
+class RecordingMockLLM(MockLLM):
+    """Mock LLM that records requests for prompt assertions."""
+
+    def __init__(self) -> None:
+        self.requests: list[LLMRequest] = []
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Record the request and return the deterministic mock response."""
+        self.requests.append(request)
+        return await super().complete(request)
 
 
 class TrackingLLM:
@@ -142,17 +238,48 @@ class ErrorLLM:
         raise RuntimeError("LLM adapter error")
 
 
+class CountingErrorLLM:
+    """LLM test double that counts calls and raises a runtime error."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, _request: LLMRequest) -> LLMResponse:
+        """Count and raise a runtime error."""
+        self.calls += 1
+        raise RuntimeError("LLM adapter error")
+
+
+class FlakyStageALLM:
+    """LLM test double that fails once, then returns valid Stage A JSON."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Raise once, then return a valid Stage A response."""
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("transient LLM adapter error")
+        return LLMResponse(
+            content='{"score": 75, "one_line": "ok", "timing_eligible": "eligible"}',
+            model=request.model,
+            input_tokens=0,
+            output_tokens=0,
+        )
+
+
 class StubStoreOps:
     """Minimal StoreOpsMixin stub for tests that need cost/usage recording."""
 
     def __init__(self) -> None:
-        self.costs: list[tuple[str, float]] = []
+        self.costs: list[tuple[str, float, int]] = []
         self.usages: list[LLMUsage] = []
         self._cost_entry: CostEntry | None = None
 
-    async def record_cost(self, *, day: str, spent_usd: float) -> None:
+    async def record_cost(self, *, day: str, spent_usd: float, calls: int = 1) -> None:
         """Record a cost entry."""
-        self.costs.append((day, spent_usd))
+        self.costs.append((day, spent_usd, calls))
 
     async def get_cost(self, _day: str) -> CostEntry | None:
         """Return the configured cost entry."""
@@ -161,6 +288,32 @@ class StubStoreOps:
     async def record_llm_usage(self, usage: LLMUsage) -> None:
         """Record an LLM usage entry."""
         self.usages.append(usage)
+
+    async def record_llm_usage_with_cost(
+        self,
+        *,
+        day: str,
+        spent_usd: float,
+        usage: LLMUsage,
+    ) -> None:
+        """Record a cost and LLM usage entry."""
+        self.costs.append((day, spent_usd, 0))
+        self.usages.append(usage)
+
+
+class DynamicBudgetStoreOps(StubStoreOps):
+    """StoreOps stub whose budget reads reflect prior recorded costs."""
+
+    async def get_cost(self, day: str) -> CostEntry | None:
+        """Return cost totals accumulated by this test stub."""
+        if not self.costs:
+            return None
+        return CostEntry(
+            day=day,
+            spent_usd=sum(spent for _, spent, _ in self.costs),
+            calls=sum(calls for _, _, calls in self.costs),
+            last_updated=datetime.now(UTC),
+        )
 
 
 class StubPromptRenderer:
@@ -177,12 +330,20 @@ class StubPromptRenderer:
             resume_hash="test",
         )
 
-    def render_stage_b(self, *, resume_text: str, job: JobPosting) -> PromptBundle:  # noqa: ARG002
+    def render_stage_b(
+        self,
+        *,
+        resume_text: str,
+        job: JobPosting,
+        stage_a_score: int | None = None,
+    ) -> PromptBundle:
         """Return skeleton Stage B prompt bundle."""
+        del resume_text
+        score_text = "" if stage_a_score is None else f"stage_a={stage_a_score}"
         return PromptBundle(
             messages=[
                 Message(role="system", content="review"),
-                Message(role="user", content=job.jd_text or ""),
+                Message(role="user", content=f"{job.jd_text or ''} {score_text}"),
             ],
             prompt_hash="test",
             resume_hash="test",
@@ -193,6 +354,7 @@ def _make_deps(
     store: PostgresStore,
     llm: object,
     store_ops: StubStoreOps | None = None,
+    sweep: object | None = None,
 ) -> EvaluateDependencies:
     """Build EvaluateDependencies from test doubles."""
     ops = store_ops or StubStoreOps()
@@ -202,6 +364,7 @@ def _make_deps(
         prompt_renderer=StubPromptRenderer(),  # type: ignore[arg-type]
         llm_stage_a=llm,  # type: ignore[arg-type]
         llm_stage_b=llm,  # type: ignore[arg-type]
+        llm_stage_b_sweep=sweep,  # type: ignore[arg-type]
     )
 
 
@@ -209,9 +372,15 @@ def _make_config(
     settings: Settings | None = None,
 ) -> EvaluateRuntimeConfig:
     """Build EvaluateRuntimeConfig from settings."""
-    s = settings or Settings()
+    s = settings or Settings(llm=TEST_LLM_SETTINGS)
     return EvaluateRuntimeConfig(
-        llm=s.llm,
+        llm=EvaluateLLMConfig(
+            stage_a=s.llm.stage_a,
+            stage_b=s.llm.stage_b,
+            max_concurrent=s.llm.max_concurrent,
+            max_daily_score_calls=s.llm.max_daily_score_calls,
+            max_daily_cost_usd=s.llm.max_daily_cost_usd,
+        ),
         stage_a_threshold=s.scoring.stage_a_threshold,
         resume_text=RESUME_TEXT,
     )
@@ -230,6 +399,151 @@ def _make_service(
         config=_make_config(settings),
         logger=logger or RecordingLogger(),  # type: ignore[arg-type]
     )
+
+
+async def test_evaluate_service_rejects_invalid_stage_before_llm(
+    store: PostgresStore,
+) -> None:
+    """Invalid stage values should fail before claim or LLM work."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    llm = CountingLLM()
+    service = _make_service(store, llm)
+
+    with pytest.raises(ValueError, match="unknown evaluate stage"):
+        await service.run(stage="typo")
+
+    assert llm.calls == 0
+    assert len(await store.load_pending_stage_a()) == 1
+
+
+async def test_postgres_claim_stage_a_excludes_already_claimed(
+    store: PostgresStore,
+) -> None:
+    """A claimed Stage A row should not be claimed by a second runner."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+
+    first = await store.claim_pending_stage_a(
+        quality_bands=frozenset({"full", "good"}),
+        limit=1,
+    )
+    second = await store.claim_pending_stage_a(
+        quality_bands=frozenset({"full", "good"}),
+        limit=1,
+    )
+
+    assert len(first) == 1
+    assert second == []
+    assert first[0].id is not None
+    await _age_evaluation_claim(store, first[0].id)
+    stale = await store.claim_pending_stage_a(
+        quality_bands=frozenset({"full", "good"}),
+        limit=1,
+    )
+    assert [job.id for job in stale] == [first[0].id]
+    await store.release_stage_a_claim(first[0].id)
+    reclaimed = await store.claim_pending_stage_a(
+        quality_bands=frozenset({"full", "good"}),
+        limit=1,
+    )
+    assert [job.id for job in reclaimed] == [first[0].id]
+
+
+async def test_evaluate_dry_run_previews_stale_stage_a_claim(
+    store: PostgresStore,
+) -> None:
+    """Dry-run should show stale Stage A claims a real run would reclaim."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    claimed = await store.claim_pending_stage_a(
+        quality_bands=frozenset({"full", "good"}),
+        limit=1,
+    )
+    assert claimed[0].id is not None
+    await _age_evaluation_claim(store, claimed[0].id)
+
+    run = await _make_service(store, CountingLLM()).run(stage="a", dry_run=True)
+
+    assert [item.job_id for item in run.dry_run_preview] == [claimed[0].id]
+
+
+async def test_postgres_claim_stage_b_excludes_already_claimed(
+    store: PostgresStore,
+) -> None:
+    """A claimed Stage B row should not be claimed by a second runner."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    await store.save_stage_a(job.id, make_stage_a_result(score=90))
+
+    first = await store.claim_pending_stage_b(limit=1, stage_a_threshold=80)
+    second = await store.claim_pending_stage_b(limit=1, stage_a_threshold=80)
+
+    assert [claimed.id for claimed in first] == [job.id]
+    assert second == []
+    await _age_evaluation_claim(store, job.id)
+    stale = await store.claim_pending_stage_b(limit=1, stage_a_threshold=80)
+    assert [claimed.id for claimed in stale] == [job.id]
+    await store.release_stage_b_claim(job.id)
+    reclaimed = await store.claim_pending_stage_b(limit=1, stage_a_threshold=80)
+    assert [claimed.id for claimed in reclaimed] == [job.id]
+
+
+async def test_evaluate_dry_run_previews_stale_stage_b_claim(
+    store: PostgresStore,
+) -> None:
+    """Dry-run should show stale Stage B claims a real run would reclaim."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    await store.save_stage_a(job.id, make_stage_a_result(score=90))
+    await store.claim_pending_stage_b(limit=1, stage_a_threshold=80)
+    await _age_evaluation_claim(store, job.id)
+
+    service = _make_service(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+    )
+    run = await service.run(stage="b", dry_run=True)
+
+    assert [item.job_id for item in run.dry_run_preview] == [job.id]
+
+
+async def test_stage_b_threshold_sync_skips_stale_claim_below_raised_threshold(
+    store: PostgresStore,
+) -> None:
+    """A stale claim below a raised threshold should not stay in progress."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    await store.save_stage_a(job.id, make_stage_a_result(score=75))
+    claimed = await store.claim_pending_stage_b(limit=1, stage_a_threshold=70)
+    assert [item.id for item in claimed] == [job.id]
+    await _age_evaluation_claim(store, job.id)
+    service = _make_service(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+    )
+
+    run = await service.run(stage="b")
+
+    status, error = await _get_stage_b_state(store, job.id)
+    assert status == "skipped_below_threshold"
+    assert error is None
+    assert run.stage_b_scored == 0
+    assert run.errors == 0
 
 
 async def test_scan_service_saves_mock_jobs_and_single_source_name(
@@ -387,23 +701,128 @@ async def test_evaluate_service_skips_preexisting_below_threshold_stage_b(
     await store.save_stage_a(job.id, low)
     assert len(await store.load_pending_stage_b()) == 1
 
-    # Pre-existing below-threshold: the new service no longer does batch
-    # skip_below_threshold on load. Instead Stage A threshold check happens
-    # at scoring time. Below-threshold rows from a prior run stay in the
-    # Stage B queue (the store includes them). The service attempts Stage B
-    # for them; CountingLLM returns Stage A-shaped JSON, which fails Stage B
-    # parsing, so they end up as errors.
     service = _make_service(
         store,
         CountingLLM(),
         Settings(scoring=ScoringSettings(stage_a_threshold=80)),
     )
     run = await service.run()
+    pending_b = await store.load_pending_stage_b()
 
-    # Stage A: no new pending (already scored). Stage B: one job attempted
-    # but parse fails because CountingLLM returns Stage A JSON for Stage B.
+    assert pending_b == []
     assert run.stage_b_scored == 0
-    assert run.errors >= 1
+    assert run.errors == 0
+
+
+async def test_evaluate_service_stage_b_limit_applies_after_threshold_filter(
+    store: PostgresStore,
+) -> None:
+    """Stage B should fill the limit from threshold-eligible jobs."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 2})]
+    )
+    jobs = await store.list_jobs()
+    low_job = jobs[0]
+    high_job = jobs[1]
+    assert low_job.id is not None
+    assert high_job.id is not None
+    await store.save_stage_a(
+        low_job.id,
+        StageAResult(
+            score=40,
+            one_line="weak",
+            timing_eligible="eligible",
+            model="mock/stage-a",
+            prompt_hash="h",
+            resume_hash="h",
+            cost_usd=0.0,
+        ),
+    )
+    await store.save_stage_a(
+        high_job.id,
+        StageAResult(
+            score=90,
+            one_line="strong",
+            timing_eligible="eligible",
+            model="mock/stage-a",
+            prompt_hash="h",
+            resume_hash="h",
+            cost_usd=0.0,
+        ),
+    )
+
+    service = _make_service(
+        store,
+        MockLLM(),
+        Settings(llm=TEST_LLM_SETTINGS, scoring=ScoringSettings(stage_a_threshold=80)),
+    )
+    run = await service.run(stage="b", limit=1)
+
+    assert run.stage_b_scored == 1
+    assert run.errors == 0
+    assert await store.load_pending_stage_b(stage_a_threshold=80) == []
+
+
+async def test_evaluate_service_passes_stage_a_score_to_stage_b_prompt(
+    store: PostgresStore,
+) -> None:
+    """Stage B prompt rendering should receive the stored Stage A score."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    await store.save_stage_a(
+        job.id,
+        StageAResult(
+            score=88,
+            one_line="strong",
+            timing_eligible="eligible",
+            model="mock/stage-a",
+            prompt_hash="h",
+            resume_hash="h",
+            cost_usd=0.0,
+        ),
+    )
+    llm = RecordingMockLLM()
+    service = _make_service(store, llm)
+
+    run = await service.run(stage="b")
+
+    assert run.stage_b_scored == 1
+    assert "stage_a=88" in llm.requests[0].messages[1].content
+
+
+async def test_evaluate_service_stage_b_limit_zero_does_not_mark_skips(
+    store: PostgresStore,
+) -> None:
+    """Stage B limit=0 should leave the Stage B queue untouched."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    low = StageAResult(
+        score=40,
+        one_line="weak",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    await store.save_stage_a(job.id, low)
+
+    service = _make_service(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+    )
+    run = await service.run(stage="b", limit=0)
+
+    assert run.stage_b_scored == 0
+    assert run.errors == 0
+    assert len(await store.load_pending_stage_b()) == 1
 
 
 async def test_evaluate_dry_run_does_not_mutate_store(
@@ -440,6 +859,203 @@ async def test_evaluate_dry_run_does_not_mutate_store(
     assert len(await store.load_pending_stage_b()) == 1
 
 
+async def test_stage_a_rescore_reopens_threshold_skipped_stage_b(
+    store: PostgresStore,
+) -> None:
+    """A later above-threshold Stage A score should re-enter Stage B."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    low = StageAResult(
+        score=40,
+        one_line="weak",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    high = StageAResult(
+        score=90,
+        one_line="strong",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+
+    await store.save_stage_a(job.id, low)
+    await store.mark_stage_b_skipped(job.id)
+    assert await store.load_pending_stage_b(stage_a_threshold=80) == []
+
+    await store.save_stage_a(job.id, high)
+
+    pending_ids = {item.id for item in await store.load_pending_stage_b()}
+    assert job.id in pending_ids
+
+
+async def test_stage_b_lower_threshold_reopens_previous_skips(
+    store: PostgresStore,
+) -> None:
+    """Lowering the active threshold should requeue previously skipped jobs."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    low = StageAResult(
+        score=75,
+        one_line="ok",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    await store.save_stage_a(job.id, low)
+    high_threshold = _make_service(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+    )
+    await high_threshold.run(stage="b")
+
+    lowered = _make_service(
+        store,
+        MockLLM(),
+        Settings(llm=TEST_LLM_SETTINGS, scoring=ScoringSettings(stage_a_threshold=70)),
+    )
+    run = await lowered.run(stage="b")
+
+    assert run.stage_b_scored == 1
+    assert run.errors == 0
+
+
+async def test_stage_b_dry_run_previews_lowered_threshold_without_mutating(
+    store: PostgresStore,
+) -> None:
+    """Dry-run should show rows a real lowered-threshold run would reopen."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    score = StageAResult(
+        score=75,
+        one_line="ok",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    await store.save_stage_a(job.id, score)
+    high_threshold = _make_service(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=80)),
+    )
+    await high_threshold.run(stage="b")
+    assert await store.load_pending_stage_b(stage_a_threshold=70) == []
+
+    logger = RecordingLogger()
+    dry_run = _make_service(
+        store,
+        CountingLLM(),
+        Settings(scoring=ScoringSettings(stage_a_threshold=70)),
+        logger,
+    )
+    run = await dry_run.run(stage="b", dry_run=True)
+
+    assert run.stage_b_scored == 0
+    assert [event[1]["job_id"] for event in logger.events] == [job.id]
+    assert await store.load_pending_stage_b(stage_a_threshold=70) == []
+
+
+async def test_evaluate_service_stage_b_respects_budget_gate(
+    store: PostgresStore,
+) -> None:
+    """Stage B should not call the LLM after the daily budget is exhausted."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    high = StageAResult(
+        score=90,
+        one_line="strong",
+        timing_eligible="eligible",
+        model="mock/stage-a",
+        prompt_hash="h",
+        resume_hash="h",
+        cost_usd=0.0,
+    )
+    await store.save_stage_a(job.id, high)
+    llm = CountingLLM()
+    ops = StubStoreOps()
+    ops._cost_entry = CostEntry(
+        day="2026-05-25",
+        spent_usd=1.0,
+        calls=150,
+        last_updated=datetime.now(UTC),
+    )
+    service = _make_service(store, llm, store_ops=ops)
+
+    run = await service.run(stage="b")
+
+    assert llm.calls == 0
+    assert run.stage_b_scored == 0
+    assert run.errors == 0
+    assert len(await store.load_pending_stage_b(stage_a_threshold=80)) == 1
+
+
+async def test_evaluate_service_retries_stage_a_runtime_failure(
+    store: PostgresStore,
+) -> None:
+    """Stage A transient runtime failures should retry once before erroring."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    llm = FlakyStageALLM()
+    service = _make_service(store, llm)
+
+    run = await service.run(stage="a")
+
+    assert llm.calls == STAGE_RETRY_CALLS
+    assert run.stage_a_scored == 1
+    assert run.errors == 0
+
+
+async def test_evaluate_service_records_real_cost_and_usage_chain(
+    store: PostgresStore,
+) -> None:
+    """Evaluate should write cost_ledger and llm_usage through the real store."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    service = _make_service(store, MockLLM(), store_ops=store)  # type: ignore[arg-type]
+
+    run = await service.run()
+
+    cost = await store.get_cost(datetime.now(UTC).strftime("%Y-%m-%d"))
+    assert cost is not None
+    assert cost.calls == LLM_USAGE_STAGE_COUNT
+    pool = store._get_pool()
+    rows = await pool.fetch(
+        """SELECT job_id, stage, run_id
+           FROM llm_usage
+           WHERE run_id = $1
+           ORDER BY stage""",
+        run.run_id,
+    )
+    assert len(rows) == LLM_USAGE_STAGE_COUNT
+    assert {row["stage"] for row in rows} == {"a", "b"}
+    assert all(row["job_id"] is not None for row in rows)
+
+
 async def test_evaluate_service_persists_parse_failures_and_continues(
     store: PostgresStore,
 ) -> None:
@@ -458,6 +1074,200 @@ async def test_evaluate_service_persists_parse_failures_and_continues(
     # errored rows (plan Task 1), so a later run re-attempts them.
     assert len(pending) == SINGLE_SOURCE_COUNT
     assert all(item.stage_a is None for item in evaluations)
+
+
+async def test_evaluate_service_counts_parse_failure_cost_in_run_total(
+    store: PostgresStore,
+) -> None:
+    """Parse-failure retries should still count successful LLM response cost."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    llm = CostlyBadStageALLM()
+    service = _make_service(store, llm)
+
+    run = await service.run(stage="a")
+
+    assert llm.calls == STAGE_RETRY_CALLS
+    assert run.errors == 1
+    assert run.total_llm_cost_usd == pytest.approx(0.50)
+
+
+async def test_evaluate_service_checks_budget_before_parse_retry(
+    store: PostgresStore,
+) -> None:
+    """A costly parse failure should not retry after exhausting call budget."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    llm = CostlyBadStageALLM()
+    service = _make_service(
+        store,
+        llm,
+        Settings(llm=LLMSettings(max_daily_score_calls=1)),
+        store_ops=DynamicBudgetStoreOps(),
+    )
+
+    run = await service.run(stage="a")
+
+    assert llm.calls == 1
+    assert run.errors == 0
+    assert run.total_llm_cost_usd == pytest.approx(0.25)
+    assert len(await store.load_pending_stage_a()) == 1
+
+
+async def test_evaluate_service_counts_runtime_failures_against_budget(
+    store: PostgresStore,
+) -> None:
+    """Runtime failures should consume the daily call budget before retry."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    llm = CountingErrorLLM()
+    service = _make_service(
+        store,
+        llm,
+        Settings(llm=LLMSettings(max_daily_score_calls=1)),
+        store_ops=DynamicBudgetStoreOps(),
+    )
+
+    run = await service.run(stage="a")
+
+    assert llm.calls == 1
+    assert run.stage_a_scored == 0
+    assert len(await store.load_pending_stage_a()) == 1
+
+
+async def test_stage_b_sweep_parse_failure_uses_single_attempt(
+    store: PostgresStore,
+) -> None:
+    """Stage B sweep should not retry parser failures again."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    await store.save_stage_a(job.id, make_stage_a_result())
+    sweep = CostlyBadStageBLLM()
+    service = EvaluateService(
+        deps=_make_deps(store, ErrorLLM(), sweep=sweep),
+        config=_make_config(),
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+
+    run = await service.run(stage="b")
+
+    assert sweep.calls == 1
+    assert run.stage_b_scored == 0
+    assert run.errors == 1
+
+
+async def test_stage_b_sweep_budget_exhaustion_persists_primary_failure(
+    store: PostgresStore,
+) -> None:
+    """Budget-blocked sweep should not hide an already-failed primary call."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    await store.save_stage_a(job.id, make_stage_a_result(score=90))
+    sweep = CountingLLM()
+    service = EvaluateService(
+        deps=_make_deps(
+            store,
+            ErrorLLM(),
+            store_ops=DynamicBudgetStoreOps(),
+            sweep=sweep,
+        ),
+        config=_make_config(
+            Settings(
+                llm=LLMSettings(
+                    stage_a="mock/stage-a",
+                    stage_b="mock/stage-b",
+                    max_daily_score_calls=1,
+                )
+            )
+        ),
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+
+    run = await service.run(stage="b")
+
+    status, error = await _get_stage_b_state(store, job.id)
+    assert sweep.calls == 0
+    assert status == "error"
+    assert error == "stage_b_sweep_failed"
+    assert run.stage_b_scored == 0
+    assert run.errors == 1
+
+
+async def test_stage_b_sweep_refreshes_stale_claim_before_call(
+    store: PostgresStore,
+) -> None:
+    """Sweep should refresh stale Stage B claims before unbounded LLM calls."""
+    threshold = 70
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    await store.save_stage_a(job.id, make_stage_a_result(score=90))
+    sweep = ReclaimProbeSweepLLM(store, threshold)
+    service = EvaluateService(
+        deps=_make_deps(store, AgingStageBErrorLLM(store, job.id), sweep=sweep),
+        config=_make_config(
+            Settings(
+                llm=TEST_LLM_SETTINGS,
+                scoring=ScoringSettings(stage_a_threshold=threshold),
+            )
+        ),
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+
+    run = await service.run(stage="b")
+
+    assert sweep.reclaimed_ids == []
+    assert run.stage_b_scored == 1
+    assert run.errors == 0
+
+
+async def test_stage_b_heartbeat_failure_does_not_mask_completed_response(
+    store: PostgresStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed background refresh should not discard a returned LLM response."""
+    await ScanService(store, RecordingLogger()).run(
+        [("mock", MockSource(), {"count": 1})]
+    )
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    await store.save_stage_a(job.id, make_stage_a_result(score=90))
+    monkeypatch.setattr(claim_helpers, "STAGE_B_LEASE_HEARTBEAT_SECONDS", 0.0)
+    refresh_calls = 0
+
+    async def flaky_refresh(job_id: str) -> None:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        if refresh_calls > 1:
+            raise RuntimeError("refresh failed")
+        await PostgresStore.refresh_stage_b_claim(store, job_id)
+
+    monkeypatch.setattr(store, "refresh_stage_b_claim", flaky_refresh)
+    service = _make_service(
+        store,
+        YieldingMockLLM(),
+        Settings(llm=TEST_LLM_SETTINGS, scoring=ScoringSettings(stage_a_threshold=80)),
+    )
+
+    run = await service.run(stage="b")
+
+    status, error = await _get_stage_b_state(store, job.id)
+    assert refresh_calls >= MIN_HEARTBEAT_REFRESH_CALLS
+    assert status == "completed"
+    assert error is None
+    assert run.stage_b_scored == 1
+    assert run.errors == 0
 
 
 async def test_evaluate_service_respects_max_concurrent(
@@ -516,6 +1326,7 @@ async def test_evaluate_service_dry_run_does_not_call_llm(
 
     assert llm.calls == 0
     assert run.stage_a_scored == 0
+    assert await store.get_pipeline_run(run.run_id) is None
     assert await store.list_evaluated_jobs() == []
 
 
@@ -574,13 +1385,39 @@ async def test_structlog_entries_include_run_id(
     assert first_event["run_id"] == run.run_id
 
 
-def make_stage_a_result() -> StageAResult:
+def make_stage_a_result(score: int = 75) -> StageAResult:
     """Return a completed Stage A result for service setup."""
     return StageAResult(
-        score=75,
+        score=score,
         one_line="ok",
         timing_eligible="eligible",
         model="mock/stage-a",
         prompt_hash="prompt",
         resume_hash="resume",
     )
+
+
+async def _age_evaluation_claim(store: PostgresStore, job_id: str) -> None:
+    pool = store._get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE evaluations SET updated_at = $2 WHERE job_id = $1",
+            int(job_id),
+            datetime.now(UTC) - timedelta(hours=2),
+        )
+
+
+async def _get_stage_b_state(
+    store: PostgresStore,
+    job_id: str,
+) -> tuple[str | None, str | None]:
+    pool = store._get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """SELECT stage_b_status, stage_b_error
+               FROM evaluations
+               WHERE job_id = $1""",
+            int(job_id),
+        )
+    assert row is not None
+    return row["stage_b_status"], row["stage_b_error"]

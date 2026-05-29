@@ -31,15 +31,15 @@ class LLMSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    stage_a: str = "mock/stage-a"
-    stage_b: str = "mock/stage-b"
+    stage_a: str = "codex-cli/gpt-5.4-mini"
+    stage_b: str = "codex-cli/gpt-5.5"
     codex_timeout_s: float = 60.0
     claude_timeout_s: float = 210.0
     max_concurrent: int = 4
     master_resume_path: str = ".jobfeed-dev/resume.md"
     preamble_personal_path: str | None = None
-    max_daily_score_calls: int = 150
-    max_daily_cost_usd: float = 10.0
+    max_daily_score_calls: int = Field(default=150, ge=0)
+    max_daily_cost_usd: float = Field(default=10.0, ge=0)
 
     @field_validator("stage_a", "stage_b")
     @classmethod
@@ -157,7 +157,10 @@ def _collect_env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
     for key, value in environ.items():
         if not key.startswith(CONFIG_ENV_PREFIX):
             continue
-        path = key.removeprefix(CONFIG_ENV_PREFIX).lower().split(ENV_NESTED_DELIMITER)
+        raw_path = key.removeprefix(CONFIG_ENV_PREFIX)
+        if ENV_NESTED_DELIMITER not in raw_path:
+            continue
+        path = raw_path.lower().split(ENV_NESTED_DELIMITER)
         if not all(path):
             continue
         _set_nested_value(overrides, path, value)

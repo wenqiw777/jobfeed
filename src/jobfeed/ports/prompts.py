@@ -33,12 +33,19 @@ class PromptRenderer(Protocol):
         """
         ...
 
-    def render_stage_b(self, *, resume_text: str, job: JobPosting) -> PromptBundle:
+    def render_stage_b(
+        self,
+        *,
+        resume_text: str,
+        job: JobPosting,
+        stage_a_score: int | None = None,
+    ) -> PromptBundle:
         """Render Stage B prompt bundle.
 
         Args:
             resume_text: Master resume text.
             job: Job posting to evaluate.
+            stage_a_score: Optional Stage A rough score for calibration.
 
         Returns:
             PromptBundle with messages and hashes.
