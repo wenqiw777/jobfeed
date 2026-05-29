@@ -54,25 +54,40 @@ def _stage_a_content() -> str:
 def _stage_b_content() -> str:
     return json.dumps(
         {
-            "block_a": {"verdict": "consider"},
-            "block_b": {"summary": "Mock JD summary"},
-            "block_c": {
+            "verdict": {
+                "recommendation": "consider",
+                "confidence": 3,
+                "one_line": "Mock verdict for testing.",
+            },
+            "jd_summary": {
+                "role_in_3_lines": "Mock JD summary",
+                "must_haves": ["Python"],
+                "nice_to_haves": [],
+                "red_flags_in_jd": [],
+            },
+            "fit_analysis": {
                 "score_0_100": 72,
                 "strong_match": [
                     {
                         "requirement": "Python backend services",
-                        "evidence": "Resume shows production Python work.",
+                        "evidence_from_resume": (
+                            "Resume shows production Python work."
+                        ),
                     }
                 ],
                 "gaps": [
                     {
                         "requirement": "Company-specific systems",
                         "severity": "minor",
-                        "mitigation": "Connect prior automation work to the role.",
+                        "mitigation": ("Connect prior automation work to the role."),
                     }
                 ],
             },
-            "block_e": {"hooks": ["Mention the local-first job pipeline."]},
+            "resume_hooks": {
+                "lead_with": "Mention the local-first job pipeline.",
+                "supporting": [],
+                "avoid_mentioning": [],
+            },
         }
     )
 

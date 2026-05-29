@@ -950,8 +950,10 @@ class TestLeverFetchJobs:
         assert postings[0].posted_at is None
 
     @respx.mock
-    async def test_fetch_jobs_combines_description_plain_and_lists(self) -> None:
-        """Lever fetch_jobs concatenates descriptionPlain and lists[].content."""
+    async def test_fetch_jobs_combines_description_plain_list_headings_and_content(
+        self,
+    ) -> None:
+        """Lever fetch_jobs includes descriptionPlain, headings, and content."""
         job = _lever_job(
             description_plain="Intro text. " + "D" * 100,
             lists=[{"text": "Requirements", "content": "<li>Python</li><li>Go</li>"}],
@@ -962,7 +964,9 @@ class TestLeverFetchJobs:
         async with create_http_client() as client:
             postings = await lever_fetch_jobs(client, SLUG, discovered_at=DISCOVERED_AT)
         assert "Intro text" in postings[0].jd_text
+        assert "Requirements:" in postings[0].jd_text
         assert "Python" in postings[0].jd_text
+        assert "Go" in postings[0].jd_text
 
     @respx.mock
     async def test_fetch_jobs_raises_ats_parse_error_on_non_list_response(

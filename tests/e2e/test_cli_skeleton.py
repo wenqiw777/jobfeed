@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner, Result
@@ -59,7 +60,115 @@ def test_cli_dry_run_does_not_persist_evaluations(
     dry_run = invoke_ok(runner, config_path, "evaluate", "--dry-run")
     digest = invoke_ok(runner, config_path, "digest")
 
+    assert "Would evaluate stage_a: Backend Platform Intern @" in dry_run.output
     assert "Evaluated 0 (Stage A), 0 (Stage B)" in dry_run.output
+    assert "Backend Platform Intern" not in digest.output
+
+
+@pytest.mark.postgres
+def test_cli_stage_a_does_not_require_stage_b_toolchain(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """evaluate --stage a should not preflight unused Stage B backends."""
+    config_path = write_config(
+        tmp_path,
+        "stage-a-only",
+        fresh_pg_dsn,
+        llm_lines=[
+            'stage_a = "mock/stage-a"',
+            'stage_b = "codex-cli/gpt-5.5"',
+        ],
+    )
+    runner = CliRunner()
+    invoke_ok(runner, config_path, "scan", "--source", "mock")
+
+    with patch("jobfeed.adapters.llm._factory.shutil.which", return_value=None):
+        result = invoke_ok(runner, config_path, "evaluate", "--stage", "a")
+
+    assert f"Evaluated {MOCK_JOB_COUNT} (Stage A), 0 (Stage B)" in result.output
+
+
+@pytest.mark.postgres
+def test_cli_dry_run_does_not_require_llm_toolchain(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """evaluate --dry-run should not preflight real LLM executables."""
+    config_path = write_config(
+        tmp_path,
+        "dry-run-real-backends",
+        fresh_pg_dsn,
+        llm_lines=[
+            'stage_a = "codex-cli/gpt-5.4-mini"',
+            'stage_b = "claude-cli/claude-sonnet-4-6"',
+        ],
+    )
+    runner = CliRunner()
+    invoke_ok(runner, config_path, "scan", "--source", "mock")
+
+    with patch("jobfeed.adapters.llm._factory.shutil.which", return_value=None):
+        result = invoke_ok(runner, config_path, "evaluate", "--dry-run")
+
+    assert "Evaluated 0 (Stage A), 0 (Stage B)" in result.output
+
+
+@pytest.mark.postgres
+def test_cli_dry_run_does_not_require_resume_file(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """evaluate --dry-run should not validate an unused resume file."""
+    config_path = write_config(
+        tmp_path,
+        "dry-run-missing-resume",
+        fresh_pg_dsn,
+        create_resume=False,
+    )
+    runner = CliRunner()
+    invoke_ok(runner, config_path, "scan", "--source", "mock")
+
+    result = invoke_ok(runner, config_path, "evaluate", "--dry-run")
+
+    assert "Evaluated 0 (Stage A), 0 (Stage B)" in result.output
+
+
+@pytest.mark.postgres
+def test_cli_real_backend_missing_toolchain_is_click_error(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """Missing real LLM CLI binaries should fail without a traceback."""
+    config_path = write_config(
+        tmp_path,
+        "missing-llm-tool",
+        fresh_pg_dsn,
+        llm_lines=[
+            'stage_a = "codex-cli/gpt-5.4-mini"',
+            'stage_b = "mock/stage-b"',
+        ],
+    )
+    runner = CliRunner()
+
+    with patch("jobfeed.adapters.llm._factory.shutil.which", return_value=None):
+        result = runner.invoke(
+            cli,
+            ["--config", str(config_path), "evaluate", "--stage", "a"],
+        )
+
+    assert result.exit_code == 1
+    assert "codex-cli backend requires 'codex'" in result.output
+    assert "jobfeed-cli runtime" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.postgres
+def test_cli_limit_zero_evaluates_no_jobs(tmp_path: Path, fresh_pg_dsn: str) -> None:
+    """evaluate --limit 0 should keep the queue untouched."""
+    config_path = write_config(tmp_path, "limit-zero", fresh_pg_dsn)
+    runner = CliRunner()
+    invoke_ok(runner, config_path, "scan", "--source", "mock")
+
+    evaluate = invoke_ok(runner, config_path, "evaluate", "--limit", "0")
+    digest = invoke_ok(runner, config_path, "digest")
+
+    assert "Evaluated 0 (Stage A), 0 (Stage B)" in evaluate.output
     assert "Backend Platform Intern" not in digest.output
 
 
@@ -220,25 +329,49 @@ def invoke_ok(
     return result
 
 
-def write_config(tmp_path: Path, name: str, dsn: str) -> Path:
+def write_config(
+    tmp_path: Path,
+    name: str,
+    dsn: str,
+    llm_lines: list[str] | None = None,
+    create_resume: bool = True,
+) -> Path:
     """Write an isolated CLI config pointing at the test Postgres database.
+
+    Creates a mock resume file so that the evaluate command's lazy
+    construction can validate it exists.
 
     Args:
         tmp_path: Temporary root owned by pytest.
         name: Unique config namespace for one test flow.
         dsn: PostgreSQL DSN the store should connect to.
+        llm_lines: Optional extra lines to write under ``[llm]``.
+        create_resume: Whether to create the configured resume file.
 
     Returns:
         Path to the written TOML config file.
     """
     config_dir = tmp_path / name
     config_dir.mkdir(parents=True, exist_ok=True)
+
+    resume_path = config_dir / "resume.md"
+    if create_resume:
+        resume_path.write_text("Test resume for E2E.", encoding="utf-8")
+
     config_path = config_dir / "config.toml"
+    llm_config_lines = llm_lines or [
+        'stage_a = "mock/stage-a"',
+        'stage_b = "mock/stage-b"',
+    ]
     config_path.write_text(
         "\n".join(
             [
                 "[db]",
                 f'url = "{dsn}"',
+                "",
+                "[llm]",
+                *llm_config_lines,
+                f'master_resume_path = "{resume_path}"',
                 "",
                 "[observability]",
                 'log_level = "warning"',

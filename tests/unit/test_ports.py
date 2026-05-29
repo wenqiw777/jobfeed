@@ -133,12 +133,14 @@ class FakeStore:
         *,
         limit: int = 100,
         max_days: int | None = None,
+        stage_a_threshold: int | None = None,
     ) -> list[JobPosting]:
         """Load Stage A-completed, Stage B-pending jobs.
 
         Args:
             limit: Maximum jobs to return.
             max_days: Freshness filter.
+            stage_a_threshold: Optional minimum Stage A score.
 
         Returns:
             Job postings pending Stage B.

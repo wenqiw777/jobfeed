@@ -186,7 +186,8 @@ def _build_posting(
 def _extract_jd_text(job: Any) -> str:
     """Extract job description text from a Lever job object.
 
-    Combines descriptionPlain and lists content via html_to_text for HTML segments.
+    Combines descriptionPlain and each lists[].text heading plus lists[].content
+    via html_to_text for HTML segments.
 
     Args:
         job: Raw job dict.
@@ -203,11 +204,15 @@ def _extract_jd_text(job: Any) -> str:
     for item in lists:
         if not isinstance(item, dict):
             continue
+        heading = str(item.get("text") or "").strip()
         content = item.get("content") or ""
-        if content:
-            parts.append(html_to_text(str(content)).strip())
+        body_text = html_to_text(str(content)).strip() if content else ""
+        if heading and body_text:
+            parts.append(f"{heading}:\n{body_text}")
+        elif body_text:
+            parts.append(body_text)
 
-    return "\n".join(p for p in parts if p)
+    return "\n\n".join(p for p in parts if p)
 
 
 def _extract_location(job: Any) -> str:

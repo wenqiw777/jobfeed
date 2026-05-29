@@ -371,9 +371,11 @@ class TestLeverDTOContract:
         assert posting.posted_at == datetime(2024, 5, 22, 18, 0, tzinfo=UTC)
         assert posting.posted_at.tzinfo == UTC
         assert posting.jd_quality == QualityBand.GOOD
-        # jd_text combines descriptionPlain + lists[].content
+        # jd_text combines descriptionPlain + lists[].text headings + lists[].content
         assert posting.jd_text is not None
         assert "Build the backend services" in posting.jd_text
+        assert "Requirements:" in posting.jd_text
+        assert "Nice to Have:" in posting.jd_text
         assert "PostgreSQL" in posting.jd_text
 
     @respx.mock
@@ -421,8 +423,10 @@ class TestLeverDTOContract:
         assert posting.posted_at == datetime(2024, 5, 25, 18, 0, tzinfo=UTC)
 
     @respx.mock
-    async def test_jd_text_combines_description_plain_and_lists_content(self) -> None:
-        """Lever jd_text concatenates descriptionPlain with lists[].content text."""
+    async def test_jd_text_combines_description_plain_list_headings_and_content(
+        self,
+    ) -> None:
+        """Lever jd_text includes descriptionPlain, headings, and content."""
         respx.get(_LEVER_URL).mock(return_value=_lever_response())
         async with create_http_client() as client:
             postings = await lever_fetch_jobs(client, SLUG, discovered_at=DISCOVERED_AT)
@@ -435,6 +439,8 @@ class TestLeverDTOContract:
         # list content was HTML-stripped and appended
         assert "<ul>" not in posting.jd_text
         assert "<li>" not in posting.jd_text
-        # items from lists are present as plain text
+        # headings and items from lists are present as plain text
+        assert "Requirements:" in posting.jd_text
+        assert "Nice to Have:" in posting.jd_text
         assert "Python or Go" in posting.jd_text
         assert "Kafka" in posting.jd_text

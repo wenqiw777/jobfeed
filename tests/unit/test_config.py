@@ -8,12 +8,25 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from jobfeed.config import SourcesATSConfig, SourcesConfig, load_settings
+from jobfeed.config import (
+    LLMSettings,
+    ScoringSettings,
+    SourcesATSConfig,
+    SourcesConfig,
+    load_settings,
+)
 from jobfeed.observability import bind_run_id, configure_logging, get_logger
 
 DEFAULT_STAGE_A_THRESHOLD = 60
 ENV_MAX_CONCURRENT = 7
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# LLM config default values (mirrors LLMSettings defaults)
+LLM_DEFAULT_CODEX_TIMEOUT_S = 60.0
+LLM_DEFAULT_CLAUDE_TIMEOUT_S = 210.0
+LLM_DEFAULT_MAX_CONCURRENT = 4
+LLM_DEFAULT_MAX_DAILY_SCORE_CALLS = 150
+LLM_DEFAULT_MAX_DAILY_COST_USD = 10.0
 
 # ATS config default values (mirrors SourcesATSConfig defaults)
 ATS_DEFAULT_MAX_CONCURRENT = 10
@@ -29,7 +42,7 @@ def test_load_settings_returns_defaults_without_config_file() -> None:
     settings = load_settings()
 
     assert settings.db.url is None
-    assert settings.llm.stage_a == "mock/stage-a"
+    assert settings.llm.stage_a == "codex-cli/gpt-5.4-mini"
 
 
 def test_load_settings_rejects_missing_explicit_config(tmp_path: Path) -> None:
@@ -91,6 +104,17 @@ def test_load_settings_flat_db_url_alias_maps_to_db_url(
     settings = load_settings()
 
     assert settings.db.url == url
+
+
+def test_load_settings_ignores_flat_compose_plumbing_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flat non-alias JOBFEED vars are Docker plumbing, not app config."""
+    monkeypatch.setenv("JOBFEED_POSTGRES_PORT", "55432")
+
+    settings = load_settings()
+
+    assert settings.db.url is None
 
 
 def test_load_settings_nested_db_url_beats_flat_alias(
@@ -157,6 +181,93 @@ def test_configure_logging_human_outputs_readable_event(
     assert "human-check" in output
     assert "component" in output
     assert "\x1b[" not in output
+
+
+# --- LLMSettings Phase 3 tests ---
+
+
+def test_llm_settings_defaults() -> None:
+    """LLMSettings defaults should match Phase 3 plan values."""
+    cfg = LLMSettings()
+
+    assert cfg.stage_a == "codex-cli/gpt-5.4-mini"
+    assert cfg.stage_b == "codex-cli/gpt-5.5"
+    assert cfg.codex_timeout_s == LLM_DEFAULT_CODEX_TIMEOUT_S
+    assert cfg.claude_timeout_s == LLM_DEFAULT_CLAUDE_TIMEOUT_S
+    assert cfg.max_concurrent == LLM_DEFAULT_MAX_CONCURRENT
+    assert cfg.master_resume_path == ".jobfeed-dev/resume.md"
+    assert cfg.preamble_personal_path is None
+    assert cfg.max_daily_score_calls == LLM_DEFAULT_MAX_DAILY_SCORE_CALLS
+    assert cfg.max_daily_cost_usd == LLM_DEFAULT_MAX_DAILY_COST_USD
+
+
+def test_llm_settings_validates_provider_format() -> None:
+    """stage_a and stage_b must contain a '/' separator."""
+    with pytest.raises(ValidationError, match="backend/model"):
+        LLMSettings(stage_a="no-slash")
+
+
+def test_llm_settings_accepts_all_backends() -> None:
+    """All three backend prefixes should pass validation."""
+    for spec in [
+        "codex-cli/gpt-5.4-mini",
+        "claude-cli/claude-haiku-4-5",
+        "mock/stage-a",
+    ]:
+        cfg = LLMSettings(stage_a=spec)
+        assert cfg.stage_a == spec
+
+
+def test_llm_settings_rejects_extra_fields() -> None:
+    """extra='forbid' should reject unknown fields."""
+    with pytest.raises(ValidationError):
+        LLMSettings(nonexistent_field="value")  # type: ignore[call-arg]
+
+
+def test_llm_settings_rejects_negative_budget_limits() -> None:
+    """Daily LLM budget settings should allow zero but reject negatives."""
+    LLMSettings(max_daily_score_calls=0, max_daily_cost_usd=0.0)
+
+    with pytest.raises(ValidationError):
+        LLMSettings(max_daily_score_calls=-1)
+    with pytest.raises(ValidationError):
+        LLMSettings(max_daily_cost_usd=-0.01)
+
+
+LLM_TOML_CODEX_TIMEOUT = 90.0
+LLM_TOML_CLAUDE_TIMEOUT = 300.0
+LLM_TOML_DAILY_CALLS = 200
+LLM_TOML_DAILY_COST = 20.0
+
+
+def test_load_settings_parses_llm_section(tmp_path: Path) -> None:
+    """load_settings should populate llm fields from [llm] TOML section."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[llm]\n"
+        'stage_a = "codex-cli/gpt-5.4-mini"\n'
+        'stage_b = "codex-cli/gpt-5.5"\n'
+        f"codex_timeout_s = {LLM_TOML_CODEX_TIMEOUT:.0f}\n"
+        f"claude_timeout_s = {LLM_TOML_CLAUDE_TIMEOUT:.0f}\n"
+        f"max_daily_score_calls = {LLM_TOML_DAILY_CALLS}\n"
+        f"max_daily_cost_usd = {LLM_TOML_DAILY_COST}\n",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.llm.stage_a == "codex-cli/gpt-5.4-mini"
+    assert settings.llm.stage_b == "codex-cli/gpt-5.5"
+    assert settings.llm.codex_timeout_s == LLM_TOML_CODEX_TIMEOUT
+    assert settings.llm.claude_timeout_s == LLM_TOML_CLAUDE_TIMEOUT
+    assert settings.llm.max_daily_score_calls == LLM_TOML_DAILY_CALLS
+    assert settings.llm.max_daily_cost_usd == LLM_TOML_DAILY_COST
+
+
+def test_scoring_settings_rejects_max_daily_score_calls() -> None:
+    """max_daily_score_calls moved to LLMSettings; ScoringSettings rejects it."""
+    with pytest.raises(ValidationError):
+        ScoringSettings(max_daily_score_calls=100)  # type: ignore[call-arg]
 
 
 # --- SourcesATSConfig / SourcesConfig tests ---

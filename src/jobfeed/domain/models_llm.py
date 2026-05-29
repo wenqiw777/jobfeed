@@ -22,6 +22,9 @@ class LLMUsage:
     cached: bool
     latency_ms: int
     timestamp: datetime
+    job_id: str | None = None
+    stage: Literal["a", "b"] | None = None
+    run_id: str | None = None
 
 
 @dataclass(kw_only=True)
@@ -53,6 +56,7 @@ class LLMResponse:
     output_tokens: int
     cost_usd: float | None = None
     cached: bool = False
+    latency_ms: int = 0
 
 
 __all__ = ["LLMRequest", "LLMResponse", "LLMUsage", "Message"]

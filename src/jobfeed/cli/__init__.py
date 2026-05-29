@@ -8,7 +8,6 @@ from typing import TypedDict, TypeVar, cast
 
 import click
 
-from jobfeed.adapters.llm.mock import MockLLM
 from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import Settings, load_settings
@@ -16,7 +15,6 @@ from jobfeed.observability import JobfeedLogger, configure_logging, get_logger
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.services.digest import DigestService
-from jobfeed.services.evaluate import EvaluateService
 from jobfeed.services.scan import ScanService
 
 T = TypeVar("T")
@@ -29,7 +27,6 @@ class AppContext(TypedDict):
     store: JobStore
     sources: dict[str, SimpleSource]
     scan_service: ScanService
-    evaluate_service: EvaluateService
     digest_service: DigestService
     logger: JobfeedLogger
     verbose: bool
@@ -40,6 +37,9 @@ def create_app(config_path: Path | None = None) -> AppContext:
 
     Wires the PostgreSQL store (the only supported backend) from
     ``settings.db.url``, falling back to the built-in development DSN.
+
+    The evaluate command builds its own EvaluateService lazily so that
+    scan, digest, and migrate work without LLM CLI tools installed.
 
     Args:
         config_path: Optional path to the TOML configuration file.
@@ -56,14 +56,12 @@ def create_app(config_path: Path | None = None) -> AppContext:
     )
     logger = get_logger()
     store = _create_store(settings)
-    llm = MockLLM()
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
     return AppContext(
         settings=settings,
         store=store,
         sources=sources,
         scan_service=ScanService(store, logger),
-        evaluate_service=EvaluateService(store, llm, settings, logger),
         digest_service=DigestService(store, logger),
         logger=logger,
         verbose=False,

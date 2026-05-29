@@ -107,12 +107,24 @@ def _make_stage_b_raw() -> str:
     """
     return json.dumps(
         {
-            "block_a": {"verdict": "consider"},
-            "block_b": {"summary": "Detailed summary"},
-            "block_c": {
+            "verdict": {
+                "recommendation": "consider",
+                "confidence": 3,
+                "one_line": "Decent fit for contract testing.",
+            },
+            "jd_summary": {
+                "role_in_3_lines": "Detailed summary",
+                "must_haves": ["Python"],
+                "nice_to_haves": [],
+                "red_flags_in_jd": [],
+            },
+            "fit_analysis": {
                 "score_0_100": STAGE_B_FIT_SCORE,
                 "strong_match": [
-                    {"requirement": "Python", "evidence": "Built Python services."}
+                    {
+                        "requirement": "Python",
+                        "evidence_from_resume": "Built Python services.",
+                    }
                 ],
                 "gaps": [
                     {
@@ -122,7 +134,11 @@ def _make_stage_b_raw() -> str:
                     }
                 ],
             },
-            "block_e": {"hooks": ["Mention automation."]},
+            "resume_hooks": {
+                "lead_with": "Mention automation.",
+                "supporting": [],
+                "avoid_mentioning": [],
+            },
         }
     )
 
@@ -139,6 +155,22 @@ def _make_stage_b() -> StageBResult:
         prompt_hash="stage-b-prompt",
         resume_hash="resume-b",
         cost_usd=STAGE_B_COST,
+    )
+
+
+def _make_stage_b_without_raw() -> StageBResult:
+    """Build a Stage B result without raw LLM blocks."""
+    parsed = _make_stage_b()
+    return StageBResult(
+        verdict=parsed.verdict,
+        jd_summary=parsed.jd_summary,
+        fit_analysis=parsed.fit_analysis,
+        resume_hooks=parsed.resume_hooks,
+        model=parsed.model,
+        prompt_hash=parsed.prompt_hash,
+        resume_hash=parsed.resume_hash,
+        cost_usd=parsed.cost_usd,
+        raw_blocks=None,
     )
 
 
@@ -383,6 +415,42 @@ class TestEvaluationPipeline:
         assert ev.stage_b is not None
         assert ev.stage_b.verdict == Verdict.CONSIDER
         assert ev.stage_b.cost_usd == STAGE_B_COST
+
+    async def test_completed_stage_b_with_null_verdict_yields_none(
+        self, contract_store
+    ):
+        """Legacy 'completed' rows with NULL verdict must not crash digest loading.
+
+        Inconsistent/legacy data can have stage_b_status='completed' without a
+        verdict. list_evaluated_jobs must treat such rows as stage_b=None rather
+        than raising 'None is not a valid Verdict'.
+        """
+        job_id, _ = await _insert_job(contract_store, "null-verdict-eval")
+        await contract_store.save_stage_a(job_id, _make_stage_a())
+        pool = contract_store._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE evaluations SET stage_b_status = 'completed', "
+                "stage_b_verdict = NULL WHERE job_id = $1",
+                int(job_id),
+            )
+
+        evals = await contract_store.list_evaluated_jobs()
+        ev = next(e for e in evals if e.job.id == job_id)
+        assert ev.stage_b is None
+
+    async def test_stage_b_without_raw_blocks_round_trips(self, contract_store):
+        """save_stage_b should persist readable JSON blocks if raw_blocks is None."""
+        job_id, _ = await _insert_job(contract_store, "full-eval-no-raw")
+        await contract_store.save_stage_a(job_id, _make_stage_a())
+        await contract_store.save_stage_b(job_id, _make_stage_b_without_raw())
+
+        evaluation = await contract_store.get_evaluation(job_id)
+
+        assert evaluation is not None
+        assert evaluation.stage_b is not None
+        assert evaluation.stage_b.verdict == Verdict.CONSIDER
+        assert evaluation.stage_b.fit_analysis.score == STAGE_B_FIT_SCORE
 
 
 # ===========================================================================
@@ -968,6 +1036,22 @@ class TestStateCostPipeline:
         assert abs(entry.spent_usd - expected) < FLOAT_TOLERANCE
         assert entry.calls == COST_CALLS_AFTER_TWO
 
+    async def test_record_cost_can_add_spend_without_incrementing_calls(
+        self, contract_store
+    ):
+        """record_cost(calls=0) should only update spend."""
+        await contract_store.record_cost(day=COST_DAY, spent_usd=0.0, calls=1)
+        await contract_store.record_cost(
+            day=COST_DAY,
+            spent_usd=COST_AMOUNT_FIRST,
+            calls=0,
+        )
+
+        entry = await contract_store.get_cost(COST_DAY)
+        assert entry is not None
+        assert abs(entry.spent_usd - COST_AMOUNT_FIRST) < FLOAT_TOLERANCE
+        assert entry.calls == 1
+
     async def test_get_cost_range_includes_boundary_day(self, contract_store):
         """get_cost_range(since_days=0) includes today's row (lower bound inclusive).
 
@@ -1183,6 +1267,23 @@ class TestPendingLoadRefinements:
         pending_ids = {j.id for j in pending_b}
         assert job_id in pending_ids
 
+    async def test_pending_b_threshold_filter_applies_before_limit(
+        self,
+        contract_store,
+    ):
+        """load_pending_stage_b should limit after Stage A threshold filtering."""
+        low_id, _ = await _insert_job(contract_store, "pend-b-low-first")
+        await contract_store.save_stage_a(low_id, _make_stage_a(LOW_STAGE_A_SCORE))
+        high_id, _ = await _insert_job(contract_store, "pend-b-high-second")
+        await contract_store.save_stage_a(high_id, _make_stage_a(HIGH_STAGE_A_SCORE))
+
+        pending_b = await contract_store.load_pending_stage_b(
+            limit=1,
+            stage_a_threshold=MIN_SCORE_FILTER,
+        )
+
+        assert [j.id for j in pending_b] == [high_id]
+
     async def test_pending_b_excludes_b_completed(self, contract_store):
         """load_pending_stage_b should exclude Stage B completed jobs."""
         job_id, _ = await _insert_job(contract_store, "pend-b-done")
@@ -1292,6 +1393,38 @@ class TestEvaluationReads:
         """get_stage_a_scores with empty input returns empty dict."""
         scores = await contract_store.get_stage_a_scores([])
         assert scores == {}
+
+    async def test_mark_stage_b_below_threshold(self, contract_store):
+        """mark_stage_b_below_threshold should skip pending low-score rows."""
+        low_id, _ = await _insert_job(contract_store, "mark-low-stage-b")
+        await contract_store.save_stage_a(low_id, _make_stage_a(LOW_STAGE_A_SCORE))
+        high_id, _ = await _insert_job(contract_store, "mark-high-stage-b")
+        await contract_store.save_stage_a(high_id, _make_stage_a(HIGH_STAGE_A_SCORE))
+
+        updated = await contract_store.mark_stage_b_below_threshold(MIN_SCORE_FILTER)
+        pending = await contract_store.load_pending_stage_b()
+        pending_ids = {job.id for job in pending}
+
+        assert updated == 1
+        assert low_id not in pending_ids
+        assert high_id in pending_ids
+
+    async def test_reopen_stage_b_at_or_above_threshold(self, contract_store):
+        """reopen_stage_b_at_or_above_threshold should requeue eligible skips."""
+        job_id, _ = await _insert_job(contract_store, "reopen-stage-b")
+        await contract_store.save_stage_a(job_id, _make_stage_a(LOW_STAGE_A_SCORE))
+        await contract_store.mark_stage_b_below_threshold(MIN_SCORE_FILTER)
+
+        reopened = await contract_store.reopen_stage_b_at_or_above_threshold(
+            LOW_STAGE_A_SCORE
+        )
+        pending = await contract_store.load_pending_stage_b(
+            stage_a_threshold=LOW_STAGE_A_SCORE
+        )
+        pending_ids = {job.id for job in pending}
+
+        assert reopened == 1
+        assert job_id in pending_ids
 
     async def test_top_evaluated_jobs_filter(self, contract_store):
         """top_evaluated_jobs with min_score should filter by stage_a_score."""

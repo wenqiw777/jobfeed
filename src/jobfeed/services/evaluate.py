@@ -5,36 +5,33 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from jobfeed.config import Settings
 from jobfeed.domain.errors import ScoringParseError
-from jobfeed.domain.models import (
-    JobPosting,
-    LLMRequest,
-    LLMResponse,
-    PipelineRun,
-    StageAResult,
-    StageBResult,
-)
-from jobfeed.domain.scoring import (
-    parse_stage_a_response,
-    parse_stage_b_response,
-    render_stage_a_prompt,
-    render_stage_b_prompt,
-)
-from jobfeed.domain.types import StageName
+from jobfeed.domain.models import JobPosting, LLMRequest, PipelineRun, StageAResult
+from jobfeed.domain.scoring_parse import parse_stage_a_response, parse_stage_b_response
 from jobfeed.observability import JobfeedLogger, bind_run_id
 from jobfeed.ports.llm import LLMClient
-from jobfeed.ports.store import JobStore
+from jobfeed.ports.prompts import PromptBundle
 from jobfeed.ports.store_ext import StoreEvaluationBatchMixin
-from jobfeed.services.error_handler import ServiceErrorHandler
+from jobfeed.services._evaluate_budget import EvaluateBudgetGate
+from jobfeed.services._evaluate_claims import (
+    load_stage_a_for_run,
+    load_stage_b_for_run,
+    maintain_stage_b_claim,
+    release_stage_a_for_run,
+    release_stage_b_for_run,
+    validate_evaluate_stage,
+)
+from jobfeed.services._evaluate_helpers import (
+    SHORT_JD_THRESHOLD,
+    DryRunRequest,
+    UsageRecordContext,
+    build_dry_run_preview,
+    load_stage_a_scores,
+    record_usage,
+    require_job_id,
+)
+from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 from jobfeed.services.runs import start_pipeline_run
-
-# TODO(phase1): Replace skeleton prompt inputs with configured resume, rubric,
-# and prompt hash sources once real scoring configuration lands.
-SKELETON_HASH = "skeleton"
-SKELETON_RESUME = "Phase 0 resume placeholder."
-SKELETON_RUBRIC = "Prefer relevant backend, data, automation, and timing fit."
-StageResult = StageAResult | StageBResult
 
 
 class EvaluateService:
@@ -42,239 +39,261 @@ class EvaluateService:
 
     def __init__(
         self,
-        store: JobStore,
-        llm: LLMClient,
-        settings: Settings,
+        *,
+        deps: EvaluateDependencies,
+        config: EvaluateRuntimeConfig,
         logger: JobfeedLogger,
     ) -> None:
-        """Create an evaluation service with injected ports.
+        self._deps = deps
+        self._config = config
+        self._logger = logger
+        self._budget = EvaluateBudgetGate(deps.store_ops, config.llm, logger)
 
-        Args:
-            store: Persistence port for pending jobs and results.
-            llm: LLM completion port.
-            settings: Runtime settings for models and thresholds.
-            logger: Structured logger for evaluation events.
-        """
-        self.store = store
-        self.llm = llm
-        self.settings = settings
-        self.logger = logger
-        self.error_handler = ServiceErrorHandler(store=store, logger=logger)
-
-    async def run(self, dry_run: bool = False) -> PipelineRun:
+    async def run(
+        self,
+        *,
+        stage: str = "both",
+        corpus: str = "unrated",
+        limit: int | None = None,
+        max_days: int | None = None,
+        dry_run: bool = False,
+    ) -> PipelineRun:
         """Evaluate pending jobs and persist run counters.
 
         Args:
-            dry_run: When true, log pending jobs without calling the LLM.
+            stage: "both", "a", or "b".
+            corpus: "unrated", "all", or "failed".
+            limit: Max jobs per stage.
+            max_days: Freshness filter.
+            dry_run: Skip LLM calls.
 
         Returns:
-            Recorded pipeline run with Stage A and Stage B counters.
+            Recorded pipeline run with counters.
         """
+        validate_evaluate_stage(stage)
         run = start_pipeline_run("evaluate")
         bind_run_id(run.run_id)
-        stage_a_jobs = await self.store.load_pending_stage_a()
-        stage_b_jobs = await self.store.load_pending_stage_b()
+        lim = 100 if limit is None else limit
         if dry_run:
-            self._log_dry_run("stage_a", stage_a_jobs)
-            below = await self._below_threshold_ids(stage_b_jobs)
-            eligible_b = [
-                job for job in stage_b_jobs if _require_job_id(job) not in below
-            ]
-            self._log_dry_run("stage_b", eligible_b)
+            threshold = self._config.stage_a_threshold
+            request = DryRunRequest(
+                self._deps.store, self._logger, stage, corpus, lim, max_days, threshold
+            )
+            run.dry_run_preview = await build_dry_run_preview(request)
         else:
-            await self._score_stage_jobs("stage_a", stage_a_jobs, run)
-            stage_b_jobs = await self.store.load_pending_stage_b()
-            stage_b_jobs = await self._skip_below_threshold(stage_b_jobs)
-            await self._score_stage_jobs("stage_b", stage_b_jobs, run)
+            await self._real_run(run, stage, corpus, lim, max_days)
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
         run.finished_at = datetime.now(UTC)
-        await self.store.record_pipeline_run(run)
+        if not dry_run:
+            await self._deps.store.record_pipeline_run(run)
         return run
 
-    async def _below_threshold_ids(self, jobs: list[JobPosting]) -> set[str]:
-        """Return ids of pending Stage B jobs below the Stage A threshold.
-
-        Read-only: callers decide whether to mark them skipped (real run) or
-        just exclude them from a preview (dry run).
-
-        Args:
-            jobs: Stage B pending jobs.
-
-        Returns:
-            Job ids whose Stage A score is below the threshold.
-        """
-        threshold = self.settings.scoring.stage_a_threshold
-        job_ids = [_require_job_id(job) for job in jobs]
-        batch_store: StoreEvaluationBatchMixin = self.store  # type: ignore[assignment]
-        scores = await batch_store.get_stage_a_scores(job_ids)
-        return {
-            jid
-            for jid, score in scores.items()
-            if score is not None and score < threshold
-        }
-
-    async def _skip_below_threshold(self, jobs: list[JobPosting]) -> list[JobPosting]:
-        """Mark below-threshold pending Stage B rows skipped; return the rest.
-
-        The save_stage_a path skips below-threshold jobs scored in this run, but
-        rows that became Stage A-completed without it (legacy import, or scored
-        before the gate existed) still surface in the Stage B queue. Mark those
-        skipped here so they never reach Stage B (plan Decision 1).
-
-        Args:
-            jobs: Stage B pending jobs.
-
-        Returns:
-            Jobs whose Stage A score meets the threshold.
-        """
-        below = await self._below_threshold_ids(jobs)
-        if below:
-            batch_store: StoreEvaluationBatchMixin = self.store  # type: ignore[assignment]
-            await batch_store.mark_stage_b_skipped_batch(sorted(below))
-        return [job for job in jobs if _require_job_id(job) not in below]
-
-    async def _score_stage_jobs(
-        self,
-        stage: StageName,
-        jobs: list[JobPosting],
-        run: PipelineRun,
+    async def _real_run(
+        self, run: PipelineRun, stg: str, corp: str, lim: int, md: int | None
     ) -> None:
-        semaphore = asyncio.Semaphore(max(1, self.settings.llm.max_concurrent))
+        if stg != "b":
+            await self._run_stage_a(run, corp, lim, md)
+        if stg != "a":
+            await self._run_stage_b(run, lim, md)
 
-        async def score_with_limit(job: JobPosting) -> None:
-            async with semaphore:
-                await self._score_stage_job(stage, job, run)
+    async def _run_stage_a(
+        self, run: PipelineRun, corpus: str, limit: int, max_days: int | None
+    ) -> None:
+        if not await self._budget.has_budget():
+            return
+        jobs = await load_stage_a_for_run(self._deps.store, corpus, limit, max_days)
+        sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
 
-        await asyncio.gather(*(score_with_limit(job) for job in jobs))
+        async def _worker(job: JobPosting) -> None:
+            async with sem:
+                await self._score_stage_a(job, run)
 
-    async def _score_stage_job(
+        await asyncio.gather(*(_worker(j) for j in jobs))
+
+    async def _score_stage_a(self, job: JobPosting, run: PipelineRun) -> None:
+        job_id = require_job_id(job)
+        if len(job.jd_text or "") < SHORT_JD_THRESHOLD:
+            await self._deps.store.save_stage_a_error(
+                job_id,
+                f"jd_text_too_short: {len(job.jd_text or '')} chars",
+            )
+            run.errors += 1
+            return
+        bundle = self._deps.prompt_renderer.render_stage_a(
+            resume_text=self._config.resume_text,
+            job=job,
+        )
+        req = LLMRequest(messages=bundle.messages, model=self._config.llm.stage_a)
+        result = await self._call_parse_a(job_id, req, bundle, run)
+        if result is None:
+            return
+        await self._deps.store.save_stage_a(job_id, result)
+        run.stage_a_scored += 1
+        self._logger.info("stage_a_scored", job_id=job_id, score=result.score)
+        if result.score < self._config.stage_a_threshold:
+            await self._deps.store.mark_stage_b_skipped(job_id)
+
+    async def _call_parse_a(
         self,
-        stage: StageName,
+        job_id: str,
+        req: LLMRequest,
+        bundle: PromptBundle,
+        run: PipelineRun,
+    ) -> StageAResult | None:
+        for attempt in range(2):
+            ledger_day = await self._budget.reserve()
+            if ledger_day is None:
+                await release_stage_a_for_run(self._deps.store, job_id)
+                return None
+            try:
+                resp = await self._deps.llm_stage_a.complete(req)
+            except Exception as exc:
+                if attempt == 0:
+                    self._logger.warning(
+                        "stage_a_runtime_retry", job_id=job_id, error=str(exc)
+                    )
+                    continue
+                await self._deps.store.save_stage_a_error(job_id, str(exc))
+                run.errors += 1
+                self._logger.error(
+                    "stage_a_runtime_failed", job_id=job_id, error=str(exc)
+                )
+                return None
+            context = UsageRecordContext(job_id, "a", run.run_id, ledger_day)
+            await record_usage(self._deps.store_ops, resp, context)
+            run.total_llm_cost_usd += resp.cost_usd or 0.0
+            try:
+                return parse_stage_a_response(
+                    resp.content,
+                    model=resp.model,
+                    prompt_hash=bundle.prompt_hash,
+                    resume_hash=bundle.resume_hash,
+                    cost_usd=resp.cost_usd,
+                )
+            except ScoringParseError as exc:
+                if attempt == 0:
+                    self._logger.warning(
+                        "stage_a_parse_retry", job_id=job_id, error=str(exc)
+                    )
+                    continue
+                await self._deps.store.save_stage_a_error(job_id, str(exc))
+                run.errors += 1
+                self._logger.error(
+                    "stage_a_parse_failed", job_id=job_id, error=str(exc)
+                )
+                return None
+        return None  # pragma: no cover
+
+    async def _run_stage_b(
+        self, run: PipelineRun, limit: int, max_days: int | None
+    ) -> None:
+        if limit <= 0:
+            return
+        await self._sync_stage_b_threshold(max_days)
+        if not await self._budget.has_budget():
+            return
+        jobs = await load_stage_b_for_run(
+            self._deps.store, limit, max_days, self._config.stage_a_threshold
+        )
+        stage_a_scores = await load_stage_a_scores(self._deps.store, jobs)
+        sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
+        failed: list[JobPosting] = []
+
+        async def _worker(job: JobPosting) -> None:
+            async with sem:
+                score = stage_a_scores.get(require_job_id(job))
+                outcome = await self._score_stage_b(
+                    job, run, self._deps.llm_stage_b, stage_a_score=score
+                )
+                if outcome == "failed":
+                    failed.append(job)
+
+        await asyncio.gather(*(_worker(j) for j in jobs))
+        await self._sweep_stage_b(failed, run)
+
+    async def _score_stage_b(
+        self,
         job: JobPosting,
         run: PipelineRun,
-    ) -> None:
-        job_id = _require_job_id(job)
-        request = self._request_for_stage(stage, job.jd_text or "")
-        try:
-            response = await self._complete_with_timeout(request)
-            result = self._parse_stage_response(stage, response)
-        except ScoringParseError as exc:
-            await self.error_handler.handle_stage_parse_error(run, stage, job_id, exc)
-            return
-        except Exception as exc:
-            await self.error_handler.handle_stage_runtime_error(run, stage, job_id, exc)
-            return
-        await self._save_stage_result(stage, job_id, result)
-        self._record_stage_success(stage, run, job_id, result)
-
-    def _request_for_stage(self, stage: StageName, jd_text: str) -> LLMRequest:
-        if stage == "stage_a":
-            return LLMRequest(
-                messages=render_stage_a_prompt(
-                    jd_text,
-                    SKELETON_RESUME,
-                    SKELETON_RUBRIC,
-                ),
-                model=self.settings.llm.stage_a,
+        llm: LLMClient,
+        *,
+        stage_a_score: int | None = None,
+        parse_attempts: int = 2,
+    ) -> str:
+        job_id = require_job_id(job)
+        bundle = self._deps.prompt_renderer.render_stage_b(
+            resume_text=self._config.resume_text,
+            job=job,
+            stage_a_score=stage_a_score,
+        )
+        req = LLMRequest(messages=bundle.messages, model=self._config.llm.stage_b)
+        for attempt in range(parse_attempts):
+            ledger_day = await self._budget.reserve()
+            if ledger_day is None:
+                await release_stage_b_for_run(self._deps.store, job_id)
+                return "skipped"
+            try:
+                async with maintain_stage_b_claim(self._deps.store, job_id):
+                    resp = await llm.complete(req)
+            except Exception as exc:
+                self._logger.error(
+                    "stage_b_runtime_failed", job_id=job_id, error=str(exc)
+                )
+                return "failed"
+            context = UsageRecordContext(job_id, "b", run.run_id, ledger_day)
+            await record_usage(self._deps.store_ops, resp, context)
+            run.total_llm_cost_usd += resp.cost_usd or 0.0
+            try:
+                result = parse_stage_b_response(
+                    resp.content,
+                    model=resp.model,
+                    prompt_hash=bundle.prompt_hash,
+                    resume_hash=bundle.resume_hash,
+                    cost_usd=resp.cost_usd,
+                )
+            except ScoringParseError as exc:
+                if attempt + 1 < parse_attempts:
+                    self._logger.warning(
+                        "stage_b_parse_retry", job_id=job_id, error=str(exc)
+                    )
+                    continue
+                return "failed"
+            await self._deps.store.save_stage_b(job_id, result)
+            run.stage_b_scored += 1
+            self._logger.info(
+                "stage_b_scored", job_id=job_id, score=result.fit_analysis.score
             )
-        return LLMRequest(
-            messages=render_stage_b_prompt(
-                jd_text,
-                SKELETON_RESUME,
-                SKELETON_RUBRIC,
-            ),
-            model=self.settings.llm.stage_b,
-        )
+            return "completed"
+        return "failed"  # pragma: no cover
 
-    async def _complete_with_timeout(self, request: LLMRequest) -> LLMResponse:
-        return await asyncio.wait_for(
-            self.llm.complete(request),
-            timeout=self.settings.llm.timeout_s,
-        )
-
-    def _parse_stage_response(
-        self,
-        stage: StageName,
-        response: LLMResponse,
-    ) -> StageResult:
-        if stage == "stage_a":
-            return parse_stage_a_response(
-                response.content,
-                model=response.model,
-                prompt_hash=SKELETON_HASH,
-                resume_hash=SKELETON_HASH,
-                cost_usd=response.cost_usd,
-            )
-        return parse_stage_b_response(
-            response.content,
-            model=response.model,
-            prompt_hash=SKELETON_HASH,
-            resume_hash=SKELETON_HASH,
-            cost_usd=response.cost_usd,
-        )
-
-    async def _save_stage_result(
-        self,
-        stage: StageName,
-        job_id: str,
-        result: StageResult,
-    ) -> None:
-        if stage == "stage_a":
-            if not isinstance(result, StageAResult):
-                raise TypeError("stage_a parser returned non-StageAResult")
-            await self.store.save_stage_a(job_id, result)
-            # Threshold is a service-side policy, not a store concern: below the
-            # configured Stage A threshold the job is terminally skipped so it
-            # never enters the Stage B queue (plan Decision 1 / Task 1).
-            if result.score < self.settings.scoring.stage_a_threshold:
-                await self.store.mark_stage_b_skipped(job_id)
+    async def _sweep_stage_b(self, failed: list[JobPosting], run: PipelineRun) -> None:
+        sweep = self._deps.llm_stage_b_sweep
+        if sweep is None:
+            for job in failed:
+                jid = require_job_id(job)
+                await self._deps.store.save_stage_b_error(
+                    jid, "stage_b_failed_no_sweep"
+                )
+                run.errors += 1
             return
-        if not isinstance(result, StageBResult):
-            raise TypeError("stage_b parser returned non-StageBResult")
-        await self.store.save_stage_b(job_id, result)
-
-    def _record_stage_success(
-        self,
-        stage: StageName,
-        run: PipelineRun,
-        job_id: str,
-        result: StageResult,
-    ) -> None:
-        run.total_llm_cost_usd += _result_cost_or_zero(result)
-        if stage == "stage_a":
-            if not isinstance(result, StageAResult):
-                raise TypeError("stage_a parser returned non-StageAResult")
-            run.stage_a_scored += 1
-            self.logger.info("stage_a_scored", job_id=job_id, score=result.score)
-            return
-        if not isinstance(result, StageBResult):
-            raise TypeError("stage_b parser returned non-StageBResult")
-        run.stage_b_scored += 1
-        self.logger.info(
-            "stage_b_scored",
-            job_id=job_id,
-            score=result.fit_analysis.score,
-        )
-
-    def _log_dry_run(self, stage: StageName, jobs: list[JobPosting]) -> None:
-        for job in jobs:
-            self.logger.info(
-                "evaluate_dry_run_job",
-                stage=stage,
-                job_id=job.id,
-                title=job.title,
-                company=job.company,
+        stage_a_scores = await load_stage_a_scores(self._deps.store, failed)
+        for job in failed:
+            jid = require_job_id(job)
+            outcome = await self._score_stage_b(
+                job,
+                run,
+                sweep,
+                stage_a_score=stage_a_scores.get(jid),
+                parse_attempts=1,
             )
+            if outcome != "completed":
+                await self._deps.store.save_stage_b_error(jid, "stage_b_sweep_failed")
+                run.errors += 1
 
-
-def _require_job_id(job: JobPosting) -> str:
-    if job.id is None:
-        raise ValueError("evaluated jobs must have a store id")
-    return job.id
-
-
-def _result_cost_or_zero(result: StageResult) -> float:
-    return result.cost_usd if result.cost_usd is not None else 0.0
-
-
-__all__ = ["EvaluateService"]
+    async def _sync_stage_b_threshold(self, max_days: int | None) -> None:
+        store = self._deps.store
+        if not isinstance(store, StoreEvaluationBatchMixin):
+            return
+        threshold = self._config.stage_a_threshold
+        await store.reopen_stage_b_at_or_above_threshold(threshold, max_days=max_days)
+        await store.mark_stage_b_below_threshold(threshold, max_days=max_days)

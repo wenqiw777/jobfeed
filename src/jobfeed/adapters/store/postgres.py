@@ -53,6 +53,7 @@ from jobfeed.domain.models import (
     WorkflowAttention,
     WorkflowAttentionItem,
 )
+from jobfeed.domain.models_llm import LLMUsage
 from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.domain.status import (
@@ -162,51 +163,108 @@ def _stage_b_from_record(r: asyncpg.Record) -> StageBResult | None:
         r: Database record with evaluation columns.
 
     Returns:
-        Stage B result for completed records; otherwise None.
+        Stage B result for completed records with a verdict; otherwise None.
     """
     if r.get("stage_b_status") != "completed":
         return None
+    if r.get("stage_b_verdict") is None:
+        # Defensive: legacy/inconsistent rows can be 'completed' without a
+        # verdict. Treat as no usable Stage B result rather than crashing.
+        return None
 
-    block_a = _as_json_obj(r["stage_b_verdict_json"])
-    block_b = _as_json_obj(r["stage_b_summary_json"])
-    block_c = _as_json_obj(r["stage_b_fit_json"])
-    block_e = _as_json_obj(r["stage_b_hooks_json"])
+    verdict_json = _as_json_obj(r["stage_b_verdict_json"])
+    jd_summary_json = _as_json_obj(r["stage_b_summary_json"])
+    fit_json = _as_json_obj(r["stage_b_fit_json"])
+    hooks_json = _as_json_obj(r["stage_b_hooks_json"])
 
     raw_blocks: dict[str, object] = {
-        "block_a": block_a,
-        "block_b": block_b,
-        "block_c": block_c,
-        "block_e": block_e,
+        "verdict": verdict_json,
+        "jd_summary": jd_summary_json,
+        "fit_analysis": fit_json,
+        "resume_hooks": hooks_json,
     }
 
     strengths = [
-        MatchItem(requirement=m["requirement"], evidence=m["evidence"])
-        for m in block_c["strong_match"]
+        MatchItem(
+            requirement=m["requirement"],
+            evidence=m.get("evidence_from_resume", m.get("evidence", "")),
+        )
+        for m in fit_json["strong_match"]
     ]
     gaps = [
         GapItem(
             requirement=g["requirement"],
-            severity=_validated_severity(g["severity"]),
-            mitigation=g["mitigation"],
+            severity=_map_legacy_severity(g["severity"]),
+            mitigation=g.get("mitigation") or "",
         )
-        for g in block_c["gaps"]
+        for g in fit_json["gaps"]
     ]
+
+    resume_hooks = _read_legacy_hooks(hooks_json)
 
     return StageBResult(
         verdict=Verdict(r["stage_b_verdict"]),
         jd_summary=r["stage_b_jd_summary"],
         fit_analysis=FitAnalysis(
-            score=block_c["score_0_100"],
+            score=fit_json["score_0_100"],
             strengths=strengths,
             gaps=gaps,
         ),
-        resume_hooks=list(block_e["hooks"]),
+        resume_hooks=resume_hooks,
         model=r["stage_b_model"],
         prompt_hash=r["stage_b_prompt_hash"],
         resume_hash=r["stage_b_resume_hash"],
         cost_usd=r["stage_b_cost_usd"],
         raw_blocks=raw_blocks,
     )
+
+
+_LEGACY_SEVERITY_MAP: dict[str, str] = {
+    "blocker": "critical",
+    "notable": "major",
+    "minor": "minor",
+}
+
+
+def _map_legacy_severity(value: str) -> Severity:
+    """Map legacy severity vocabulary to domain vocabulary.
+
+    Args:
+        value: Raw severity string (legacy or domain vocabulary).
+
+    Returns:
+        Typed Severity value.
+
+    Raises:
+        ValueError: If the severity value is not recognized.
+    """
+    mapped = _LEGACY_SEVERITY_MAP.get(value, value)
+    if mapped not in VALID_SEVERITIES:
+        raise ValueError(f"invalid gap severity: {value}")
+    return cast(Severity, mapped)
+
+
+def _read_legacy_hooks(hooks_json: dict[str, object]) -> list[str]:
+    """Read resume hooks from legacy or Phase 0 JSON structure.
+
+    Args:
+        hooks_json: Parsed hooks JSON object.
+
+    Returns:
+        Flat list of hook strings.
+    """
+    if "lead_with" in hooks_json:
+        lead = hooks_json["lead_with"]
+        supporting = hooks_json.get("supporting", [])
+        result = [str(lead)] if lead else []
+        if isinstance(supporting, list):
+            result.extend(str(s) for s in supporting)
+        return result
+    if "hooks" in hooks_json:
+        raw_hooks = hooks_json["hooks"]
+        if isinstance(raw_hooks, list):
+            return [str(h) for h in raw_hooks]
+    return []
 
 
 def _validated_severity(value: str) -> Severity:
@@ -387,19 +445,71 @@ def _json_or_none(value: Any) -> str | None:
     return json.dumps(value, sort_keys=True)
 
 
-def _block_json(raw_blocks: dict[str, object] | None, key: str) -> str | None:
-    """Serialize one Stage B raw block for JSONB column storage.
+def _stage_b_block_json(result: StageBResult, key: str) -> str:
+    """Serialize one Stage B block for JSONB column storage.
 
     Args:
-        raw_blocks: Parsed Stage B raw block object.
+        result: Stage B result to persist.
         key: Block key to serialize.
 
     Returns:
-        JSON string for the block, or None when absent.
+        JSON string for the block.
     """
-    if raw_blocks is None or key not in raw_blocks:
-        return None
-    return json.dumps(raw_blocks[key], sort_keys=True)
+    blocks = result.raw_blocks or {}
+    if key in blocks:
+        return json.dumps(blocks[key], sort_keys=True)
+    return json.dumps(_derived_stage_b_block(result, key), sort_keys=True)
+
+
+def _derived_stage_b_block(result: StageBResult, key: str) -> dict[str, object]:
+    if key == "verdict":
+        return {"recommendation": result.verdict.value}
+    if key == "jd_summary":
+        return _derived_jd_summary_block(result)
+    if key == "fit_analysis":
+        return _derived_fit_analysis_block(result)
+    if key == "resume_hooks":
+        return _derived_resume_hooks_block(result)
+    raise ValueError(f"unknown Stage B block: {key}")
+
+
+def _derived_jd_summary_block(result: StageBResult) -> dict[str, object]:
+    return {
+        "role_in_3_lines": result.jd_summary,
+        "must_haves": [],
+        "nice_to_haves": [],
+        "red_flags_in_jd": [],
+    }
+
+
+def _derived_fit_analysis_block(result: StageBResult) -> dict[str, object]:
+    return {
+        "score_0_100": result.fit_analysis.score,
+        "strong_match": [
+            {
+                "requirement": item.requirement,
+                "evidence_from_resume": item.evidence,
+            }
+            for item in result.fit_analysis.strengths
+        ],
+        "gaps": [
+            {
+                "requirement": item.requirement,
+                "severity": item.severity,
+                "mitigation": item.mitigation,
+            }
+            for item in result.fit_analysis.gaps
+        ],
+    }
+
+
+def _derived_resume_hooks_block(result: StageBResult) -> dict[str, object]:
+    hooks = result.resume_hooks
+    return {
+        "lead_with": hooks[0] if hooks else "",
+        "supporting": hooks[1:],
+        "avoid_mentioning": [],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +527,7 @@ _PG_STAGE_B_UNDER_CAP = (
     "(evaluations.stage_b_status IS DISTINCT FROM 'error' "
     f"OR evaluations.stage_b_error_count < {MAX_STAGE_RETRIES})"
 )
+_PG_EVALUATION_CLAIM_TTL = timedelta(hours=1)
 
 
 def _pg_corpus_condition(corpus: str) -> str:
@@ -445,6 +556,39 @@ def _pg_corpus_condition(corpus: str) -> str:
     raise ValueError(f"unknown corpus: {corpus!r}")
 
 
+def _stage_a_pending_filters(
+    *,
+    quality_bands: frozenset[str] | None,
+    corpus: str,
+    max_days: int | None,
+    now: datetime,
+) -> tuple[list[str], list[Any]]:
+    """Build shared Stage A pending filters.
+
+    Args:
+        quality_bands: Optional jd_quality allow-list.
+        corpus: "unrated", "all", or "failed".
+        max_days: Optional freshness window on discovered_at.
+        now: Reference time for the freshness cutoff.
+
+    Returns:
+        WHERE conditions and positional (asyncpg) parameters.
+    """
+    conditions: list[str] = []
+    params: list[Any] = []
+    corpus_clause = _pg_corpus_condition(corpus)
+    if corpus_clause:
+        conditions.append(corpus_clause)
+    conditions.append(_PG_STAGE_A_UNDER_CAP)
+    if quality_bands:
+        params.append(sorted(quality_bands))
+        conditions.append(f"jobs.jd_quality = ANY(${len(params)})")
+    if max_days is not None:
+        params.append(now - timedelta(days=max_days))
+        conditions.append(f"jobs.discovered_at >= ${len(params)}")
+    return conditions, params
+
+
 def _build_pending_stage_a_query(
     *,
     limit: int,
@@ -465,18 +609,12 @@ def _build_pending_stage_a_query(
     Returns:
         SQL string and its positional (asyncpg) parameters.
     """
-    conditions: list[str] = []
-    params: list[Any] = []
-    corpus_clause = _pg_corpus_condition(corpus)
-    if corpus_clause:
-        conditions.append(corpus_clause)
-    conditions.append(_PG_STAGE_A_UNDER_CAP)
-    if quality_bands:
-        params.append(sorted(quality_bands))
-        conditions.append(f"jobs.jd_quality = ANY(${len(params)})")
-    if max_days is not None:
-        params.append(now - timedelta(days=max_days))
-        conditions.append(f"jobs.discovered_at >= ${len(params)}")
+    conditions, params = _stage_a_pending_filters(
+        quality_bands=quality_bands,
+        corpus=corpus,
+        max_days=max_days,
+        now=now,
+    )
     where = " AND ".join(conditions) if conditions else "TRUE"
     params.append(limit)
     sql = (
@@ -489,21 +627,21 @@ def _build_pending_stage_a_query(
     return sql, params
 
 
-def _build_pending_stage_b_query(
+def _stage_b_pending_filters(
     *,
-    limit: int,
     max_days: int | None,
+    stage_a_threshold: int | None,
     now: datetime,
-) -> tuple[str, list[Any]]:
-    """Build the Stage B pending query (Stage A completed, Stage B pending).
+) -> tuple[list[str], list[Any]]:
+    """Build shared Stage B pending filters.
 
     Args:
-        limit: Max rows.
         max_days: Optional freshness window on discovered_at.
+        stage_a_threshold: Optional minimum Stage A score.
         now: Reference time for the freshness cutoff.
 
     Returns:
-        SQL string and its positional (asyncpg) parameters.
+        WHERE conditions and positional (asyncpg) parameters.
     """
     conditions = [
         "evaluations.stage_a_status = 'completed'",
@@ -514,12 +652,258 @@ def _build_pending_stage_b_query(
     if max_days is not None:
         params.append(now - timedelta(days=max_days))
         conditions.append(f"jobs.discovered_at >= ${len(params)}")
+    if stage_a_threshold is not None:
+        params.append(stage_a_threshold)
+        conditions.append(f"evaluations.stage_a_score >= ${len(params)}")
+    return conditions, params
+
+
+def _build_pending_stage_b_query(
+    *,
+    limit: int,
+    max_days: int | None,
+    stage_a_threshold: int | None,
+    now: datetime,
+) -> tuple[str, list[Any]]:
+    """Build the Stage B pending query (Stage A completed, Stage B pending).
+
+    Args:
+        limit: Max rows.
+        max_days: Optional freshness window on discovered_at.
+        stage_a_threshold: Optional minimum Stage A score.
+        now: Reference time for the freshness cutoff.
+
+    Returns:
+        SQL string and its positional (asyncpg) parameters.
+    """
+    conditions, params = _stage_b_pending_filters(
+        max_days=max_days,
+        stage_a_threshold=stage_a_threshold,
+        now=now,
+    )
     params.append(limit)
     where = " AND ".join(conditions)
     sql = (
         "SELECT jobs.* FROM jobs "
         "JOIN evaluations ON evaluations.job_id = jobs.id "
         f"WHERE {where} "
+        "ORDER BY jobs.discovered_at DESC, jobs.id DESC "
+        f"LIMIT ${len(params)}"
+    )
+    return sql, params
+
+
+def _stage_a_claim_status_condition(corpus: str, stale_ref: str) -> str:
+    if corpus == "all":
+        return (
+            "(evaluations.stage_a_status IS DISTINCT FROM 'in_progress' "
+            f"OR evaluations.updated_at < {stale_ref})"
+        )
+    if corpus == "failed":
+        return (
+            "(evaluations.stage_a_status = 'error' OR "
+            "(evaluations.stage_a_status = 'in_progress' "
+            f"AND evaluations.updated_at < {stale_ref} "
+            "AND evaluations.stage_a_error IS NOT NULL))"
+        )
+    if corpus == "unrated":
+        return (
+            "(evaluations.job_id IS NULL OR evaluations.stage_a_status IS NULL "
+            "OR evaluations.stage_a_status = 'error' OR "
+            "(evaluations.stage_a_status = 'in_progress' "
+            f"AND evaluations.updated_at < {stale_ref} "
+            "AND (evaluations.stage_a_score IS NULL "
+            "OR evaluations.stage_a_error IS NOT NULL)))"
+        )
+    raise ValueError(f"unknown corpus: {corpus!r}")
+
+
+def _stage_a_claim_update_condition(corpus: str, stale_ref: str) -> str:
+    if corpus in {"all", "failed"}:
+        return _stage_a_claim_status_condition(corpus, stale_ref)
+    if corpus == "unrated":
+        return (
+            "(evaluations.stage_a_status IS NULL OR evaluations.stage_a_status = 'error' "
+            "OR (evaluations.stage_a_status = 'in_progress' "
+            f"AND evaluations.updated_at < {stale_ref} "
+            "AND (evaluations.stage_a_score IS NULL "
+            "OR evaluations.stage_a_error IS NOT NULL)))"
+        )
+    raise ValueError(f"unknown corpus: {corpus!r}")
+
+
+def _build_claim_stage_a_query(
+    *,
+    limit: int,
+    quality_bands: frozenset[str] | None,
+    corpus: str,
+    max_days: int | None,
+    now: datetime,
+) -> tuple[str, list[Any]]:
+    """Build the Stage A atomic claim query."""
+    conditions, params = _stage_a_pending_filters(
+        quality_bands=quality_bands,
+        corpus="all",
+        max_days=max_days,
+        now=now,
+    )
+    params.append(now - _PG_EVALUATION_CLAIM_TTL)
+    stale_ref = f"${len(params)}"
+    conditions.append(_stage_a_claim_status_condition(corpus, stale_ref))
+    where = " AND ".join(conditions) if conditions else "TRUE"
+    params.append(limit)
+    update_condition = _stage_a_claim_update_condition(corpus, stale_ref)
+    return (
+        f"""WITH candidates AS (
+                SELECT jobs.id FROM jobs
+                LEFT JOIN evaluations ON evaluations.job_id = jobs.id
+                WHERE {where}
+                ORDER BY jobs.discovered_at DESC, jobs.id DESC
+                LIMIT ${len(params)}
+                FOR UPDATE OF jobs SKIP LOCKED
+            ),
+            claimed AS (
+                INSERT INTO evaluations (job_id, stage_a_status, updated_at)
+                SELECT id, 'in_progress', now() FROM candidates
+                ON CONFLICT (job_id) DO UPDATE SET
+                    stage_a_status = 'in_progress',
+                    updated_at = now()
+                WHERE {update_condition}
+                RETURNING job_id
+            )
+            SELECT jobs.* FROM jobs
+            JOIN claimed ON claimed.job_id = jobs.id
+            ORDER BY jobs.discovered_at DESC, jobs.id DESC""",
+        params,
+    )
+
+
+def _build_claimable_stage_a_query(
+    *,
+    limit: int,
+    quality_bands: frozenset[str] | None,
+    corpus: str,
+    max_days: int | None,
+    now: datetime,
+) -> tuple[str, list[Any]]:
+    """Build the read-only Stage A claim preview query."""
+    conditions, params = _stage_a_pending_filters(
+        quality_bands=quality_bands,
+        corpus="all",
+        max_days=max_days,
+        now=now,
+    )
+    params.append(now - _PG_EVALUATION_CLAIM_TTL)
+    stale_ref = f"${len(params)}"
+    conditions.append(_stage_a_claim_status_condition(corpus, stale_ref))
+    params.append(limit)
+    where = " AND ".join(conditions) if conditions else "TRUE"
+    return (
+        "SELECT jobs.* FROM jobs "
+        "LEFT JOIN evaluations ON evaluations.job_id = jobs.id "
+        f"WHERE {where} "
+        "ORDER BY jobs.discovered_at DESC, jobs.id DESC "
+        f"LIMIT ${len(params)}",
+        params,
+    )
+
+
+def _build_claim_stage_b_query(
+    *,
+    limit: int,
+    max_days: int | None,
+    stage_a_threshold: int | None,
+    now: datetime,
+) -> tuple[str, list[Any]]:
+    """Build the Stage B atomic claim query."""
+    conditions = [
+        "evaluations.stage_a_status = 'completed'",
+        _PG_STAGE_B_UNDER_CAP,
+    ]
+    params: list[Any] = []
+    if max_days is not None:
+        params.append(now - timedelta(days=max_days))
+        conditions.append(f"jobs.discovered_at >= ${len(params)}")
+    if stage_a_threshold is not None:
+        params.append(stage_a_threshold)
+        conditions.append(f"evaluations.stage_a_score >= ${len(params)}")
+    params.append(now - _PG_EVALUATION_CLAIM_TTL)
+    stale_ref = f"${len(params)}"
+    stage_b_claim_condition = (
+        "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status = 'error' "
+        "OR (evaluations.stage_b_status = 'in_progress' "
+        f"AND evaluations.updated_at < {stale_ref} "
+        "AND evaluations.stage_b_verdict IS NULL))"
+    )
+    conditions.append(stage_b_claim_condition)
+    params.append(limit)
+    where = " AND ".join(conditions)
+    return (
+        f"""WITH candidates AS (
+                SELECT jobs.id FROM jobs
+                JOIN evaluations ON evaluations.job_id = jobs.id
+                WHERE {where}
+                ORDER BY jobs.discovered_at DESC, jobs.id DESC
+                LIMIT ${len(params)}
+                FOR UPDATE OF evaluations SKIP LOCKED
+            ),
+            claimed AS (
+                UPDATE evaluations
+                SET stage_b_status = 'in_progress', updated_at = now()
+                FROM candidates
+                WHERE evaluations.job_id = candidates.id
+                  AND (
+                    evaluations.stage_b_status IS NULL
+                    OR evaluations.stage_b_status = 'error'
+                    OR (
+                        evaluations.stage_b_status = 'in_progress'
+                        AND evaluations.updated_at < {stale_ref}
+                        AND evaluations.stage_b_verdict IS NULL
+                    )
+                  )
+                RETURNING evaluations.job_id
+            )
+            SELECT jobs.* FROM jobs
+            JOIN claimed ON claimed.job_id = jobs.id
+            ORDER BY jobs.discovered_at DESC, jobs.id DESC""",
+        params,
+    )
+
+
+def _build_stage_b_preview_query(
+    *,
+    limit: int,
+    max_days: int | None,
+    stage_a_threshold: int,
+    now: datetime,
+) -> tuple[str, list[Any]]:
+    """Build the read-only Stage B queue preview query."""
+    conditions = [
+        "evaluations.stage_a_status = 'completed'",
+        "evaluations.stage_a_score >= $1",
+        _PG_STAGE_B_UNDER_CAP,
+    ]
+    params: list[Any] = [stage_a_threshold]
+    if max_days is not None:
+        params.append(now - timedelta(days=max_days))
+        conditions.append(f"jobs.discovered_at >= ${len(params)}")
+    params.append(now - _PG_EVALUATION_CLAIM_TTL)
+    stale_ref = f"${len(params)}"
+    conditions.append(
+        "("
+        "evaluations.stage_b_status IS NULL OR "
+        "evaluations.stage_b_status = 'error' OR "
+        "evaluations.stage_b_status = 'skipped_below_threshold' OR "
+        "(evaluations.stage_b_status = 'in_progress' AND "
+        f"evaluations.updated_at < {stale_ref} AND "
+        "evaluations.stage_b_verdict IS NULL)"
+        ")"
+    )
+    params.append(limit)
+    sql = (
+        "SELECT jobs.* FROM jobs "
+        "JOIN evaluations ON evaluations.job_id = jobs.id "
+        f"WHERE {' AND '.join(conditions)} "
         "ORDER BY jobs.discovered_at DESC, jobs.id DESC "
         f"LIMIT ${len(params)}"
     )
@@ -1220,6 +1604,16 @@ class PostgresStore:
                        stage_a_prompt_hash = EXCLUDED.stage_a_prompt_hash,
                        stage_a_resume_hash = EXCLUDED.stage_a_resume_hash,
                        stage_a_at = COALESCE(evaluations.stage_a_at, now()),
+                       stage_b_status = CASE
+                           WHEN evaluations.stage_b_status = 'skipped_below_threshold'
+                               THEN NULL
+                           ELSE evaluations.stage_b_status
+                       END,
+                       stage_b_error = CASE
+                           WHEN evaluations.stage_b_status = 'skipped_below_threshold'
+                               THEN NULL
+                           ELSE evaluations.stage_b_error
+                       END,
                        updated_at = now()""",
                 int(job_id),
                 result.score,
@@ -1289,10 +1683,10 @@ class PostgresStore:
                 int(job_id),
                 result.verdict.value,
                 result.jd_summary,
-                _block_json(result.raw_blocks, "block_a"),
-                _block_json(result.raw_blocks, "block_b"),
-                _block_json(result.raw_blocks, "block_c"),
-                _block_json(result.raw_blocks, "block_e"),
+                _stage_b_block_json(result, "verdict"),
+                _stage_b_block_json(result, "jd_summary"),
+                _stage_b_block_json(result, "fit_analysis"),
+                _stage_b_block_json(result, "resume_hooks"),
                 result.model,
                 result.cost_usd,
                 result.prompt_hash,
@@ -1358,6 +1752,85 @@ class PostgresStore:
                 int_ids,
             )
 
+    async def mark_stage_b_below_threshold(
+        self,
+        threshold: int,
+        *,
+        max_days: int | None = None,
+    ) -> int:
+        """Mark pending Stage B rows below the Stage A threshold.
+
+        Args:
+            threshold: Minimum Stage A score allowed into Stage B.
+            max_days: Optional freshness window on discovered_at.
+
+        Returns:
+            Number of rows marked skipped.
+        """
+        conditions = [
+            "evaluations.job_id = jobs.id",
+            "evaluations.stage_a_status = 'completed'",
+            """(evaluations.stage_b_status IS NULL
+               OR evaluations.stage_b_status = 'error'
+               OR (
+                   evaluations.stage_b_status = 'in_progress'
+                   AND evaluations.stage_b_verdict IS NULL
+                   AND evaluations.updated_at < $2
+               ))""",
+            _PG_STAGE_B_UNDER_CAP,
+            "evaluations.stage_a_score < $1",
+        ]
+        params: list[Any] = [threshold, datetime.now(UTC) - _PG_EVALUATION_CLAIM_TTL]
+        if max_days is not None:
+            params.append(datetime.now(UTC) - timedelta(days=max_days))
+            conditions.append(f"jobs.discovered_at >= ${len(params)}")
+        where = " AND ".join(conditions)
+        sql = (
+            "UPDATE evaluations SET "
+            "stage_b_status = 'skipped_below_threshold', updated_at = now() "
+            f"FROM jobs WHERE {where} RETURNING evaluations.job_id"
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return len(rows)
+
+    async def reopen_stage_b_at_or_above_threshold(
+        self,
+        threshold: int,
+        *,
+        max_days: int | None = None,
+    ) -> int:
+        """Reopen threshold-skipped Stage B rows that meet the active threshold.
+
+        Args:
+            threshold: Minimum Stage A score allowed into Stage B.
+            max_days: Optional freshness window on discovered_at.
+
+        Returns:
+            Number of rows reopened.
+        """
+        conditions = [
+            "evaluations.job_id = jobs.id",
+            "evaluations.stage_a_status = 'completed'",
+            "evaluations.stage_b_status = 'skipped_below_threshold'",
+            "evaluations.stage_a_score >= $1",
+        ]
+        params: list[Any] = [threshold]
+        if max_days is not None:
+            params.append(datetime.now(UTC) - timedelta(days=max_days))
+            conditions.append(f"jobs.discovered_at >= ${len(params)}")
+        sql = (
+            "UPDATE evaluations SET stage_b_status = NULL, "
+            "stage_b_error = NULL, updated_at = now() "
+            f"FROM jobs WHERE {' AND '.join(conditions)} "
+            "RETURNING evaluations.job_id"
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return len(rows)
+
     async def load_pending_stage_a(
         self,
         *,
@@ -1389,17 +1862,81 @@ class PostgresStore:
             rows = await conn.fetch(sql, *params)
         return [_job_from_record(r) for r in rows]
 
+    async def claim_pending_stage_a(
+        self,
+        *,
+        limit: int = 100,
+        quality_bands: frozenset[str] | None = None,
+        corpus: str = "unrated",
+        max_days: int | None = None,
+    ) -> list[JobPosting]:
+        """Atomically claim jobs pending Stage A evaluation.
+
+        Args:
+            limit: Max jobs.
+            quality_bands: Filter by jd_quality.
+            corpus: "unrated", "all", or "failed".
+            max_days: Freshness filter on discovered_at.
+
+        Returns:
+            Jobs claimed for this Stage A run.
+        """
+        sql, params = _build_claim_stage_a_query(
+            limit=limit,
+            quality_bands=quality_bands,
+            corpus=corpus,
+            max_days=max_days,
+            now=datetime.now(UTC),
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return [_job_from_record(r) for r in rows]
+
+    async def preview_claimable_stage_a(
+        self,
+        *,
+        limit: int = 100,
+        quality_bands: frozenset[str] | None = None,
+        corpus: str = "unrated",
+        max_days: int | None = None,
+    ) -> list[JobPosting]:
+        """Preview jobs claimable for Stage A without mutating leases.
+
+        Args:
+            limit: Max jobs.
+            quality_bands: Filter by jd_quality.
+            corpus: "unrated", "all", or "failed".
+            max_days: Freshness filter on discovered_at.
+
+        Returns:
+            Jobs a real Stage A run would claim.
+        """
+        sql, params = _build_claimable_stage_a_query(
+            limit=limit,
+            quality_bands=quality_bands,
+            corpus=corpus,
+            max_days=max_days,
+            now=datetime.now(UTC),
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return [_job_from_record(r) for r in rows]
+
     async def load_pending_stage_b(
         self,
         *,
         limit: int = 100,
         max_days: int | None = None,
+        stage_a_threshold: int | None = None,
     ) -> list[JobPosting]:
         """Load Stage A-completed, Stage B-pending jobs.
 
         Args:
             limit: Max jobs.
             max_days: Freshness filter.
+            stage_a_threshold: Optional minimum Stage A score.
 
         Returns:
             Jobs pending Stage B.
@@ -1407,6 +1944,119 @@ class PostgresStore:
         sql, params = _build_pending_stage_b_query(
             limit=limit,
             max_days=max_days,
+            stage_a_threshold=stage_a_threshold,
+            now=datetime.now(UTC),
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return [_job_from_record(r) for r in rows]
+
+    async def claim_pending_stage_b(
+        self,
+        *,
+        limit: int = 100,
+        max_days: int | None = None,
+        stage_a_threshold: int | None = None,
+    ) -> list[JobPosting]:
+        """Atomically claim jobs pending Stage B evaluation.
+
+        Args:
+            limit: Max jobs.
+            max_days: Freshness filter.
+            stage_a_threshold: Optional minimum Stage A score.
+
+        Returns:
+            Jobs claimed for this Stage B run.
+        """
+        sql, params = _build_claim_stage_b_query(
+            limit=limit,
+            max_days=max_days,
+            stage_a_threshold=stage_a_threshold,
+            now=datetime.now(UTC),
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return [_job_from_record(r) for r in rows]
+
+    async def release_stage_a_claim(self, job_id: str) -> None:
+        """Release an unspent Stage A in-progress claim.
+
+        Args:
+            job_id: Store-assigned identity.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE evaluations
+                   SET stage_a_status = CASE
+                           WHEN stage_a_error IS NOT NULL THEN 'error'
+                           WHEN stage_a_score IS NOT NULL THEN 'completed'
+                           ELSE NULL
+                       END,
+                       updated_at = now()
+                 WHERE job_id = $1 AND stage_a_status = 'in_progress'""",
+                int(job_id),
+            )
+
+    async def release_stage_b_claim(self, job_id: str) -> None:
+        """Release an unspent Stage B in-progress claim.
+
+        Args:
+            job_id: Store-assigned identity.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE evaluations
+                   SET stage_b_status = CASE
+                           WHEN stage_b_error IS NOT NULL THEN 'error'
+                           WHEN stage_b_verdict IS NOT NULL THEN 'completed'
+                           ELSE NULL
+                       END,
+                       updated_at = now()
+                 WHERE job_id = $1 AND stage_b_status = 'in_progress'""",
+                int(job_id),
+            )
+
+    async def refresh_stage_b_claim(self, job_id: str) -> None:
+        """Refresh an active Stage B in-progress claim.
+
+        Args:
+            job_id: Store-assigned identity.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE evaluations
+                      SET updated_at = now()
+                    WHERE job_id = $1 AND stage_b_status = 'in_progress'""",
+                int(job_id),
+            )
+
+    async def preview_pending_stage_b_after_threshold_sync(
+        self,
+        *,
+        limit: int = 100,
+        max_days: int | None = None,
+        stage_a_threshold: int,
+    ) -> list[JobPosting]:
+        """Preview Stage B jobs after threshold sync without mutating rows.
+
+        Args:
+            limit: Max jobs.
+            max_days: Freshness filter.
+            stage_a_threshold: Active Stage A threshold.
+
+        Returns:
+            Jobs that a real Stage B run would consider after reopening
+            eligible threshold-skipped rows and filtering below-threshold rows.
+        """
+        sql, params = _build_stage_b_preview_query(
+            limit=limit,
+            max_days=max_days,
+            stage_a_threshold=stage_a_threshold,
             now=datetime.now(UTC),
         )
         pool = self._get_pool()
@@ -2719,24 +3369,18 @@ class PostgresStore:
                 value,
             )
 
-    async def record_cost(self, *, day: str, spent_usd: float) -> None:
-        """Upsert daily cost ledger (calls +1 per invocation).
+    async def record_cost(self, *, day: str, spent_usd: float, calls: int = 1) -> None:
+        """Upsert daily cost ledger spend and attempted call count.
 
         Args:
             day: YYYY-MM-DD date string.
             spent_usd: Cost to accumulate.
+            calls: Attempted LLM calls to accumulate.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO cost_ledger (day, spent_usd, calls)
-                   VALUES ($1, $2, 1)
-                   ON CONFLICT (day) DO UPDATE SET
-                       spent_usd = cost_ledger.spent_usd + EXCLUDED.spent_usd,
-                       calls = cost_ledger.calls + 1,
-                       last_updated = now()""",
-                day,
-                spent_usd,
+            await self._record_cost_conn(
+                conn, day=day, spent_usd=spent_usd, calls=calls
             )
 
     async def get_cost(self, day: str) -> CostEntry | None:
@@ -2923,9 +3567,85 @@ class PostgresStore:
             stuck_scoring=stuck_scoring,
         )
 
+    async def record_llm_usage(self, usage: LLMUsage) -> None:
+        """Record a single LLM call's usage metrics.
+
+        Args:
+            usage: LLM usage metrics for one call.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await self._record_llm_usage_conn(conn, usage)
+
+    async def record_llm_usage_with_cost(
+        self,
+        *,
+        day: str,
+        spent_usd: float,
+        usage: LLMUsage,
+    ) -> None:
+        """Atomically record a usage row and same-call ledger spend.
+
+        Args:
+            day: YYYY-MM-DD cost ledger day.
+            spent_usd: Cost to accumulate.
+            usage: LLM usage metrics for one call.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await self._record_llm_usage_conn(conn, usage)
+                await self._record_cost_conn(
+                    conn,
+                    day=day,
+                    spent_usd=spent_usd,
+                    calls=0,
+                )
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _record_cost_conn(
+        conn: asyncpg.Connection,
+        *,
+        day: str,
+        spent_usd: float,
+        calls: int,
+    ) -> None:
+        await conn.execute(
+            """INSERT INTO cost_ledger (day, spent_usd, calls)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (day) DO UPDATE SET
+                   spent_usd = cost_ledger.spent_usd + EXCLUDED.spent_usd,
+                   calls = cost_ledger.calls + EXCLUDED.calls,
+                   last_updated = now()""",
+            day,
+            spent_usd,
+            calls,
+        )
+
+    @staticmethod
+    async def _record_llm_usage_conn(
+        conn: asyncpg.Connection,
+        usage: LLMUsage,
+    ) -> None:
+        await conn.execute(
+            """INSERT INTO llm_usage (model, input_tokens, output_tokens, cost_usd,
+               cached, latency_ms, timestamp, job_id, stage, run_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
+            usage.model,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cost_usd,
+            usage.cached,
+            usage.latency_ms,
+            usage.timestamp,
+            int(usage.job_id) if usage.job_id is not None else None,
+            usage.stage,
+            usage.run_id,
+        )
 
     @staticmethod
     async def _count(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
@@ -172,6 +172,16 @@ class SaveJobResult:
 
 
 @dataclass(kw_only=True)
+class DryRunPreviewItem:
+    """One job that an evaluation dry-run would process."""
+
+    stage: str
+    job_id: str | None
+    title: str
+    company: str
+
+
+@dataclass(kw_only=True)
 class PipelineRun:
     """Aggregate counters and timing for a scan or evaluation run."""
 
@@ -189,6 +199,7 @@ class PipelineRun:
     total_llm_cost_usd: float = 0.0
     errors: int = 0
     finished_at: datetime | None = None
+    dry_run_preview: list[DryRunPreviewItem] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)
@@ -244,6 +255,7 @@ __all__ = [
     "CompanyRecord",
     "CostEntry",
     "DigestStats",
+    "DryRunPreviewItem",
     "FitAnalysis",
     "GapItem",
     "JobEvaluation",

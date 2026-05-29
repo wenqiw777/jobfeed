@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 from jobfeed.domain.models import (
     ApplicationRecord,
     ApplicationStats,
+    JobPosting,
     ResumeSnapshot,
     StatusInfo,
     WorkflowAttention,
@@ -33,6 +34,65 @@ class StoreEvaluationBatchMixin(Protocol):
 
         Args:
             job_ids: Store-assigned job identities to skip.
+        """
+        ...
+
+    async def mark_stage_b_below_threshold(
+        self,
+        threshold: int,
+        *,
+        max_days: int | None = None,
+    ) -> int:
+        """Mark pending Stage B rows whose stored Stage A score is below threshold.
+
+        Args:
+            threshold: Minimum Stage A score allowed into Stage B.
+            max_days: Optional freshness window on discovered_at.
+
+        Returns:
+            Number of rows marked skipped.
+        """
+        ...
+
+    async def reopen_stage_b_at_or_above_threshold(
+        self,
+        threshold: int,
+        *,
+        max_days: int | None = None,
+    ) -> int:
+        """Reopen threshold-skipped rows that now meet the active threshold.
+
+        Args:
+            threshold: Minimum Stage A score allowed into Stage B.
+            max_days: Optional freshness window on discovered_at.
+
+        Returns:
+            Number of rows reopened.
+        """
+        ...
+
+
+@runtime_checkable
+class StoreStageBPreviewMixin(Protocol):
+    """Read-only Stage B queue preview helpers."""
+
+    async def preview_pending_stage_b_after_threshold_sync(
+        self,
+        *,
+        limit: int = 100,
+        max_days: int | None = None,
+        stage_a_threshold: int,
+    ) -> list[JobPosting]:
+        """Preview Stage B jobs after threshold requeue/skip sync.
+
+        Args:
+            limit: Max jobs.
+            max_days: Optional freshness window on discovered_at.
+            stage_a_threshold: Active Stage A threshold.
+
+        Returns:
+            Jobs a real Stage B run would consider after threshold sync,
+            without mutating evaluation status.
         """
         ...
 
