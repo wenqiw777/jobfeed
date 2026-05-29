@@ -62,13 +62,14 @@ def create_http_client(timeout: float = 30.0) -> httpx.AsyncClient:
     )
 
 
-async def fetch_json(
+async def fetch_json(  # noqa: PLR0913
     client: httpx.AsyncClient,
     url: str,
     *,
     slug: str,
     vendor: str,
     timeout: float | None = None,
+    retries: int = 1,
 ) -> dict[str, Any] | list[Any]:
     """GET a URL and return parsed JSON.
 
@@ -78,6 +79,10 @@ async def fetch_json(
         slug: Company slug for error context.
         vendor: ATS vendor name for error context.
         timeout: Optional per-request override in seconds.
+        retries: Number of extra attempts on transport errors (timeout/connect/
+            read/DNS). A slug that times out one moment often answers on the
+            next when a vendor is intermittently degraded. HTTP status errors
+            (4xx/5xx) and JSON-decode failures are never retried.
 
     Returns:
         Parsed JSON as dict or list.
@@ -90,15 +95,20 @@ async def fetch_json(
     if timeout is not None:
         request_kwargs["timeout"] = timeout
 
-    try:
-        response = await client.get(url, **request_kwargs)
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
+    last_exc: BaseException | None = None
+    for _ in range(retries + 1):
+        try:
+            response = await client.get(url, **request_kwargs)
+            break
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+    else:
         raise ATSFetchError(
-            f"Network error fetching {vendor}/{slug}: {exc}",
+            f"Network error fetching {vendor}/{slug}: {last_exc}",
             slug=slug,
             vendor=vendor,
             status_code=None,
-        ) from exc
+        ) from last_exc
 
     if not response.is_success:
         raise ATSFetchError(

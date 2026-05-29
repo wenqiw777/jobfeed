@@ -36,6 +36,9 @@ HTTP_500 = 500
 HTTP_503 = 503
 HTTP_429 = 429
 
+RETRY_THEN_SUCCESS_ATTEMPTS = 2  # 1 failed + 1 successful retry
+RETRIES_2_TOTAL_ATTEMPTS = 3  # retries=2 -> 1 initial + 2 retries
+
 
 # ---------------------------------------------------------------------------
 # create_http_client
@@ -175,6 +178,34 @@ async def test_fetch_json_raises_ats_fetch_error_on_connection_error() -> None:
             await fetch_json(client, BASE_URL, slug=SLUG, vendor=VENDOR)
 
     assert exc_info.value.status_code is None
+
+
+@respx.mock
+async def test_fetch_json_retries_transport_error_then_succeeds() -> None:
+    """A transient transport error is retried and the next attempt succeeds."""
+    route = respx.get(BASE_URL).mock(
+        side_effect=[
+            httpx.TimeoutException("timed out"),
+            httpx.Response(HTTP_200, json={"jobs": []}),
+        ]
+    )
+    async with create_http_client() as client:
+        result = await fetch_json(client, BASE_URL, slug=SLUG, vendor=VENDOR)
+
+    assert result == {"jobs": []}
+    assert route.call_count == RETRY_THEN_SUCCESS_ATTEMPTS
+
+
+@respx.mock
+async def test_fetch_json_gives_up_after_retries_exhausted() -> None:
+    """Transport errors on every attempt exhaust retries and raise."""
+    route = respx.get(BASE_URL).mock(side_effect=httpx.TimeoutException("timed out"))
+    async with create_http_client() as client:
+        with pytest.raises(ATSFetchError) as exc_info:
+            await fetch_json(client, BASE_URL, slug=SLUG, vendor=VENDOR, retries=2)
+
+    assert exc_info.value.status_code is None
+    assert route.call_count == RETRIES_2_TOTAL_ATTEMPTS
 
 
 # ---------------------------------------------------------------------------
