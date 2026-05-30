@@ -1,0 +1,20 @@
+[
+  {
+    "id": "li-zzz999",
+    "title": "Backend Engineer",
+    "company": "Stripe",
+    "location": "Remote - US",
+    "job_url": "https://www.linkedin.com/jobs/view/zzz999",
+    "description": "Stripe is hiring a backend engineer to build the economic infrastructure of the internet. You will own services that move billions of dollars, work in Ruby and Go, and collaborate across teams to ship reliable, well-tested APIs. We care deeply about correctness and operational excellence, and we invest heavily in tooling, observability, and developer experience so engineers can move quickly without breaking things. On this team you will design and implement new payment flows, debug subtle distributed-systems issues, participate in on-call rotations, and mentor newer engineers as you grow. Requirements: strong fundamentals in algorithms and systems, experience operating production services, and excellent written communication. Nice to have: experience with payments, ledgers, or high-availability infrastructure. This LinkedIn JobSpy description is deliberately long enough to land in the FULL quality band so the source-priority tiebreak case in the twin scenario compares two EQUAL-quality FULL twins across different platforms (greenhouse versus linkedin_jobspy).",
+    "date_posted": "2026-05-26"
+  },
+  {
+    "id": "li-yyy888",
+    "title": "Site Reliability Engineer",
+    "company": "Datadog",
+    "location": "New York, NY",
+    "job_url": "https://www.linkedin.com/jobs/view/yyy888",
+    "description": "Datadog is looking for a site reliability engineer to keep our observability platform fast and resilient at massive scale. You will build automation, tune Kubernetes, and respond to incidents with a blameless, learning-oriented mindset. You will partner with product engineering teams to improve reliability, define service-level objectives, and reduce toil through better tooling. This description is long enough to clear the GOOD quality band so the persisted LinkedIn JobSpy row carries a usable inline JD for the integration assertions.",
+    "date_posted": "2026-05-25"
+  }
+]
