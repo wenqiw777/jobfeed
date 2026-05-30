@@ -1,4 +1,6 @@
-.PHONY: test lint fmt quality docker-build docker-quality update-prices
+.PHONY: test lint fmt quality e2e docker-build docker-quality update-prices
+
+SOURCE ?= indeed
 
 test:
 	pytest
@@ -11,6 +13,11 @@ fmt:
 
 quality:
 	make lint && make test
+
+# Manual full-stack e2e smoke (ephemeral PG + real scan). Not a CI gate.
+# Override the source with: make e2e SOURCE=all   (or speedyapply | linkedin-jobspy | indeed)
+e2e:
+	./scripts/e2e_smoke.sh $(SOURCE)
 
 docker-build:
 	docker compose build jobfeed-cli
