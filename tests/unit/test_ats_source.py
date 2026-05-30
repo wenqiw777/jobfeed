@@ -214,7 +214,16 @@ def _make_source(
     mock_logger = logger or MockLogger()
     cfg = config or SourcesATSConfig(failure_threshold=3, probe_ttl_days=7)
     client = httpx.AsyncClient()
-    source = ATSSource(client=client, store=mock_store, config=cfg, logger=mock_logger)
+    # Pin the source's clock to the same fixed NOW the fixtures use, so
+    # freshness/probe-TTL checks are deterministic and never drift against the
+    # real wall clock (the cause of the 2026-05-30 failures).
+    source = ATSSource(
+        client=client,
+        store=mock_store,
+        config=cfg,
+        logger=mock_logger,
+        now=lambda: NOW,
+    )
     return source, mock_store, mock_logger
 
 
