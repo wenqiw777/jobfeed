@@ -1497,7 +1497,19 @@ class PostgresStore:
                        posted_at = COALESCE(EXCLUDED.posted_at, jobs.posted_at),
                        discovered_at = EXCLUDED.discovered_at,
                        enriched_at = COALESCE(EXCLUDED.enriched_at, jobs.enriched_at),
-                       enrich_source = COALESCE(EXCLUDED.enrich_source, jobs.enrich_source),
+                       -- enrich_source must track whichever jd_text actually
+                       -- wins above: only adopt the incoming provenance when the
+                       -- incoming JD is kept, else a no-JD/lower-quality re-scan
+                       -- (e.g. a transient vendor failure) would relabel a
+                       -- preserved full JD as speedyapply-error/-unrouted.
+                       enrich_source = CASE
+                           WHEN $16::int >= (CASE jobs.jd_quality
+                               WHEN 'full' THEN 5 WHEN 'good' THEN 4
+                               WHEN 'partial' THEN 3 WHEN 'stub' THEN 2
+                               WHEN 'missing' THEN 1 WHEN 'abandoned' THEN 0
+                               ELSE -1 END)
+                           THEN COALESCE(EXCLUDED.enrich_source, jobs.enrich_source)
+                           ELSE jobs.enrich_source END,
                        company_norm = EXCLUDED.company_norm,
                        title_norm = EXCLUDED.title_norm,
                        location_norm = EXCLUDED.location_norm

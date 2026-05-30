@@ -16,6 +16,10 @@ dependencies = [
     "jinja2 >= 3.1",
     "psycopg2-binary >= 2.9",
     "pydantic",
+    # >= 1.1.82: the version we validate against; older 1.1.x predates the
+    # country_indeed / linkedin_fetch_description kwargs _jobspy.scrape passes,
+    # which would otherwise raise (contained as JobSpyError -> silent 0 jobs).
+    "python-jobspy >= 1.1.82",
     "structlog",
 ]
 
@@ -48,7 +52,17 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 "src/jobfeed/ports/*.py" = ["ARG002", "PLR0913"]
 "src/jobfeed/adapters/store/postgres.py" = ["ARG002", "E501", "PLR0913", "SIM117"]
 "tests/**/test_ports.py" = ["ARG002", "PLR0913"]
+# The dedupe tests build JobPosting fixtures via a keyword-only `_job` helper
+# that exposes every dedup-relevant field (>5 kwargs) so each test can pin one
+# decisive key; that is the point of the helper, not accidental sprawl.
+"tests/unit/test_dedupe.py" = ["PLR0913"]
+"tests/contract/test_dedupe_contract.py" = ["PLR0913"]
 "tests/conftest.py" = ["PLC0415"]
+# SpeedyApply markdown-table fixtures embed HTML anchors that are inherently
+# wider than 88 chars; the table rows cannot be wrapped without corrupting the
+# fixture. E501 stays active everywhere else.
+"tests/unit/test_speedyapply_markdown.py" = ["E501"]
+"tests/unit/test_speedyapply_routing.py" = ["E501"]
 "tests/fixtures/generate_legacy_fixture.py" = ["PLR2004", "E501", "C901", "PLC0415"]
 "migrations/env.py" = ["PLC0415"]
 "migrations/versions/*.py" = ["E501"]
@@ -66,6 +80,13 @@ warn_unused_ignores = true
 warn_return_any = true
 disallow_any_generics = true
 mypy_path = "src"
+
+# jobspy and pandas ship no type stubs / py.typed marker. They are confined to
+# the JobSpy isolation boundary (adapters/sources/_jobspy*.py); treat their
+# imports as untyped rather than failing strict mode.
+[[tool.mypy.overrides]]
+module = ["jobspy.*", "pandas"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

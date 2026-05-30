@@ -30,3 +30,25 @@ max_concurrent = 10
 probe_ttl_days = 7
 failure_threshold = 3
 seed_companies = ["anthropic", "openai", "palantir"]
+
+# NOTE: list fields below (e.g. search_urls) are TOML-only. They cannot be set
+# via JOBFEED_SOURCES__*__SEARCH_URLS env vars: the nested-env setter stores a
+# bare string at the leaf, which Pydantic will not coerce into a list.
+
+[sources.speedyapply]
+enabled = false
+# search_urls = []          # empty selects the built-in default README
+# max_concurrent = 10
+# fetch_timeout_s = 30.0
+
+[sources.indeed]
+enabled = false
+# search_urls = []
+# max_jobs = 100
+# hours_old =               # unset; when set, overrides each URL's fromage window
+
+[sources.linkedin_jobspy]
+enabled = false
+# search_urls = []
+# max_jobs = 100
+# hours_old =               # unset; when set, overrides each URL's fromage window

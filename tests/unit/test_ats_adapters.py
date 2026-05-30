@@ -10,6 +10,7 @@ import respx
 
 from jobfeed.adapters.sources._ats_ashby import fetch_jobs as ashby_fetch_jobs
 from jobfeed.adapters.sources._ats_ashby import probe as ashby_probe
+from jobfeed.adapters.sources._ats_greenhouse import fetch_job as gh_fetch_job
 from jobfeed.adapters.sources._ats_greenhouse import fetch_jobs as gh_fetch_jobs
 from jobfeed.adapters.sources._ats_greenhouse import probe as gh_probe
 from jobfeed.adapters.sources._ats_lever import fetch_jobs as lever_fetch_jobs
@@ -491,6 +492,49 @@ class TestGreenhouseFetchJobs:
         async with create_http_client() as client:
             postings = await gh_fetch_jobs(client, SLUG, discovered_at=DISCOVERED_AT)
         assert len(postings) == GH_MULTI_JOB_COUNT
+
+
+GH_JOB_URL = f"https://boards-api.greenhouse.io/v1/boards/{SLUG}/jobs/777?content=true"
+
+
+class TestGreenhouseFetchJob:
+    """Tests for greenhouse fetch_job() single-job helper (SpeedyApply path)."""
+
+    @respx.mock
+    async def test_fetch_job_hits_single_job_endpoint(self) -> None:
+        """fetch_job GETs /jobs/<id>?content=true and returns one posting."""
+        route = respx.get(GH_JOB_URL).mock(
+            return_value=httpx.Response(HTTP_200, json=_gh_job(job_id=777))
+        )
+        async with create_http_client() as client:
+            posting = await gh_fetch_job(
+                client, SLUG, "777", discovered_at=DISCOVERED_AT
+            )
+        assert route.called
+        assert posting is not None
+        assert posting.platform == "greenhouse"
+        assert posting.canonical_id == "777"
+        assert posting.jd_text
+
+    @respx.mock
+    async def test_fetch_job_returns_none_on_blank_required_field(self) -> None:
+        """A job with a blank title is dropped (None) like the board path."""
+        respx.get(GH_JOB_URL).mock(
+            return_value=httpx.Response(HTTP_200, json=_gh_job(job_id=777, title=""))
+        )
+        async with create_http_client() as client:
+            posting = await gh_fetch_job(
+                client, SLUG, "777", discovered_at=DISCOVERED_AT
+            )
+        assert posting is None
+
+    @respx.mock
+    async def test_fetch_job_raises_on_http_error(self) -> None:
+        """A 500 from the single-job endpoint raises ATSFetchError."""
+        respx.get(GH_JOB_URL).mock(return_value=httpx.Response(HTTP_500))
+        async with create_http_client() as client:
+            with pytest.raises(ATSFetchError):
+                await gh_fetch_job(client, SLUG, "777", discovered_at=DISCOVERED_AT)
 
 
 # ===========================================================================

@@ -48,11 +48,17 @@ class ATSSource:
         store: StoreOpsMixin,
         config: SourcesATSConfig,
         logger: JobfeedLogger,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self._client = client
         self._store = store
         self._config = config
         self._log = logger
+        # Injectable wall clock so freshness/probe-TTL logic is deterministic in
+        # tests (default: real UTC now). Without this, a test that pins a fixed
+        # date drifts against datetime.now() and its "fresh" fixtures silently
+        # rot once real time passes probe_ttl_days.
+        self._now = now or (lambda: datetime.now(UTC))
 
     async def fetch_jobs(self, config: dict[str, object]) -> list[JobPosting]:  # noqa: ARG002
         """Fetch jobs from all tracked ATS companies concurrently.
@@ -64,7 +70,7 @@ class ATSSource:
             Aggregated job postings from all companies.
         """
         companies = await self._store.list_companies()
-        scan_started_at = datetime.now(UTC)
+        scan_started_at = self._now()
         sem = asyncio.Semaphore(self._config.max_concurrent)
         tasks = [
             self._process_company(c, scan_started_at, sem)
@@ -206,7 +212,7 @@ class ATSSource:
             await self._store.reset_discover_failures(company.slug)
             self._log.info("company_removed", slug=company.slug)
             return []
-        now = datetime.now(UTC)
+        now = self._now()
         await self._update_company(
             company,
             ats_vendor=new_vendor,
@@ -251,7 +257,7 @@ class ATSSource:
         """True when last_verified_at is missing or older than probe_ttl_days."""
         if company.last_verified_at is None:
             return True
-        age = datetime.now(UTC) - company.last_verified_at
+        age = self._now() - company.last_verified_at
         return age > timedelta(days=self._config.probe_ttl_days)
 
 

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "in-aaa111",
+    "title": "Software Engineer Intern",
+    "company": "Wayne Enterprises",
+    "location": "Gotham, NJ",
+    "job_url": "https://www.indeed.com/viewjob?jk=aaa111",
+    "description": "Join the Wayne Enterprises applied-sciences software team as a summer intern. You will build internal tooling in Python and TypeScript, ship features behind feature flags, and pair with senior engineers on production services. Strong CS fundamentals and a love of clean code are required. On this team you will own a project end to end, from design review through production rollout and on-call support, learning how large systems are built, tested, and operated in the real world with mentorship at every step. Responsibilities include writing well-tested services, profiling and optimizing hot paths, instrumenting telemetry, and documenting your work so the next engineer can build on it. Requirements: currently pursuing a degree in computer science or a related field, comfortable with data structures and algorithms, and experienced with at least one programming language. Nice to have: exposure to cloud infrastructure, containers, or CI pipelines. This description is intentionally long enough to clear the FULL quality band so the persisted Indeed row carries a real JD body for downstream scoring and dedupe assertions in the integration suite.",
+    "datePublished": "2025-11-01",
+    "dateOnIndeed": "2026-05-28"
+  },
+  {
+    "id": "in-bbb222",
+    "title": "Backend Engineer Intern",
+    "company": "Stark Industries",
+    "location": "Remote",
+    "job_url": "https://www.indeed.com/viewjob?jk=bbb222",
+    "description": "Stark Industries is hiring a backend engineering intern to work on high-throughput services. You will design APIs, write integration tests, and learn distributed systems from the ground up alongside a supportive team of senior engineers. We use Go, PostgreSQL, and Kafka in production, and we care deeply about correctness, observability, and operational excellence. Over the course of the internship you will ship real features to production, participate in design reviews, and present your work at the end of the summer. This description is deliberately verbose so it lands squarely in the GOOD quality band and the persisted Indeed row has an inline JD that downstream evaluation and twin clustering can rely on without ambiguity.",
+    "datePublished": "2025-12-15",
+    "dateOnIndeed": "2026-05-27"
+  }
+]

@@ -45,11 +45,11 @@ Read `docs/engineering-standards.md` before editing code. Key enforced rules:
 
 ## Constraints
 
-- No browser automation, Temporal, or frontend code. ATS adapters may make outbound HTTP to public vendor APIs (Greenhouse, Ashby, Lever). Phase 3 allows real LLM calls only through the subprocess-backed LLM adapters and only when the configured backend/toolchain is intentionally selected; use mock LLM config for deterministic smoke and CI flows.
+- No Temporal or frontend code. Browser automation is forbidden EXCEPT Playwright in the LinkedIn SessionSource adapter (`adapters/sources/linkedin.py`) and its one-time login command (`cli/login.py`) — permitted per the **Phase 4 amendment, approved 2026-05-29**, solely for LinkedIn scraping; its cookie profile and cross-process enrich lock live under `~/.cache/jobfeed/`, never `~/.jobfeed/`. ATS adapters may make outbound HTTP to public vendor APIs (Greenhouse, Ashby, Lever); the Phase 4 SpeedyApply and JobSpy sources may likewise fetch public job-board APIs / lists. Phase 3 allows real LLM calls only through the subprocess-backed LLM adapters and only when the configured backend/toolchain is intentionally selected; use mock LLM config for deterministic smoke and CI flows.
 - PostgreSQL is the only supported store backend. Config: `db.url` (DSN) or env `JOBFEED_DB_URL`.
 - No reads/writes to `~/.jobfeed/`.
 - Do not weaken quality gates without explicit human approval.
-- Phase 0 plan (`docs/plans/2026-05-21-jobfeed-rewrite-phase0-walking-skeleton.md`) is the Phase 0 source of truth; Phase 1 plan (`docs/plans/2026-05-21-jobfeed-rewrite-phase1-store-hardening.md`) governs store hardening; Phase 2 plan (`docs/plans/2026-05-23-jobfeed-rewrite-phase2-first-real-source.md`) governs ATS source integration; Phase 3 plan (`docs/plans/2026-05-23-jobfeed-rewrite-phase3-first-real-llm.md`) governs real LLM integration.
+- Phase 0 plan (`docs/plans/2026-05-21-jobfeed-rewrite-phase0-walking-skeleton.md`) is the Phase 0 source of truth; Phase 1 plan (`docs/plans/2026-05-21-jobfeed-rewrite-phase1-store-hardening.md`) governs store hardening; Phase 2 plan (`docs/plans/2026-05-23-jobfeed-rewrite-phase2-first-real-source.md`) governs ATS source integration; Phase 3 plan (`docs/plans/2026-05-23-jobfeed-rewrite-phase3-first-real-llm.md`) governs real LLM integration; Phase 4 plan (`docs/plans/2026-05-29-jobfeed-rewrite-phase4-source-expansion.md`) governs source expansion (SpeedyApply + JobSpy + LinkedIn Playwright).
 ## Commit Convention
 
 Format: `type(scope): summary` — e.g. `feat(phase0):`, `fix(phase0):`, `test(phase0):`, `docs(phase0):`.

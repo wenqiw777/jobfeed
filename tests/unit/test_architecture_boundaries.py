@@ -10,11 +10,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = PROJECT_ROOT / "src" / "jobfeed"
 DOMAIN_ALLOWED_IMPORTS = {
     "__future__",
+    "collections.abc",
     "dataclasses",
     "datetime",
     "enum",
     "hashlib",
     "json",
+    "re",
     "typing",
 }
 ADAPTER_IMPORT_PREFIX = "jobfeed.adapters"

@@ -13,6 +13,7 @@ from jobfeed.adapters.sources._http import (
     ProbeNetworkError,
     create_http_client,
     fetch_json,
+    fetch_text,
     html_to_text,
     probe_url,
 )
@@ -228,6 +229,76 @@ async def test_fetch_json_raises_ats_parse_error_on_invalid_json() -> None:
     assert err.slug == SLUG
     assert err.vendor == VENDOR
     assert isinstance(err, ATSFetchError)
+
+
+# ---------------------------------------------------------------------------
+# fetch_text — raw HTML body (for iCIMS and other HTML-embedded JDs)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_fetch_text_returns_body_on_200() -> None:
+    """fetch_text returns the raw response body text on HTTP 200."""
+    respx.get(BASE_URL).mock(
+        return_value=httpx.Response(HTTP_200, text="<html><body>hi</body></html>")
+    )
+    async with create_http_client() as client:
+        result = await fetch_text(client, BASE_URL, slug=SLUG, vendor=VENDOR)
+
+    assert result == "<html><body>hi</body></html>"
+
+
+@respx.mock
+async def test_fetch_text_raises_ats_fetch_error_on_404() -> None:
+    """fetch_text raises ATSFetchError with status/slug/vendor on 404."""
+    respx.get(BASE_URL).mock(return_value=httpx.Response(HTTP_404))
+    async with create_http_client() as client:
+        with pytest.raises(ATSFetchError) as exc_info:
+            await fetch_text(client, BASE_URL, slug=SLUG, vendor=VENDOR)
+
+    err = exc_info.value
+    assert err.status_code == HTTP_404
+    assert err.slug == SLUG
+    assert err.vendor == VENDOR
+
+
+@respx.mock
+async def test_fetch_text_raises_ats_fetch_error_on_timeout() -> None:
+    """fetch_text raises ATSFetchError with status_code=None on timeout."""
+    respx.get(BASE_URL).mock(side_effect=httpx.TimeoutException("timed out"))
+    async with create_http_client() as client:
+        with pytest.raises(ATSFetchError) as exc_info:
+            await fetch_text(client, BASE_URL, slug=SLUG, vendor=VENDOR)
+
+    assert exc_info.value.status_code is None
+
+
+@respx.mock
+async def test_fetch_text_retries_transport_error_then_succeeds() -> None:
+    """A transient transport error is retried and the next attempt succeeds."""
+    route = respx.get(BASE_URL).mock(
+        side_effect=[
+            httpx.TimeoutException("timed out"),
+            httpx.Response(HTTP_200, text="ok"),
+        ]
+    )
+    async with create_http_client() as client:
+        result = await fetch_text(client, BASE_URL, slug=SLUG, vendor=VENDOR)
+
+    assert result == "ok"
+    assert route.call_count == RETRY_THEN_SUCCESS_ATTEMPTS
+
+
+@respx.mock
+async def test_fetch_text_gives_up_after_retries_exhausted() -> None:
+    """Transport errors on every attempt exhaust retries and raise."""
+    route = respx.get(BASE_URL).mock(side_effect=httpx.TimeoutException("timed out"))
+    async with create_http_client() as client:
+        with pytest.raises(ATSFetchError) as exc_info:
+            await fetch_text(client, BASE_URL, slug=SLUG, vendor=VENDOR, retries=2)
+
+    assert exc_info.value.status_code is None
+    assert route.call_count == RETRIES_2_TOTAL_ATTEMPTS
 
 
 # ---------------------------------------------------------------------------
