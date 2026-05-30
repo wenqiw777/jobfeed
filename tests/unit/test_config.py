@@ -13,6 +13,9 @@ from jobfeed.config import (
     ScoringSettings,
     SourcesATSConfig,
     SourcesConfig,
+    SourcesIndeedConfig,
+    SourcesLinkedInJobSpyConfig,
+    SourcesSpeedyApplyConfig,
     load_settings,
 )
 from jobfeed.observability import bind_run_id, configure_logging, get_logger
@@ -35,6 +38,14 @@ ATS_DEFAULT_FAILURE_THRESHOLD = 3
 ATS_DEFAULT_PROBE_TIMEOUT_S = 5.0
 ATS_DEFAULT_SCAN_TIMEOUT_S = 30.0
 ATS_ENV_MAX_CONCURRENT = 5
+
+# Phase 4a source config default values (mirror the new SourcesConfig models)
+SPEEDYAPPLY_DEFAULT_MAX_CONCURRENT = 10
+SPEEDYAPPLY_DEFAULT_FETCH_TIMEOUT_S = 30.0
+JOBSPY_DEFAULT_MAX_JOBS = 100
+INDEED_ENV_MAX_JOBS = 50
+INDEED_TOML_MAX_JOBS = 25
+INDEED_TOML_HOURS_OLD = 48
 
 
 def test_load_settings_returns_defaults_without_config_file() -> None:
@@ -374,3 +385,160 @@ def test_sources_ats_config_rejects_nonpositive_scan_timeout() -> None:
     """scan_timeout_s <= 0 should fail Pydantic validation (gt=0 constraint)."""
     with pytest.raises(ValidationError):
         SourcesATSConfig(scan_timeout_s=0.0)
+
+
+# --- Phase 4a source config tests (speedyapply / indeed / linkedin_jobspy) ---
+
+
+def test_settings_exposes_phase4a_source_defaults() -> None:
+    """Settings.sources should expose the three Phase 4a sources, all disabled."""
+    sources = load_settings().sources
+
+    assert isinstance(sources.speedyapply, SourcesSpeedyApplyConfig)
+    assert isinstance(sources.indeed, SourcesIndeedConfig)
+    assert isinstance(sources.linkedin_jobspy, SourcesLinkedInJobSpyConfig)
+
+    assert sources.speedyapply.enabled is False
+    assert sources.indeed.enabled is False
+    assert sources.linkedin_jobspy.enabled is False
+
+    assert sources.speedyapply.search_urls == []
+    assert sources.speedyapply.max_concurrent == SPEEDYAPPLY_DEFAULT_MAX_CONCURRENT
+    assert sources.speedyapply.fetch_timeout_s == SPEEDYAPPLY_DEFAULT_FETCH_TIMEOUT_S
+
+    assert sources.indeed.search_urls == []
+    assert sources.indeed.max_jobs == JOBSPY_DEFAULT_MAX_JOBS
+    assert sources.indeed.hours_old is None
+
+    assert sources.linkedin_jobspy.search_urls == []
+    assert sources.linkedin_jobspy.max_jobs == JOBSPY_DEFAULT_MAX_JOBS
+    assert sources.linkedin_jobspy.hours_old is None
+
+
+def test_load_settings_parses_phase4a_source_sections(tmp_path: Path) -> None:
+    """load_settings should populate each new [sources.*] block from TOML.
+
+    Args:
+        tmp_path: Temporary directory for a synthetic config file.
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[sources.speedyapply]\n"
+        "enabled = true\n"
+        'search_urls = ["https://example.test/jobs.md"]\n'
+        "[sources.indeed]\n"
+        "enabled = true\n"
+        'search_urls = ["https://example.test/indeed"]\n'
+        f"max_jobs = {INDEED_TOML_MAX_JOBS}\n"
+        f"hours_old = {INDEED_TOML_HOURS_OLD}\n"
+        "[sources.linkedin_jobspy]\n"
+        "enabled = true\n"
+        'search_urls = ["https://example.test/li"]\n',
+        encoding="utf-8",
+    )
+
+    sources = load_settings(config_path).sources
+
+    assert sources.speedyapply.enabled is True
+    assert sources.speedyapply.search_urls == ["https://example.test/jobs.md"]
+    assert sources.indeed.enabled is True
+    assert sources.indeed.search_urls == ["https://example.test/indeed"]
+    assert sources.indeed.max_jobs == INDEED_TOML_MAX_JOBS
+    assert sources.indeed.hours_old == INDEED_TOML_HOURS_OLD
+    assert sources.linkedin_jobspy.enabled is True
+    assert sources.linkedin_jobspy.search_urls == ["https://example.test/li"]
+
+
+def test_sources_speedyapply_config_rejects_unknown_key() -> None:
+    """An unknown key in [sources.speedyapply] should fail (extra='forbid')."""
+    with pytest.raises(ValidationError):
+        SourcesSpeedyApplyConfig(unknown_key="value")  # type: ignore[call-arg]
+
+
+def test_sources_indeed_config_rejects_unknown_key() -> None:
+    """An unknown key in [sources.indeed] should fail (extra='forbid')."""
+    with pytest.raises(ValidationError):
+        SourcesIndeedConfig(unknown_key="value")  # type: ignore[call-arg]
+
+
+def test_sources_linkedin_jobspy_config_rejects_unknown_key() -> None:
+    """An unknown key in [sources.linkedin_jobspy] should fail (extra='forbid')."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInJobSpyConfig(unknown_key="value")  # type: ignore[call-arg]
+
+
+def test_indeed_config_rejects_enabled_without_search_urls() -> None:
+    """Enabled Indeed with no search_urls fails (JobSpy has no default search)."""
+    with pytest.raises(ValidationError):
+        SourcesIndeedConfig(enabled=True)
+
+
+def test_linkedin_jobspy_config_rejects_enabled_without_search_urls() -> None:
+    """Enabled LinkedIn JobSpy with no search_urls fails (no default search)."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInJobSpyConfig(enabled=True)
+
+
+def test_jobspy_config_allows_disabled_without_search_urls() -> None:
+    """Disabled JobSpy sources need no search_urls — the default resting state."""
+    assert SourcesIndeedConfig(enabled=False).search_urls == []
+    assert SourcesLinkedInJobSpyConfig().enabled is False
+
+
+def test_jobspy_config_allows_enabled_with_search_urls() -> None:
+    """An enabled JobSpy source with at least one search_url validates."""
+    cfg = SourcesIndeedConfig(enabled=True, search_urls=["https://x/jobs"])
+    assert cfg.enabled is True
+    assert cfg.search_urls == ["https://x/jobs"]
+
+
+def test_jobspy_config_rejects_blank_search_urls() -> None:
+    """Enabled JobSpy with ANY blank/whitespace search_url entry is rejected."""
+    with pytest.raises(ValidationError):
+        SourcesIndeedConfig(enabled=True, search_urls=["", "   "])
+    # A mixed list with one real URL and one blank entry is still rejected:
+    # the blank would otherwise be scraped as garbage.
+    with pytest.raises(ValidationError):
+        SourcesIndeedConfig(enabled=True, search_urls=["   ", "https://valid.test/q"])
+
+
+def test_sources_speedyapply_config_rejects_max_concurrent_zero() -> None:
+    """speedyapply.max_concurrent=0 should fail validation (ge=1 constraint)."""
+    with pytest.raises(ValidationError):
+        SourcesSpeedyApplyConfig(max_concurrent=0)
+
+
+def test_sources_indeed_config_rejects_max_jobs_zero() -> None:
+    """indeed.max_jobs=0 should fail Pydantic validation (ge=1 constraint)."""
+    with pytest.raises(ValidationError):
+        SourcesIndeedConfig(max_jobs=0)
+
+
+def test_load_settings_env_overrides_indeed_max_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scalar JOBFEED_SOURCES__INDEED__MAX_JOBS env var should override config.
+
+    Args:
+        monkeypatch: Pytest helper used to set scoped environment variables.
+    """
+    monkeypatch.setenv("JOBFEED_SOURCES__INDEED__MAX_JOBS", str(INDEED_ENV_MAX_JOBS))
+
+    settings = load_settings()
+
+    assert settings.sources.indeed.max_jobs == INDEED_ENV_MAX_JOBS
+
+
+def test_load_settings_env_overrides_speedyapply_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scalar JOBFEED_SOURCES__SPEEDYAPPLY__ENABLED env var should override config.
+
+    Args:
+        monkeypatch: Pytest helper used to set scoped environment variables.
+    """
+    monkeypatch.setenv("JOBFEED_SOURCES__SPEEDYAPPLY__ENABLED", "true")
+
+    settings = load_settings()
+
+    assert settings.sources.speedyapply.enabled is True
