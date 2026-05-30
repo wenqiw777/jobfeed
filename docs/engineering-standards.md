@@ -35,6 +35,7 @@ The thresholds above are global defaults. A small set of scoped relaxations live
   - `ports/*.py` — `ARG002` (Protocol methods legitimately have unused args), `PLR0913` (capability signatures can exceed 5 args).
   - `adapters/store/postgres.py` — `ARG002`, `E501`, `PLR0913`, `SIM117` (the 300-line-exempt store surface; large SQL-bearing methods).
   - `tests/**/test_ports.py` — `ARG002`, `PLR0913`. `tests/conftest.py` / `migrations/env.py` — `PLC0415`. `migrations/versions/*.py` — `E501`. `tests/fixtures/generate_legacy_fixture.py` — `PLR2004`, `E501`, `C901`, `PLC0415`.
+  - `tests/unit/test_speedyapply_markdown.py` / `tests/unit/test_speedyapply_routing.py` — `E501` (inline SpeedyApply markdown-table fixtures embed HTML anchors that cannot wrap). `tests/unit/test_dedupe.py` / `tests/contract/test_dedupe_contract.py` — `PLR0913` (keyword-only `_job` fixture builders intentionally expose every dedup-relevant field).
 - **Targeted `# noqa`:** for a one-off legitimate exceedance outside the scoped paths, a per-line `# noqa: <rule>` is the escape hatch rather than a new per-file ignore (e.g. `adapters/sources/_http.py` `fetch_json` / `probe_url` carry `# noqa: PLR0913` — low-level HTTP helpers with `client`/`url`/`slug`/`vendor`/`timeout`/`retries`).
 
 ## Documentation And Comments
