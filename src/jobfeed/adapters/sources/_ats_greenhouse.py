@@ -21,6 +21,7 @@ _logger = logging.getLogger(__name__)
 
 _VENDOR = "greenhouse"
 JOBS_URL = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
+JOB_URL = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs/{job_id}?content=true"
 PROBE_URL = "https://boards-api.greenhouse.io/v1/boards/{slug}"
 
 
@@ -81,6 +82,41 @@ async def fetch_jobs(
         if posting is not None:
             postings.append(posting)
     return postings
+
+
+async def fetch_job(
+    client: httpx.AsyncClient,
+    slug: str,
+    job_id: str,
+    *,
+    discovered_at: datetime,
+    timeout: float = 30.0,
+) -> JobPosting | None:
+    """GET a single Greenhouse job by id and parse it into a JobPosting.
+
+    Targets the per-job endpoint ``/v1/boards/{slug}/jobs/{job_id}?content=true``
+    (a single GET, NOT the whole board). The response is one job object, so it is
+    handed straight to the shared ``_build_posting`` helper.
+
+    Args:
+        client: Shared async HTTP client.
+        slug: Company board slug on Greenhouse.
+        job_id: Greenhouse numeric job id.
+        discovered_at: Scan-start timestamp to stamp on the posting.
+        timeout: Per-request timeout in seconds.
+
+    Returns:
+        Parsed JobPosting, or None if required fields are blank/malformed.
+
+    Raises:
+        ATSFetchError: On HTTP or network failures.
+    """
+    url = JOB_URL.format(slug=slug, job_id=job_id)
+    raw = await fetch_json(client, url, slug=slug, vendor=_VENDOR, timeout=timeout)
+    if not isinstance(raw, dict):
+        _logger.warning("Greenhouse single-job response not an object for %s", slug)
+        return None
+    return _parse_job(raw, slug, discovered_at)
 
 
 def _extract_jobs_list(raw: dict[str, Any] | list[Any], slug: str) -> list[Any]:
@@ -219,4 +255,4 @@ def _parse_updated_at(updated_at: Any) -> datetime | None:
         return None
 
 
-__all__ = ["JOBS_URL", "PROBE_URL", "fetch_jobs", "probe"]
+__all__ = ["JOBS_URL", "JOB_URL", "PROBE_URL", "fetch_job", "fetch_jobs", "probe"]

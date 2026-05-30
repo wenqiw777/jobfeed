@@ -129,6 +129,68 @@ async def fetch_json(  # noqa: PLR0913
         ) from exc
 
 
+async def fetch_text(  # noqa: PLR0913
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    slug: str,
+    vendor: str,
+    timeout: float | None = None,
+    retries: int = 1,
+) -> str:
+    """GET a URL and return the raw response body as text.
+
+    The HTML twin of ``fetch_json``: same transport-retry and timeout wrapping,
+    but returns ``response.text`` instead of parsed JSON. Used for vendors whose
+    JD body is embedded in an HTML page (e.g. iCIMS JSON-LD) rather than a JSON
+    API. The client is an ``httpx.AsyncClient``, so the GET is awaited; never use
+    the synchronous ``client.get(url).text`` idiom.
+
+    Args:
+        client: Shared async HTTP client.
+        url: Target URL to fetch.
+        slug: Company slug for error context.
+        vendor: ATS vendor name for error context.
+        timeout: Optional per-request override in seconds.
+        retries: Number of extra attempts on transport errors (timeout/connect/
+            read/DNS). HTTP status errors (4xx/5xx) are never retried.
+
+    Returns:
+        Raw response body text.
+
+    Raises:
+        ATSFetchError: On non-2xx HTTP status or network/timeout errors.
+    """
+    request_kwargs: dict[str, Any] = {}
+    if timeout is not None:
+        request_kwargs["timeout"] = timeout
+
+    last_exc: BaseException | None = None
+    for _ in range(retries + 1):
+        try:
+            response = await client.get(url, **request_kwargs)
+            break
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+    else:
+        raise ATSFetchError(
+            f"Network error fetching {vendor}/{slug}: {last_exc}",
+            slug=slug,
+            vendor=vendor,
+            status_code=None,
+        ) from last_exc
+
+    if not response.is_success:
+        raise ATSFetchError(
+            f"HTTP {response.status_code} from {vendor}/{slug}",
+            slug=slug,
+            vendor=vendor,
+            status_code=response.status_code,
+        )
+
+    return response.text
+
+
 async def probe_url(  # noqa: PLR0913
     client: httpx.AsyncClient,
     url: str,
@@ -204,6 +266,7 @@ __all__ = [
     "ProbeNetworkError",
     "create_http_client",
     "fetch_json",
+    "fetch_text",
     "html_to_text",
     "probe_url",
 ]
