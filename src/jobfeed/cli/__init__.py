@@ -142,6 +142,7 @@ def cli(ctx: click.Context, config_path: Path | None, verbose: bool) -> None:
     Raises:
         click.ClickException: If configuration cannot build a Phase 0 app.
     """
+    config_path = _resolve_config_path(config_path)
     try:
         app = create_app(config_path)
     except (FileNotFoundError, ValueError) as exc:
@@ -156,6 +157,32 @@ def _enable_verbose_logging(app: AppContext) -> None:
     settings = app["settings"]
     configure_logging("debug", settings.observability.log_format)
     app["logger"].debug("cli_verbose_enabled")
+
+
+_DEFAULT_CONFIG_FILENAME = "config.toml"
+
+
+def _resolve_config_path(config_path: Path | None) -> Path | None:
+    """Resolve the effective config path for a CLI invocation.
+
+    An explicit ``--config`` always wins. When it is omitted, fall back to a
+    ``config.toml`` in the current working directory if one exists, so
+    ``jobfeed <cmd>`` uses a project-local config without repeating ``--config``
+    every time. Returns None when neither is present (built-in defaults apply).
+
+    Args:
+        config_path: The explicit ``--config`` path, or None.
+
+    Returns:
+        The explicit path, the discovered ``./config.toml``, or None.
+    """
+    if config_path is not None:
+        return config_path
+    cwd_config = Path(_DEFAULT_CONFIG_FILENAME)
+    if cwd_config.is_file():
+        click.echo(f"Using config: {cwd_config}", err=True)
+        return cwd_config
+    return None
 
 
 DEFAULT_POSTGRES_URL = "postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev"

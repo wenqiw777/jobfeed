@@ -38,3 +38,6 @@ pip-wheel-metadata/
 .idea/
 .vscode/
 .claude/worktrees/
+
+# Local/personal config (use config.example.toml as the template)
+/config.toml

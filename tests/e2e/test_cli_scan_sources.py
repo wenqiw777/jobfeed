@@ -21,7 +21,7 @@ from click.testing import CliRunner, Result
 from jobfeed.adapters.sources import _jobspy
 from jobfeed.adapters.sources.ats import ATSSource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
-from jobfeed.cli import cli
+from jobfeed.cli import _resolve_config_path, cli
 from jobfeed.domain.models import JobPosting, SaveJobResult
 from jobfeed.domain.quality import assess_quality
 
@@ -398,3 +398,38 @@ def _enable_linkedin_url(config_path: Path) -> None:
         '[sources.linkedin_jobspy]\nenabled = true\nsearch_urls = ["https://linkedin.com/jobs/search?keywords=swe"]',
     )
     config_path.write_text(text, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Default source = all  +  ./config.toml auto-discovery
+# ---------------------------------------------------------------------------
+
+
+def test_scan_source_default_is_all() -> None:
+    """`jobfeed scan` defaults to --source all (not mock)."""
+    source_opt = next(p for p in scan_module.scan.params if p.name == "source_name")
+    assert source_opt.default == "all"
+
+
+def test_resolve_config_path_prefers_explicit(tmp_path: Path) -> None:
+    """An explicit --config path always wins over a cwd config.toml."""
+    explicit = tmp_path / "custom.toml"
+    explicit.write_text("", encoding="utf-8")
+    assert _resolve_config_path(explicit) == explicit
+
+
+def test_resolve_config_path_falls_back_to_cwd_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With --config omitted, ./config.toml in the cwd is picked up."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
+    assert _resolve_config_path(None) == Path("config.toml")
+
+
+def test_resolve_config_path_none_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No --config and no ./config.toml -> None (built-in defaults apply)."""
+    monkeypatch.chdir(tmp_path)
+    assert _resolve_config_path(None) is None

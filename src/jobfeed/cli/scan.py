@@ -35,11 +35,12 @@ _REAL_SOURCES = ("ats", "speedyapply", "indeed", "linkedin-jobspy")
 @click.option(
     "--source",
     "source_name",
-    default="mock",
+    default="all",
     show_default=True,
     type=click.Choice(SOURCE_CHOICES),
     help="Source adapter to scan: mock, ats, speedyapply, indeed, "
-    "linkedin-jobspy, or all.",
+    "linkedin-jobspy, or all (default: all enabled real sources; mock is "
+    "explicit-only).",
 )
 @click.pass_context
 def scan(ctx: click.Context, source_name: str) -> None:
