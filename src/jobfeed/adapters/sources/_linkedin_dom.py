@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from collections.abc import Sequence
 from typing import Any
 
@@ -14,14 +15,48 @@ VIEWPORTS = (
     {"width": 1365, "height": 900},
     {"width": 1536, "height": 960},
 )
-CHECKPOINT_HINTS = (
-    "checkpoint",
-    "authwall",
-    "login",
-    "sign in",
+# Randomized human-like pause range between page actions. Real jitter (not a
+# fixed cadence) makes an authenticated session less obviously automated.
+MIN_DELAY_S = 0.8
+MAX_DELAY_S = 2.4
+# Authwall detection. URL hints catch the login/checkpoint REDIRECT; body hints
+# are deliberately strong phrases that only appear on a real interstitial —
+# generic words like "login"/"sign in" appear on valid pages and caused false
+# reauth signals, so they are matched on the URL only, never on body text.
+URL_AUTHWALL_HINTS = ("/login", "/checkpoint", "/authwall", "/uas/login")
+BODY_AUTHWALL_HINTS = (
     "security verification",
     "verify your identity",
+    "let's do a quick security check",
 )
+
+
+def human_delay() -> float:
+    """Return a randomized human-like pause in seconds between page actions.
+
+    Tests inject a no-op sleeper, so the value is computed but never waited on.
+
+    Returns:
+        A jittered delay between ``MIN_DELAY_S`` and ``MAX_DELAY_S``.
+    """
+    return random.uniform(MIN_DELAY_S, MAX_DELAY_S)
+
+
+def is_browser_closed(exc: Exception) -> bool:
+    """Return whether an error means the page/context/browser is gone.
+
+    Detected by message so this confined module never imports Playwright. Lets a
+    dead browser propagate instead of being masked as empty text or zero cards.
+
+    Args:
+        exc: Exception raised by a Playwright page/locator call.
+
+    Returns:
+        True when the failure is a closed target rather than a benign miss.
+    """
+    return "has been closed" in str(exc).lower()
+
+
 CARD_SELECTOR = (
     "li[data-occludable-job-id], .job-card-container, .jobs-search-results__list-item"
 )
@@ -137,8 +172,11 @@ def looks_like_authwall(url: str, text: str) -> bool:
     Returns:
         True when the URL/text includes LinkedIn login or checkpoint hints.
     """
-    haystack = f"{url}\n{text}".lower()
-    return any(hint in haystack for hint in CHECKPOINT_HINTS)
+    url_lower = url.lower()
+    if any(hint in url_lower for hint in URL_AUTHWALL_HINTS):
+        return True
+    text_lower = text.lower()
+    return any(hint in text_lower for hint in BODY_AUTHWALL_HINTS)
 
 
 def _normalize_space(text: str) -> str:
@@ -148,7 +186,9 @@ def _normalize_space(text: str) -> str:
 async def _maybe_inner_text(owner: Any, selector: str, timeout_ms: int) -> str:
     try:
         value = await owner.locator(selector).first.inner_text(timeout=timeout_ms)
-    except Exception:
+    except Exception as exc:
+        if is_browser_closed(exc):
+            raise
         return ""
     return value if isinstance(value, str) else ""
 
@@ -164,7 +204,9 @@ async def _maybe_attribute(
             attr,
             timeout=timeout_ms,
         )
-    except Exception:
+    except Exception as exc:
+        if is_browser_closed(exc):
+            raise
         return None
     return value if isinstance(value, str) else None
 
@@ -179,6 +221,8 @@ __all__ = [
     "LOCATION_SELECTORS",
     "USER_AGENT",
     "VIEWPORTS",
+    "human_delay",
+    "is_browser_closed",
     "looks_like_authwall",
     "read_body_text",
     "read_first_attr",

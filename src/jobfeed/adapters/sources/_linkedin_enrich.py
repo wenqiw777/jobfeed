@@ -12,7 +12,7 @@ from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.ports.source import DiscoverResult, EnrichResult
 
 from ._linkedin_discover import discover_linkedin_jobs
-from ._linkedin_dom import read_job_description
+from ._linkedin_dom import human_delay, read_job_description
 
 Sleeper = Callable[[float], Awaitable[None]]
 _GOOD_RANK = quality_rank(QualityBand.GOOD)
@@ -96,7 +96,7 @@ class LinkedInScanSession:
         # auto-selected first result (wrong JD) or an empty pane.
         target_url = _with_current_job(search_url, posting.canonical_id)
         await self.page.goto(target_url, wait_until="domcontentloaded")
-        await self.sleeper(0)
+        await self.sleeper(human_delay())
         jd_text = await read_job_description(self.page)
         if not jd_text:
             return None
@@ -116,7 +116,7 @@ class LinkedInScanSession:
             return fallback or _error_result(posting, "LinkedIn tier2 cap reached")
         self._tier2_used += 1
         await self.page.goto(posting.url, wait_until="domcontentloaded")
-        await self.sleeper(0)
+        await self.sleeper(human_delay())
         jd_text = await read_job_description(self.page)
         if not jd_text:
             return fallback or _error_result(posting, "LinkedIn detail JD missing")

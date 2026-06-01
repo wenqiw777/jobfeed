@@ -21,6 +21,7 @@ from ._linkedin_dom import (
     COMPANY_SELECTORS,
     JOB_LINK_SELECTOR,
     LOCATION_SELECTORS,
+    human_delay,
     looks_like_authwall,
     read_body_text,
     read_first_attr,
@@ -123,13 +124,13 @@ async def _discover_spec(
     sleeper: Sleeper,
     logger: Any,
 ) -> bool:
-    """Scrape one search spec; return True when the page demands reauth."""
+    # Returns True when the page hits an authwall and the caller must reauth.
     accepted = 0
     for search_url in _paginated_urls(spec.url, spec.max_jobs):
         if not _can_accept(spec, accepted, state.group_counts):
             return False
         await page.goto(search_url, wait_until="domcontentloaded")
-        await sleeper(0)
+        await sleeper(human_delay())
         await _scroll_results(page)
         body_text = await read_body_text(page)
         if looks_like_authwall(getattr(page, "url", search_url), body_text):
