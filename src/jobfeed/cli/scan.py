@@ -12,6 +12,7 @@ import httpx
 from jobfeed.adapters.sources._http import create_http_client
 from jobfeed.adapters.sources.ats import ATSSource
 from jobfeed.adapters.sources.indeed_jobspy import IndeedSource
+from jobfeed.adapters.sources.linkedin import LinkedInSource
 from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.cli import AppContext, require_app, run_with_store
@@ -23,12 +24,20 @@ from jobfeed.services.scan import SourceSpec
 # enabled; the mock source is a dev seed and is EXPLICIT-ONLY (--source mock),
 # never folded into "all" — otherwise every real scan would persist synthetic
 # mock jobs. The hyphenated "linkedin-jobspy" token maps to the
-# ``linkedin_jobspy`` config field and the ``LinkedInJobSpySource`` platform tag
-# — Phase 4b adds a separate Playwright "linkedin" choice, not wired here.
-SOURCE_CHOICES = ["mock", "ats", "speedyapply", "indeed", "linkedin-jobspy", "all"]
+# ``linkedin_jobspy`` config field and the ``LinkedInJobSpySource`` platform tag.
+# The plain "linkedin" token is the authenticated Playwright SessionSource.
+SOURCE_CHOICES = [
+    "mock",
+    "ats",
+    "speedyapply",
+    "indeed",
+    "linkedin-jobspy",
+    "linkedin",
+    "all",
+]
 
 # Real (non-mock) sources eligible for ``--source all`` fan-out, in scan order.
-_REAL_SOURCES = ("ats", "speedyapply", "indeed", "linkedin-jobspy")
+_REAL_SOURCES = ("ats", "speedyapply", "indeed", "linkedin-jobspy", "linkedin")
 
 
 @click.command(name="scan", help="Fetch jobs from a configured source.")
@@ -39,8 +48,8 @@ _REAL_SOURCES = ("ats", "speedyapply", "indeed", "linkedin-jobspy")
     show_default=True,
     type=click.Choice(SOURCE_CHOICES),
     help="Source adapter to scan: mock, ats, speedyapply, indeed, "
-    "linkedin-jobspy, or all (default: all enabled real sources; mock is "
-    "explicit-only).",
+    "linkedin-jobspy, linkedin, or all (default: all enabled real sources; "
+    "mock is explicit-only).",
 )
 @click.pass_context
 def scan(ctx: click.Context, source_name: str) -> None:
@@ -96,20 +105,7 @@ async def _build_sources(
     source_name: str,
     stack: contextlib.AsyncExitStack,
 ) -> list[SourceSpec]:
-    """Resolve the source token into the concrete ``SourceSpec`` list.
-
-    Sources are built LOCALLY here (never stored into ``app["sources"]`` — that
-    registry stays the mock seed). Each builder appends to ``sources`` and
-    registers any owned httpx client on ``stack``.
-
-    Args:
-        app: Initialized application context.
-        source_name: CLI source token from ``SOURCE_CHOICES``.
-        stack: Exit stack owning every client created for this scan.
-
-    Returns:
-        Source specs to hand to ``ScanService.run``.
-    """
+    """Resolve the source token into locally built ``SourceSpec`` entries."""
     sources: list[SourceSpec] = []
     if source_name == "mock":  # dev seed — explicit only, never part of "all"
         sources.append(_resolve_mock_source(app))
@@ -125,12 +121,7 @@ async def _build_enabled_real_sources(
     sources: list[SourceSpec],
     stack: contextlib.AsyncExitStack,
 ) -> None:
-    """Append each enabled real source for ``--source all``; log the skips.
-
-    Disabled sources are never silently omitted — each emits a structured
-    ``scan_source_skipped`` event so an operator sees exactly which sources a
-    given config left out.
-    """
+    """Append enabled real sources for ``--source all`` and log skips."""
     for name in _REAL_SOURCES:
         if _is_source_enabled(app, name):
             await _BUILDERS[name](app, sources, stack)
@@ -145,7 +136,6 @@ def _is_source_enabled(app: AppContext, source_name: str) -> bool:
 
 
 def _resolve_mock_source(app: AppContext) -> SourceSpec:
-    """Look up the mock source from app context."""
     mock_source = app["sources"].get("mock")
     if mock_source is None:
         raise click.ClickException("Mock source not configured")
@@ -229,6 +219,22 @@ async def _build_linkedin_jobspy(
     )
 
 
+async def _build_linkedin(
+    app: AppContext,
+    sources: list[SourceSpec],
+    stack: contextlib.AsyncExitStack,  # noqa: ARG001 - Playwright context is source-owned
+) -> None:
+    config = app["settings"].sources.linkedin
+    _require_enabled(config.enabled, "linkedin")
+    sources.append(
+        (
+            "linkedin",
+            LinkedInSource(config=config, logger=app["logger"]),
+            {},
+        )
+    )
+
+
 async def _noop_builder(
     app: AppContext,
     sources: list[SourceSpec],
@@ -263,6 +269,7 @@ _BUILDERS = {
     "speedyapply": _build_speedyapply,
     "indeed": _build_indeed,
     "linkedin-jobspy": _build_linkedin_jobspy,
+    "linkedin": _build_linkedin,
 }
 
 # Real source token -> its field name on ``settings.sources`` (the hyphenated
@@ -272,6 +279,7 @@ _CONFIG_FIELDS = {
     "speedyapply": "speedyapply",
     "indeed": "indeed",
     "linkedin-jobspy": "linkedin_jobspy",
+    "linkedin": "linkedin",
 }
 
 
