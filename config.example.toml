@@ -63,7 +63,6 @@ enabled = false
 # ]
 # max_jobs = 100
 # headless = true
-# parallel_workers = 3
 # tier2_cap = 30
 # profile_dir = "~/.cache/jobfeed/linkedin"
 # lock_path = "~/.cache/jobfeed/enrich.lock"

@@ -50,11 +50,9 @@ INDEED_TOML_MAX_JOBS = 25
 INDEED_TOML_HOURS_OLD = 48
 LINKEDIN_DEFAULT_PROFILE_DIR = "~/.cache/jobfeed/linkedin"
 LINKEDIN_DEFAULT_LOCK_PATH = "~/.cache/jobfeed/enrich.lock"
-LINKEDIN_DEFAULT_PARALLEL_WORKERS = 3
 LINKEDIN_DEFAULT_TIER2_CAP = 30
 LINKEDIN_TOML_MAX_JOBS = 40
 LINKEDIN_TOML_GROUP_MAX_JOBS = 12
-LINKEDIN_TOML_PARALLEL_WORKERS = 2
 LINKEDIN_TOML_TIER2_CAP = 5
 
 
@@ -434,7 +432,6 @@ def test_settings_exposes_phase4b_linkedin_defaults() -> None:
     assert linkedin.search_urls == []
     assert linkedin.max_jobs == JOBSPY_DEFAULT_MAX_JOBS
     assert linkedin.headless is True
-    assert linkedin.parallel_workers == LINKEDIN_DEFAULT_PARALLEL_WORKERS
     assert linkedin.tier2_cap == LINKEDIN_DEFAULT_TIER2_CAP
     assert linkedin.profile_dir == LINKEDIN_DEFAULT_PROFILE_DIR
     assert linkedin.lock_path == LINKEDIN_DEFAULT_LOCK_PATH
@@ -453,7 +450,6 @@ def test_load_settings_parses_phase4b_linkedin_section(tmp_path: Path) -> None:
         "]\n"
         f"max_jobs = {LINKEDIN_TOML_MAX_JOBS}\n"
         "headless = false\n"
-        f"parallel_workers = {LINKEDIN_TOML_PARALLEL_WORKERS}\n"
         f"tier2_cap = {LINKEDIN_TOML_TIER2_CAP}\n"
         'profile_dir = "/tmp/jobfeed-li-profile"\n'
         'lock_path = "/tmp/jobfeed-li.lock"\n',
@@ -465,7 +461,6 @@ def test_load_settings_parses_phase4b_linkedin_section(tmp_path: Path) -> None:
     assert linkedin.enabled is True
     assert linkedin.max_jobs == LINKEDIN_TOML_MAX_JOBS
     assert linkedin.headless is False
-    assert linkedin.parallel_workers == LINKEDIN_TOML_PARALLEL_WORKERS
     assert linkedin.tier2_cap == LINKEDIN_TOML_TIER2_CAP
     assert linkedin.profile_dir == "/tmp/jobfeed-li-profile"
     assert linkedin.lock_path == "/tmp/jobfeed-li.lock"
@@ -615,8 +610,6 @@ def test_sources_linkedin_config_rejects_nonpositive_limits() -> None:
     """Playwright LinkedIn source limits should be positive where required."""
     with pytest.raises(ValidationError):
         SourcesLinkedInConfig(max_jobs=0)
-    with pytest.raises(ValidationError):
-        SourcesLinkedInConfig(parallel_workers=0)
     with pytest.raises(ValidationError):
         SourcesLinkedInConfig(tier2_cap=-1)
 

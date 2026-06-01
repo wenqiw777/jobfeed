@@ -97,7 +97,6 @@ class SourcesLinkedInConfig(BaseModel):
     search_urls: list[str | SourcesLinkedInSearchConfig] = Field(default_factory=list)
     max_jobs: int = Field(default=100, ge=1)
     headless: bool = True
-    parallel_workers: int = Field(default=3, ge=1)
     tier2_cap: int = Field(default=30, ge=0)
     profile_dir: str = "~/.cache/jobfeed/linkedin"
     lock_path: str = "~/.cache/jobfeed/enrich.lock"
