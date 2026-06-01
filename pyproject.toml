@@ -16,6 +16,7 @@ dependencies = [
     "jinja2 >= 3.1",
     "psycopg2-binary >= 2.9",
     "pydantic",
+    "playwright >= 1.48",
     # >= 1.1.82: the version we validate against; older 1.1.x predates the
     # country_indeed / linkedin_fetch_description kwargs _jobspy.scrape passes,
     # which would otherwise raise (contained as JobSpyError -> silent 0 jobs).
@@ -29,6 +30,7 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-asyncio",
+    "pytest-playwright",
     "respx >= 0.22",
     "ruff",
     "testcontainers[postgres] >= 4.0",
@@ -93,5 +95,6 @@ asyncio_mode = "auto"
 markers = [
     "postgres: requires PostgreSQL (Docker)",
     "live: requires real HTTP to external APIs (manual only)",
+    "browser: requires Playwright browser binaries",
 ]
-addopts = "-m 'not postgres and not live'"
+addopts = "-m 'not postgres and not live and not browser'"

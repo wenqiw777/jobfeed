@@ -32,11 +32,27 @@ class EnrichResult:
 
 
 @runtime_checkable
-class EnrichSession(Protocol):
-    """Session capability for sources that enrich discovered postings later."""
+class ScanSession(Protocol):
+    """One source session that discovers postings then enriches them.
+
+    Discovery and enrichment share a single session so a source that needs an
+    exclusive, expensive resource (e.g. an authenticated browser under a
+    cross-process lock) holds it across BOTH phases, not just enrichment.
+    """
+
+    async def discover(self, config: dict[str, object]) -> DiscoverResult:
+        """Discover postings within the active session.
+
+        Args:
+            config: Source-specific configuration.
+
+        Returns:
+            Discovery result for the source.
+        """
+        ...
 
     async def enrich(self, posting: JobPosting) -> EnrichResult:
-        """Enrich a discovered posting.
+        """Enrich a discovered posting within the active session.
 
         Args:
             posting: Job posting that needs JD enrichment.
@@ -65,23 +81,13 @@ class SimpleSource(Protocol):
 
 @runtime_checkable
 class SessionSource(Protocol):
-    """Source capability for multi-phase discovery and enrichment lifecycles."""
+    """Source capability for a single locked discover-and-enrich session."""
 
-    async def discover(self, config: dict[str, object]) -> DiscoverResult:
-        """Discover postings that may need session enrichment.
-
-        Args:
-            config: Source-specific configuration.
+    def session(self) -> AbstractAsyncContextManager[ScanSession]:
+        """Open one session covering discovery and enrichment.
 
         Returns:
-            Discovery result for the source.
-        """
-        ...
-
-    async def enrich_session(self) -> AbstractAsyncContextManager[EnrichSession]:
-        """Create an async context manager for enrichment.
-
-        Returns:
-            Async context manager yielding an enrichment session.
+            Async context manager yielding a scan session whose lifetime owns
+            any exclusive resource (lock, browser context) for both phases.
         """
         ...

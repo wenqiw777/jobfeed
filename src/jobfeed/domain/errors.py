@@ -21,4 +21,14 @@ class ScoringParseError(JobfeedError):
         self.raw_response = raw_response
 
 
-__all__ = ["JobfeedError", "ScoringParseError"]
+class SourceBusyError(JobfeedError):
+    """Raised when a source's exclusive session is already held elsewhere.
+
+    Lives in the domain layer so services can catch source contention without
+    importing any adapter (e.g. the LinkedIn cross-process enrich lock). It
+    signals a benign skip — the source is busy, not failing — so the scan
+    service must not record it as a fetch error.
+    """
+
+
+__all__ = ["JobfeedError", "ScoringParseError", "SourceBusyError"]
