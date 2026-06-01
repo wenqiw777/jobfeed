@@ -25,9 +25,23 @@ def login_linkedin(ctx: click.Context) -> None:
 
     Args:
         ctx: Click invocation context.
+
+    Raises:
+        click.ClickException: If the login browser fails to launch (for example
+            when Chromium is not installed).
     """
     app = require_app(ctx)
-    asyncio.run(_run_linkedin_login(app))
+    try:
+        asyncio.run(_run_linkedin_login(app))
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        # A missing Chromium (or any Playwright launch failure) should read as a
+        # clean CLI error, not a raw traceback.
+        raise click.ClickException(
+            f"LinkedIn login failed: {exc}. Install the browser with "
+            "'playwright install chromium' and retry."
+        ) from exc
 
 
 async def _run_linkedin_login(app: AppContext) -> None:
