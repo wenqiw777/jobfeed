@@ -122,6 +122,27 @@ async def test_discover_signals_reauth_via_return_value(
     assert not hasattr(page, "_jobfeed_needs_reauth")
 
 
+@pytest.mark.asyncio
+async def test_scroll_results_makes_multiple_paced_passes() -> None:
+    """Discovery scrolls several paced passes so LinkedIn's lazy cards render."""
+
+    class _CountingMouse:
+        def __init__(self) -> None:
+            self.wheels = 0
+
+        async def wheel(self, _x: int, _y: int) -> None:
+            self.wheels += 1
+
+    class _CountingPage:
+        def __init__(self) -> None:
+            self.mouse = _CountingMouse()
+
+    page = _CountingPage()
+    await discover_module._scroll_results(page, _no_sleep)
+
+    assert page.mouse.wheels == discover_module._SCROLL_PASSES
+
+
 def _posting(canonical_id: str, title: str) -> JobPosting:
     return JobPosting(
         platform="linkedin",

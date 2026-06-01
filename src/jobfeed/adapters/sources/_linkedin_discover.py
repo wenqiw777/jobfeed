@@ -1,15 +1,19 @@
-"""LinkedIn Playwright discovery helpers."""
+"""LinkedIn Playwright discovery: drive the page and harvest job cards.
+
+Pure URL/spec/ordering logic lives in ``_linkedin_search``; this module owns the
+page-driving scrape. ``build_search_specs``/``order_discovered_postings``/
+``LinkedInSearchSpec`` are re-exported for callers that import them from here.
+"""
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin
 
 from jobfeed.config import SourcesLinkedInConfig
 from jobfeed.domain.models import JobPosting, QualityBand
@@ -28,22 +32,19 @@ from ._linkedin_dom import (
     read_first_text,
     read_job_description,
 )
+from ._linkedin_search import (
+    LinkedInSearchSpec,
+    build_search_specs,
+    canonical_job_id,
+    order_discovered_postings,
+    paginated_urls,
+)
 
 Sleeper = Callable[[float], Awaitable[None]]
-_PAGE_SIZE = 25
 _GOOD_RANK = quality_rank(QualityBand.GOOD)
-_JOB_ID_RE = re.compile(r"/jobs/view/(\d+)")
-_NUMERIC_ID_RE = re.compile(r"(\d{4,})")
-
-
-@dataclass(frozen=True, kw_only=True)
-class LinkedInSearchSpec:
-    """Normalized LinkedIn search URL and optional local budgets."""
-
-    url: str
-    max_jobs: int
-    group: str | None = None
-    group_max_jobs: int | None = None
+# Bounded paced scroll passes: LinkedIn lazy-loads job cards, so a single nudge
+# under-collects the tail of each page.
+_SCROLL_PASSES = 4
 
 
 @dataclass(kw_only=True)
@@ -54,29 +55,6 @@ class _DiscoverState:
     source_search_urls: dict[str, str]
 
 
-def build_search_specs(config: SourcesLinkedInConfig) -> list[LinkedInSearchSpec]:
-    """Normalize LinkedIn config search entries into concrete specs.
-    Args:
-        config: LinkedIn source configuration.
-    Returns:
-        Search specs with defaults and per-URL overrides applied.
-    """
-    specs: list[LinkedInSearchSpec] = []
-    for entry in config.search_urls:
-        if isinstance(entry, str):
-            specs.append(LinkedInSearchSpec(url=entry, max_jobs=config.max_jobs))
-        else:
-            specs.append(
-                LinkedInSearchSpec(
-                    url=entry.url,
-                    max_jobs=entry.max_jobs or config.max_jobs,
-                    group=entry.group,
-                    group_max_jobs=entry.group_max_jobs,
-                )
-            )
-    return specs
-
-
 async def discover_linkedin_jobs(
     page: Any,
     config: SourcesLinkedInConfig,
@@ -85,12 +63,14 @@ async def discover_linkedin_jobs(
     logger: Any,
 ) -> DiscoverResult:
     """Discover LinkedIn job cards using the active Playwright page.
+
     Args:
         page: Playwright page opened on the configured LinkedIn profile.
         config: LinkedIn source configuration.
         source_search_urls: Mutable canonical-id to search URL provenance map.
         sleeper: Async pacing hook.
         logger: Structured logger.
+
     Returns:
         Discovery result with ordered postings or a reauth signal.
     """
@@ -103,20 +83,6 @@ async def discover_linkedin_jobs(
     return DiscoverResult(postings=ordered, duration_s=monotonic() - started)
 
 
-def order_discovered_postings(
-    postings: list[JobPosting],
-    source_search_urls: dict[str, str],
-) -> list[JobPosting]:
-    """Return postings sorted by LinkedIn-specific intern priority.
-    Args:
-        postings: Discovered LinkedIn postings.
-        source_search_urls: Canonical-id to search URL provenance map.
-    Returns:
-        Postings ordered fall-intern, intern, then remaining roles.
-    """
-    return sorted(postings, key=lambda p: _priority_key(p, source_search_urls))
-
-
 async def _discover_spec(
     page: Any,
     spec: LinkedInSearchSpec,
@@ -126,12 +92,12 @@ async def _discover_spec(
 ) -> bool:
     # Returns True when the page hits an authwall and the caller must reauth.
     accepted = 0
-    for search_url in _paginated_urls(spec.url, spec.max_jobs):
+    for search_url in paginated_urls(spec.url, spec.max_jobs):
         if not _can_accept(spec, accepted, state.group_counts):
             return False
         await page.goto(search_url, wait_until="domcontentloaded")
         await sleeper(human_delay())
-        await _scroll_results(page)
+        await _scroll_results(page, sleeper)
         body_text = await read_body_text(page)
         if looks_like_authwall(getattr(page, "url", search_url), body_text):
             logger.error("linkedin_discover_reauth_required", url=search_url)
@@ -139,13 +105,7 @@ async def _discover_spec(
         new_jobs = await _read_cards(page, search_url)
         if not new_jobs:
             return False
-        accepted = _accept_jobs(
-            spec,
-            new_jobs,
-            state,
-            search_url,
-            accepted,
-        )
+        accepted = _accept_jobs(spec, new_jobs, state, search_url, accepted)
     return False
 
 
@@ -167,8 +127,8 @@ async def _posting_from_card(
 ) -> JobPosting | None:
     href = await read_first_attr(card, (JOB_LINK_SELECTOR,), "href")
     raw_id = await _read_card_job_id(card)
-    canonical_id = _canonical_job_id(raw_id, href)
-    if canonical_id is None or href is None:
+    cid = canonical_job_id(raw_id, href)
+    if cid is None or href is None:
         return None
     title = await read_first_text(card, (JOB_LINK_SELECTOR,))
     company = await read_first_text(card, COMPANY_SELECTORS)
@@ -179,7 +139,7 @@ async def _posting_from_card(
     now = datetime.now(UTC)
     return JobPosting(
         platform="linkedin",
-        canonical_id=canonical_id,
+        canonical_id=cid,
         url=urljoin(search_url, href),
         title=title or "LinkedIn job",
         company=company or "Unknown company",
@@ -233,51 +193,15 @@ async def _read_card_job_id(card: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-async def _scroll_results(page: Any) -> None:
-    try:
-        await page.mouse.wheel(0, 2500)
-    except Exception:
-        return
-
-
-def _canonical_job_id(raw_id: str | None, href: str | None) -> str | None:
-    if raw_id:
-        match = _NUMERIC_ID_RE.search(raw_id)
-        return match.group(1) if match else raw_id
-    if href is None:
-        return None
-    match = _JOB_ID_RE.search(href)
-    return match.group(1) if match else href.rstrip("/").rsplit("/", maxsplit=1)[-1]
-
-
-def _paginated_urls(base_url: str, max_jobs: int) -> list[str]:
-    return [_with_start(base_url, start) for start in range(0, max_jobs, _PAGE_SIZE)]
-
-
-def _with_start(url: str, start: int) -> str:
-    if start == 0:
-        return url
-    parts = urlsplit(url)
-    query = [(k, v) for k, v in parse_qsl(parts.query) if k != "start"]
-    query.append(("start", str(start)))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
-
-
-def _priority_key(
-    posting: JobPosting,
-    source_search_urls: dict[str, str],
-) -> tuple[int, str]:
-    title = posting.title.lower()
-    source_url = source_search_urls.get(posting.canonical_id, "").lower()
-    if "intern" in title and (
-        "fall" in title or "fall" in source_url or "2026" in title
-    ):
-        tier = 0
-    elif "intern" in title:
-        tier = 1
-    else:
-        tier = 2
-    return tier, source_url
+async def _scroll_results(page: Any, sleeper: Sleeper) -> None:
+    # A few paced passes so lazy-loaded cards render; O(_SCROLL_PASSES). A dead
+    # browser surfaces via the subsequent description/attribute reads, not here.
+    for _pass in range(_SCROLL_PASSES):
+        try:
+            await page.mouse.wheel(0, 2500)
+        except Exception:
+            return
+        await sleeper(human_delay())
 
 
 def _reauth_result(postings: list[JobPosting], started: float) -> DiscoverResult:
