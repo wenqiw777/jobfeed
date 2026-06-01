@@ -12,6 +12,7 @@ from typing import Any
 
 from jobfeed.config import SourcesLinkedInConfig
 from jobfeed.observability import JobfeedLogger
+from jobfeed.ports.source import EnrichmentLookup
 
 from ._linkedin_dom import USER_AGENT, VIEWPORTS
 from ._linkedin_enrich import LinkedInScanSession
@@ -37,6 +38,7 @@ class LinkedInSource:
         config: SourcesLinkedInConfig,
         logger: JobfeedLogger,
         sleeper: Sleeper | None = None,
+        freshness: EnrichmentLookup | None = None,
     ) -> None:
         """Create a LinkedIn SessionSource.
 
@@ -44,10 +46,13 @@ class LinkedInSource:
             config: LinkedIn source configuration.
             logger: Structured logger.
             sleeper: Optional async sleep hook for tests.
+            freshness: Optional read-only store probe; lets enrichment skip
+                postings whose JD is already fresh in the store (cross-run).
         """
         self.config = config
         self.logger = logger
         self.sleeper = sleeper or asyncio.sleep
+        self.freshness = freshness
         self.profile_dir = Path(config.profile_dir).expanduser()
         self.lock_path = Path(config.lock_path).expanduser()
 
@@ -77,6 +82,7 @@ class LinkedInSource:
                     config=self.config,
                     sleeper=self.sleeper,
                     logger=self.logger,
+                    freshness=self.freshness,
                 )
         finally:
             lock.release()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -11,6 +11,7 @@ import jobfeed.adapters.sources._linkedin_enrich as enrich_module
 from jobfeed.adapters.sources._linkedin_enrich import LinkedInScanSession
 from jobfeed.config import SourcesLinkedInConfig
 from jobfeed.domain.models import JobPosting, QualityBand
+from jobfeed.ports.source import StoredEnrichment
 
 SEARCH_URL = "https://www.linkedin.com/jobs/search/?keywords=swe"
 # Long enough (>500 chars) to assess as GOOD so tier1 short-circuits enrich().
@@ -47,10 +48,33 @@ class _FakePage:
         self.goto_urls.append(url)
 
 
-def _session(page: _FakePage, *, tier2_cap: int = 30) -> LinkedInScanSession:
+class _FakeFreshness:
+    """EnrichmentLookup double returning a configured stored snapshot."""
+
+    def __init__(self, stored: StoredEnrichment | None) -> None:
+        self.stored = stored
+        self.calls: list[tuple[str, str]] = []
+
+    async def get_enrichment(
+        self, *, platform: str, canonical_id: str
+    ) -> StoredEnrichment | None:
+        self.calls.append((platform, canonical_id))
+        return self.stored
+
+
+def _session(
+    page: _FakePage,
+    *,
+    tier2_cap: int = 30,
+    freshness: _FakeFreshness | None = None,
+) -> LinkedInScanSession:
     config = SourcesLinkedInConfig(tier2_cap=tier2_cap)
     return LinkedInScanSession(
-        page=page, config=config, sleeper=_no_sleep, logger=_Logger()
+        page=page,
+        config=config,
+        sleeper=_no_sleep,
+        logger=_Logger(),
+        freshness=freshness,
     )
 
 
@@ -129,6 +153,80 @@ async def test_tier2_cap_blocks_further_detail_fetches(
     assert "detail JD missing" in (first.error or "")
     assert "tier2 cap reached" in (second.error or "")
     assert page.goto_urls == ["https://www.linkedin.com/jobs/view/a/"]
+
+
+@pytest.mark.asyncio
+async def test_enrich_skips_when_store_has_fresh_jd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cross-run: a fresh stored JD short-circuits enrich with no navigation."""
+    page = _FakePage()
+
+    async def fake_read(_page: object) -> str:  # pragma: no cover - must not run
+        raise AssertionError("must not read the page when the store JD is fresh")
+
+    monkeypatch.setattr(enrich_module, "read_job_description", fake_read)
+    stored = StoredEnrichment(
+        jd_text=GOOD_JD,
+        quality=QualityBand.GOOD,
+        enriched_at=datetime.now(UTC) - timedelta(days=1),
+        enrich_source="linkedin_detail",
+    )
+    probe = _FakeFreshness(stored)
+    session = _session(page, freshness=probe)
+
+    result = await session.enrich(_posting("li-1"))
+
+    assert page.goto_urls == []
+    assert result.enrich_source == "cached-fresh"
+    assert result.jd_text == GOOD_JD
+    assert probe.calls == [("linkedin", "li-1")]
+
+
+@pytest.mark.asyncio
+async def test_enrich_navigates_when_store_jd_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale stored JD (past the TTL) does not short-circuit; enrich runs."""
+    page = _FakePage()
+
+    async def fake_read(_page: object) -> str:
+        return GOOD_JD
+
+    monkeypatch.setattr(enrich_module, "read_job_description", fake_read)
+    stored = StoredEnrichment(
+        jd_text=GOOD_JD,
+        quality=QualityBand.GOOD,
+        enriched_at=datetime.now(UTC) - timedelta(days=30),
+        enrich_source="linkedin_detail",
+    )
+    session = _session(page, freshness=_FakeFreshness(stored))
+    posting = _posting("li-2")
+
+    result = await session.enrich(posting)
+
+    assert page.goto_urls == [posting.url]
+    assert result.enrich_source == "linkedin_detail"
+
+
+@pytest.mark.asyncio
+async def test_enrich_navigates_when_store_has_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No stored enrichment means the first scan enriches normally."""
+    page = _FakePage()
+
+    async def fake_read(_page: object) -> str:
+        return GOOD_JD
+
+    monkeypatch.setattr(enrich_module, "read_job_description", fake_read)
+    session = _session(page, freshness=_FakeFreshness(None))
+    posting = _posting("li-3")
+
+    result = await session.enrich(posting)
+
+    assert page.goto_urls == [posting.url]
+    assert result.enrich_source == "linkedin_detail"
 
 
 @pytest.mark.asyncio

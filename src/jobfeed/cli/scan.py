@@ -17,6 +17,7 @@ from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.cli import AppContext, require_app, run_with_store
 from jobfeed.domain.models import CompanyRecord, PipelineRun
+from jobfeed.ports.source import EnrichmentLookup
 from jobfeed.ports.store_ops import StoreOpsMixin
 from jobfeed.services.scan import SourceSpec
 
@@ -226,10 +227,13 @@ async def _build_linkedin(
 ) -> None:
     config = app["settings"].sources.linkedin
     _require_enabled(config.enabled, "linkedin")
+    # The PostgresStore implements EnrichmentLookup; passing it lets the session
+    # skip re-enriching postings whose JD is already fresh in the store.
+    freshness = cast(EnrichmentLookup, app["store"])
     sources.append(
         (
             "linkedin",
-            LinkedInSource(config=config, logger=app["logger"]),
+            LinkedInSource(config=config, logger=app["logger"], freshness=freshness),
             {},
         )
     )

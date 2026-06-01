@@ -31,6 +31,38 @@ class EnrichResult:
     posted_at: datetime | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class StoredEnrichment:
+    """Snapshot of a job's persisted enrichment, used for freshness checks."""
+
+    jd_text: str | None
+    quality: QualityBand | None
+    enriched_at: datetime | None
+    enrich_source: str | None = None
+
+
+@runtime_checkable
+class EnrichmentLookup(Protocol):
+    """Read-only probe a session uses to skip re-enriching a fresh stored JD."""
+
+    async def get_enrichment(
+        self,
+        *,
+        platform: str,
+        canonical_id: str,
+    ) -> StoredEnrichment | None:
+        """Return the stored enrichment for a job, or None if absent.
+
+        Args:
+            platform: Source platform.
+            canonical_id: Platform-specific identity.
+
+        Returns:
+            Stored enrichment snapshot, or None when the job is unknown.
+        """
+        ...
+
+
 @runtime_checkable
 class ScanSession(Protocol):
     """One source session that discovers postings then enriches them.

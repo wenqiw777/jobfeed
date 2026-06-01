@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from jobfeed.config import SourcesLinkedInConfig
 from jobfeed.domain.models import JobPosting, QualityBand
-from jobfeed.domain.quality import assess_quality, quality_rank
-from jobfeed.ports.source import DiscoverResult, EnrichResult
+from jobfeed.domain.quality import assess_quality, is_jd_fresh, quality_rank
+from jobfeed.ports.source import DiscoverResult, EnrichmentLookup, EnrichResult
 
 from ._linkedin_discover import discover_linkedin_jobs
 from ._linkedin_dom import human_delay, read_job_description
@@ -35,6 +36,7 @@ class LinkedInScanSession:
         config: SourcesLinkedInConfig,
         sleeper: Sleeper,
         logger: Any,
+        freshness: EnrichmentLookup | None = None,
     ) -> None:
         """Create a LinkedIn scan session.
 
@@ -43,11 +45,14 @@ class LinkedInScanSession:
             config: LinkedIn source configuration.
             sleeper: Async sleep hook; tests can inject a no-op.
             logger: Structured logger for discovery events.
+            freshness: Optional read-only store probe; when a posting's JD is
+                already fresh in the store, enrichment navigation is skipped.
         """
         self.page = page
         self.config = config
         self.sleeper = sleeper
         self.logger = logger
+        self.freshness = freshness
         self.source_search_urls: dict[str, str] = {}
         self._tier2_used = 0
 
@@ -79,6 +84,9 @@ class LinkedInScanSession:
         """
         if _is_fresh(posting):
             return _existing_result(posting, "cached-fresh")
+        cached = await self._stored_fresh(posting)
+        if cached is not None:
+            return cached
         try:
             tier1 = await self._try_tier1(posting)
             if tier1 is not None and quality_rank(tier1.quality) >= _GOOD_RANK:
@@ -86,6 +94,33 @@ class LinkedInScanSession:
             return await self._try_tier2(posting, tier1)
         except Exception as exc:
             return _error_result(posting, str(exc))
+
+    async def _stored_fresh(self, posting: JobPosting) -> EnrichResult | None:
+        """Return a cached result when the store already holds a fresh JD.
+
+        Cross-run idempotency: a posting whose stored JD is still fresh (see
+        ``is_jd_fresh``) skips both tiers of browser navigation, sparing the
+        per-card click / detail goto and the LinkedIn anti-bot budget.
+        """
+        if self.freshness is None:
+            return None
+        stored = await self.freshness.get_enrichment(
+            platform=posting.platform,
+            canonical_id=posting.canonical_id,
+        )
+        if stored is None or not is_jd_fresh(
+            quality=stored.quality,
+            jd_text=stored.jd_text,
+            enriched_at=stored.enriched_at,
+            now=datetime.now(UTC),
+        ):
+            return None
+        return EnrichResult(
+            jd_text=stored.jd_text or "",
+            quality=stored.quality or QualityBand.MISSING,
+            enrich_source="cached-fresh",
+            posted_at=posting.posted_at,
+        )
 
     async def _try_tier1(self, posting: JobPosting) -> EnrichResult | None:
         search_url = self.source_search_urls.get(posting.canonical_id)
