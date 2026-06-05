@@ -29,6 +29,8 @@ from jobfeed.adapters.ml._embedder import (
     FASTEMBED_MINILM_ID,
     ML_CACHE_DIR_ENV,
     FastEmbedEmbedder,
+    warm_embedder,
+    weights_present,
 )
 
 _LAZY_MODULES = ("fastembed", "onnxruntime")
@@ -194,3 +196,129 @@ def test_load_model_defaults_cache_dir_under_user_cache_jobfeed(
         {"model_name": "some/model", "cache_dir": str(expected)}
     ]
     assert expected.is_dir()
+
+
+# ---- weights-present detection + one-time-download log (FIX 3) ----
+#
+# The eval path must announce a cold-cache embedder download ONCE (with a
+# pre-seed hint) instead of silently stalling mid-evaluation, but stay silent
+# when the weights are already cached — exactly the Docker-baked case. These
+# tests drive _load_model with the fake fastembed so nothing downloads.
+
+
+def _seed_onnx_weight(cache_dir: Path) -> None:
+    """Create a fastembed-shaped ``model.onnx`` so ``weights_present`` is True."""
+    snapshot = cache_dir / "models--qdrant--all-MiniLM-L6-v2-onnx" / "snapshots" / "rev"
+    snapshot.mkdir(parents=True)
+    (snapshot / "model.onnx").write_bytes(b"onnx")
+
+
+def test_weights_present_false_for_missing_or_empty_dir(tmp_path: Path) -> None:
+    """No cache dir and an empty cache dir both report weights absent."""
+    assert weights_present(tmp_path / "does-not-exist") is False
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert weights_present(empty) is False
+
+
+def test_weights_present_true_when_model_onnx_exists_anywhere(tmp_path: Path) -> None:
+    """A nested ``model.onnx`` (fastembed snapshot layout) means present."""
+    _seed_onnx_weight(tmp_path)
+    assert weights_present(tmp_path) is True
+
+
+def test_load_model_warns_once_on_cold_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A cache MISS logs ``embedder_weights_downloading`` before the download."""
+    _SpyTextEmbedding.calls = []
+    cache_dir = tmp_path / "cold"
+    monkeypatch.setenv(ML_CACHE_DIR_ENV, str(cache_dir))
+    _install_fake_fastembed(monkeypatch, _SpyTextEmbedding)
+    warned: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        embedder_module,
+        "_warn_one_time_download",
+        lambda model, cache: warned.append({"model": model, "cache_dir": cache}),
+    )
+
+    embedder_module._load_model("some/model")
+
+    assert warned == [{"model": "some/model", "cache_dir": str(cache_dir)}]
+
+
+def test_load_model_silent_when_weights_already_cached(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A warm cache (baked Docker image) emits no download warning."""
+    _SpyTextEmbedding.calls = []
+    cache_dir = tmp_path / "warm"
+    cache_dir.mkdir()
+    _seed_onnx_weight(cache_dir)
+    monkeypatch.setenv(ML_CACHE_DIR_ENV, str(cache_dir))
+    _install_fake_fastembed(monkeypatch, _SpyTextEmbedding)
+    warned: list[object] = []
+    monkeypatch.setattr(
+        embedder_module,
+        "_warn_one_time_download",
+        lambda *_a: warned.append(object()),
+    )
+
+    embedder_module._load_model("some/model")
+
+    assert warned == []  # weights present -> no surprise-download log
+
+
+def test_warn_one_time_download_emits_structlog_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The warning helper emits a structlog event carrying the model + hint."""
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    class _SpyLog:
+        def warning(self, event: str, **kwargs: Any) -> None:
+            events.append((event, kwargs))
+
+    monkeypatch.setattr(
+        embedder_module.structlog, "get_logger", lambda *_a, **_k: _SpyLog()
+    )
+
+    embedder_module._warn_one_time_download("some/model", "/tmp/cache")
+
+    assert len(events) == 1
+    event, kwargs = events[0]
+    assert event == "embedder_weights_downloading"
+    assert kwargs["model"] == "some/model"
+    assert kwargs["cache_dir"] == "/tmp/cache"
+    assert "ml-gate fetch" in kwargs["hint"]
+
+
+def test_warm_embedder_loads_via_embed_batch_and_returns_cache_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``warm_embedder`` runs one embed (materializing the model) + returns the dir.
+
+    Drives the real ``FastEmbedEmbedder.embed_batch`` through the fake fastembed
+    so it loads + embeds without any download; asserts it returns the resolved
+    cache dir (what ``fetch`` and the Docker bake print / write to).
+    """
+    cache_dir = tmp_path / "warm-embed"
+    monkeypatch.setenv(ML_CACHE_DIR_ENV, str(cache_dir))
+    embedded: list[list[str]] = []
+
+    class _EmbeddingModel:
+        def __init__(self, _name: str, *, cache_dir: str | None = None) -> None:
+            self._dir = cache_dir
+
+        def embed(self, texts: list[str]) -> list[Any]:
+            embedded.append(list(texts))
+            import numpy as np  # noqa: PLC0415
+
+            return [np.zeros(384, dtype=np.float32) for _ in texts]
+
+    _install_fake_fastembed(monkeypatch, _EmbeddingModel)
+
+    resolved = warm_embedder("some/model")
+
+    assert resolved == str(cache_dir)
+    assert embedded == [["warmup"]]  # exactly one warm embed ran

@@ -40,12 +40,22 @@ pytest -m mlmodel        # runs tests/mlmodel/test_ml_gate_e2e.py
 ```
 
 - The trained XGBoost model is **committed in-repo** under `models/ml_gate/` (`v*.json` booster + `.meta.json` threshold), so a plain `git clone` is self-contained — no model download or training step is needed to run the gate.
-- The embedder is `all-MiniLM-L6-v2` served by [`fastembed`](https://github.com/qdrant/fastembed) over **onnxruntime** (no PyTorch). `fastembed` is a **core** dependency, so the gate runs in the default install and the default Docker image. The ONNX model weights are **downloaded once from Hugging Face** on the first run and then cached locally; the first invocation is therefore slower and needs network access. That one-time download is the gate's only outbound network call.
-- **Where the weights are cached:** the embedder passes an explicit `cache_dir` to fastembed instead of its ephemeral temp default. It resolves to `$JOBFEED_ML_CACHE_DIR` when set, else `~/.cache/jobfeed/fastembed` (never `~/.jobfeed`). For host-native runs this works with zero config and persists the weights across runs. The `jobfeed-cli` Docker service sets `JOBFEED_ML_CACHE_DIR=/cache/jobfeed/fastembed` and mounts the named `mlcache` volume there, so the ~90MB download survives `docker compose run --rm` and is reused on every later run (and reruns work offline).
+- The embedder is `all-MiniLM-L6-v2` served by [`fastembed`](https://github.com/qdrant/fastembed) over **onnxruntime** (no PyTorch). `fastembed` is a **core** dependency, so the gate runs in the default install and the default Docker image. The ONNX weights (~87MB) are too large to commit to git, so they are obtained one of two ways depending on how you run jobfeed (below).
+- **Default Docker image — zero runtime download, offline-ready.** The `Dockerfile` **bakes the ONNX weights into the image at build time** at the same path the runtime reads (`JOBFEED_ML_CACHE_DIR=/cache/jobfeed/fastembed`, an image-level default that `warm_embedder()` resolves so the bake can't drift from runtime). The canonical `./bin/jobfeed` / `docker compose run --rm jobfeed-cli` path therefore performs **no** weight download and works **offline**. A fresh `mlcache` named volume is initialized from the image's baked directory on first mount, so the weights are present even with the volume attached; the volume then persists them across `--rm`. (Upgraders who already have an *empty* `mlcache` from before the bake should run `docker volume rm jobfeed_mlcache` once so it re-seeds from the new image.)
+- **Host-native installs — one-time per-machine download.** Outside Docker the weights are **downloaded once from Hugging Face** into `$JOBFEED_ML_CACHE_DIR` (else `~/.cache/jobfeed/fastembed`, never `~/.jobfeed`) and reused on every later run. On a cold cache the gate logs a single `embedder_weights_downloading` line (model id + cache dir + pre-seed hint) **before** downloading, so it is never a surprise mid-evaluation stall. Pre-seed it explicitly with `jobfeed ml-gate fetch` (prints where the weights landed and their size); offline machines can pre-seed the cache dir directly.
+
+#### Pre-seeding the embedder weights (`jobfeed ml-gate fetch`)
+
+```sh
+jobfeed ml-gate fetch                 # download/warm the default all-MiniLM-L6-v2 weights
+jobfeed ml-gate fetch --embedding-model BAAI/bge-small-en-v1.5
+```
+
+`fetch` materializes the ONNX weights into the resolved cache dir and prints the location + on-disk size. It is unnecessary for the default Docker image (which already bundles them); it's the explicit, offline-friendly pre-seed step for host-native runs.
 
 #### Running the real ML gate
 
-Because the fastembed/onnxruntime embedder is a core dependency (no heavy torch optional extra), the **real** ML gate runs anywhere the package is installed — including the canonical Docker image, which installs `.[dev]` and therefore pulls fastembed. Enable it with `scoring.ml_gate_enabled=true`, or point `ml_gate.model_dir="mock"` at the deterministic mock gate to exercise the funnel without the embedder or the one-time model download.
+Because the fastembed/onnxruntime embedder is a core dependency (no heavy torch optional extra), the **real** ML gate runs anywhere the package is installed — including the canonical Docker image, which installs `.[dev]` and therefore pulls fastembed (and bakes the weights). Enable it with `scoring.ml_gate_enabled=true`, or point `ml_gate.model_dir="mock"` at the deterministic mock gate to exercise the funnel without the embedder or any weight download.
 
 ## Architecture
 

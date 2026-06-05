@@ -22,9 +22,11 @@ services:
     working_dir: /app
     environment:
       JOBFEED_DB_URL: "postgresql://jobfeed:jobfeed_dev@postgres:5432/jobfeed_dev"
-      # Persist the fastembed ONNX weight cache on the mlcache named volume below
-      # so the ~90MB MiniLM download is one-time per machine, not per `--rm` run
-      # (and offline reruns work). Must match the mlcache mount target.
+      # Resolve the fastembed ONNX weight cache to the path the image BAKES the
+      # weights into at build time, so the canonical `docker compose run --rm`
+      # path does zero runtime download and works offline. Reasserts the
+      # Dockerfile's image-level default (kept identical) and must match the
+      # mlcache mount target below.
       JOBFEED_ML_CACHE_DIR: "/cache/jobfeed/fastembed"
       # Forward host LLM API keys into the container so the openai-compat
       # backend works through the canonical ./bin/jobfeed (docker compose run)
@@ -38,8 +40,11 @@ services:
       MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
     volumes:
-      # Named volume for the fastembed ONNX weights; survives `docker compose run
-      # --rm`, so the model is downloaded once and reused on every later run.
+      # Named volume for the fastembed ONNX weights. A FRESH mlcache is seeded
+      # from the image's baked weights at this path on first mount, so runs work
+      # offline out of the box; the volume then persists them across `--rm`.
+      # Upgraders with a pre-existing EMPTY mlcache (from before the bake) run
+      # `docker volume rm jobfeed_mlcache` once so it re-seeds from the new image.
       - mlcache:/cache/jobfeed/fastembed
     depends_on:
       postgres:

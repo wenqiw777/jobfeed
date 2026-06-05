@@ -111,6 +111,75 @@ def _read_meta(model_dir: Path, version: str) -> dict[str, object]:
     return meta
 
 
+@ml_gate.command(
+    name="fetch",
+    help="Pre-download the embedder ONNX weights into the local cache dir.",
+)
+@click.option(
+    "--embedding-model",
+    "embedding_model",
+    default=None,
+    help="Embedder model id to fetch (defaults to the built-in all-MiniLM-L6-v2).",
+)
+def fetch(embedding_model: str | None) -> None:
+    """Download/warm the embedder weights into the resolved cache, offline-ready.
+
+    Gives host-native users an explicit pre-seed step instead of an implicit
+    mid-evaluation download: it materializes the ONNX ``all-MiniLM-L6-v2``
+    weights into ``$JOBFEED_ML_CACHE_DIR`` (else ``~/.cache/jobfeed/fastembed``)
+    and prints where they landed plus the on-disk size. The default Docker image
+    already bakes these at build time, so this is for the host-native path.
+
+    The ``fastembed`` import is deferred into the warm call, so ``ml-gate fetch``
+    is the only ``ml-gate`` subcommand that loads the embedder toolchain.
+
+    Args:
+        embedding_model: Embedder model id to fetch, or ``None`` for the default.
+    """
+    from jobfeed.adapters.ml._embedder import (  # noqa: PLC0415
+        DEFAULT_MODEL_NAME,
+        warm_embedder,
+    )
+
+    model_name = embedding_model or DEFAULT_MODEL_NAME
+    click.echo(f"Fetching embedder weights for {model_name} ...")
+    cache_dir = warm_embedder(model_name)
+    click.echo(f"weights ready: {cache_dir}")
+    click.echo(f"cache size:    {_dir_size_human(Path(cache_dir))}")
+
+
+_BYTES_PER_UNIT = 1024.0
+_SIZE_UNITS = ("B", "KiB", "MiB", "GiB")
+
+
+def _dir_size_human(path: Path) -> str:
+    """Return the human-readable on-disk size of all real files under ``path``.
+
+    Sums ``st_size`` over regular files, SKIPPING symlinks: fastembed stores the
+    weights once in ``blobs/`` and exposes them via ``snapshots/.../model.onnx``
+    symlinks, so counting both (following links) would ~double the figure. We
+    count blobs once and ignore the links — matching ``du`` — then format it as
+    MiB/GiB for the ``fetch`` summary line.
+
+    Args:
+        path: Directory whose recursive real-file size to total.
+
+    Returns:
+        A short ``"<n> <unit>"`` size string (e.g. ``"87.0 MiB"``).
+    """
+    total = sum(
+        p.stat(follow_symlinks=False).st_size
+        for p in path.rglob("*")
+        if p.is_file() and not p.is_symlink()
+    )
+    size = float(total)
+    for unit in _SIZE_UNITS:
+        if size < _BYTES_PER_UNIT or unit == _SIZE_UNITS[-1]:
+            return f"{size:.1f} {unit}"
+        size /= _BYTES_PER_UNIT
+    return f"{size:.1f} {_SIZE_UNITS[-1]}"  # pragma: no cover - loop returns first
+
+
 # ---- evaluate-command gate / filter construction (lazy, toolchain-free) ----
 
 
