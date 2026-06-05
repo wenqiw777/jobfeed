@@ -29,6 +29,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
+import structlog
 
 # fastembed addresses ``all-MiniLM-L6-v2`` by its full Hugging Face id. The
 # legacy short name is mapped to it so existing ``[ml_gate].embedding_model``
@@ -152,9 +153,10 @@ def _resolve_cache_dir() -> str:
     """Return the stable fastembed weight-cache dir (env override or host default).
 
     ``$JOBFEED_ML_CACHE_DIR`` wins (the docker-compose service points it at a
-    persistent named volume so weights survive ``--rm``); otherwise the host
-    default ``~/.cache/jobfeed/fastembed`` keeps host-native runs persistent with
-    zero config. The directory is created if missing so the first run can write.
+    persistent named volume so weights survive ``--rm``, and the default Docker
+    image *bakes* the weights here at build time); otherwise the host default
+    ``~/.cache/jobfeed/fastembed`` keeps host-native runs persistent with zero
+    config. The directory is created if missing so the first run can write.
     """
     override = os.environ.get(ML_CACHE_DIR_ENV)
     cache_dir = (
@@ -162,6 +164,46 @@ def _resolve_cache_dir() -> str:
     )
     cache_dir.mkdir(parents=True, exist_ok=True)
     return str(cache_dir)
+
+
+def weights_present(cache_dir: str | Path) -> bool:
+    """Whether the embedder's ONNX weights already live under ``cache_dir``.
+
+    fastembed lays the HuggingFace snapshot out as
+    ``models--<org>--<model>/snapshots/<rev>/model.onnx`` (a symlink into
+    ``blobs/``). ``model.onnx`` is the load-bearing artifact, so its presence
+    ANYWHERE under the cache means a load will hit the disk, not the network —
+    robust across fastembed versions and model ids (no hard-coded dir name).
+
+    Args:
+        cache_dir: Resolved fastembed weight-cache directory.
+
+    Returns:
+        True iff at least one ``model.onnx`` exists beneath ``cache_dir``.
+    """
+    root = Path(cache_dir)
+    return root.is_dir() and any(root.rglob("model.onnx"))
+
+
+def warm_embedder(model_name: str = DEFAULT_MODEL_NAME) -> str:
+    """Download + materialize the embedder weights into the resolved cache dir.
+
+    Single source of truth for "put the ONNX weights on disk at the runtime
+    cache path" — reused by the ``jobfeed ml-gate fetch`` command and by the
+    Docker image's build-time bake, so neither can drift from the path a real
+    evaluation run reads. Loads the model (triggering the one-time HF download
+    when absent) and runs a tiny embed so the ONNX session is fully realized.
+
+    Args:
+        model_name: Model id to warm; defaults to ``all-MiniLM-L6-v2`` (mapped
+            to its full HF id like every other call site).
+
+    Returns:
+        The resolved cache directory the weights landed in.
+    """
+    embedder = FastEmbedEmbedder(model_name=model_name)
+    embedder.embed_batch(["warmup"])
+    return _resolve_cache_dir()
 
 
 def _load_model(model_name: str) -> Any:
@@ -172,11 +214,18 @@ def _load_model(model_name: str) -> Any:
     downloaded once from Hugging Face into ``_resolve_cache_dir()`` (a stable
     path / persistent Docker volume, NOT fastembed's ephemeral temp default) and
     reused on every later run, so the download is genuinely one-time per machine.
+    The default Docker image bakes the weights here at build time, so the
+    canonical path never downloads; a host-native cache miss logs one clear
+    line (with a pre-seed hint) BEFORE the download so it is never a surprise.
     """
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
     logging.getLogger("fastembed").setLevel(logging.ERROR)
+
+    cache_dir = _resolve_cache_dir()
+    if not weights_present(cache_dir):
+        _warn_one_time_download(model_name, cache_dir)
 
     import warnings  # noqa: PLC0415
 
@@ -184,7 +233,23 @@ def _load_model(model_name: str) -> Any:
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return TextEmbedding(model_name, cache_dir=_resolve_cache_dir())
+        return TextEmbedding(model_name, cache_dir=cache_dir)
+
+
+def _warn_one_time_download(model_name: str, cache_dir: str) -> None:
+    """Emit one structlog line before a cold-cache embedder weight download.
+
+    Fired only on a genuine cache MISS (so the baked Docker image and warm
+    host caches stay silent). Surfaces the model id + target dir and points at
+    ``jobfeed ml-gate fetch`` so the implicit fetch is visible and pre-seedable
+    instead of a mysterious mid-evaluation stall.
+    """
+    structlog.get_logger("jobfeed").warning(
+        "embedder_weights_downloading",
+        model=model_name,
+        cache_dir=cache_dir,
+        hint="one-time per machine; run `jobfeed ml-gate fetch` to pre-seed",
+    )
 
 
 __all__ = [
@@ -194,4 +259,6 @@ __all__ = [
     "ML_CACHE_DIR_ENV",
     "EmbedderProtocol",
     "FastEmbedEmbedder",
+    "warm_embedder",
+    "weights_present",
 ]

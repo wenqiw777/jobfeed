@@ -18,10 +18,16 @@ from typing import ClassVar
 import pytest
 from click.testing import CliRunner
 
+from jobfeed.adapters.ml import _embedder as embedder_module
 from jobfeed.adapters.ml import xgboost_gate as xgboost_gate_module
 from jobfeed.adapters.ml.mock import MockGate
 from jobfeed.cli import cli
-from jobfeed.cli.ml_gate import build_hard_filters, build_ml_gate, needs_ml_gate
+from jobfeed.cli.ml_gate import (
+    _dir_size_human,
+    build_hard_filters,
+    build_ml_gate,
+    needs_ml_gate,
+)
 from jobfeed.config import Settings
 
 # The committed in-repo model + meta (reading meta JSON is toolchain-free).
@@ -106,6 +112,96 @@ def test_ml_gate_train_command_is_absent() -> None:
     assert result.exit_code != 0
     # Click reports an unknown subcommand without a Python traceback.
     assert "Traceback" not in result.output
+
+
+# ---- ml-gate fetch (host-native pre-seed; embedder warmed via fake) ----
+#
+# `fetch` lazily imports warm_embedder, so we patch it on the _embedder module
+# to record the model id and stand in a temp cache dir (no real ONNX download).
+# The size line is exercised against real on-disk bytes we write there.
+
+
+def _patch_warm_embedder(monkeypatch: pytest.MonkeyPatch, cache_dir: Path) -> list[str]:
+    """Patch ``warm_embedder`` to seed ``cache_dir`` and record requested models.
+
+    Returns the list that captures each ``model_name`` ``fetch`` warms with, so a
+    test can assert the default vs ``--embedding-model`` threading without ever
+    importing fastembed / onnxruntime.
+    """
+    requested: list[str] = []
+
+    def _fake_warm(model_name: str = embedder_module.DEFAULT_MODEL_NAME) -> str:
+        requested.append(model_name)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "model.onnx").write_bytes(b"x" * 2048)  # 2 KiB of "weights"
+        return str(cache_dir)
+
+    monkeypatch.setattr(embedder_module, "warm_embedder", _fake_warm)
+    return requested
+
+
+def test_ml_gate_fetch_warms_default_model_and_prints_location_and_size(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``ml-gate fetch`` warms the default embedder and reports dir + size."""
+    cache_dir = tmp_path / "fe-cache"
+    requested = _patch_warm_embedder(monkeypatch, cache_dir)
+
+    result = CliRunner().invoke(cli, ["ml-gate", "fetch"])
+
+    assert result.exit_code == 0, result.output
+    assert requested == ["all-MiniLM-L6-v2"]  # built-in default warmed
+    assert str(cache_dir) in result.output
+    assert "weights ready" in result.output
+    assert "2.0 KiB" in result.output  # the 2048 bytes we seeded, humanized
+
+
+def test_ml_gate_fetch_forwards_custom_embedding_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--embedding-model`` threads the chosen id into ``warm_embedder``."""
+    requested = _patch_warm_embedder(monkeypatch, tmp_path / "c")
+
+    result = CliRunner().invoke(
+        cli, ["ml-gate", "fetch", "--embedding-model", "BAAI/bge-small-en-v1.5"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert requested == ["BAAI/bge-small-en-v1.5"]
+
+
+def test_ml_gate_fetch_imports_no_ml_toolchain_until_warm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``fetch`` triggers no NEW heavy ML import (the warm call is faked out).
+
+    Proves the command body itself is lazy: with ``warm_embedder`` stubbed,
+    invoking ``fetch`` must not import xgboost / fastembed / onnxruntime.
+    """
+    _patch_warm_embedder(monkeypatch, tmp_path / "c")
+
+    with _no_ml_toolchain_imported():
+        result = CliRunner().invoke(cli, ["ml-gate", "fetch"])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_dir_size_human_counts_blobs_once_not_their_symlinks(tmp_path: Path) -> None:
+    """Size totals the real blob once and skips the snapshot symlink to it.
+
+    fastembed stores weights in ``blobs/`` and exposes them via
+    ``snapshots/.../model.onnx`` symlinks. Following the link AND counting the
+    blob would ~double the figure, so the size must equal just the blob bytes.
+    """
+    blobs = tmp_path / "models--x" / "blobs"
+    snapshot = tmp_path / "models--x" / "snapshots" / "rev"
+    blobs.mkdir(parents=True)
+    snapshot.mkdir(parents=True)
+    blob = blobs / "deadbeef"
+    blob.write_bytes(b"w" * 4096)  # exactly 4 KiB of real weight bytes
+    (snapshot / "model.onnx").symlink_to(blob)  # the double-count trap
+
+    assert _dir_size_human(tmp_path) == "4.0 KiB"
 
 
 # ---- evaluate gate/filter injection helpers ----
