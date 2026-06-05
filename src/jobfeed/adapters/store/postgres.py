@@ -929,6 +929,41 @@ def _build_claim_stage_a_by_ids_query(
     )
 
 
+def _append_unrated_completed_suppression(conditions: list[str]) -> None:
+    """Append the unrated-only completed-exclusion + twin-suppression predicates.
+
+    Scoped to the incremental ``corpus='unrated'`` flow (the caller gates on
+    corpus). Two predicates, neither parameterized:
+
+    1. Completed-exclusion — a row already Stage-A ``completed`` (or whose
+       cluster was) is done, so drop it from the default incremental load.
+    2. Twin-cluster cross-run suppression — once ANY member of a row's twin
+       cluster (shared ``(company_norm, title_norm)``) is Stage-A ``completed``
+       the cluster has been scored, so drop every still-pending sibling; else the
+       survivors re-elect a new representative next run and incur duplicate LLM
+       cost, violating dedupe's "score each cluster once". Only fires when BOTH
+       norms are non-blank, mirroring dedupe's blank-norm singleton rule (a blank
+       company_norm OR title_norm forms its own cluster and must never suppress
+       another blank-norm row).
+
+    Args:
+        conditions: WHERE-clause fragment list, appended in place.
+    """
+    conditions.append(
+        "(evaluations.job_id IS NULL "
+        "OR evaluations.stage_a_status IS DISTINCT FROM 'completed')"
+    )
+    conditions.append(
+        "(NOT (COALESCE(jobs.company_norm,'') <> '' "
+        "AND COALESCE(jobs.title_norm,'') <> '') "
+        "OR NOT EXISTS (SELECT 1 FROM jobs twin "
+        "JOIN evaluations twin_eval ON twin_eval.job_id = twin.id "
+        "WHERE twin.company_norm = jobs.company_norm "
+        "AND twin.title_norm = jobs.title_norm "
+        "AND twin_eval.stage_a_status = 'completed'))"
+    )
+
+
 def _build_gate_candidates_query(
     *,
     limit: int,
@@ -943,9 +978,26 @@ def _build_gate_candidates_query(
 
     Reuses the shared Stage A eligibility filters (quality_bands / freshness on
     ``discovered_at`` / retry-cap) and the SAME stale-takeover corpus predicate
-    the claim builders use (``_stage_a_claim_status_condition``), then adds:
-    not-yet-Stage-A-scored (status IS DISTINCT FROM 'completed') and, when
-    ``exclude_gate_failed``, ``jobs.ml_gate_result IS DISTINCT FROM 'fail'``.
+    the claim builders use (``_stage_a_claim_status_condition``). For the
+    incremental DEFAULT corpus (``'unrated'``) it ALSO adds the
+    not-yet-Stage-A-scored exclusion (status IS DISTINCT FROM 'completed') plus a
+    twin-cluster cross-run suppression; both are scoped to ``'unrated'`` ONLY (see
+    ``_append_unrated_completed_suppression``). When ``exclude_gate_failed`` is
+    set, ``jobs.ml_gate_result IS DISTINCT FROM 'fail'`` is appended for every
+    corpus.
+
+    Corpus-scoped completed handling — because the funnel is the sole path to
+    survivor ids, the completed-exclusion / twin-suppression must AGREE with each
+    corpus's claim semantics or rows get filtered before
+    ``claim_stage_a_by_ids`` can claim them:
+      * ``'unrated'`` — completed rows + completed-cluster twins are dropped
+        (incremental "score new work once").
+      * ``'all'`` — explicit full re-evaluation: completed rows AND completed-
+        cluster twins are RE-ADMITTED, mirroring the claim's stale-takeover that
+        permits non-locked completed rows.
+      * ``'failed'`` — targets ``'error'`` rows (the claim status predicate
+        already restricts the set); a failed twin whose cluster sibling completed
+        stays re-scorable, so suppression must not fire.
 
     Sharing the claim status predicate (instead of the narrower
     ``_pg_corpus_condition``) means a row stuck ``in_progress`` past the claim
@@ -953,8 +1005,8 @@ def _build_gate_candidates_query(
     becomes a survivor, and is re-claimable by ``claim_stage_a_by_ids`` (whose
     own stale-takeover then succeeds). FRESH ``in_progress`` rows (actively owned
     by another run) are excluded. Rows with a NULL or 'pass' gate that are not
-    yet Stage-A-scored are included (crash recovery); already-Stage-A-scored rows
-    are excluded. This reads only — no claim, no in_progress write.
+    yet Stage-A-scored are included (crash recovery). This reads only — no claim,
+    no in_progress write.
 
     ``after`` is an optional keyset cursor ``(discovered_at, id)``: when set, only
     rows strictly older in the ``ORDER BY jobs.discovered_at DESC, jobs.id DESC``
@@ -992,28 +1044,18 @@ def _build_gate_candidates_query(
         conditions.append(
             f"(jobs.discovered_at, jobs.id) < (${len(params) - 1}, ${len(params)})"
         )
-    conditions.append(
-        "(evaluations.job_id IS NULL "
-        "OR evaluations.stage_a_status IS DISTINCT FROM 'completed')"
-    )
-    # Twin-cluster cross-run suppression: once ANY member of a row's twin
-    # cluster (shared (company_norm, title_norm)) is Stage-A 'completed', the
-    # cluster has been scored, so drop every still-pending sibling — otherwise
-    # the surviving twins re-elect a new representative in the next run and
-    # incur duplicate LLM cost, violating dedupe's "score each cluster once".
-    # Only fires when BOTH norms are non-blank, mirroring dedupe's blank-norm
-    # singleton rule (a blank company_norm OR title_norm forms its own cluster
-    # and must never suppress another blank-norm row). Added unconditionally
-    # (all corpora), matching the completed-exclusion just above.
-    conditions.append(
-        "(NOT (COALESCE(jobs.company_norm,'') <> '' "
-        "AND COALESCE(jobs.title_norm,'') <> '') "
-        "OR NOT EXISTS (SELECT 1 FROM jobs twin "
-        "JOIN evaluations twin_eval ON twin_eval.job_id = twin.id "
-        "WHERE twin.company_norm = jobs.company_norm "
-        "AND twin.title_norm = jobs.title_norm "
-        "AND twin_eval.stage_a_status = 'completed'))"
-    )
+    # Completed-exclusion + twin-cluster suppression are scoped to the
+    # incremental DEFAULT flow (corpus='unrated') ONLY. The funnel is now the
+    # sole path to survivor ids, so applying them to every corpus would silently
+    # filter completed rows BEFORE claim_stage_a_by_ids could re-claim them,
+    # breaking the explicit full re-evaluation (corpus='all') and the failed
+    # retry (corpus='failed'). Both of those corpora must mirror their
+    # _stage_a_claim_status_condition semantics: 'all' permits non-locked
+    # completed rows; 'failed' targets 'error' rows (and a failed twin whose
+    # cluster sibling completed must stay re-scorable). So neither predicate
+    # fires outside 'unrated'.
+    if corpus == "unrated":
+        _append_unrated_completed_suppression(conditions)
     if exclude_gate_failed:
         conditions.append("jobs.ml_gate_result IS DISTINCT FROM 'fail'")
     where = " AND ".join(conditions) if conditions else "TRUE"
