@@ -198,6 +198,7 @@ from jobfeed.cli.evaluate import evaluate  # noqa: E402
 from jobfeed.cli.login import login  # noqa: E402
 from jobfeed.cli.maintenance import mark_stale_closed  # noqa: E402
 from jobfeed.cli.migrate import migrate  # noqa: E402
+from jobfeed.cli.ml_gate import ml_gate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
 
 cli.add_command(scan)
@@ -206,6 +207,7 @@ cli.add_command(digest)
 cli.add_command(migrate)
 cli.add_command(login)
 cli.add_command(mark_stale_closed)
+cli.add_command(ml_gate)
 
 
 __all__ = [
