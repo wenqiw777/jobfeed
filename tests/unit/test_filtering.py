@@ -1,18 +1,14 @@
-"""Unit tests for deterministic hard filters."""
+"""Unit tests for deterministic hard filters.
+
+NOTE: title_blocklist was removed from apply_hard_filters in Phase 5 — that
+logic moved to the ML gate. Title-based tests are now in test_hard_filter.py
+(which asserts that title_blocklist does NOT block).
+"""
 
 from __future__ import annotations
 
 from jobfeed.domain.filtering import HardFilters, apply_hard_filters
 from tests.support.factories import make_job
-
-
-def test_apply_hard_filters_blocks_title_word() -> None:
-    """Title blocklist matches should return a filter reason."""
-    filters = HardFilters(title_blocklist=["senior"], company_blocklist=[])
-
-    reason = apply_hard_filters(make_job(title="Senior Backend Engineer"), filters)
-
-    assert reason == 'title contains "senior"'
 
 
 def test_apply_hard_filters_blocks_company_word() -> None:
@@ -22,24 +18,6 @@ def test_apply_hard_filters_blocks_company_word() -> None:
     reason = apply_hard_filters(make_job(company="Hiring Agency"), filters)
 
     assert reason == 'company contains "agency"'
-
-
-def test_apply_hard_filters_matches_case_insensitively() -> None:
-    """Blocklist matching should ignore title and company casing."""
-    filters = HardFilters(title_blocklist=["SENIOR"], company_blocklist=[])
-
-    reason = apply_hard_filters(make_job(title="senior backend engineer"), filters)
-
-    assert reason == 'title contains "SENIOR"'
-
-
-def test_apply_hard_filters_matches_partial_words() -> None:
-    """Phase 0 blocklists intentionally use substring matching."""
-    filters = HardFilters(title_blocklist=["sales"], company_blocklist=[])
-
-    reason = apply_hard_filters(make_job(title="Presales Engineer"), filters)
-
-    assert reason == 'title contains "sales"'
 
 
 def test_apply_hard_filters_passes_clean_job() -> None:
