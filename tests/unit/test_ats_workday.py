@@ -249,3 +249,99 @@ def test_build_cxs_url_myworkdaysite() -> None:
 def test_build_cxs_url_unrecognized_returns_none() -> None:
     """Unrecognized URLs return None."""
     assert _build_cxs_url("https://example.com/jobs/123") is None
+
+
+# ---------------------------------------------------------------------------
+# Cookie isolation
+# ---------------------------------------------------------------------------
+
+_APPLY_URL_2 = "https://other.wd5.myworkdayjobs.com/en-US/jobs/job/Some-Role_R-00000001"
+_CXS_URL_2 = (
+    "https://other.wd5.myworkdayjobs.com/wday/cxs/other/jobs/job/Some-Role_R-00000001"
+)
+_TOKEN_2 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+_HTML_OPEN_2 = f"""
+<html><body>
+<script>
+  var config = {{
+    token: "{_TOKEN_2}",
+    postingAvailable: true,
+  }};
+</script>
+</body></html>
+"""
+
+_SET_COOKIE_HEADER = "wd_browser_id=abc123; Domain=.myworkdayjobs.com; Path=/"
+
+
+@respx.mock
+async def test_cross_fetch_cookie_isolation() -> None:
+    """Cookie set by fetch #1's HTML response must NOT appear in fetch #2's requests.
+
+    The shared ``httpx.AsyncClient`` jar must NOT accumulate cookies between
+    independent ``fetch_jd_result`` calls.
+    """
+    # fetch #1 — HTML sets a cookie
+    respx.get(_APPLY_URL).mock(
+        return_value=httpx.Response(
+            200,
+            text=_HTML_OPEN,
+            headers={"Set-Cookie": _SET_COOKIE_HEADER},
+        )
+    )
+    respx.get(_CXS_URL).mock(return_value=httpx.Response(200, json=_CXS_PAYLOAD))
+
+    # fetch #2 — capture outgoing Cookie headers for both requests
+    html2_route = respx.get(_APPLY_URL_2).mock(
+        return_value=httpx.Response(200, text=_HTML_OPEN_2)
+    )
+    cxs2_route = respx.get(_CXS_URL_2).mock(
+        return_value=httpx.Response(200, json=_CXS_PAYLOAD)
+    )
+
+    async with create_http_client() as client:
+        await fetch_jd_result(client, _APPLY_URL, timeout=TIMEOUT)
+        await fetch_jd_result(client, _APPLY_URL_2, timeout=TIMEOUT)
+
+    html2_cookie = html2_route.calls.last.request.headers.get("cookie", "")
+    cxs2_cookie = cxs2_route.calls.last.request.headers.get("cookie", "")
+
+    # The cookie planted by fetch #1 must not bleed into fetch #2
+    assert "wd_browser_id" not in html2_cookie, (
+        f"fetch #1 cookie leaked onto fetch #2 HTML request: {html2_cookie!r}"
+    )
+    assert "wd_browser_id" not in cxs2_cookie, (
+        f"fetch #1 cookie leaked onto fetch #2 CXS request: {cxs2_cookie!r}"
+    )
+
+
+@respx.mock
+async def test_intra_fetch_cookie_sharing() -> None:
+    """Cookie set by the HTML step IS present on the CXS request within one fetch.
+
+    The CXS GET must carry cookies established by the HTML GET so the
+    session-scoped token is transmitted correctly.
+    """
+    html_route = respx.get(_APPLY_URL).mock(
+        return_value=httpx.Response(
+            200,
+            text=_HTML_OPEN,
+            headers={"Set-Cookie": _SET_COOKIE_HEADER},
+        )
+    )
+    cxs_route = respx.get(_CXS_URL).mock(
+        return_value=httpx.Response(200, json=_CXS_PAYLOAD)
+    )
+
+    async with create_http_client() as client:
+        result = await fetch_jd_result(client, _APPLY_URL, timeout=TIMEOUT)
+
+    assert result.is_closed is False
+    assert html_route.called
+    assert cxs_route.called
+
+    cxs_cookie = cxs_route.calls.last.request.headers.get("cookie", "")
+    assert "wd_browser_id" in cxs_cookie, (
+        f"cookie from HTML step not forwarded to CXS step: {cxs_cookie!r}"
+    )

@@ -165,11 +165,19 @@ async def fetch_jd_result(
 ) -> WorkdayFetch:
     """Fetch the JD for a Workday apply URL using the two-step protocol.
 
-    Step 1: GET the apply HTML page (seeds cookies + yields postingAvailable + token).
-    Step 2: If open, GET the CXS endpoint on the same client with the CSRF token.
+    Step 1: GET the apply HTML page (seeds per-fetch cookies + yields
+            postingAvailable + token).
+    Step 2: If open, GET the CXS endpoint with the CSRF token.
+
+    A short-lived ``httpx.AsyncClient`` is created per call, sharing only the
+    transport (connection pool) of ``client`` but owning a fresh cookie jar.
+    This prevents cookies set by one tenant's HTML response from leaking onto
+    subsequent fetches that reuse the same long-lived ``client``.  Within a
+    single fetch the HTML and CXS requests share the same isolated jar, so
+    session cookies flow from step 1 to step 2 as required.
 
     Args:
-        client: Shared async HTTP client.
+        client: Shared async HTTP client (provides connection pool / transport).
         apply_url: The Workday apply URL from the SpeedyApply table.
         timeout: Per-request timeout in seconds.
 
@@ -182,32 +190,35 @@ async def fetch_jd_result(
 
     cxs_url, _slug = built
 
-    html_status, html_body = await _fetch_html(client, apply_url, timeout=timeout)
+    async with httpx.AsyncClient(transport=client._transport) as fetch_client:
+        html_status, html_body = await _fetch_html(
+            fetch_client, apply_url, timeout=timeout
+        )
 
-    if html_status in _DEAD_STATUSES:
-        return WorkdayFetch("", True, f"gone:{html_status}:{_VENDOR}")
-    if html_status == 0 or not html_body:
-        return WorkdayFetch("", False, None)
+        if html_status in _DEAD_STATUSES:
+            return WorkdayFetch("", True, f"gone:{html_status}:{_VENDOR}")
+        if html_status == 0 or not html_body:
+            return WorkdayFetch("", False, None)
 
-    is_available = _parse_posting_flag(html_body)
-    if is_available is False:
-        return WorkdayFetch("", True, f"closed:posting-unavailable:{_VENDOR}")
+        is_available = _parse_posting_flag(html_body)
+        if is_available is False:
+            return WorkdayFetch("", True, f"closed:posting-unavailable:{_VENDOR}")
 
-    token = _parse_csrf_token(html_body)
-    if token is None:
-        return WorkdayFetch("", False, None)
+        token = _parse_csrf_token(html_body)
+        if token is None:
+            return WorkdayFetch("", False, None)
 
-    cxs_status, cxs_json = await _fetch_cxs(
-        client, cxs_url, token=token, apply_url=apply_url, timeout=timeout
-    )
+        cxs_status, cxs_json = await _fetch_cxs(
+            fetch_client, cxs_url, token=token, apply_url=apply_url, timeout=timeout
+        )
 
-    if cxs_status in _DEAD_STATUSES:
-        return WorkdayFetch("", True, f"gone:{cxs_status}:{_VENDOR}")
-    if cxs_status == 0 or cxs_json is None:
-        return WorkdayFetch("", False, None)
+        if cxs_status in _DEAD_STATUSES:
+            return WorkdayFetch("", True, f"gone:{cxs_status}:{_VENDOR}")
+        if cxs_status == 0 or cxs_json is None:
+            return WorkdayFetch("", False, None)
 
-    jd_text = _extract_jd_text(cxs_json)
-    return WorkdayFetch(jd_text, False, None)
+        jd_text = _extract_jd_text(cxs_json)
+        return WorkdayFetch(jd_text, False, None)
 
 
 async def fetch_jd(
