@@ -16,9 +16,22 @@ import asyncpg
 import pytest
 
 from jobfeed.adapters.store.postgres import PostgresStore
-from jobfeed.domain.models import QualityBand, StageAResult, StageBResult
+from jobfeed.domain.models import (
+    MLGateResult,
+    QualityBand,
+    StageAResult,
+    StageBResult,
+)
 from jobfeed.domain.scoring import parse_stage_b_response
 from tests.support.factories import make_job
+
+ML_GATE_COLUMNS = (
+    "ml_gate_score",
+    "ml_gate_result",
+    "ml_gate_fail_reason",
+    "ml_gate_at",
+    "ml_gate_version",
+)
 
 pytestmark = pytest.mark.postgres
 
@@ -127,6 +140,47 @@ def make_stage_b() -> StageBResult:
         resume_hash="resume-b",
         cost_usd=STAGE_B_COST,
     )
+
+
+def make_ml_gate(result: str = "fail") -> MLGateResult:
+    """Create an ML gate result for seeding a persisted verdict.
+
+    Args:
+        result: ``'pass'`` or ``'fail'``.
+
+    Returns:
+        Gate result with a deterministic score/version + a few feature fields.
+    """
+    return MLGateResult(
+        score=0.12 if result == "fail" else 0.91,
+        result=result,
+        fail_reason="low score" if result == "fail" else None,
+        version="gate-v1",
+        is_swe_role=True,
+    )
+
+
+async def _ml_gate_row(store: PostgresStore, job_id: str) -> dict[str, Any]:
+    """Read the ml_gate_* verdict columns for one job.
+
+    Args:
+        store: Connected PostgresStore.
+        job_id: Store-assigned job identity.
+
+    Returns:
+        Mapping of the five ``ml_gate_*`` verdict columns for the row.
+    """
+    conn = await store._get_pool().acquire()  # type: ignore[attr-defined]
+    try:
+        row = await conn.fetchrow(
+            "SELECT ml_gate_score, ml_gate_result, ml_gate_fail_reason, "
+            "ml_gate_at, ml_gate_version FROM jobs WHERE id = $1",
+            int(job_id),
+        )
+    finally:
+        await store._get_pool().release(conn)  # type: ignore[attr-defined]
+    assert row is not None
+    return dict(row)
 
 
 async def _eval_row(store: PostgresStore, job_id: str) -> dict[str, Any]:
@@ -407,6 +461,149 @@ async def test_ml_gate_check_rejects_invalid_score(
             "UPDATE jobs SET ml_gate_score = 1.4 WHERE id = $1",
             int(saved.job_id),
         )
+
+
+async def test_save_job_resets_ml_gate_when_jd_text_changes(
+    store: PostgresStore,
+) -> None:
+    """A re-scan with a changed winning JD clears the stale gate verdict.
+
+    The gate's verdict is keyed on the JD content. When a re-scan replaces the
+    stored JD with a different one of equal-or-higher quality (so the new JD
+    actually WINS the upsert), the persisted ml_gate_* verdict no longer
+    describes the live content: a stale 'fail' would be excluded forever and a
+    stale 'pass' trusted without re-gating. save_job must NULL the ml_gate_*
+    columns so the funnel re-gates on the new JD.
+    """
+    saved = await store.save_job(make_store_job("jd-change"))
+    await store.save_ml_gate_result(saved.job_id, make_ml_gate("fail"))
+    before = await _ml_gate_row(store, saved.job_id)
+    assert before["ml_gate_result"] == "fail"
+
+    # Same quality band (GOOD) so the new JD wins the upsert, but different text.
+    changed = make_store_job("jd-change", jd_text="A completely rewritten JD body")
+    await store.save_job(changed)
+
+    after = await _ml_gate_row(store, saved.job_id)
+    assert all(after[col] is None for col in ML_GATE_COLUMNS)
+
+
+async def test_save_job_preserves_ml_gate_when_content_unchanged(
+    store: PostgresStore,
+) -> None:
+    """An identical re-scan keeps the gate verdict (no needless re-gate).
+
+    Decision 8: don't re-gate an unchanged re-scan and risk a model-drift flip.
+    Re-saving the SAME (platform, canonical_id) with identical title + jd_text
+    leaves the winning JD equal to the stored one, so the ml_gate_* verdict is
+    preserved intact.
+    """
+    saved = await store.save_job(make_store_job("jd-same"))
+    await store.save_ml_gate_result(saved.job_id, make_ml_gate("pass"))
+
+    # Re-save an identical posting (same title + same jd_text).
+    await store.save_job(make_store_job("jd-same"))
+
+    after = await _ml_gate_row(store, saved.job_id)
+    assert after["ml_gate_result"] == "pass"
+    assert after["ml_gate_score"] is not None
+    assert after["ml_gate_version"] == "gate-v1"
+    assert after["ml_gate_at"] is not None
+
+
+async def test_save_job_resets_ml_gate_on_title_only_change(
+    store: PostgresStore,
+) -> None:
+    """A title-only re-scan also clears the stale gate verdict.
+
+    Title is a gate input feature alongside the JD, so a changed title with an
+    unchanged JD must still reset the verdict for re-gating.
+    """
+    saved = await store.save_job(make_store_job("title-change"))
+    await store.save_ml_gate_result(saved.job_id, make_ml_gate("fail"))
+
+    # Identical jd_text, changed title.
+    renamed = make_store_job("title-change")
+    renamed.title = "Senior Backend Engineer"
+    await store.save_job(renamed)
+
+    after = await _ml_gate_row(store, saved.job_id)
+    assert all(after[col] is None for col in ML_GATE_COLUMNS)
+
+
+async def test_save_job_preserves_ml_gate_when_lower_quality_jd_loses(
+    store: PostgresStore,
+) -> None:
+    """A lower-quality re-scan that loses keeps the stored JD AND the verdict.
+
+    The reset keys on the WINNING JD, not the incoming one. A no-JD/lower-quality
+    re-scan (e.g. a transient vendor failure) preserves the stored full JD via
+    the quality-gated upsert, so the gate input is effectively unchanged and the
+    verdict must be preserved (not reset).
+    """
+    saved = await store.save_job(make_store_job("jd-loses"))
+    await store.save_ml_gate_result(saved.job_id, make_ml_gate("pass"))
+
+    # A re-scan that brought back NO JD (loses the quality gate) keeps stored JD.
+    await store.save_job(make_store_job("jd-loses", jd_text=None))
+
+    after = await _ml_gate_row(store, saved.job_id)
+    assert after["ml_gate_result"] == "pass"
+    assert after["ml_gate_version"] == "gate-v1"
+
+
+async def test_record_enrichment_resets_ml_gate_verdict(
+    store: PostgresStore,
+) -> None:
+    """record_enrichment replacing the JD clears the stale gate verdict.
+
+    record_enrichment is a deliberate enrichment write that swaps in new JD
+    content (it already unconditionally NULLs enrich_error + closed_at). The
+    persisted ml_gate_* verdict was computed against the OLD JD, so leaving it
+    in place means a stale 'fail' is excluded from the funnel forever and a
+    stale 'pass' is trusted without re-gating the new body. The enrichment IS a
+    content change, so all five ml_gate_* columns must be NULLed unconditionally.
+    """
+    saved = await store.save_job(make_store_job("enrich-gate"))
+    await store.save_ml_gate_result(saved.job_id, make_ml_gate("fail"))
+    before = await _ml_gate_row(store, saved.job_id)
+    assert before["ml_gate_result"] == "fail"
+
+    await store.record_enrichment(
+        job_id=saved.job_id,
+        jd_text="A freshly enriched job description body.",
+        jd_quality=QualityBand.FULL.value,
+        enriched_at=datetime.now(UTC),
+        enrich_source="manual-paste",
+    )
+
+    after = await _ml_gate_row(store, saved.job_id)
+    assert all(after[col] is None for col in ML_GATE_COLUMNS)
+
+
+async def test_enrich_paste_resets_ml_gate_verdict(
+    store: PostgresStore,
+) -> None:
+    """enrich_paste clears the stale gate verdict via record_enrichment.
+
+    enrich_paste resolves the job then delegates to record_enrichment, so the
+    same JD-replacement reset must apply: a previously-persisted ml_gate_*
+    verdict no longer describes the pasted content and must be NULLed.
+    """
+    job = make_store_job("paste-gate")
+    saved = await store.save_job(job)
+    await store.save_ml_gate_result(saved.job_id, make_ml_gate("pass"))
+    before = await _ml_gate_row(store, saved.job_id)
+    assert before["ml_gate_result"] == "pass"
+
+    await store.enrich_paste(
+        platform=job.platform,
+        canonical_id=job.canonical_id,
+        jd_text="Pasted job description body recovered manually.",
+    )
+
+    after = await _ml_gate_row(store, saved.job_id)
+    assert all(after[col] is None for col in ML_GATE_COLUMNS)
 
 
 async def test_evaluations_foreign_key_requires_existing_job(

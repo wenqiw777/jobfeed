@@ -68,6 +68,7 @@ from jobfeed.domain.status import (
 )
 from jobfeed.domain.types import VALID_SEVERITIES, Severity
 from jobfeed.ports.source import StoredEnrichment
+from jobfeed.ports.store_claims import GateCandidate
 
 # ---------------------------------------------------------------------------
 # Row mapping helpers
@@ -99,6 +100,25 @@ def _job_from_record(r: asyncpg.Record) -> JobPosting:
         enrich_source=r["enrich_source"],
         closed_at=r["closed_at"],
         enrich_error=r["enrich_error"],
+    )
+
+
+def _gate_candidate_from_record(r: asyncpg.Record) -> GateCandidate:
+    """Build a GateCandidate (job + persisted ml_gate_result) from a jobs record.
+
+    Reuses ``_job_from_record`` for identity/columns and lifts the persisted
+    ``jobs.ml_gate_result`` (already present via ``SELECT jobs.*``) so the funnel
+    can skip re-gating an already-'pass' representative.
+
+    Args:
+        r: ``jobs`` table record (must include the ``ml_gate_result`` column).
+
+    Returns:
+        Gate candidate carrying the job and its stored gate verdict (or None).
+    """
+    return GateCandidate(
+        job=_job_from_record(r),
+        ml_gate_result=r["ml_gate_result"],
     )
 
 
@@ -532,6 +552,36 @@ _PG_STAGE_B_UNDER_CAP = (
 )
 _PG_EVALUATION_CLAIM_TTL = timedelta(hours=1)
 
+# The jd_quality -> rank CASE used to decide whether an incoming JD outranks the
+# stored one (mirrors domain.quality.quality_rank). Reused by save_job's upsert.
+_PG_STORED_JD_RANK = (
+    "(CASE jobs.jd_quality "
+    "WHEN 'full' THEN 5 WHEN 'good' THEN 4 "
+    "WHEN 'partial' THEN 3 WHEN 'stub' THEN 2 "
+    "WHEN 'missing' THEN 1 WHEN 'abandoned' THEN 0 "
+    "ELSE -1 END)"
+)
+# The JD that actually WINS save_job's upsert: the incoming JD only when it
+# outranks (>=) the stored one, else the preserved stored JD. ``$18`` is the
+# incoming quality_rank bind. Identical to the jd_text assignment's CASE.
+_PG_WINNING_JD_TEXT = (
+    f"(CASE WHEN $18::int >= {_PG_STORED_JD_RANK} "
+    "THEN COALESCE(EXCLUDED.jd_text, jobs.jd_text) ELSE jobs.jd_text END)"
+)
+# A gate INPUT feature changed iff the title or the WINNING JD differs from the
+# stored row. Drives save_job's stale-ml_gate reset.
+_PG_GATE_INPUT_CHANGED = (
+    "(EXCLUDED.title IS DISTINCT FROM jobs.title "
+    f"OR {_PG_WINNING_JD_TEXT} IS DISTINCT FROM jobs.jd_text)"
+)
+# Reset (NULL) the five ml_gate_* verdict columns on a gate-input change, else
+# preserve them. Appended to save_job's ON CONFLICT DO UPDATE SET list.
+_PG_RESET_ML_GATE_SET = ",\n".join(
+    f"ml_gate_{col} = CASE WHEN {_PG_GATE_INPUT_CHANGED} "
+    f"THEN NULL ELSE jobs.ml_gate_{col} END"
+    for col in ("score", "result", "fail_reason", "at", "version")
+)
+
 
 def _pg_corpus_condition(corpus: str) -> str:
     """Return the WHERE fragment selecting the requested Stage A corpus.
@@ -568,6 +618,10 @@ def _stage_a_pending_filters(
 ) -> tuple[list[str], list[Any]]:
     """Build shared Stage A pending filters.
 
+    Always excludes ``closed_at IS NOT NULL`` rows (job-liveness): a posting
+    confirmed gone by a JD fetch never enters the funnel via any consumer
+    (``load_gate_candidates`` and every Stage-A claim path).
+
     Args:
         quality_bands: Optional jd_quality allow-list.
         corpus: "unrated", "all", or "failed".
@@ -583,6 +637,11 @@ def _stage_a_pending_filters(
     if corpus_clause:
         conditions.append(corpus_clause)
     conditions.append(_PG_STAGE_A_UNDER_CAP)
+    # Job-liveness (closed_at feature): a req confirmed gone by JD fetch
+    # (404/410/403) is stamped closed_at and must never enter the funnel. This
+    # predicate is shared, so it covers load_gate_candidates AND every claim
+    # path (claim_pending_stage_a, claim_stage_a_by_ids).
+    conditions.append("jobs.closed_at IS NULL")
     if quality_bands:
         params.append(sorted(quality_bands))
         conditions.append(f"jobs.jd_quality = ANY(${len(params)})")
@@ -735,6 +794,42 @@ def _stage_a_claim_update_condition(corpus: str, stale_ref: str) -> str:
     raise ValueError(f"unknown corpus: {corpus!r}")
 
 
+def _claim_stage_a_sql(*, where: str, update_condition: str, limit_ref: str) -> str:
+    """Assemble the Stage A atomic-claim CTE SQL.
+
+    Shared by the queue-wide claim and the id-restricted claim so the
+    ``FOR UPDATE ... SKIP LOCKED`` + ``in_progress`` upsert lives in one place.
+
+    Args:
+        where: Candidate-selection WHERE clause.
+        update_condition: Guard for the ON CONFLICT upsert (stale/retry rules).
+        limit_ref: Positional placeholder for the candidate LIMIT.
+
+    Returns:
+        The claim CTE SQL string.
+    """
+    return f"""WITH candidates AS (
+                SELECT jobs.id FROM jobs
+                LEFT JOIN evaluations ON evaluations.job_id = jobs.id
+                WHERE {where}
+                ORDER BY jobs.discovered_at DESC, jobs.id DESC
+                LIMIT {limit_ref}
+                FOR UPDATE OF jobs SKIP LOCKED
+            ),
+            claimed AS (
+                INSERT INTO evaluations (job_id, stage_a_status, updated_at)
+                SELECT id, 'in_progress', now() FROM candidates
+                ON CONFLICT (job_id) DO UPDATE SET
+                    stage_a_status = 'in_progress',
+                    updated_at = now()
+                WHERE {update_condition}
+                RETURNING job_id
+            )
+            SELECT jobs.* FROM jobs
+            JOIN claimed ON claimed.job_id = jobs.id
+            ORDER BY jobs.discovered_at DESC, jobs.id DESC"""
+
+
 def _build_claim_stage_a_query(
     *,
     limit: int,
@@ -757,28 +852,180 @@ def _build_claim_stage_a_query(
     params.append(limit)
     update_condition = _stage_a_claim_update_condition(corpus, stale_ref)
     return (
-        f"""WITH candidates AS (
-                SELECT jobs.id FROM jobs
-                LEFT JOIN evaluations ON evaluations.job_id = jobs.id
-                WHERE {where}
-                ORDER BY jobs.discovered_at DESC, jobs.id DESC
-                LIMIT ${len(params)}
-                FOR UPDATE OF jobs SKIP LOCKED
-            ),
-            claimed AS (
-                INSERT INTO evaluations (job_id, stage_a_status, updated_at)
-                SELECT id, 'in_progress', now() FROM candidates
-                ON CONFLICT (job_id) DO UPDATE SET
-                    stage_a_status = 'in_progress',
-                    updated_at = now()
-                WHERE {update_condition}
-                RETURNING job_id
-            )
-            SELECT jobs.* FROM jobs
-            JOIN claimed ON claimed.job_id = jobs.id
-            ORDER BY jobs.discovered_at DESC, jobs.id DESC""",
+        _claim_stage_a_sql(
+            where=where,
+            update_condition=update_condition,
+            limit_ref=f"${len(params)}",
+        ),
         params,
     )
+
+
+def _numeric_job_ids(job_ids: list[str]) -> list[int]:
+    """Coerce store ids to ints, skipping non-numeric ones.
+
+    Store ids are bigint-as-str, so a non-numeric id matches no row; skipping
+    them keeps ``claim_stage_a_by_ids`` crash-free (no ``ValueError``) instead of
+    failing the whole claim. An all-non-numeric input yields ``[]``, which the
+    caller treats as a no-op (no query, no writes).
+    """
+    numeric: list[int] = []
+    for jid in job_ids:
+        try:
+            numeric.append(int(jid))
+        except (ValueError, TypeError):
+            continue
+    return numeric
+
+
+def _build_claim_stage_a_by_ids_query(
+    *,
+    job_ids: list[int],
+    limit: int,
+    quality_bands: frozenset[str] | None,
+    corpus: str,
+    max_days: int | None,
+    now: datetime,
+) -> tuple[str, list[Any]]:
+    """Build the Stage A atomic claim query restricted to an explicit id set.
+
+    Identical claim machinery to ``_build_claim_stage_a_query`` (stale-takeover /
+    retry-cap / ``SKIP LOCKED`` upsert), but the candidate scan is additionally
+    constrained to ``job_ids``. Callers must short-circuit empty ``job_ids``
+    (already coerced to bigint via ``_numeric_job_ids``).
+
+    Args:
+        job_ids: Numeric store ids to restrict the claim to (non-empty bigints).
+        limit: Max rows.
+        quality_bands: Optional jd_quality allow-list.
+        corpus: "unrated", "all", or "failed".
+        max_days: Optional freshness window on discovered_at.
+        now: Reference time for freshness and the stale-claim cutoff.
+
+    Returns:
+        SQL string and its positional (asyncpg) parameters.
+    """
+    conditions, params = _stage_a_pending_filters(
+        quality_bands=quality_bands,
+        corpus="all",
+        max_days=max_days,
+        now=now,
+    )
+    params.append(job_ids)
+    conditions.append(f"jobs.id = ANY(${len(params)})")
+    params.append(now - _PG_EVALUATION_CLAIM_TTL)
+    stale_ref = f"${len(params)}"
+    conditions.append(_stage_a_claim_status_condition(corpus, stale_ref))
+    where = " AND ".join(conditions)
+    params.append(limit)
+    update_condition = _stage_a_claim_update_condition(corpus, stale_ref)
+    return (
+        _claim_stage_a_sql(
+            where=where,
+            update_condition=update_condition,
+            limit_ref=f"${len(params)}",
+        ),
+        params,
+    )
+
+
+def _build_gate_candidates_query(
+    *,
+    limit: int,
+    quality_bands: frozenset[str] | None,
+    corpus: str,
+    max_days: int | None,
+    exclude_gate_failed: bool,
+    now: datetime,
+    after: tuple[datetime, int] | None = None,
+) -> tuple[str, list[Any]]:
+    """Build the NON-claiming ML-gate candidate query.
+
+    Reuses the shared Stage A eligibility filters (quality_bands / freshness on
+    ``discovered_at`` / retry-cap) and the SAME stale-takeover corpus predicate
+    the claim builders use (``_stage_a_claim_status_condition``), then adds:
+    not-yet-Stage-A-scored (status IS DISTINCT FROM 'completed') and, when
+    ``exclude_gate_failed``, ``jobs.ml_gate_result IS DISTINCT FROM 'fail'``.
+
+    Sharing the claim status predicate (instead of the narrower
+    ``_pg_corpus_condition``) means a row stuck ``in_progress`` past the claim
+    TTL by an interrupted *scoring* run re-enters the funnel under "unrated",
+    becomes a survivor, and is re-claimable by ``claim_stage_a_by_ids`` (whose
+    own stale-takeover then succeeds). FRESH ``in_progress`` rows (actively owned
+    by another run) are excluded. Rows with a NULL or 'pass' gate that are not
+    yet Stage-A-scored are included (crash recovery); already-Stage-A-scored rows
+    are excluded. This reads only — no claim, no in_progress write.
+
+    ``after`` is an optional keyset cursor ``(discovered_at, id)``: when set, only
+    rows strictly older in the ``ORDER BY jobs.discovered_at DESC, jobs.id DESC``
+    sense are returned (``(discovered_at, id) < (ts, id)``). The funnel uses it to
+    page PAST hard-filtered drops so an eligible older row behind a blocked newest
+    prefix is not starved; every other predicate above still applies per page.
+
+    Args:
+        limit: Max rows (one page).
+        quality_bands: Optional jd_quality allow-list.
+        corpus: "unrated", "all", or "failed".
+        max_days: Optional freshness window on discovered_at.
+        exclude_gate_failed: When True, drop rows whose ml_gate_result is 'fail'.
+        now: Reference time for the freshness + stale-claim cutoffs.
+        after: Optional ``(discovered_at, id)`` keyset cursor for the next page.
+
+    Returns:
+        SQL string and its positional (asyncpg) parameters.
+    """
+    conditions, params = _stage_a_pending_filters(
+        quality_bands=quality_bands,
+        corpus="all",
+        max_days=max_days,
+        now=now,
+    )
+    params.append(now - _PG_EVALUATION_CLAIM_TTL)
+    stale_ref = f"${len(params)}"
+    conditions.append(_stage_a_claim_status_condition(corpus, stale_ref))
+    if after is not None:
+        cursor_ts, cursor_id = after
+        params.append(cursor_ts)
+        params.append(cursor_id)
+        # Keyset "next page" predicate, consistent with the row tuple ordering
+        # ORDER BY jobs.discovered_at DESC, jobs.id DESC.
+        conditions.append(
+            f"(jobs.discovered_at, jobs.id) < (${len(params) - 1}, ${len(params)})"
+        )
+    conditions.append(
+        "(evaluations.job_id IS NULL "
+        "OR evaluations.stage_a_status IS DISTINCT FROM 'completed')"
+    )
+    # Twin-cluster cross-run suppression: once ANY member of a row's twin
+    # cluster (shared (company_norm, title_norm)) is Stage-A 'completed', the
+    # cluster has been scored, so drop every still-pending sibling — otherwise
+    # the surviving twins re-elect a new representative in the next run and
+    # incur duplicate LLM cost, violating dedupe's "score each cluster once".
+    # Only fires when BOTH norms are non-blank, mirroring dedupe's blank-norm
+    # singleton rule (a blank company_norm OR title_norm forms its own cluster
+    # and must never suppress another blank-norm row). Added unconditionally
+    # (all corpora), matching the completed-exclusion just above.
+    conditions.append(
+        "(NOT (COALESCE(jobs.company_norm,'') <> '' "
+        "AND COALESCE(jobs.title_norm,'') <> '') "
+        "OR NOT EXISTS (SELECT 1 FROM jobs twin "
+        "JOIN evaluations twin_eval ON twin_eval.job_id = twin.id "
+        "WHERE twin.company_norm = jobs.company_norm "
+        "AND twin.title_norm = jobs.title_norm "
+        "AND twin_eval.stage_a_status = 'completed'))"
+    )
+    if exclude_gate_failed:
+        conditions.append("jobs.ml_gate_result IS DISTINCT FROM 'fail'")
+    where = " AND ".join(conditions) if conditions else "TRUE"
+    params.append(limit)
+    sql = (
+        "SELECT jobs.* FROM jobs "
+        "LEFT JOIN evaluations ON evaluations.job_id = jobs.id "
+        f"WHERE {where} "
+        "ORDER BY jobs.discovered_at DESC, jobs.id DESC "
+        f"LIMIT ${len(params)}"
+    )
+    return sql, params
 
 
 def _build_claimable_stage_a_query(
@@ -1470,7 +1717,7 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                """INSERT INTO jobs (
+                f"""INSERT INTO jobs (
                        platform, canonical_id, url, title, company, location,
                        jd_text, jd_quality, posted_at, discovered_at,
                        enriched_at, enrich_source,
@@ -1520,7 +1767,20 @@ class PostgresStore:
                        closed_at = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
                                         ELSE COALESCE(jobs.closed_at, EXCLUDED.closed_at) END,
                        enrich_error = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
-                                           ELSE COALESCE(EXCLUDED.enrich_error, jobs.enrich_error) END
+                                           ELSE COALESCE(EXCLUDED.enrich_error, jobs.enrich_error) END,
+                       -- Reset the stale ML-gate verdict iff a gate INPUT
+                       -- feature (title, or the JD that actually WINS this
+                       -- upsert) changed. A stale 'fail' is excluded forever
+                       -- (ml_gate_result IS DISTINCT FROM 'fail') and a stale
+                       -- 'pass' is trusted without re-gating, so on a content
+                       -- change we NULL the verdict columns to force a re-gate.
+                       -- _PG_GATE_INPUT_CHANGED reuses the exact winning-jd_text
+                       -- CASE from the jd_text assignment above: a lower-quality
+                       -- / no-JD re-scan that loses keeps the stored JD, so the
+                       -- input is unchanged and the verdict is preserved
+                       -- (Decision 8: don't needlessly re-gate an identical
+                       -- re-scan and risk a model-drift flip).
+                       {_PG_RESET_ML_GATE_SET}
                    RETURNING id, (xmax = 0) AS inserted""",
                 job.platform,
                 job.canonical_id,
@@ -1967,6 +2227,102 @@ class PostgresStore:
             Jobs a real Stage A run would claim.
         """
         sql, params = _build_claimable_stage_a_query(
+            limit=limit,
+            quality_bands=quality_bands,
+            corpus=corpus,
+            max_days=max_days,
+            now=datetime.now(UTC),
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return [_job_from_record(r) for r in rows]
+
+    async def load_gate_candidates(
+        self,
+        *,
+        corpus: str = "unrated",
+        quality_bands: frozenset[str] | None = None,
+        max_days: int | None = None,
+        limit: int = 100,
+        exclude_gate_failed: bool = True,
+        after: tuple[datetime, int] | None = None,
+    ) -> list[GateCandidate]:
+        """Load ML-gate candidates pending Stage A (NON-claiming read).
+
+        Reuses the shared Stage A eligibility filters plus the same
+        stale-takeover corpus predicate the claim builders use (so a stale
+        ``in_progress`` row past the claim TTL re-enters under "unrated"), and
+        adds the not-yet-Stage-A-scored predicate plus, when
+        ``exclude_gate_failed``, an ``ml_gate_result IS DISTINCT FROM 'fail'``
+        guard. Includes rows with a NULL or 'pass' gate that are not yet
+        Stage-A-scored (crash recovery) and excludes already-Stage-A-scored rows.
+        Each row carries its persisted ``ml_gate_result``. Writes nothing.
+
+        ``after`` is an optional ``(discovered_at, id)`` keyset cursor: when set,
+        only rows strictly past it in ``discovered_at DESC, id DESC`` order are
+        returned. The funnel pages with it to overfetch past hard-filtered drops
+        so an eligible older row is not starved by a blocked newest prefix.
+
+        Args:
+            corpus: "unrated", "all", or "failed".
+            quality_bands: Filter by jd_quality.
+            max_days: Freshness filter on discovered_at.
+            limit: Max jobs (one page).
+            exclude_gate_failed: When True, drop rows whose gate result is 'fail';
+                when False, gate state is ignored entirely.
+            after: Optional ``(discovered_at, id)`` keyset cursor for the next page.
+
+        Returns:
+            Gate candidates (job + persisted ``ml_gate_result``) pending Stage A,
+            with no lease mutation.
+        """
+        sql, params = _build_gate_candidates_query(
+            limit=limit,
+            quality_bands=quality_bands,
+            corpus=corpus,
+            max_days=max_days,
+            exclude_gate_failed=exclude_gate_failed,
+            now=datetime.now(UTC),
+            after=after,
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return [_gate_candidate_from_record(r) for r in rows]
+
+    async def claim_stage_a_by_ids(
+        self,
+        job_ids: list[str],
+        *,
+        quality_bands: frozenset[str] | None = None,
+        corpus: str = "unrated",
+        max_days: int | None = None,
+        limit: int = 100,
+    ) -> list[JobPosting]:
+        """Atomically claim Stage A jobs restricted to an explicit id set.
+
+        Same claim machinery as ``claim_pending_stage_a`` (``SKIP LOCKED`` +
+        ``in_progress`` upsert with stale-takeover / retry-cap semantics), but
+        the candidate scan is constrained to ``job_ids``. Store ids are
+        bigint-as-str; non-numeric ids match no row and are dropped, so an empty
+        or all-non-numeric ``job_ids`` returns ``[]`` and writes nothing.
+
+        Args:
+            job_ids: Store-assigned identities to claim from.
+            quality_bands: Filter by jd_quality.
+            corpus: "unrated", "all", or "failed".
+            max_days: Freshness filter on discovered_at.
+            limit: Max jobs.
+
+        Returns:
+            Jobs claimed for this Stage A run (subset of ``job_ids``).
+        """
+        numeric_ids = _numeric_job_ids(job_ids)
+        if not numeric_ids:
+            return []
+        sql, params = _build_claim_stage_a_by_ids_query(
+            job_ids=numeric_ids,
             limit=limit,
             quality_bands=quality_bands,
             corpus=corpus,
@@ -3341,7 +3697,18 @@ class PostgresStore:
                 """UPDATE jobs SET
                        jd_text = $1, jd_quality = $2, enriched_at = $3,
                        enrich_source = $4, jd_lang = $5, enrich_error = NULL,
-                       closed_at = NULL
+                       closed_at = NULL,
+                       -- An enrichment replaces the JD with new content, so the
+                       -- ml_gate_* verdict (computed against the OLD JD) is
+                       -- stale: a stale 'fail' is excluded from the funnel
+                       -- forever and a stale 'pass' is trusted without
+                       -- re-gating. This is an unconditional content change, so
+                       -- NULL the verdict columns to force a re-gate (matching
+                       -- the unconditional enrich_error/closed_at reset above
+                       -- and save_job's input-change reset).
+                       ml_gate_score = NULL, ml_gate_result = NULL,
+                       ml_gate_fail_reason = NULL, ml_gate_at = NULL,
+                       ml_gate_version = NULL
                    WHERE id = $6""",
                 jd_text,
                 jd_quality,
