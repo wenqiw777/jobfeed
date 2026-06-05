@@ -231,19 +231,26 @@ async def test_smartrecruiters_concats_sections() -> None:
 
 @respx.mock
 async def test_workday_extracts_job_description() -> None:
-    """Workday transforms the apply URL to the wday/cxs endpoint and strips HTML."""
+    """Workday two-step: GET apply HTML then CXS endpoint, strips HTML tags."""
+    apply_url = (
+        "https://leidos.wd5.myworkdayjobs.com/en-US/external/job/Fort-Belvoir-VA/"
+        "Data-Engineer-Intern_R-00180867"
+    )
     cxs = (
         "https://leidos.wd5.myworkdayjobs.com/wday/cxs/leidos/external/job/"
         "Fort-Belvoir-VA/Data-Engineer-Intern_R-00180867"
     )
+    _token = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    _html = (
+        "<html><body><script>var c = {"
+        f'token: "{_token}", postingAvailable: true,'
+        "};</script></body></html>"
+    )
+    respx.get(apply_url).mock(return_value=httpx.Response(200, text=_html))
     respx.get(cxs).mock(
         return_value=httpx.Response(
             200, json={"jobPostingInfo": {"jobDescription": "<p>Clearance role</p>"}}
         )
-    )
-    apply_url = (
-        "https://leidos.wd5.myworkdayjobs.com/en-US/external/job/Fort-Belvoir-VA/"
-        "Data-Engineer-Intern_R-00180867"
     )
     async with create_http_client() as client:
         jd_text, enrich_source = await routing.route_and_fetch(
