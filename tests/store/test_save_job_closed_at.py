@@ -103,6 +103,58 @@ async def test_upsert_with_jd_text_clears_closed_at_and_enrich_error(
     assert loaded.enrich_error is None
 
 
+async def test_record_enrichment_clears_closed_at(store: PostgresStore) -> None:
+    """record_enrichment writing a JD self-heals a previously-closed job.
+
+    A previously-closed job that gets a real JD via record_enrichment (e.g. a
+    manual paste through enrich_paste) must clear closed_at — a JD means the
+    posting is alive again, mirroring save_job's self-heal.
+    """
+    job = make_job(
+        "closed-enrich",
+        jd_text=None,
+        jd_quality=None,
+        closed_at=T1,
+        enrich_error="scrape_failed",
+    )
+    result = await store.save_job(job)
+
+    await store.record_enrichment(
+        job_id=result.job_id,
+        jd_text="A real job description recovered manually.",
+        jd_quality=QualityBand.FULL.value,
+        enriched_at=T2,
+        enrich_source="manual-paste",
+    )
+
+    loaded = await store.get_job(result.job_id)
+    assert loaded is not None
+    assert loaded.closed_at is None
+    assert loaded.enrich_error is None
+
+
+async def test_enrich_paste_clears_closed_at(store: PostgresStore) -> None:
+    """enrich_paste on a closed job clears closed_at via record_enrichment."""
+    job = make_job(
+        "closed-paste",
+        jd_text=None,
+        jd_quality=None,
+        closed_at=T1,
+        enrich_error="timeout",
+    )
+    saved = await store.save_job(job)
+
+    await store.enrich_paste(
+        platform=job.platform,
+        canonical_id=job.canonical_id,
+        jd_text="Pasted job description body text here.",
+    )
+
+    loaded = await store.get_job(saved.job_id)
+    assert loaded is not None
+    assert loaded.closed_at is None
+
+
 async def test_quality_monotonic_gate_unchanged(store: PostgresStore) -> None:
     """A lower-quality re-scan does NOT overwrite a stored full-quality jd_text."""
     # Insert with full quality JD

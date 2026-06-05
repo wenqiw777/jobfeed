@@ -22,8 +22,8 @@ from jobfeed.ports.store_ops import StoreOpsMixin
     "--older-than-days",
     default=30,
     show_default=True,
-    type=int,
-    help="Discovery-age threshold in days.",
+    type=click.IntRange(min=1),
+    help="Discovery-age threshold in days (must be >= 1).",
 )
 @click.option(
     "--apply",

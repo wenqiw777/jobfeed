@@ -181,6 +181,35 @@ async def test_fetch_jd_result_unrecognized_url_is_transient() -> None:
     assert result.reason is None
 
 
+@respx.mock
+async def test_fetch_jd_result_follows_html_redirect() -> None:
+    """A 301/302 redirect on the apply HTML is followed to the real job page.
+
+    Proves the per-fetch client preserves ``follow_redirects=True`` from the
+    shared client. Without it, the redirect would surface as a 30x and become
+    a transient miss instead of recovering the JD.
+    """
+    redirect_url = (
+        "https://leidos.wd5.myworkdayjobs.com/en-US/external/job/"
+        "Fort-Belvoir-VA/Data-Engineer-Intern_R-00180867/redirected"
+    )
+    respx.get(_APPLY_URL).mock(
+        return_value=httpx.Response(302, headers={"Location": redirect_url})
+    )
+    respx.get(redirect_url).mock(return_value=httpx.Response(200, text=_HTML_OPEN))
+    cxs_route = respx.get(_CXS_URL).mock(
+        return_value=httpx.Response(200, json=_CXS_PAYLOAD)
+    )
+
+    async with create_http_client() as client:
+        result = await fetch_jd_result(client, _APPLY_URL, timeout=TIMEOUT)
+
+    assert result.is_closed is False
+    assert "hi" in result.jd_text
+    assert result.reason is None
+    assert cxs_route.called
+
+
 # ---------------------------------------------------------------------------
 # fetch_jd backward-compat
 # ---------------------------------------------------------------------------

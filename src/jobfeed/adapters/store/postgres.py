@@ -3340,7 +3340,8 @@ class PostgresStore:
             await conn.execute(
                 """UPDATE jobs SET
                        jd_text = $1, jd_quality = $2, enriched_at = $3,
-                       enrich_source = $4, jd_lang = $5, enrich_error = NULL
+                       enrich_source = $4, jd_lang = $5, enrich_error = NULL,
+                       closed_at = NULL
                    WHERE id = $6""",
                 jd_text,
                 jd_quality,
@@ -3638,7 +3639,12 @@ class PostgresStore:
 
         Returns:
             Row count: matched rows (dry_run=True) or updated rows (dry_run=False).
+
+        Raises:
+            ValueError: If older_than_days < 1 (would select fresh/all rows).
         """
+        if older_than_days < 1:
+            raise ValueError("older_than_days must be >= 1")
         _STALE_WHERE = """
             (jd_quality IS NULL OR jd_quality IN ('missing', 'abandoned'))
             AND discovered_at < now() - make_interval(days => $1)

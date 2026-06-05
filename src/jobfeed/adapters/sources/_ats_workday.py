@@ -190,7 +190,11 @@ async def fetch_jd_result(
 
     cxs_url, _slug = built
 
-    async with httpx.AsyncClient(transport=client._transport) as fetch_client:
+    async with httpx.AsyncClient(
+        transport=client._transport,
+        headers=client.headers,
+        follow_redirects=True,
+    ) as fetch_client:
         html_status, html_body = await _fetch_html(
             fetch_client, apply_url, timeout=timeout
         )

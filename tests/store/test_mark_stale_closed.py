@@ -205,6 +205,33 @@ async def test_dry_run_count_matches_write_count(store: PostgresStore) -> None:
     assert dry == written == STALE_BATCH_SIZE
 
 
+async def test_zero_older_than_days_raises(store: PostgresStore) -> None:
+    """older_than_days=0 is rejected — it would select fresh rows (footgun)."""
+    with pytest.raises(ValueError, match="older_than_days"):
+        await store.mark_stale_jobs_closed(older_than_days=0, dry_run=True)
+
+
+async def test_negative_older_than_days_raises(store: PostgresStore) -> None:
+    """A negative older_than_days is rejected."""
+    with pytest.raises(ValueError, match="older_than_days"):
+        await store.mark_stale_jobs_closed(older_than_days=-1, dry_run=False)
+
+
+@pytest.mark.postgres
+def test_cli_rejects_zero_older_than_days(fresh_pg_dsn: str, tmp_path: Path) -> None:
+    """CLI rejects --older-than-days 0 with a non-zero exit (IntRange min=1)."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[db]\nurl = "{fresh_pg_dsn}"\n', encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--config", str(config_path), "mark-stale-closed", "--older-than-days", "0"],
+    )
+
+    assert result.exit_code != 0
+
+
 @pytest.mark.postgres
 def test_cli_command_registered_in_help() -> None:
     """mark-stale-closed must appear in jobfeed --help output."""
