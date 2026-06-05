@@ -14,6 +14,14 @@ dependencies = [
     "click",
     "httpx >= 0.28",
     "jinja2 >= 3.1",
+    # OpenAI SDK drives the `openai-compat` LLM backend (Decision 9). Lazy-imported
+    # inside the factory branch + under TYPE_CHECKING in the adapter, so the rest
+    # of the package imports cleanly even when the SDK is absent.
+    # >= 1.57.1: first release compatible with httpx 0.28 (which dropped the
+    # `proxies` kwarg). Older SDKs pass `proxies` and crash constructing
+    # AsyncOpenAI under our httpx floor — see openai-python#1902. The floor keeps
+    # locked/constrained installs reproducible, not just fresh latest-resolves.
+    "openai >= 1.57.1",
     "psycopg2-binary >= 2.9",
     "pydantic",
     "playwright >= 1.48",

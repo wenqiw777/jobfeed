@@ -15,6 +15,7 @@ from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.llm.claude import ClaudeCliLLM
 from jobfeed.adapters.llm.codex import CodexCliLLM
 from jobfeed.adapters.llm.mock import MockLLM
+from jobfeed.adapters.llm.openai_compat import OpenAiCompatLLM
 from jobfeed.config import LLMSettings
 from jobfeed.observability import get_logger
 
@@ -181,6 +182,76 @@ def test_claude_missing_executable_raises_runtime_unavailable(
         build_llm_client(
             "claude-cli/claude-haiku-4-5",
             settings=settings,
+            price_table=price_table,
+            logger=logger,
+        )
+
+
+# ---------------------------------------------------------------------------
+# openai-compat backend
+# ---------------------------------------------------------------------------
+
+
+def test_openai_compat_builds_adapter(monkeypatch, price_table, logger):
+    """openai-compat/model builds OpenAiCompatLLM when the api-key env is set."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    client = build_llm_client(
+        "openai-compat/gpt-4o-mini",
+        settings=LLMSettings(),
+        price_table=price_table,
+        logger=logger,
+    )
+
+    assert isinstance(client, OpenAiCompatLLM)
+
+
+def test_openai_compat_two_providers_by_base_url(monkeypatch, price_table, logger):
+    """One backend drives 2+ providers distinguished only by base_url config."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+
+    openai_client = build_llm_client(
+        "openai-compat/gpt-4o-mini",
+        settings=LLMSettings(openai_compat_base_url="https://api.openai.com/v1"),
+        price_table=price_table,
+        logger=logger,
+    )
+    deepseek_client = build_llm_client(
+        "openai-compat/deepseek-chat",
+        settings=LLMSettings(
+            openai_compat_base_url="https://api.deepseek.com",
+            openai_compat_api_key_env="DEEPSEEK_API_KEY",
+        ),
+        price_table=price_table,
+        logger=logger,
+    )
+
+    assert isinstance(openai_client, OpenAiCompatLLM)
+    assert isinstance(deepseek_client, OpenAiCompatLLM)
+    assert type(openai_client) is type(deepseek_client)
+
+
+def test_openai_compat_missing_api_key_raises_before_network(
+    monkeypatch, price_table, logger
+):
+    """An absent api_key_env raises LLMRuntimeUnavailable before any SDK use."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(LLMRuntimeUnavailable, match=r"requires \$OPENAI_API_KEY"):
+        build_llm_client(
+            "openai-compat/gpt-4o-mini",
+            settings=LLMSettings(),
+            price_table=price_table,
+            logger=logger,
+        )
+
+
+def test_openai_compat_empty_api_key_raises(monkeypatch, price_table, logger):
+    """An env var set to empty string is treated as missing."""
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    with pytest.raises(LLMRuntimeUnavailable, match="openai-compat backend requires"):
+        build_llm_client(
+            "openai-compat/gpt-4o-mini",
+            settings=LLMSettings(),
             price_table=price_table,
             logger=logger,
         )

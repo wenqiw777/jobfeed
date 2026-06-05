@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 
@@ -87,12 +88,54 @@ def build_llm_client(
             logger=logger,
         )
 
+    if backend == "openai-compat":
+        return _build_openai_compat(
+            model_name,
+            settings=settings,
+            price_table=price_table,
+            logger=logger,
+            opts=opts,
+        )
+
     if backend == "mock":
         from jobfeed.adapters.llm.mock import MockLLM  # noqa: PLC0415
 
         return MockLLM()
 
     raise ValueError(f"unknown LLM backend: {backend!r}")
+
+
+def _build_openai_compat(
+    model_name: str,
+    *,
+    settings: LLMSettings,
+    price_table: dict[str, ModelPricing],
+    logger: JobfeedLogger,
+    opts: LLMClientBuildOptions,
+) -> LLMClient:
+    """Build an ``OpenAiCompatLLM`` from settings + an injected SDK client.
+
+    The API key is validated BEFORE importing the SDK or opening any network
+    connection.  Pricing is best-effort (Decision 9): no analogue of
+    ``_require_codex_pricing``.
+    """
+    _require_api_key(settings.openai_compat_api_key_env)
+    from openai import AsyncOpenAI  # noqa: PLC0415
+
+    from jobfeed.adapters.llm.openai_compat import OpenAiCompatLLM  # noqa: PLC0415
+
+    client = AsyncOpenAI(
+        base_url=settings.openai_compat_base_url,
+        api_key=os.environ[settings.openai_compat_api_key_env],
+        timeout=_resolve_timeout(settings.openai_compat_timeout_s, opts),
+        max_retries=opts.max_retries,
+    )
+    return OpenAiCompatLLM(
+        client=client,
+        model=model_name,
+        price_table=price_table,
+        logger=logger,
+    )
 
 
 def _require_codex_pricing(
@@ -105,6 +148,27 @@ def _require_codex_pricing(
         f"codex-cli model {model_name!r} has no vendored pricing. "
         "Run `make update-prices` or choose a priced model before making "
         "real paid calls."
+    )
+
+
+def _require_api_key(env_name: str) -> None:
+    """Assert that the configured API-key env var is set and non-empty.
+
+    Parallels ``_require_executable``: raised BEFORE the SDK import or any
+    network call so a misconfigured ``openai-compat`` backend fails fast with a
+    teaching message instead of a vendor authentication error.
+
+    Args:
+        env_name: Name of the env var that holds the API key.
+
+    Raises:
+        LLMRuntimeUnavailable: When the env var is unset or empty.
+    """
+    if os.environ.get(env_name):
+        return
+    raise LLMRuntimeUnavailable(
+        f"openai-compat backend requires ${env_name}. Set it, or use "
+        "claude-cli if you have the CLI logged in."
     )
 
 
@@ -136,4 +200,8 @@ def _resolve_timeout(
     return options.timeout_s
 
 
-__all__ = ["LLMClientBuildOptions", "LLMRuntimeUnavailable", "build_llm_client"]
+__all__ = [
+    "LLMClientBuildOptions",
+    "LLMRuntimeUnavailable",
+    "build_llm_client",
+]
