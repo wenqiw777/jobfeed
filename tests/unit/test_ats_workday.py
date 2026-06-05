@@ -16,6 +16,7 @@ import respx
 
 from jobfeed.adapters.sources._ats_workday import (
     _build_cxs_url,
+    _extract_jd_text,
     fetch_jd,
     fetch_jd_result,
 )
@@ -169,6 +170,46 @@ async def test_fetch_jd_result_cxs_timeout_is_transient() -> None:
 
 
 @respx.mock
+async def test_fetch_jd_result_html_403_is_transient() -> None:
+    """HTML 403 (with a closed-looking body) → transient, NOT closed.
+
+    A 403 on the apply HTML is an anti-bot / rate-limit signal, not a dead
+    posting. Even if the (likely error-page) body happens to contain
+    ``postingAvailable: false``, a non-2xx HTML status must short-circuit to
+    transient BEFORE the flag is parsed, so we never mis-close on a 403.
+    """
+    respx.get(_APPLY_URL).mock(return_value=httpx.Response(403, text=_HTML_CLOSED))
+    cxs_route = respx.get(_CXS_URL).mock(
+        return_value=httpx.Response(200, json=_CXS_PAYLOAD)
+    )
+
+    async with create_http_client() as client:
+        result = await fetch_jd_result(client, _APPLY_URL, timeout=TIMEOUT)
+
+    assert result.is_closed is False
+    assert result.jd_text == ""
+    assert result.reason is None
+    assert not cxs_route.called
+
+
+@respx.mock
+async def test_fetch_jd_result_html_500_is_transient() -> None:
+    """HTML 500 → transient (is_closed=False), CXS not attempted."""
+    respx.get(_APPLY_URL).mock(return_value=httpx.Response(500, text=_HTML_OPEN))
+    cxs_route = respx.get(_CXS_URL).mock(
+        return_value=httpx.Response(200, json=_CXS_PAYLOAD)
+    )
+
+    async with create_http_client() as client:
+        result = await fetch_jd_result(client, _APPLY_URL, timeout=TIMEOUT)
+
+    assert result.is_closed is False
+    assert result.jd_text == ""
+    assert result.reason is None
+    assert not cxs_route.called
+
+
+@respx.mock
 async def test_fetch_jd_result_unrecognized_url_is_transient() -> None:
     """An unrecognized apply URL (no CXS mapping) → transient empty."""
     async with create_http_client() as client:
@@ -281,6 +322,53 @@ def test_build_cxs_url_unrecognized_returns_none() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _extract_jd_text — jobDescription must be a string
+# ---------------------------------------------------------------------------
+
+
+def test_extract_jd_text_string_description() -> None:
+    """A str jobDescription is converted to plain text."""
+    raw = {"jobPostingInfo": {"jobDescription": "<p>hello</p>"}}
+    assert "hello" in _extract_jd_text(raw)
+
+
+def test_extract_jd_text_dict_description_is_empty() -> None:
+    """A dict jobDescription is rejected → empty string (not a bogus JD)."""
+    raw = {"jobPostingInfo": {"jobDescription": {"text": "<p>nope</p>"}}}
+    assert _extract_jd_text(raw) == ""
+
+
+def test_extract_jd_text_list_description_is_empty() -> None:
+    """A list jobDescription is rejected → empty string."""
+    raw = {"jobPostingInfo": {"jobDescription": ["<p>nope</p>"]}}
+    assert _extract_jd_text(raw) == ""
+
+
+def test_extract_jd_text_number_description_is_empty() -> None:
+    """A numeric jobDescription is rejected → empty string."""
+    raw = {"jobPostingInfo": {"jobDescription": 12345}}
+    assert _extract_jd_text(raw) == ""
+
+
+@respx.mock
+async def test_fetch_jd_result_non_string_description_yields_no_jd() -> None:
+    """A non-str jobDescription in the CXS payload → empty jd, is_closed=False."""
+    respx.get(_APPLY_URL).mock(return_value=httpx.Response(200, text=_HTML_OPEN))
+    respx.get(_CXS_URL).mock(
+        return_value=httpx.Response(
+            200, json={"jobPostingInfo": {"jobDescription": {"html": "<p>x</p>"}}}
+        )
+    )
+
+    async with create_http_client() as client:
+        result = await fetch_jd_result(client, _APPLY_URL, timeout=TIMEOUT)
+
+    assert result.jd_text == ""
+    assert result.is_closed is False
+    assert result.reason is None
+
+
+# ---------------------------------------------------------------------------
 # Cookie isolation
 # ---------------------------------------------------------------------------
 
@@ -343,6 +431,27 @@ async def test_cross_fetch_cookie_isolation() -> None:
     assert "wd_browser_id" not in cxs2_cookie, (
         f"fetch #1 cookie leaked onto fetch #2 CXS request: {cxs2_cookie!r}"
     )
+
+
+@respx.mock
+async def test_shared_client_usable_after_fetch() -> None:
+    """The shared client survives a fetch and stays usable for the next one.
+
+    The per-fetch client must own an INDEPENDENT transport. If it reused the
+    shared client's transport, its ``__aexit__`` would ``aclose()`` the shared
+    pool, breaking the next fetch on the same shared client.
+    """
+    respx.get(_APPLY_URL).mock(return_value=httpx.Response(200, text=_HTML_OPEN))
+    respx.get(_CXS_URL).mock(return_value=httpx.Response(200, json=_CXS_PAYLOAD))
+
+    async with create_http_client() as client:
+        first = await fetch_jd_result(client, _APPLY_URL, timeout=TIMEOUT)
+        # Shared client must not have been closed by the first per-fetch client.
+        assert client.is_closed is False
+        second = await fetch_jd_result(client, _APPLY_URL, timeout=TIMEOUT)
+
+    assert "hi" in first.jd_text
+    assert "hi" in second.jd_text
 
 
 @respx.mock

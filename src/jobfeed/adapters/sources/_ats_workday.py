@@ -89,6 +89,11 @@ def _build_cxs_url(apply_url: str) -> tuple[str, str] | None:
     return None
 
 
+def _is_success_status(status: int) -> bool:
+    """True if ``status`` is a 2xx HTTP status code."""
+    return 200 <= status <= 299  # noqa: PLR2004 — HTTP 2xx range bounds
+
+
 def _parse_posting_flag(html_body: str) -> bool | None:
     """Extract postingAvailable boolean from inline JS, or None if absent."""
     m = _RE_POSTING_AVAILABLE.search(html_body)
@@ -110,7 +115,10 @@ def _extract_jd_text(raw: Any) -> str:
     info = raw.get("jobPostingInfo")
     if not isinstance(info, dict):
         return ""
-    description = str(info.get("jobDescription") or "").strip()
+    desc = info.get("jobDescription")
+    if not isinstance(desc, str):
+        return ""
+    description = desc.strip()
     if not description:
         return ""
     return html_to_text(description).strip()
@@ -169,12 +177,16 @@ async def fetch_jd_result(
             postingAvailable + token).
     Step 2: If open, GET the CXS endpoint with the CSRF token.
 
-    A short-lived ``httpx.AsyncClient`` is created per call, sharing only the
-    transport (connection pool) of ``client`` but owning a fresh cookie jar.
-    This prevents cookies set by one tenant's HTML response from leaking onto
-    subsequent fetches that reuse the same long-lived ``client``.  Within a
-    single fetch the HTML and CXS requests share the same isolated jar, so
-    session cookies flow from step 1 to step 2 as required.
+    A short-lived, fully INDEPENDENT ``httpx.AsyncClient`` is created per call:
+    its own transport / connection pool and a fresh cookie jar, mirroring only
+    the shared client's headers (UA), redirect-following, and timeout config.
+    It deliberately does NOT reuse the shared client's transport — doing so
+    would let one finishing per-fetch client's ``__aexit__`` ``aclose()`` the
+    shared pool out from under sibling fetches running under SpeedyApply's
+    concurrent ``asyncio.gather`` routing. The fresh jar also prevents cookies
+    set by one tenant's HTML response from leaking onto subsequent fetches.
+    Within a single fetch the HTML and CXS requests share the same isolated
+    jar, so session cookies flow from step 1 to step 2 as required.
 
     Args:
         client: Shared async HTTP client (provides connection pool / transport).
@@ -191,9 +203,9 @@ async def fetch_jd_result(
     cxs_url, _slug = built
 
     async with httpx.AsyncClient(
-        transport=client._transport,
         headers=client.headers,
         follow_redirects=True,
+        timeout=client.timeout,
     ) as fetch_client:
         html_status, html_body = await _fetch_html(
             fetch_client, apply_url, timeout=timeout
@@ -201,13 +213,22 @@ async def fetch_jd_result(
 
         if html_status in _DEAD_STATUSES:
             return WorkdayFetch("", True, f"gone:{html_status}:{_VENDOR}")
-        if html_status == 0 or not html_body:
+        # Any other non-2xx HTML (e.g. 403 anti-bot, 429 rate-limit, 5xx) is a
+        # transient miss, never a close: short-circuit BEFORE parsing the flag so
+        # an error-page body that happens to read postingAvailable:false can't
+        # mis-close the req. (status==0 = network failure; empty body = nothing
+        # to parse.)
+        if not _is_success_status(html_status) or not html_body:
             return WorkdayFetch("", False, None)
 
         is_available = _parse_posting_flag(html_body)
         if is_available is False:
             return WorkdayFetch("", True, f"closed:posting-unavailable:{_VENDOR}")
 
+        # postingAvailable absent (None) but a token exists → still attempt the
+        # CXS call as best-effort recovery. Safe: a closed req returns CXS
+        # 403→transient or 404/410→gone, and posting-unavailable-closed is only
+        # set on an explicit ``false`` flag, never on a missing one.
         token = _parse_csrf_token(html_body)
         if token is None:
             return WorkdayFetch("", False, None)
