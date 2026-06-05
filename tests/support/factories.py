@@ -46,6 +46,8 @@ def make_job(
     posted_at = cast(datetime | None, overrides.get("posted_at"))
     enriched_at = cast(datetime | None, overrides.get("enriched_at"))
     enrich_source = cast(str | None, overrides.get("enrich_source"))
+    closed_at = cast(datetime | None, overrides.get("closed_at"))
+    enrich_error = cast(str | None, overrides.get("enrich_error"))
     if jd_text is not None and jd_quality is None:
         jd_quality = assess_quality(jd_text)
     if jd_text is not None and posted_at is None:
@@ -67,6 +69,8 @@ def make_job(
         posted_at=posted_at,
         enriched_at=enriched_at,
         enrich_source=enrich_source,
+        closed_at=closed_at,
+        enrich_error=enrich_error,
     )
 
 
