@@ -166,23 +166,59 @@ def _resolve_cache_dir() -> str:
     return str(cache_dir)
 
 
-def weights_present(cache_dir: str | Path) -> bool:
-    """Whether the embedder's ONNX weights already live under ``cache_dir``.
+def _model_dir_token(model_name: str) -> str:
+    """Return the lowercased identity token a model's cache dir must contain.
 
-    fastembed lays the HuggingFace snapshot out as
-    ``models--<org>--<model>/snapshots/<rev>/model.onnx`` (a symlink into
-    ``blobs/``). ``model.onnx`` is the load-bearing artifact, so its presence
-    ANYWHERE under the cache means a load will hit the disk, not the network —
-    robust across fastembed versions and model ids (no hard-coded dir name).
+    fastembed names a model's on-disk dir after its DOWNLOAD source, not the
+    user-facing id: the HF mirror ``models--<org>--<repo>`` (e.g.
+    ``models--qdrant--all-MiniLM-L6-v2-onnx``) or the GCS layout ``fast-<name>``
+    (e.g. ``fast-all-MiniLM-L6-v2``). Both carry the model id's LAST path segment
+    verbatim, so that segment (lowercased) is a registry-free, version-tolerant
+    token to scope the weight search to THIS model — independent of fastembed's
+    exact mirror org / suffix.
+    """
+    return model_name.rsplit("/", 1)[-1].lower()
+
+
+def weights_present(cache_dir: str | Path, model_name: str) -> bool:
+    """Whether the REQUESTED model's ONNX weights already live under ``cache_dir``.
+
+    A bare "any ``model.onnx`` under the cache" check is WRONG when models share a
+    cache dir: a baked default MiniLM would mask a cold cache for a different
+    configured ``embedding_model`` and let it silently download. So the search is
+    scoped to the requested model — a ``model.onnx`` counts only when an owner
+    directory between it and ``cache_dir`` carries this model's
+    ``_model_dir_token`` (the HF ``models--<org>--<repo>`` owner or the GCS
+    ``fast-<name>`` owner). Robust across both fastembed cache layouts.
 
     Args:
         cache_dir: Resolved fastembed weight-cache directory.
+        model_name: Requested model id to scope the presence check to.
 
     Returns:
-        True iff at least one ``model.onnx`` exists beneath ``cache_dir``.
+        True iff a ``model.onnx`` for THIS model exists beneath ``cache_dir``.
     """
     root = Path(cache_dir)
-    return root.is_dir() and any(root.rglob("model.onnx"))
+    if not root.is_dir():
+        return False
+    token = _model_dir_token(model_name)
+    return any(
+        _onnx_belongs_to_model(onnx, root, token) for onnx in root.rglob("model.onnx")
+    )
+
+
+def _onnx_belongs_to_model(onnx: Path, root: Path, token: str) -> bool:
+    """Whether an ancestor dir of ``onnx`` (up to ``root``) carries the model token.
+
+    Walks ``onnx``'s ancestors up to (excluding) ``root``, matching ``token``
+    against each dir name — so the owner dir is found at any nesting depth.
+    """
+    for parent in onnx.parents:
+        if parent == root:
+            return False
+        if token in parent.name.lower():
+            return True
+    return False
 
 
 def warm_embedder(model_name: str = DEFAULT_MODEL_NAME) -> str:
@@ -224,7 +260,7 @@ def _load_model(model_name: str) -> Any:
     logging.getLogger("fastembed").setLevel(logging.ERROR)
 
     cache_dir = _resolve_cache_dir()
-    if not weights_present(cache_dir):
+    if not weights_present(cache_dir, model_name):
         _warn_one_time_download(model_name, cache_dir)
 
     import warnings  # noqa: PLC0415

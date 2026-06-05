@@ -206,25 +206,78 @@ def test_load_model_defaults_cache_dir_under_user_cache_jobfeed(
 # tests drive _load_model with the fake fastembed so nothing downloads.
 
 
-def _seed_onnx_weight(cache_dir: Path) -> None:
-    """Create a fastembed-shaped ``model.onnx`` so ``weights_present`` is True."""
-    snapshot = cache_dir / "models--qdrant--all-MiniLM-L6-v2-onnx" / "snapshots" / "rev"
+def _seed_onnx_weight(
+    cache_dir: Path, dirname: str = "models--qdrant--all-MiniLM-L6-v2-onnx"
+) -> None:
+    """Create a fastembed-shaped ``model.onnx`` under a named owner dir.
+
+    Mirrors fastembed's HF-snapshot layout ``<owner>/snapshots/<rev>/model.onnx``.
+    ``dirname`` is the owner directory (e.g. ``models--<org>--<repo>``) whose name
+    carries the model identity that ``weights_present`` scopes its match to.
+    """
+    snapshot = cache_dir / dirname / "snapshots" / "rev"
     snapshot.mkdir(parents=True)
     (snapshot / "model.onnx").write_bytes(b"onnx")
 
 
+# fastembed addresses all-MiniLM-L6-v2 by its full HF id; weights_present + the
+# cold-cache warning must scope to the REQUESTED model, so these drive the real
+# FASTEMBED_MINILM_ID rather than a synthetic "some/model".
+_MINILM_ONNX_DIR = "models--qdrant--all-MiniLM-L6-v2-onnx"
+_OTHER_MODEL = "BAAI/bge-small-en-v1.5"
+_OTHER_ONNX_DIR = "models--qdrant--bge-small-en-v1.5-onnx-q"
+
+
 def test_weights_present_false_for_missing_or_empty_dir(tmp_path: Path) -> None:
     """No cache dir and an empty cache dir both report weights absent."""
-    assert weights_present(tmp_path / "does-not-exist") is False
+    assert weights_present(tmp_path / "does-not-exist", FASTEMBED_MINILM_ID) is False
     empty = tmp_path / "empty"
     empty.mkdir()
-    assert weights_present(empty) is False
+    assert weights_present(empty, FASTEMBED_MINILM_ID) is False
 
 
-def test_weights_present_true_when_model_onnx_exists_anywhere(tmp_path: Path) -> None:
-    """A nested ``model.onnx`` (fastembed snapshot layout) means present."""
-    _seed_onnx_weight(tmp_path)
-    assert weights_present(tmp_path) is True
+def test_weights_present_true_when_requested_model_onnx_exists(tmp_path: Path) -> None:
+    """A nested ``model.onnx`` under the REQUESTED model's dir means present."""
+    _seed_onnx_weight(tmp_path, _MINILM_ONNX_DIR)
+    assert weights_present(tmp_path, FASTEMBED_MINILM_ID) is True
+
+
+def test_weights_present_false_when_only_a_different_model_is_cached(
+    tmp_path: Path,
+) -> None:
+    """A present-but-DIFFERENT model's onnx does not satisfy the requested model.
+
+    The bug: ``weights_present`` matched ANY ``model.onnx`` under the cache, so a
+    baked default MiniLM made a request for a different ``embedding_model`` look
+    warm and silently download. Scoping the check to the requested model's
+    directory token makes a foreign model's weights NOT count as present.
+    """
+    # Only the default MiniLM weights are baked in.
+    _seed_onnx_weight(tmp_path, _MINILM_ONNX_DIR)
+
+    # A request for a DIFFERENT supported model must report its weights absent.
+    assert weights_present(tmp_path, _OTHER_MODEL) is False
+    # And the reverse: the other model present, MiniLM requested -> absent.
+    other = tmp_path / "other"
+    other.mkdir()
+    _seed_onnx_weight(other, _OTHER_ONNX_DIR)
+    assert weights_present(other, FASTEMBED_MINILM_ID) is False
+    # Sanity: each model IS present under its own dir token.
+    assert weights_present(other, _OTHER_MODEL) is True
+
+
+def test_weights_present_matches_gcs_fast_dir_layout(tmp_path: Path) -> None:
+    """The GCS (tar.gz) layout ``fast-<name>/model.onnx`` is also model-scoped.
+
+    fastembed's non-HF source extracts to ``fast-<model-last-segment>``; the
+    token match must recognize that owner dir too, robust across fastembed's two
+    cache layouts.
+    """
+    gcs_dir = tmp_path / "fast-all-MiniLM-L6-v2"
+    gcs_dir.mkdir()
+    (gcs_dir / "model.onnx").write_bytes(b"onnx")
+    assert weights_present(tmp_path, FASTEMBED_MINILM_ID) is True
+    assert weights_present(tmp_path, _OTHER_MODEL) is False
 
 
 def test_load_model_warns_once_on_cold_cache(
@@ -242,19 +295,19 @@ def test_load_model_warns_once_on_cold_cache(
         lambda model, cache: warned.append({"model": model, "cache_dir": cache}),
     )
 
-    embedder_module._load_model("some/model")
+    embedder_module._load_model(FASTEMBED_MINILM_ID)
 
-    assert warned == [{"model": "some/model", "cache_dir": str(cache_dir)}]
+    assert warned == [{"model": FASTEMBED_MINILM_ID, "cache_dir": str(cache_dir)}]
 
 
-def test_load_model_silent_when_weights_already_cached(
+def test_load_model_silent_when_requested_weights_already_cached(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A warm cache (baked Docker image) emits no download warning."""
+    """A warm cache (baked Docker image) for the requested model emits no warning."""
     _SpyTextEmbedding.calls = []
     cache_dir = tmp_path / "warm"
     cache_dir.mkdir()
-    _seed_onnx_weight(cache_dir)
+    _seed_onnx_weight(cache_dir, _MINILM_ONNX_DIR)
     monkeypatch.setenv(ML_CACHE_DIR_ENV, str(cache_dir))
     _install_fake_fastembed(monkeypatch, _SpyTextEmbedding)
     warned: list[object] = []
@@ -264,9 +317,37 @@ def test_load_model_silent_when_weights_already_cached(
         lambda *_a: warned.append(object()),
     )
 
-    embedder_module._load_model("some/model")
+    embedder_module._load_model(FASTEMBED_MINILM_ID)
 
     assert warned == []  # weights present -> no surprise-download log
+
+
+def test_load_model_warns_when_cache_holds_only_a_different_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A different model's baked weights still warns for the requested model.
+
+    The end-to-end Finding: baked default MiniLM present, but the configured
+    ``embedding_model`` is a DIFFERENT model. ``_load_model`` must scope its
+    presence check to the requested model, see a (true) cache miss, and warn
+    before fastembed downloads — never silently fetch.
+    """
+    _SpyTextEmbedding.calls = []
+    cache_dir = tmp_path / "warm-wrong-model"
+    cache_dir.mkdir()
+    _seed_onnx_weight(cache_dir, _MINILM_ONNX_DIR)  # only the default model baked.
+    monkeypatch.setenv(ML_CACHE_DIR_ENV, str(cache_dir))
+    _install_fake_fastembed(monkeypatch, _SpyTextEmbedding)
+    warned: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        embedder_module,
+        "_warn_one_time_download",
+        lambda model, cache: warned.append({"model": model, "cache_dir": cache}),
+    )
+
+    embedder_module._load_model(_OTHER_MODEL)
+
+    assert warned == [{"model": _OTHER_MODEL, "cache_dir": str(cache_dir)}]
 
 
 def test_warn_one_time_download_emits_structlog_event(

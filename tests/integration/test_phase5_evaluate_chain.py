@@ -825,3 +825,130 @@ async def test_phase5_overfetch_caps_survivors_to_gate_budget(
     oldest = await _gate_state(store, clean_ids[-1])
     assert oldest["ml_gate_result"] is None
     assert oldest["stage_a_status"] is None
+
+
+async def test_phase5_corpus_all_rescores_completed_row_and_twin(
+    store: PostgresStore,
+) -> None:
+    """``evaluate --corpus all`` re-scores a completed row + its completed twin.
+
+    The funnel is the sole path to survivor ids, so an explicit full
+    re-evaluation must surface a previously ``completed`` cluster again. Run 1
+    (default ``unrated``) scores the twin cluster's rep and the lone clean row.
+    Run 2 with ``corpus='all'`` must re-claim and re-score BOTH (the twin cluster,
+    via one re-elected rep, and the singleton), whereas a second ``unrated`` run
+    would skip them entirely (completed-exclusion + twin-suppression hold for the
+    incremental flow). Confirms the corpus-scoped predicate end-to-end.
+    """
+    ids = await _seed(store, [TWIN_REP, TWIN_NONREP, PASS_JOB])
+    first = await _service(store, fail_if=None).run(stage="a", corpus="unrated")
+    # Run 1 scored the twin rep (twin-gh) + the singleton (pass): 2 reps.
+    assert first.stage_a_scored == EXPECTED_SCORED_REPS
+    assert (await _gate_state(store, ids["twin-gh"]))["stage_a_status"] == "completed"
+    assert (await _gate_state(store, ids["pass"]))["stage_a_status"] == "completed"
+
+    # A second DEFAULT run finds nothing: completed rep + suppressed twin + the
+    # completed singleton are all excluded by the incremental predicate.
+    skipped = await _service(store, fail_if=None).run(stage="a", corpus="unrated")
+    assert skipped.stage_a_scored == 0
+
+    # corpus='all' re-admits the whole completed set: the twin cluster is
+    # re-scored via one re-elected rep, and the singleton is re-scored too.
+    rescored = await _service(store, fail_if=None).run(stage="a", corpus="all")
+    assert rescored.stage_a_scored == EXPECTED_SCORED_REPS  # twin rep + singleton.
+    assert (await _gate_state(store, ids["pass"]))["stage_a_status"] == "completed"
+    # Exactly one of the twin pair is re-claimed (dedupe keeps it once-per-cluster).
+    pool = store._get_pool()
+    twin_claimed = await pool.fetch(
+        "SELECT e.job_id FROM evaluations e "
+        "WHERE e.job_id = ANY($1::bigint[]) AND e.stage_a_status = 'completed'",
+        [int(ids["twin-gh"]), int(ids["twin-li"])],
+    )
+    assert len(twin_claimed) == 1
+
+
+async def _seed_twin_pair_at(
+    store: PostgresStore, prefix: str, base: datetime
+) -> list[str]:
+    """Seed two same-(company,title) twins (one cluster) at adjacent timestamps.
+
+    Both share ``TwinCo`` / ``Backend Engineer`` so they collapse to ONE dedup
+    cluster, and both sit at the newest ``discovered_at`` so they occupy the first
+    candidate page. Returns their store ids.
+    """
+    ids = []
+    for i, platform in enumerate(("greenhouse", "linkedin")):
+        ids.append(
+            await _seed_with_discovered_at(
+                store,
+                SeedJob(
+                    platform=platform,
+                    canonical_id=f"{prefix}-{platform}",
+                    company="TwinCo",
+                    title="Backend Engineer",
+                    jd_text=CLEAN_SWE_JD,
+                ),
+                base - timedelta(seconds=i),
+            )
+        )
+    return ids
+
+
+async def test_phase5_overfetch_pages_past_twin_collapsed_newest_page(
+    store: PostgresStore,
+) -> None:
+    """A newest page that dedupes to 1 rep must page further to fill the budget.
+
+    Regression for the dedupe-blind overfetch: the load loop returned as soon as
+    it had ``page_size`` HARD-FILTER survivors, BEFORE dedupe. A newest page made
+    entirely of one twin cluster (``page_size`` rows collapsing to a SINGLE
+    representative) therefore ended the loop with far fewer reps than the budget,
+    and the run never reached the older DISTINCT jobs behind that page — claiming
+    1 job when ``ml_gate_max_candidates`` was larger. The loop must now count
+    DEDUPED representatives toward the target and keep paging, surfacing the older
+    distinct rows so the run claims up to the budget.
+    """
+    page_size = 2
+    now = datetime.now(UTC)
+    # Newest full page: a twin pair (one cluster -> one rep) at the front.
+    twin_ids = await _seed_twin_pair_at(store, "twin", now)
+    # Older DISTINCT (different-company) clean reps, strictly behind the twin page.
+    distinct_ids = []
+    for i in range(3):
+        distinct_ids.append(
+            await _seed_with_discovered_at(
+                store,
+                SeedJob(
+                    platform="greenhouse",
+                    canonical_id=f"distinct-{i}",
+                    company=f"DistinctCo{i}",
+                    title="Platform Engineer",
+                    jd_text=CLEAN_SWE_JD,
+                ),
+                now - timedelta(minutes=i + 1),
+            )
+        )
+
+    run = await _service(store, fail_if=None, ml_gate_max_candidates=page_size).run(
+        stage="both"
+    )
+
+    # The budget is filled with DEDUPED reps: the twin cluster contributes one
+    # rep, and the loop paged on to claim the newest distinct rep too — exactly
+    # page_size reps scored, NOT the single twin rep the old loop would stop at.
+    assert run.stage_a_scored == page_size
+    pool = store._get_pool()
+    # Exactly one of the twin pair is scored (the cluster's elected rep).
+    twin_scored = await pool.fetch(
+        "SELECT e.job_id FROM evaluations e "
+        "WHERE e.job_id = ANY($1::bigint[]) AND e.stage_a_status = 'completed'",
+        [int(jid) for jid in twin_ids],
+    )
+    assert len(twin_scored) == 1
+    # An older DISTINCT job was surfaced and scored (the newest distinct one),
+    # proving the loop paged past the twin-collapsed first page.
+    newest_distinct = await _gate_state(store, distinct_ids[0])
+    assert newest_distinct["stage_a_status"] == "completed"
+    # And the budget cap still holds: the oldest distinct job is left for later.
+    oldest_distinct = await _gate_state(store, distinct_ids[-1])
+    assert oldest_distinct["stage_a_status"] is None

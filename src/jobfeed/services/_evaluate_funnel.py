@@ -45,14 +45,14 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
 ) -> list[str]:
     """Run the candidate funnel and return survivor Stage A job-ids.
 
-    Flow: load candidates page-by-page (no claim) -> hard filter (count drops),
-    overfetching PAST hard-filtered drops until enough survivors or the eligible
-    set is exhausted -> dedupe to representatives -> optional ML gate (gate only
-    NULL-gate reps; persist + count non-pass; already-'pass' reps survive without
-    re-gating). Survivors are the hard-filter ∩ representative ∩ gate-pass set
-    (or, gate off, hard-filter ∩ representative). In dry-run nothing is persisted;
-    survivors are sliced to the Stage A ``limit`` (matching what a real claim
-    would take) and a survivor preview is recorded on ``run.dry_run_preview``.
+    Flow: page candidates (no claim) -> hard filter (count drops) + dedupe each
+    iteration, overfetching PAST hard-filtered AND dedupe drops until enough
+    REPRESENTATIVES or the eligible set is exhausted -> optional ML gate (gate
+    only NULL-gate reps; persist + count non-pass; already-'pass' reps survive
+    without re-gating). Survivors are the hard-filter ∩ representative ∩ gate-pass
+    set (or, gate off, hard-filter ∩ representative). In dry-run nothing is
+    persisted; survivors are sliced to the Stage A ``limit`` (matching a real
+    claim) and a survivor preview is recorded on ``run.dry_run_preview``.
 
     Args:
         deps: Evaluate dependencies (store, optional ml_gate / hard_filters).
@@ -63,15 +63,14 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
         logger: Run logger; warns if the candidate scan is page-bound truncated.
         dry_run: When True, persist nothing and record a (limit-sliced) preview.
         limit: Stage A claim limit; slices the dry-run preview to match a real
-            run. ``None`` leaves the survivor set unsliced.
+            run (``None`` leaves it unsliced).
 
     Returns:
         Survivor job-ids to hand to Stage A (empty in dry-run).
     """
-    filtered = await _load_filtered_survivors(
+    representatives = await _load_representatives(
         deps, config, run, corpus, max_days, logger
     )
-    representatives = _representatives(filtered)
     survivors = await _gate_representatives(deps, config, run, representatives, dry_run)
     if dry_run:
         # Append (not assign) so a later Stage-B preview pass keeps this pass's
@@ -82,7 +81,7 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
     return [_job_id(job) for job in survivors]
 
 
-async def _load_filtered_survivors(  # noqa: PLR0913 - paginated load inputs
+async def _load_representatives(  # noqa: PLR0913 - paginated load inputs
     deps: EvaluateDependencies,
     config: EvaluateRuntimeConfig,
     run: PipelineRun,
@@ -90,21 +89,24 @@ async def _load_filtered_survivors(  # noqa: PLR0913 - paginated load inputs
     max_days: int | None,
     logger: JobfeedLogger,
 ) -> list[GateCandidate]:
-    """Page candidates, hard-filtering each page, until enough survivors.
+    """Page + hard-filter + dedupe candidates until enough REPRESENTATIVES.
 
-    Decouples the LOAD bound from the GATE budget: ``ml_gate_max_candidates`` is
-    both the page size and the survivor target, but the load keeps fetching the
-    next keyset page (``(discovered_at, id)`` "after" cursor, matching the query's
-    ``discovered_at DESC, id DESC`` order) PAST hard-filtered drops so an eligible
-    older row behind a blocked newest prefix is not starved. Every page reapplies
-    the same store-side predicates (corpus / freshness / stale-takeover /
-    twin-suppression / exclude-gate-failed) plus the in-memory hard filter (counted
-    on ``run.jobs_filtered``). Stops when survivors reach the page size, a short
-    page proves the eligible set is exhausted, or the ``_MAX_CANDIDATE_PAGES``
-    safety bound is hit — the last warns so the truncation is never a silent cap.
+    ``ml_gate_max_candidates`` is both the page size and the target, but the
+    target is DEDUPED representatives, not raw survivors: a newest page of twins
+    can collapse to a single rep, so counting raw survivors would stop short of
+    the budget and starve older DISTINCT jobs behind that page. So the loop pages
+    PAST both hard-filtered AND dedupe drops (keyset ``(discovered_at, id)``
+    cursor over the query's ``discovered_at DESC, id DESC`` order), re-deduping
+    the WHOLE accumulated survivor set each iteration so twins split across pages
+    still cluster. Each page reapplies the store-side predicates + the in-memory
+    hard filter (counted on ``run.jobs_filtered``). Stops when the rep count
+    reaches the page size, a short page proves the eligible set exhausted, or
+    ``_MAX_CANDIDATE_PAGES`` is hit — the last warns so the truncation is never a
+    silent cap.
 
     Returns:
-        Hard-filter survivors capped to ``ml_gate_max_candidates`` (newest-first).
+        Deduped representatives capped to ``ml_gate_max_candidates`` (newest
+        clusters first), each carrying its persisted ``ml_gate_result``.
     """
     page_size = config.ml_gate_max_candidates
     survivors: list[GateCandidate] = []
@@ -119,13 +121,15 @@ async def _load_filtered_survivors(  # noqa: PLR0913 - paginated load inputs
             after=after,
         )
         survivors.extend(_apply_hard_filters(page, deps.hard_filters, run))
-        if len(survivors) >= page_size or len(page) < page_size:
-            # Cap to the gate budget: a full final page can overshoot to ~2x.
-            return survivors[:page_size]  # target met, or set exhausted
+        representatives = _representatives(survivors)
+        if len(representatives) >= page_size or len(page) < page_size:
+            # Target met or eligible set exhausted; cap to the gate budget (a
+            # full final page can overshoot the target).
+            return representatives[:page_size]
         last = page[-1].job
         after = (last.discovered_at, int(_job_id(last)))
     logger.warning("funnel_candidate_scan_truncated", max_pages=_MAX_CANDIDATE_PAGES)
-    return survivors[:page_size]
+    return _representatives(survivors)[:page_size]
 
 
 def _apply_hard_filters(
@@ -141,7 +145,7 @@ def _apply_hard_filters(
         run: Pipeline run whose ``jobs_filtered`` counter is incremented.
 
     Returns:
-        Candidates that pass every hard filter (input order preserved).
+        Candidates passing every hard filter (input order preserved).
     """
     if filters is None:
         return candidates
@@ -231,10 +235,7 @@ async def _persist_gate_results(
     results: list[MLGateResult],
     dry_run: bool,
 ) -> None:
-    """Persist each gate result concurrently (``results`` align 1:1 with reps).
-
-    No-op in dry-run.
-    """
+    """Persist each gate result concurrently, 1:1 with reps (no-op in dry-run)."""
     if dry_run:
         return
     pairs = list(zip(representatives, results, strict=True))
@@ -251,10 +252,9 @@ def _limit_survivors(
     """Slice survivors to the Stage A claim ``limit`` in claim order.
 
     Mirrors the claim query's ``ORDER BY jobs.discovered_at DESC, jobs.id DESC``
-    + ``LIMIT`` so the dry-run preview matches exactly what a real run would
-    claim. ONLY ``None`` means unsliced (return every survivor); a non-positive
-    ``limit`` means "claim nothing" and returns an empty list — matching the
-    CLI's "max jobs" contract where 0 takes zero jobs, not unlimited.
+    + ``LIMIT`` so the dry-run preview matches what a real run would claim. ONLY
+    ``None`` is unsliced; a non-positive ``limit`` returns an empty list —
+    matching the CLI's "max jobs" contract where 0 takes zero jobs, not unlimited.
     """
     if limit is None:
         return survivors
@@ -268,9 +268,9 @@ def _claim_order_key(job: JobPosting) -> tuple[float, int]:
     """Return the claim-query ordering key (newest first, then highest id).
 
     Mirrors the SQL ``ORDER BY jobs.discovered_at DESC, jobs.id DESC`` (smaller
-    tuple sorts first). Store ids are a numeric ``bigint`` column, so the id
-    tiebreak negates the integer value; a non-numeric id (test doubles only) falls
-    back to ``0``, keeping the key total and crash-free without affecting real runs.
+    tuple sorts first). Store ids are a numeric ``bigint``, so the id tiebreak
+    negates the integer; a non-numeric id (test doubles only) falls back to ``0``,
+    keeping the key total and crash-free without affecting real runs.
     """
     job_id = _job_id(job)
     id_rank = -int(job_id) if job_id.isdigit() else 0
