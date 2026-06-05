@@ -67,6 +67,7 @@ from jobfeed.domain.status import (
     validate_transition,
 )
 from jobfeed.domain.types import VALID_SEVERITIES, Severity
+from jobfeed.ports.source import StoredEnrichment
 
 # ---------------------------------------------------------------------------
 # Row mapping helpers
@@ -1588,6 +1589,38 @@ class PostgresStore:
                 canonical_id,
             )
         return row is not None
+
+    async def get_enrichment(
+        self,
+        *,
+        platform: str,
+        canonical_id: str,
+    ) -> StoredEnrichment | None:
+        """Return the stored enrichment snapshot for a job (EnrichmentLookup port).
+
+        Args:
+            platform: Source platform.
+            canonical_id: Platform-specific identity.
+
+        Returns:
+            Stored enrichment snapshot, or None when the job is unknown.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT jd_text, jd_quality, enriched_at, enrich_source
+                   FROM jobs WHERE platform = $1 AND canonical_id = $2""",
+                platform,
+                canonical_id,
+            )
+        if row is None:
+            return None
+        return StoredEnrichment(
+            jd_text=row["jd_text"],
+            quality=QualityBand(row["jd_quality"]) if row["jd_quality"] else None,
+            enriched_at=row["enriched_at"],
+            enrich_source=row["enrich_source"],
+        )
 
     async def save_stage_a(self, job_id: str, result: StageAResult) -> None:
         """Persist a successful Stage A result.

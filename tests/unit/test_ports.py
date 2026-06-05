@@ -26,7 +26,7 @@ from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.source import (
     DiscoverResult,
     EnrichResult,
-    EnrichSession,
+    ScanSession,
     SessionSource,
     SimpleSource,
 )
@@ -333,8 +333,20 @@ class FakeLLM:
         )
 
 
-class FakeEnrichSession:
-    """Minimal structural implementation of the EnrichSession protocol."""
+class FakeScanSession:
+    """Minimal structural implementation of the ScanSession protocol."""
+
+    async def discover(self, config: dict[str, object]) -> DiscoverResult:
+        """Discover jobs within the active session.
+
+        Args:
+            config: Source-specific configuration.
+
+        Returns:
+            Discovery result for the source session.
+        """
+        duration_s = float(config.get("duration", 0.0))  # type: ignore[arg-type]
+        return DiscoverResult(postings=[make_job()], duration_s=duration_s)
 
     async def enrich(self, posting: JobPosting) -> EnrichResult:
         """Return enrichment details for a posting.
@@ -370,28 +382,16 @@ class FakeSimpleSource:
 class FakeSessionSource:
     """Minimal structural implementation of the SessionSource protocol."""
 
-    async def discover(self, config: dict[str, object]) -> DiscoverResult:
-        """Discover jobs that may need later enrichment.
-
-        Args:
-            config: Source-specific configuration.
+    def session(self) -> AbstractAsyncContextManager[FakeScanSession]:
+        """Open one discover-and-enrich session context manager.
 
         Returns:
-            Discovery result for the source session.
-        """
-        duration_s = float(config.get("duration", 0.0))
-        return DiscoverResult(postings=[make_job()], duration_s=duration_s)
-
-    async def enrich_session(self) -> AbstractAsyncContextManager[EnrichSession]:
-        """Open an enrichment session context manager.
-
-        Returns:
-            Async context manager yielding an enrichment session.
+            Async context manager yielding a scan session.
         """
 
         @asynccontextmanager
-        async def manager() -> AsyncIterator[FakeEnrichSession]:
-            yield FakeEnrichSession()
+        async def manager() -> AsyncIterator[FakeScanSession]:
+            yield FakeScanSession()
 
         return manager()
 
@@ -449,15 +449,13 @@ async def test_source_protocols_cover_simple_and_session_sources() -> None:
 
     assert isinstance(simple_source, SimpleSource)
     assert isinstance(session_source, SessionSource)
-    assert isinstance(FakeEnrichSession(), EnrichSession)
+    assert isinstance(FakeScanSession(), ScanSession)
     assert await simple_source.fetch_jobs({"count": 1}) == [make_job()]
 
-    discovered = await session_source.discover(
-        {"duration": SESSION_DISCOVERY_DURATION_S},
-    )
-    manager = await session_source.enrich_session()
-
-    async with manager as session:
+    async with session_source.session() as session:
+        discovered = await session.discover(
+            {"duration": SESSION_DISCOVERY_DURATION_S},
+        )
         enriched = await session.enrich(discovered.postings[0])
 
     assert discovered.needs_reauth is False

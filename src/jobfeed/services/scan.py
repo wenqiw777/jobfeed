@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 
+from jobfeed.domain.errors import SourceBusyError
 from jobfeed.domain.models import JobPosting, PipelineRun
 from jobfeed.observability import JobfeedLogger, bind_run_id
-from jobfeed.ports.source import SimpleSource
+from jobfeed.ports.source import EnrichResult, ScanSession, SessionSource, SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.services.error_handler import ServiceErrorHandler
 from jobfeed.services.runs import start_pipeline_run
 
-SourceSpec = tuple[str, SimpleSource, dict[str, object]]
+SourcePort = SimpleSource | SessionSource
+SourceSpec = tuple[str, SourcePort, dict[str, object]]
 SINGLE_SOURCE_COUNT = 1
 
 
@@ -55,6 +58,18 @@ class ScanService:
         self,
         run: PipelineRun,
         name: str,
+        source: SourcePort,
+        config: dict[str, object],
+    ) -> None:
+        if isinstance(source, SessionSource):
+            await self._scan_session_source(run, name, source, config)
+            return
+        await self._scan_simple_source(run, name, source, config)
+
+    async def _scan_simple_source(
+        self,
+        run: PipelineRun,
+        name: str,
         source: SimpleSource,
         config: dict[str, object],
     ) -> None:
@@ -63,6 +78,66 @@ class ScanService:
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
             return
+        await self._record_jobs(run, name, jobs)
+
+    async def _scan_session_source(
+        self,
+        run: PipelineRun,
+        name: str,
+        source: SessionSource,
+        config: dict[str, object],
+    ) -> None:
+        try:
+            jobs = await self._run_session(name, source, config)
+        except SourceBusyError as exc:
+            # Contention (e.g. another LinkedIn session holds the enrich lock) is
+            # a benign skip, not a fetch failure: do not count it as an error.
+            self.logger.info("scan_source_busy", source=name, reason=str(exc))
+            return
+        except Exception as exc:
+            self.error_handler.handle_source_fetch_error(run, name, exc)
+            return
+        await self._record_jobs(run, name, jobs)
+
+    async def _run_session(
+        self,
+        name: str,
+        source: SessionSource,
+        config: dict[str, object],
+    ) -> list[JobPosting]:
+        # ONE locked session spans discover + enrich, so the source's exclusive
+        # resource (lock + browser) is held across both phases.
+        async with source.session() as session:
+            discovered = await session.discover(config)
+            if discovered.needs_reauth:
+                raise RuntimeError(discovered.error or "source requires reauth")
+            return await self._enrich_postings(name, session, discovered.postings)
+
+    async def _enrich_postings(
+        self,
+        name: str,
+        session: ScanSession,
+        postings: list[JobPosting],
+    ) -> list[JobPosting]:
+        jobs: list[JobPosting] = []
+        for posting in postings:
+            result = await session.enrich(posting)
+            if result.error is not None:
+                self.logger.error(
+                    "scan_posting_enrich_failed",
+                    source=name,
+                    canonical_id=posting.canonical_id,
+                    error=result.error,
+                )
+            jobs.append(_merge_enrichment(posting, result))
+        return jobs
+
+    async def _record_jobs(
+        self,
+        run: PipelineRun,
+        name: str,
+        jobs: list[JobPosting],
+    ) -> None:
         inserted, updated = await self._save_jobs(jobs)
         run.jobs_discovered += len(jobs)
         run.jobs_inserted += inserted
@@ -83,6 +158,20 @@ class ScanService:
             inserted += int(result.inserted)
             updated += int(result.updated)
         return inserted, updated
+
+
+def _merge_enrichment(posting: JobPosting, result: EnrichResult) -> JobPosting:
+    enriched_at = posting.enriched_at
+    if result.error is None:
+        enriched_at = datetime.now(UTC)
+    return replace(
+        posting,
+        jd_text=result.jd_text,
+        jd_quality=result.quality,
+        posted_at=result.posted_at or posting.posted_at,
+        enriched_at=enriched_at,
+        enrich_source=result.enrich_source,
+    )
 
 
 def _run_source_name(sources: list[SourceSpec]) -> str:

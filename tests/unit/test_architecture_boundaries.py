@@ -65,6 +65,40 @@ def test_services_do_not_import_infrastructure_modules() -> None:
     assert not violations, format_violations(violations)
 
 
+# Browser automation is forbidden outside the LinkedIn SessionSource surface
+# (CLAUDE.md Phase 4 amendment). Only this file may import Playwright, and only
+# lazily (via importlib) so non-LinkedIn scans never hard-depend on the browser.
+PLAYWRIGHT_IMPORT_ALLOWLIST = frozenset({"adapters/sources/linkedin.py"})
+
+
+def test_playwright_is_confined_and_lazily_imported() -> None:
+    """Playwright may only be imported lazily, from the LinkedIn adapter.
+
+    Targets the import MECHANISM (not prose mentions): a static ``import
+    playwright`` is forbidden everywhere so the browser stack is never a hard
+    dependency, and the lazy ``importlib.import_module("playwright...")`` site
+    is allowed only inside the LinkedIn adapter.
+    """
+    static_imports: list[str] = []
+    dynamic_uses: list[str] = []
+    for path in python_files(SOURCE_ROOT):
+        rel = path.relative_to(SOURCE_ROOT).as_posix()
+        text = path.read_text(encoding="utf-8")
+        if any(
+            line.strip().startswith(("import playwright", "from playwright"))
+            for line in text.splitlines()
+        ):
+            static_imports.append(rel)
+        if (
+            'import_module("playwright' in text
+            and rel not in PLAYWRIGHT_IMPORT_ALLOWLIST
+        ):
+            dynamic_uses.append(rel)
+
+    assert not static_imports, f"Playwright must be imported lazily: {static_imports}"
+    assert not dynamic_uses, f"Playwright imported outside allowlist: {dynamic_uses}"
+
+
 def imports_under(root: Path) -> list[ImportReference]:
     """Parse Python imports under a source directory.
 

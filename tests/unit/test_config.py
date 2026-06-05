@@ -14,7 +14,9 @@ from jobfeed.config import (
     SourcesATSConfig,
     SourcesConfig,
     SourcesIndeedConfig,
+    SourcesLinkedInConfig,
     SourcesLinkedInJobSpyConfig,
+    SourcesLinkedInSearchConfig,
     SourcesSpeedyApplyConfig,
     load_settings,
 )
@@ -46,6 +48,12 @@ JOBSPY_DEFAULT_MAX_JOBS = 100
 INDEED_ENV_MAX_JOBS = 50
 INDEED_TOML_MAX_JOBS = 25
 INDEED_TOML_HOURS_OLD = 48
+LINKEDIN_DEFAULT_PROFILE_DIR = "~/.cache/jobfeed/linkedin"
+LINKEDIN_DEFAULT_LOCK_PATH = "~/.cache/jobfeed/enrich.lock"
+LINKEDIN_DEFAULT_TIER2_CAP = 30
+LINKEDIN_TOML_MAX_JOBS = 40
+LINKEDIN_TOML_GROUP_MAX_JOBS = 12
+LINKEDIN_TOML_TIER2_CAP = 5
 
 
 def test_load_settings_returns_defaults_without_config_file() -> None:
@@ -415,6 +423,56 @@ def test_settings_exposes_phase4a_source_defaults() -> None:
     assert sources.linkedin_jobspy.hours_old is None
 
 
+def test_settings_exposes_phase4b_linkedin_defaults() -> None:
+    """Settings.sources should expose the Playwright LinkedIn source disabled."""
+    linkedin = load_settings().sources.linkedin
+
+    assert isinstance(linkedin, SourcesLinkedInConfig)
+    assert linkedin.enabled is False
+    assert linkedin.search_urls == []
+    assert linkedin.max_jobs == JOBSPY_DEFAULT_MAX_JOBS
+    assert linkedin.headless is True
+    assert linkedin.tier2_cap == LINKEDIN_DEFAULT_TIER2_CAP
+    assert linkedin.profile_dir == LINKEDIN_DEFAULT_PROFILE_DIR
+    assert linkedin.lock_path == LINKEDIN_DEFAULT_LOCK_PATH
+
+
+def test_load_settings_parses_phase4b_linkedin_section(tmp_path: Path) -> None:
+    """load_settings should populate [sources.linkedin] from TOML."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[sources.linkedin]\n"
+        "enabled = true\n"
+        "search_urls = [\n"
+        '  { url = "https://linkedin.test/jobs?keywords=intern", '
+        f'max_jobs = {LINKEDIN_TOML_MAX_JOBS}, group = "fall", '
+        f"group_max_jobs = {LINKEDIN_TOML_GROUP_MAX_JOBS} }}\n"
+        "]\n"
+        f"max_jobs = {LINKEDIN_TOML_MAX_JOBS}\n"
+        "headless = false\n"
+        f"tier2_cap = {LINKEDIN_TOML_TIER2_CAP}\n"
+        'profile_dir = "/tmp/jobfeed-li-profile"\n'
+        'lock_path = "/tmp/jobfeed-li.lock"\n',
+        encoding="utf-8",
+    )
+
+    linkedin = load_settings(config_path).sources.linkedin
+
+    assert linkedin.enabled is True
+    assert linkedin.max_jobs == LINKEDIN_TOML_MAX_JOBS
+    assert linkedin.headless is False
+    assert linkedin.tier2_cap == LINKEDIN_TOML_TIER2_CAP
+    assert linkedin.profile_dir == "/tmp/jobfeed-li-profile"
+    assert linkedin.lock_path == "/tmp/jobfeed-li.lock"
+    assert len(linkedin.search_urls) == 1
+    search = linkedin.search_urls[0]
+    assert isinstance(search, SourcesLinkedInSearchConfig)
+    assert search.url == "https://linkedin.test/jobs?keywords=intern"
+    assert search.max_jobs == LINKEDIN_TOML_MAX_JOBS
+    assert search.group == "fall"
+    assert search.group_max_jobs == LINKEDIN_TOML_GROUP_MAX_JOBS
+
+
 def test_load_settings_parses_phase4a_source_sections(tmp_path: Path) -> None:
     """load_settings should populate each new [sources.*] block from TOML.
 
@@ -467,6 +525,12 @@ def test_sources_linkedin_jobspy_config_rejects_unknown_key() -> None:
         SourcesLinkedInJobSpyConfig(unknown_key="value")  # type: ignore[call-arg]
 
 
+def test_sources_linkedin_config_rejects_unknown_key() -> None:
+    """An unknown key in [sources.linkedin] should fail (extra='forbid')."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInConfig(unknown_key="value")  # type: ignore[call-arg]
+
+
 def test_indeed_config_rejects_enabled_without_search_urls() -> None:
     """Enabled Indeed with no search_urls fails (JobSpy has no default search)."""
     with pytest.raises(ValidationError):
@@ -492,6 +556,34 @@ def test_jobspy_config_allows_enabled_with_search_urls() -> None:
     assert cfg.search_urls == ["https://x/jobs"]
 
 
+def test_linkedin_config_rejects_enabled_without_search_urls() -> None:
+    """Enabled Playwright LinkedIn with no search_urls fails loud."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInConfig(enabled=True)
+
+
+def test_linkedin_config_allows_string_and_structured_search_urls() -> None:
+    """Playwright LinkedIn supports plain URLs plus per-search limits."""
+    cfg = SourcesLinkedInConfig(
+        enabled=True,
+        search_urls=[
+            "https://linkedin.test/jobs?keywords=swe",
+            {
+                "url": "https://linkedin.test/jobs?keywords=fall+intern",
+                "max_jobs": LINKEDIN_TOML_MAX_JOBS,
+                "group": "fall",
+                "group_max_jobs": LINKEDIN_TOML_GROUP_MAX_JOBS,
+            },
+        ],
+    )
+
+    assert cfg.search_urls[0] == "https://linkedin.test/jobs?keywords=swe"
+    search = cfg.search_urls[1]
+    assert isinstance(search, SourcesLinkedInSearchConfig)
+    assert search.max_jobs == LINKEDIN_TOML_MAX_JOBS
+    assert search.group_max_jobs == LINKEDIN_TOML_GROUP_MAX_JOBS
+
+
 def test_jobspy_config_rejects_blank_search_urls() -> None:
     """Enabled JobSpy with ANY blank/whitespace search_url entry is rejected."""
     with pytest.raises(ValidationError):
@@ -512,6 +604,14 @@ def test_sources_indeed_config_rejects_max_jobs_zero() -> None:
     """indeed.max_jobs=0 should fail Pydantic validation (ge=1 constraint)."""
     with pytest.raises(ValidationError):
         SourcesIndeedConfig(max_jobs=0)
+
+
+def test_sources_linkedin_config_rejects_nonpositive_limits() -> None:
+    """Playwright LinkedIn source limits should be positive where required."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInConfig(max_jobs=0)
+    with pytest.raises(ValidationError):
+        SourcesLinkedInConfig(tier2_cap=-1)
 
 
 def test_load_settings_env_overrides_indeed_max_jobs(

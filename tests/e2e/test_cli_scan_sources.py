@@ -10,6 +10,8 @@ real HTTP, JobSpy, or Postgres.
 from __future__ import annotations
 
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,16 +23,17 @@ from click.testing import CliRunner, Result
 from jobfeed.adapters.sources import _jobspy
 from jobfeed.adapters.sources.ats import ATSSource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
-from jobfeed.cli import cli
+from jobfeed.cli import _resolve_config_path, cli
 from jobfeed.domain.models import JobPosting, SaveJobResult
 from jobfeed.domain.quality import assess_quality
+from jobfeed.ports.source import DiscoverResult, EnrichResult
 
 # ``jobfeed.cli`` rebinds the ``scan`` attribute to the Click command, so the
 # submodule (which holds ``create_http_client``) is reached via ``sys.modules``.
 scan_module = sys.modules["jobfeed.cli.scan"]
 
-# ``--source all`` here disables ats + linkedin-jobspy -> two skip log lines.
-_EXPECTED_SKIPS = 2
+# ``--source all`` here disables ats + linkedin-jobspy + linkedin -> skips.
+_EXPECTED_SKIPS = 3
 # ats + speedyapply both own an httpx client -> two clients created.
 _EXPECTED_CLIENTS = 2
 
@@ -71,6 +74,42 @@ class FakeStore:
 
     async def upsert_company(self, company: Any) -> None:
         self.companies[company.slug] = company
+
+
+class FakeLinkedInScanSession:
+    """Session fake used by the Playwright LinkedIn CLI wiring tests."""
+
+    def __init__(self, posting: JobPosting) -> None:
+        self.posting = posting
+
+    async def discover(self, _config: dict[str, object]) -> DiscoverResult:
+        """Return one discovered LinkedIn posting."""
+        return DiscoverResult(postings=[self.posting])
+
+    async def enrich(self, posting: JobPosting) -> EnrichResult:
+        """Return a deterministic enriched JD."""
+        return EnrichResult(
+            jd_text=posting.jd_text or "",
+            quality=posting.jd_quality or assess_quality(posting.jd_text),
+            enrich_source="linkedin_fake",
+        )
+
+
+class FakeLinkedInSource:
+    """LinkedIn SessionSource fake replacing the Playwright adapter in E2E tests."""
+
+    def __init__(self, **_kwargs: object) -> None:
+        self.posting = _posting("linkedin", "1")
+
+    def session(self) -> object:
+        """Open a fake discover-and-enrich session."""
+        posting = self.posting
+
+        @asynccontextmanager
+        async def manager() -> AsyncIterator[FakeLinkedInScanSession]:
+            yield FakeLinkedInScanSession(posting)
+
+        return manager()
 
 
 def _posting(platform: str, suffix: str) -> JobPosting:
@@ -123,6 +162,9 @@ def _write_config(tmp_path: Path, enabled: dict[str, bool]) -> Path:
         "",
         "[sources.linkedin_jobspy]",
         f"enabled = {str(enabled.get('linkedin_jobspy', False)).lower()}",
+        "",
+        "[sources.linkedin]",
+        f"enabled = {str(enabled.get('linkedin', False)).lower()}",
         "",
     ]
     config_path.write_text("\n".join(blocks), encoding="utf-8")
@@ -219,6 +261,21 @@ def test_scan_linkedin_jobspy_runs_source(
     assert fake_store.jobs[0].platform == "linkedin_jobspy"
 
 
+def test_scan_linkedin_runs_session_source(
+    tmp_path: Path, fake_store: FakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--source linkedin`` runs the Playwright SessionSource path."""
+    monkeypatch.setattr(scan_module, "LinkedInSource", FakeLinkedInSource)
+    config_path = _write_config(tmp_path, {"linkedin": True})
+    _enable_linkedin_playwright_url(config_path)
+
+    result = _invoke(CliRunner(), config_path, "scan", "--source", "linkedin")
+
+    assert result.exit_code == 0, result.output
+    assert "Discovered 1 jobs, inserted 1, updated 0" in result.output
+    assert fake_store.jobs[0].platform == "linkedin"
+
+
 def test_scan_mock_unchanged(tmp_path: Path, fake_store: FakeStore) -> None:
     """``--source mock`` still scans the seeded mock source (no network)."""
     config_path = _write_config(tmp_path, {})
@@ -277,8 +334,10 @@ def test_scan_all_runs_enabled_and_logs_skips(
     assert "mock" not in platforms
     # ats + linkedin_jobspy were disabled -> structured skip events, no run.
     assert "linkedin_jobspy" not in platforms
+    assert "linkedin" not in platforms
     assert '"source": "ats"' in result.output
     assert '"source": "linkedin-jobspy"' in result.output
+    assert '"source": "linkedin"' in result.output
     assert result.output.count("scan_source_skipped") == _EXPECTED_SKIPS
 
 
@@ -308,6 +367,17 @@ def test_scan_ats_disabled_is_click_error(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "ats source is disabled in config" in result.output
+
+
+@pytest.mark.usefixtures("fake_store")
+def test_scan_linkedin_disabled_is_click_error(tmp_path: Path) -> None:
+    """Explicit ``--source linkedin`` while disabled fails like other sources."""
+    config_path = _write_config(tmp_path, {"linkedin": False})
+
+    result = _invoke(CliRunner(), config_path, "scan", "--source", "linkedin")
+
+    assert result.exit_code == 1
+    assert "linkedin source is disabled in config" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +441,15 @@ def test_scan_help_lists_new_choices() -> None:
     result = CliRunner().invoke(cli, ["scan", "--help"])
 
     assert result.exit_code == 0
-    for token in ("mock", "ats", "speedyapply", "indeed", "linkedin-jobspy", "all"):
+    for token in (
+        "mock",
+        "ats",
+        "speedyapply",
+        "indeed",
+        "linkedin-jobspy",
+        "linkedin",
+        "all",
+    ):
         assert token in result.output
 
 
@@ -398,3 +476,48 @@ def _enable_linkedin_url(config_path: Path) -> None:
         '[sources.linkedin_jobspy]\nenabled = true\nsearch_urls = ["https://linkedin.com/jobs/search?keywords=swe"]',
     )
     config_path.write_text(text, encoding="utf-8")
+
+
+def _enable_linkedin_playwright_url(config_path: Path) -> None:
+    """Add one LinkedIn Playwright search URL for the SessionSource."""
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "[sources.linkedin]\nenabled = true",
+        '[sources.linkedin]\nenabled = true\nsearch_urls = ["https://linkedin.com/jobs/search?keywords=swe"]',
+    )
+    config_path.write_text(text, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Default source = all  +  ./config.toml auto-discovery
+# ---------------------------------------------------------------------------
+
+
+def test_scan_source_default_is_all() -> None:
+    """`jobfeed scan` defaults to --source all (not mock)."""
+    source_opt = next(p for p in scan_module.scan.params if p.name == "source_name")
+    assert source_opt.default == "all"
+
+
+def test_resolve_config_path_prefers_explicit(tmp_path: Path) -> None:
+    """An explicit --config path always wins over a cwd config.toml."""
+    explicit = tmp_path / "custom.toml"
+    explicit.write_text("", encoding="utf-8")
+    assert _resolve_config_path(explicit) == explicit
+
+
+def test_resolve_config_path_falls_back_to_cwd_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With --config omitted, ./config.toml in the cwd is picked up."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
+    assert _resolve_config_path(None) == Path("config.toml")
+
+
+def test_resolve_config_path_none_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No --config and no ./config.toml -> None (built-in defaults apply)."""
+    monkeypatch.chdir(tmp_path)
+    assert _resolve_config_path(None) is None

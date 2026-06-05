@@ -20,6 +20,7 @@ PostgreSQL is the supported store backend. The Docker Compose stack owns the loc
 
 ```sh
 pip install -e ".[dev]"
+python -m playwright install chromium  # needed only for LinkedIn Playwright scans
 jobfeed --help
 make test
 make lint

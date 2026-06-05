@@ -8,7 +8,17 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from jobfeed.config_sources import (
+    SourcesATSConfig,
+    SourcesConfig,
+    SourcesIndeedConfig,
+    SourcesLinkedInConfig,
+    SourcesLinkedInJobSpyConfig,
+    SourcesLinkedInSearchConfig,
+    SourcesSpeedyApplyConfig,
+)
 
 CONFIG_ENV_PREFIX = "JOBFEED_"
 ENV_NESTED_DELIMITER = "__"
@@ -74,91 +84,6 @@ class ObservabilitySettings(BaseModel):
 
     log_level: str = "info"
     log_format: Literal["human", "json"] = "human"
-
-
-class SourcesATSConfig(BaseModel):
-    """Runtime limits and tuning knobs for the ATS source."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    max_concurrent: int = Field(default=10, ge=1)
-    probe_ttl_days: int = Field(default=7, ge=0)
-    failure_threshold: int = Field(default=3, ge=1)
-    probe_timeout_s: float = Field(default=5.0, gt=0)
-    scan_timeout_s: float = Field(default=30.0, gt=0)
-    seed_companies: list[str] = Field(default_factory=list)
-
-
-class SourcesSpeedyApplyConfig(BaseModel):
-    """Runtime limits and tuning knobs for the SpeedyApply source.
-
-    ``search_urls`` lists the GitHub markdown job lists to scan; an empty list
-    selects the built-in default README. List fields are TOML-only: the nested
-    env setter stores a bare string at the leaf, which Pydantic will not coerce
-    into a list, so ``JOBFEED_SOURCES__SPEEDYAPPLY__SEARCH_URLS`` is unsupported.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    search_urls: list[str] = Field(default_factory=list)
-    max_concurrent: int = Field(default=10, ge=1)
-    fetch_timeout_s: float = Field(default=30.0, gt=0)
-
-
-class _JobSpySourceConfig(BaseModel):
-    """Shared shape + guards for JobSpy-backed sources (Indeed, LinkedIn JobSpy).
-
-    Each concrete source keeps its own subclass so its limits can diverge, but
-    they share these fields and validators. ``hours_old`` (when set) overrides
-    the per-URL freshness window. ``search_urls`` is TOML-only (the nested-env
-    setter stores a bare string Pydantic won't coerce into a list — see
-    ``SourcesSpeedyApplyConfig``).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    search_urls: list[str] = Field(default_factory=list)
-    max_jobs: int = Field(default=100, ge=1)
-    hours_old: int | None = None
-
-    @model_validator(mode="after")
-    def _require_urls_when_enabled(self) -> _JobSpySourceConfig:
-        """Fail loud if enabled with no usable URL — JobSpy has no default search."""
-        if self.enabled and (
-            not self.search_urls or any(not url.strip() for url in self.search_urls)
-        ):
-            raise ValueError(
-                "JobSpy source is enabled but search_urls is empty or has a blank "
-                "entry; JobSpy has no default search, so every entry must be a real "
-                "URL. Fix search_urls or set enabled = false."
-            )
-        return self
-
-
-class SourcesIndeedConfig(_JobSpySourceConfig):
-    """Runtime limits and tuning knobs for the Indeed (JobSpy) source."""
-
-
-class SourcesLinkedInJobSpyConfig(_JobSpySourceConfig):
-    """Runtime limits and tuning knobs for the LinkedIn (JobSpy) source."""
-
-
-class SourcesConfig(BaseModel):
-    """Container for all job-data source configurations."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    ats: SourcesATSConfig = Field(default_factory=SourcesATSConfig)
-    speedyapply: SourcesSpeedyApplyConfig = Field(
-        default_factory=SourcesSpeedyApplyConfig
-    )
-    indeed: SourcesIndeedConfig = Field(default_factory=SourcesIndeedConfig)
-    linkedin_jobspy: SourcesLinkedInJobSpyConfig = Field(
-        default_factory=SourcesLinkedInJobSpyConfig
-    )
 
 
 class Settings(BaseModel):
@@ -289,7 +214,9 @@ __all__ = [
     "SourcesATSConfig",
     "SourcesConfig",
     "SourcesIndeedConfig",
+    "SourcesLinkedInConfig",
     "SourcesLinkedInJobSpyConfig",
+    "SourcesLinkedInSearchConfig",
     "SourcesSpeedyApplyConfig",
     "load_settings",
 ]

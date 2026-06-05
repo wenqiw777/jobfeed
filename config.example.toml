@@ -52,3 +52,17 @@ enabled = false
 # search_urls = []
 # max_jobs = 100
 # hours_old =               # unset; when set, overrides each URL's fromage window
+
+# LinkedIn JobSpy and LinkedIn Playwright are alternative LinkedIn paths; pick
+# at most one for routine scans to avoid duplicate LinkedIn traffic.
+[sources.linkedin]
+enabled = false
+# search_urls = [
+#   "https://www.linkedin.com/jobs/search/?keywords=software%20engineer%20intern",
+#   { url = "https://www.linkedin.com/jobs/search/?keywords=fall%202026%20intern", max_jobs = 25, group = "fall", group_max_jobs = 10 },
+# ]
+# max_jobs = 100
+# headless = true
+# tier2_cap = 30
+# profile_dir = "~/.cache/jobfeed/linkedin"
+# lock_path = "~/.cache/jobfeed/enrich.lock"

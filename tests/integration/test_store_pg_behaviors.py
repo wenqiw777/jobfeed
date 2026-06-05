@@ -183,6 +183,25 @@ async def test_save_job_upserts_and_preserves_enrichment(store: PostgresStore) -
     assert loaded.enrich_source == "mock"
 
 
+async def test_get_enrichment_returns_snapshot_by_natural_key(
+    store: PostgresStore,
+) -> None:
+    """get_enrichment returns the stored JD snapshot, or None for an unknown key."""
+    job = make_store_job("li-1")
+    await store.save_job(job)
+
+    snapshot = await store.get_enrichment(platform=job.platform, canonical_id="li-1")
+
+    assert snapshot is not None
+    assert snapshot.jd_text == "Detailed JD"
+    assert snapshot.quality is QualityBand.GOOD
+    assert snapshot.enriched_at is not None
+    assert snapshot.enrich_source == "mock"
+    assert (
+        await store.get_enrichment(platform=job.platform, canonical_id="absent")
+    ) is None
+
+
 async def test_load_pending_stage_a_corpus_filters(store: PostgresStore) -> None:
     """corpus selects unrated (no eval or error), failed (errors), or all."""
     await store.save_job(make_store_job("unrated"))
