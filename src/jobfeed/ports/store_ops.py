@@ -228,3 +228,25 @@ class StoreOpsMixin(Protocol):
             Attention report.
         """
         ...
+
+    async def mark_stale_jobs_closed(
+        self,
+        *,
+        older_than_days: int,
+        dry_run: bool,
+    ) -> int:
+        """Close stale jobs that have no usable JD and have not been closed yet.
+
+        Targets rows where:
+        - jd_quality IS NULL or jd_quality IN ('missing', 'abandoned')
+        - discovered_at < now() - make_interval(days => older_than_days)
+        - closed_at IS NULL
+
+        Args:
+            older_than_days: Discovery-age threshold (exclusive).
+            dry_run: When True, count matching rows without writing.
+
+        Returns:
+            Row count: matched rows (dry_run=True) or updated rows (dry_run=False).
+        """
+        ...

@@ -97,6 +97,8 @@ def _job_from_record(r: asyncpg.Record) -> JobPosting:
         posted_at=r["posted_at"],
         enriched_at=r["enriched_at"],
         enrich_source=r["enrich_source"],
+        closed_at=r["closed_at"],
+        enrich_error=r["enrich_error"],
     )
 
 
@@ -1472,15 +1474,16 @@ class PostgresStore:
                        platform, canonical_id, url, title, company, location,
                        jd_text, jd_quality, posted_at, discovered_at,
                        enriched_at, enrich_source,
-                       company_norm, title_norm, location_norm
-                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                       company_norm, title_norm, location_norm,
+                       closed_at, enrich_error
+                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
                    ON CONFLICT (platform, canonical_id) DO UPDATE SET
                        url = EXCLUDED.url,
                        title = EXCLUDED.title,
                        company = EXCLUDED.company,
                        location = EXCLUDED.location,
                        jd_text = CASE
-                           WHEN $16::int >= (CASE jobs.jd_quality
+                           WHEN $18::int >= (CASE jobs.jd_quality
                                WHEN 'full' THEN 5 WHEN 'good' THEN 4
                                WHEN 'partial' THEN 3 WHEN 'stub' THEN 2
                                WHEN 'missing' THEN 1 WHEN 'abandoned' THEN 0
@@ -1488,7 +1491,7 @@ class PostgresStore:
                            THEN COALESCE(EXCLUDED.jd_text, jobs.jd_text)
                            ELSE jobs.jd_text END,
                        jd_quality = CASE
-                           WHEN $16::int >= (CASE jobs.jd_quality
+                           WHEN $18::int >= (CASE jobs.jd_quality
                                WHEN 'full' THEN 5 WHEN 'good' THEN 4
                                WHEN 'partial' THEN 3 WHEN 'stub' THEN 2
                                WHEN 'missing' THEN 1 WHEN 'abandoned' THEN 0
@@ -1504,7 +1507,7 @@ class PostgresStore:
                        -- (e.g. a transient vendor failure) would relabel a
                        -- preserved full JD as speedyapply-error/-unrouted.
                        enrich_source = CASE
-                           WHEN $16::int >= (CASE jobs.jd_quality
+                           WHEN $18::int >= (CASE jobs.jd_quality
                                WHEN 'full' THEN 5 WHEN 'good' THEN 4
                                WHEN 'partial' THEN 3 WHEN 'stub' THEN 2
                                WHEN 'missing' THEN 1 WHEN 'abandoned' THEN 0
@@ -1513,7 +1516,11 @@ class PostgresStore:
                            ELSE jobs.enrich_source END,
                        company_norm = EXCLUDED.company_norm,
                        title_norm = EXCLUDED.title_norm,
-                       location_norm = EXCLUDED.location_norm
+                       location_norm = EXCLUDED.location_norm,
+                       closed_at = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
+                                        ELSE COALESCE(jobs.closed_at, EXCLUDED.closed_at) END,
+                       enrich_error = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
+                                           ELSE COALESCE(EXCLUDED.enrich_error, jobs.enrich_error) END
                    RETURNING id, (xmax = 0) AS inserted""",
                 job.platform,
                 job.canonical_id,
@@ -1530,6 +1537,8 @@ class PostgresStore:
                 normalize_company(job.company),
                 normalize(job.title),
                 normalize(job.location),
+                job.closed_at,
+                job.enrich_error,
                 quality_rank(job.jd_quality),
             )
             assert row is not None  # RETURNING always produces a row
@@ -3331,7 +3340,8 @@ class PostgresStore:
             await conn.execute(
                 """UPDATE jobs SET
                        jd_text = $1, jd_quality = $2, enriched_at = $3,
-                       enrich_source = $4, jd_lang = $5, enrich_error = NULL
+                       enrich_source = $4, jd_lang = $5, enrich_error = NULL,
+                       closed_at = NULL
                    WHERE id = $6""",
                 jd_text,
                 jd_quality,
@@ -3611,6 +3621,52 @@ class PostgresStore:
             low_quality_scored=low_quality,
             stuck_scoring=stuck_scoring,
         )
+
+    async def mark_stale_jobs_closed(
+        self,
+        *,
+        older_than_days: int,
+        dry_run: bool,
+    ) -> int:
+        """Close stale jobs that have no usable JD and have not been closed yet.
+
+        Targets rows where jd_quality IS NULL or IN ('missing', 'abandoned'),
+        discovered_at is older than the given threshold, and closed_at IS NULL.
+
+        Args:
+            older_than_days: Discovery-age threshold (exclusive).
+            dry_run: When True, count matching rows without writing.
+
+        Returns:
+            Row count: matched rows (dry_run=True) or updated rows (dry_run=False).
+
+        Raises:
+            ValueError: If older_than_days < 1 (would select fresh/all rows).
+        """
+        if older_than_days < 1:
+            raise ValueError("older_than_days must be >= 1")
+        _STALE_WHERE = """
+            (jd_quality IS NULL OR jd_quality IN ('missing', 'abandoned'))
+            AND discovered_at < now() - make_interval(days => $1)
+            AND closed_at IS NULL
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            if dry_run:
+                return await self._count(
+                    conn,
+                    f"SELECT COUNT(*) FROM jobs WHERE {_STALE_WHERE}",
+                    older_than_days,
+                )
+            result = await conn.execute(
+                f"""UPDATE jobs
+                    SET closed_at = now(),
+                        enrich_error = 'backfill:stale-no-jd'
+                    WHERE {_STALE_WHERE}""",
+                older_than_days,
+            )
+        # asyncpg returns "UPDATE N"
+        return int(result.split()[-1])
 
     async def record_llm_usage(self, usage: LLMUsage) -> None:
         """Record a single LLM call's usage metrics.

@@ -67,6 +67,8 @@ class JobPosting:
     posted_at: datetime | None = None
     enriched_at: datetime | None = None
     enrich_source: str | None = None
+    closed_at: datetime | None = None
+    enrich_error: str | None = None
 
 
 @dataclass(kw_only=True)

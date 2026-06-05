@@ -81,15 +81,15 @@ async def test_greenhouse_uses_single_job_endpoint() -> None:
         )
     )
     async with create_http_client() as client:
-        jd_text, enrich_source = await routing.route_and_fetch(
+        result = await routing.route_and_fetch(
             client,
             "https://job-boards.greenhouse.io/acme/jobs/777",
             slug_cache={},
             timeout=TIMEOUT,
         )
     assert route.called
-    assert enrich_source == "speedyapply-greenhouse"
-    assert "Engineering role" in jd_text
+    assert result.enrich_source == "speedyapply-greenhouse"
+    assert "Engineering role" in result.jd_text
 
 
 # ---------------------------------------------------------------------------
@@ -105,14 +105,14 @@ async def test_ashby_matches_by_canonical_id() -> None:
         "?includeCompensation=true"
     ).mock(return_value=httpx.Response(200, json=_ashby_payload(_ASHBY_UUID)))
     async with create_http_client() as client:
-        jd_text, enrich_source = await routing.route_and_fetch(
+        result = await routing.route_and_fetch(
             client,
             f"https://jobs.ashbyhq.com/ironcladhq/{_ASHBY_UUID}",
             slug_cache={},
             timeout=TIMEOUT,
         )
-    assert enrich_source == "speedyapply-ashby"
-    assert "Engineering role" in jd_text
+    assert result.enrich_source == "speedyapply-ashby"
+    assert "Engineering role" in result.jd_text
 
 
 @respx.mock
@@ -150,8 +150,8 @@ async def test_ashby_slug_cache_fetches_board_once_for_two_rows() -> None:
             timeout=TIMEOUT,
         )
     assert route.call_count == 1
-    assert first[1] == "speedyapply-ashby"
-    assert second[1] == "speedyapply-ashby"
+    assert first.enrich_source == "speedyapply-ashby"
+    assert second.enrich_source == "speedyapply-ashby"
     assert ("ashby", "ironcladhq") in slug_cache
 
 
@@ -164,14 +164,14 @@ async def test_ashby_not_found_when_id_absent_from_board() -> None:
     ).mock(return_value=httpx.Response(200, json=_ashby_payload(_ASHBY_UUID)))
     missing = "deadbeef-0000-0000-0000-000000000000"
     async with create_http_client() as client:
-        jd_text, enrich_source = await routing.route_and_fetch(
+        result = await routing.route_and_fetch(
             client,
             f"https://jobs.ashbyhq.com/ironcladhq/{missing}",
             slug_cache={},
             timeout=TIMEOUT,
         )
-    assert jd_text == ""
-    assert enrich_source == "speedyapply-notfound"
+    assert result.jd_text == ""
+    assert result.enrich_source == "speedyapply-notfound"
 
 
 @respx.mock
@@ -181,14 +181,14 @@ async def test_lever_matches_by_canonical_id() -> None:
         return_value=httpx.Response(200, json=_lever_payload(_LEVER_UUID))
     )
     async with create_http_client() as client:
-        jd_text, enrich_source = await routing.route_and_fetch(
+        result = await routing.route_and_fetch(
             client,
             f"https://jobs.lever.co/zushealth/{_LEVER_UUID}/apply",
             slug_cache={},
             timeout=TIMEOUT,
         )
-    assert enrich_source == "speedyapply-lever"
-    assert "Engineering role" in jd_text
+    assert result.enrich_source == "speedyapply-lever"
+    assert "Engineering role" in result.jd_text
 
 
 # ---------------------------------------------------------------------------
@@ -216,42 +216,49 @@ async def test_smartrecruiters_concats_sections() -> None:
         )
     )
     async with create_http_client() as client:
-        jd_text, enrich_source = await routing.route_and_fetch(
+        result = await routing.route_and_fetch(
             client,
             "https://jobs.smartrecruiters.com/ServiceNow/744000123-assoc-swe",
             slug_cache={},
             timeout=TIMEOUT,
         )
-    assert enrich_source == "speedyapply-smartrecruiters"
-    assert "About ServiceNow" in jd_text
-    assert "Build features" in jd_text
-    assert "Python" in jd_text
-    assert "<p>" not in jd_text
+    assert result.enrich_source == "speedyapply-smartrecruiters"
+    assert "About ServiceNow" in result.jd_text
+    assert "Build features" in result.jd_text
+    assert "Python" in result.jd_text
+    assert "<p>" not in result.jd_text
 
 
 @respx.mock
 async def test_workday_extracts_job_description() -> None:
-    """Workday transforms the apply URL to the wday/cxs endpoint and strips HTML."""
+    """Workday two-step: GET apply HTML then CXS endpoint, strips HTML tags."""
+    apply_url = (
+        "https://leidos.wd5.myworkdayjobs.com/en-US/external/job/Fort-Belvoir-VA/"
+        "Data-Engineer-Intern_R-00180867"
+    )
     cxs = (
         "https://leidos.wd5.myworkdayjobs.com/wday/cxs/leidos/external/job/"
         "Fort-Belvoir-VA/Data-Engineer-Intern_R-00180867"
     )
+    _token = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    _html = (
+        "<html><body><script>var c = {"
+        f'token: "{_token}", postingAvailable: true,'
+        "};</script></body></html>"
+    )
+    respx.get(apply_url).mock(return_value=httpx.Response(200, text=_html))
     respx.get(cxs).mock(
         return_value=httpx.Response(
             200, json={"jobPostingInfo": {"jobDescription": "<p>Clearance role</p>"}}
         )
     )
-    apply_url = (
-        "https://leidos.wd5.myworkdayjobs.com/en-US/external/job/Fort-Belvoir-VA/"
-        "Data-Engineer-Intern_R-00180867"
-    )
     async with create_http_client() as client:
-        jd_text, enrich_source = await routing.route_and_fetch(
+        result = await routing.route_and_fetch(
             client, apply_url, slug_cache={}, timeout=TIMEOUT
         )
-    assert enrich_source == "speedyapply-workday"
-    assert "Clearance role" in jd_text
-    assert "<p>" not in jd_text
+    assert result.enrich_source == "speedyapply-workday"
+    assert "Clearance role" in result.jd_text
+    assert "<p>" not in result.jd_text
 
 
 @respx.mock
@@ -265,16 +272,16 @@ async def test_icims_uses_fetch_text_and_json_ld() -> None:
     )
     route = respx.get(iframe).mock(return_value=httpx.Response(200, text=html_body))
     async with create_http_client() as client:
-        jd_text, enrich_source = await routing.route_and_fetch(
+        result = await routing.route_and_fetch(
             client,
             "https://careers-kinaxis.icims.com/jobs/34701/co-op-intern/job",
             slug_cache={},
             timeout=TIMEOUT,
         )
     assert route.called
-    assert enrich_source == "speedyapply-icims"
-    assert "Co-op JD body" in jd_text
-    assert "<p>" not in jd_text
+    assert result.enrich_source == "speedyapply-icims"
+    assert "Co-op JD body" in result.jd_text
+    assert "<p>" not in result.jd_text
 
 
 # ---------------------------------------------------------------------------
@@ -295,11 +302,11 @@ async def test_icims_uses_fetch_text_and_json_ld() -> None:
 async def test_unrouted_hosts_return_empty(url: str) -> None:
     """Hosts with no vendor integration yield ('', speedyapply-unrouted)."""
     async with create_http_client() as client:
-        jd_text, enrich_source = await routing.route_and_fetch(
+        result = await routing.route_and_fetch(
             client, url, slug_cache={}, timeout=TIMEOUT
         )
-    assert jd_text == ""
-    assert enrich_source == "speedyapply-unrouted"
+    assert result.jd_text == ""
+    assert result.enrich_source == "speedyapply-unrouted"
 
 
 # ---------------------------------------------------------------------------
@@ -450,11 +457,11 @@ async def test_route_coalesces_concurrent_same_slug_board_fetch(
         )
 
     assert calls == 1  # coalesced onto one in-flight Task, not stampeded
-    assert [enrich for _, enrich in results] == [
+    assert [r.enrich_source for r in results] == [
         "speedyapply-ashby",
         "speedyapply-ashby",
     ]
-    assert all(jd for jd, _ in results)
+    assert all(r.jd_text for r in results)
 
 
 def test_workday_routes_with_and_without_locale_segment() -> None:

@@ -35,6 +35,7 @@ DEFAULT_URL = (
 )
 
 _VENDOR = "speedyapply"
+_DEAD_STATUSES = frozenset({404, 410})
 
 
 class SpeedyApplySource:
@@ -103,7 +104,8 @@ class SpeedyApplySource:
     ) -> JobPosting:
         """Route + fetch the JD for one row under the concurrency semaphore."""
         async with sem:
-            jd_text, enrich_source = await self._route(row, slug_cache)
+            result = await self._route(row, slug_cache)
+        jd_text = result.jd_text
         return JobPosting(
             platform=_VENDOR,
             canonical_id=row.canonical_id,
@@ -119,12 +121,14 @@ class SpeedyApplySource:
             # matching ATS/JobSpy; unrouted/not-found/error rows stay None so
             # freshness queries don't treat an empty-JD row as enriched.
             enriched_at=discovered_at if jd_text else None,
-            enrich_source=enrich_source,
+            enrich_source=result.enrich_source,
+            closed_at=result.closed_at,
+            enrich_error=result.enrich_error,
         )
 
     async def _route(
         self, row: markdown.SpeedyRow, slug_cache: routing.SlugCache
-    ) -> tuple[str, str]:
+    ) -> routing.RouteResult:
         """Route one row's apply URL to its vendor; contain fetch failures."""
         try:
             return await routing.route_and_fetch(
@@ -137,7 +141,27 @@ class SpeedyApplySource:
             self._log.warning(
                 "speedyapply_jd_fetch_failed", url=row.apply_url, error=str(exc)
             )
-            return ("", "speedyapply-error")
+            return _closed_route_result(exc)
+
+
+def _closed_route_result(exc: ATSFetchError) -> routing.RouteResult:
+    """Map an ATSFetchError to a RouteResult, setting closed_at for 404/410.
+
+    Args:
+        exc: The ATSFetchError raised during vendor JD fetch.
+
+    Returns:
+        RouteResult with ``closed_at`` and ``enrich_error`` populated for
+        definitive HTTP-gone errors (404/410); plain error result otherwise.
+    """
+    if exc.status_code in _DEAD_STATUSES:
+        return routing.RouteResult(
+            jd_text="",
+            enrich_source="speedyapply-error",
+            closed_at=datetime.now(UTC),
+            enrich_error=f"gone:{exc.status_code}:{exc.vendor}",
+        )
+    return routing.RouteResult(jd_text="", enrich_source="speedyapply-error")
 
 
 def _dedupe_rows(rows: list[markdown.SpeedyRow]) -> list[markdown.SpeedyRow]:
