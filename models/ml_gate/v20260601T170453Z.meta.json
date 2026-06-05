@@ -1,0 +1,11 @@
+{
+  "version": "v20260601T170453Z",
+  "threshold": 0.19,
+  "recall_pos": 0.9730377471539844,
+  "precision_pos": 0.5438713998660415,
+  "f1": 0.6977443609022557,
+  "neg_blocked_pct": 0.7446090380648791,
+  "train_size": 7002,
+  "pos_count": 1669,
+  "neg_count": 5333
+}
