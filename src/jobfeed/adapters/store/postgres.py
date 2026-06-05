@@ -3621,6 +3621,47 @@ class PostgresStore:
             stuck_scoring=stuck_scoring,
         )
 
+    async def mark_stale_jobs_closed(
+        self,
+        *,
+        older_than_days: int,
+        dry_run: bool,
+    ) -> int:
+        """Close stale jobs that have no usable JD and have not been closed yet.
+
+        Targets rows where jd_quality IS NULL or IN ('missing', 'abandoned'),
+        discovered_at is older than the given threshold, and closed_at IS NULL.
+
+        Args:
+            older_than_days: Discovery-age threshold (exclusive).
+            dry_run: When True, count matching rows without writing.
+
+        Returns:
+            Row count: matched rows (dry_run=True) or updated rows (dry_run=False).
+        """
+        _STALE_WHERE = """
+            (jd_quality IS NULL OR jd_quality IN ('missing', 'abandoned'))
+            AND discovered_at < now() - make_interval(days => $1)
+            AND closed_at IS NULL
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            if dry_run:
+                return await self._count(
+                    conn,
+                    f"SELECT COUNT(*) FROM jobs WHERE {_STALE_WHERE}",
+                    older_than_days,
+                )
+            result = await conn.execute(
+                f"""UPDATE jobs
+                    SET closed_at = now(),
+                        enrich_error = 'backfill:stale-no-jd'
+                    WHERE {_STALE_WHERE}""",
+                older_than_days,
+            )
+        # asyncpg returns "UPDATE N"
+        return int(result.split()[-1])
+
     async def record_llm_usage(self, usage: LLMUsage) -> None:
         """Record a single LLM call's usage metrics.
 
