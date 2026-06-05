@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from jobfeed.config import (
     LLMSettings,
+    MLGateSettings,
     ScoringSettings,
     SourcesATSConfig,
     SourcesConfig,
@@ -642,3 +643,113 @@ def test_load_settings_env_overrides_speedyapply_enabled(
     settings = load_settings()
 
     assert settings.sources.speedyapply.enabled is True
+
+
+# --- Phase 5 MLGateSettings tests ---
+
+ML_GATE_DEFAULT_MODEL_DIR = "models/ml_gate"
+ML_GATE_DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+ML_GATE_DEFAULT_EMBEDDING_MAX_CHARS = 2000
+ML_GATE_DEFAULT_MAX_CANDIDATES = 5000
+
+# TOML-override values for test_load_settings_parses_ml_gate_section
+ML_GATE_TOML_EMBEDDING_MAX_CHARS = 3000
+ML_GATE_TOML_THRESHOLD_OVERRIDE = 0.6
+ML_GATE_TOML_MAX_CANDIDATES = 1000
+
+
+def test_ml_gate_settings_defaults() -> None:
+    """MLGateSettings should expose all five fields with correct defaults."""
+    cfg = MLGateSettings()
+
+    assert cfg.model_dir == ML_GATE_DEFAULT_MODEL_DIR
+    assert cfg.embedding_model == ML_GATE_DEFAULT_EMBEDDING_MODEL
+    assert cfg.embedding_max_chars == ML_GATE_DEFAULT_EMBEDDING_MAX_CHARS
+    assert cfg.threshold_override is None
+    assert cfg.max_candidates == ML_GATE_DEFAULT_MAX_CANDIDATES
+
+
+def test_ml_gate_settings_rejects_unknown_key() -> None:
+    """MLGateSettings with extra='forbid' should reject unknown keys."""
+    with pytest.raises(ValidationError):
+        MLGateSettings(nonexistent_key="value")  # type: ignore[call-arg]
+
+
+def test_scoring_ml_gate_enabled_defaults_false() -> None:
+    """ScoringSettings.ml_gate_enabled should default to False."""
+    cfg = ScoringSettings()
+
+    assert cfg.ml_gate_enabled is False
+
+
+def test_settings_exposes_ml_gate_field() -> None:
+    """Settings.ml_gate should be an MLGateSettings instance with defaults."""
+    settings = load_settings()
+
+    assert isinstance(settings.ml_gate, MLGateSettings)
+    assert settings.ml_gate.model_dir == ML_GATE_DEFAULT_MODEL_DIR
+    assert settings.ml_gate.embedding_model == ML_GATE_DEFAULT_EMBEDDING_MODEL
+    assert settings.ml_gate.embedding_max_chars == ML_GATE_DEFAULT_EMBEDDING_MAX_CHARS
+    assert settings.ml_gate.threshold_override is None
+    assert settings.ml_gate.max_candidates == ML_GATE_DEFAULT_MAX_CANDIDATES
+
+
+def test_ml_gate_settings_rejects_embedding_max_chars_zero() -> None:
+    """embedding_max_chars must be >0 (gt=0 constraint)."""
+    with pytest.raises(ValidationError):
+        MLGateSettings(embedding_max_chars=0)
+
+
+def test_ml_gate_settings_rejects_embedding_max_chars_negative() -> None:
+    """embedding_max_chars must be >0; negative values are also rejected."""
+    with pytest.raises(ValidationError):
+        MLGateSettings(embedding_max_chars=-1)
+
+
+def test_ml_gate_settings_rejects_threshold_override_below_zero() -> None:
+    """threshold_override must be in [0, 1]; values below 0 are rejected."""
+    with pytest.raises(ValidationError):
+        MLGateSettings(threshold_override=-0.01)
+
+
+def test_ml_gate_settings_rejects_threshold_override_above_one() -> None:
+    """threshold_override must be in [0, 1]; values above 1 are rejected."""
+    with pytest.raises(ValidationError):
+        MLGateSettings(threshold_override=1.01)
+
+
+def test_ml_gate_settings_accepts_threshold_override_boundary_values() -> None:
+    """threshold_override accepts exactly 0.0 and 1.0 (inclusive bounds)."""
+    cfg_low = MLGateSettings(threshold_override=0.0)
+    cfg_high = MLGateSettings(threshold_override=1.0)
+
+    assert cfg_low.threshold_override == 0.0
+    assert cfg_high.threshold_override == 1.0
+
+
+def test_ml_gate_settings_rejects_max_candidates_zero() -> None:
+    """max_candidates must be >=1; zero is rejected."""
+    with pytest.raises(ValidationError):
+        MLGateSettings(max_candidates=0)
+
+
+def test_load_settings_parses_ml_gate_section(tmp_path: Path) -> None:
+    """load_settings should populate [ml_gate] fields from TOML."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[ml_gate]\n"
+        'model_dir = "models/custom_gate"\n'
+        'embedding_model = "all-mpnet-base-v2"\n'
+        f"embedding_max_chars = {ML_GATE_TOML_EMBEDDING_MAX_CHARS}\n"
+        f"threshold_override = {ML_GATE_TOML_THRESHOLD_OVERRIDE}\n"
+        f"max_candidates = {ML_GATE_TOML_MAX_CANDIDATES}\n",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.ml_gate.model_dir == "models/custom_gate"
+    assert settings.ml_gate.embedding_model == "all-mpnet-base-v2"
+    assert settings.ml_gate.embedding_max_chars == ML_GATE_TOML_EMBEDDING_MAX_CHARS
+    assert settings.ml_gate.threshold_override == ML_GATE_TOML_THRESHOLD_OVERRIDE
+    assert settings.ml_gate.max_candidates == ML_GATE_TOML_MAX_CANDIDATES

@@ -118,3 +118,25 @@ enabled = false
 # tier2_cap = 30
 # profile_dir = "~/.cache/jobfeed/linkedin"
 # lock_path = "~/.cache/jobfeed/enrich.lock"
+
+# Phase 5 hard filters — cheap rule-based pre-LLM filtering.
+# All lists default to empty (no filtering). posted_within_days=null means no
+# date filter. title_blocklist is NOT applied here; it moved to the ML gate.
+[hard_filters]
+title_blocklist = []             # accepted for back-compat but NOT applied here — the ML gate handles seniority/title
+company_blocklist = []           # e.g. ["staffing agency", "recruiting firm"]
+location_allowlist = []          # e.g. ["remote", "san francisco"] — empty = any location
+location_blocklist = []          # e.g. ["new york", "london"]
+# posted_within_days =           # unset = no date filter; set to e.g. 30 to skip stale postings
+big_company_list = []            # e.g. ["google", "meta", "apple"] — get big_company_days leniency
+big_company_days = 90            # stale cutoff for big-company postings (default 90 days)
+
+# Phase 5 ML gate — the trained XGBoost model ships in-repo under models/ml_gate/.
+# Override threshold_override (0–1) to tune the gate's acceptance threshold at
+# runtime without retraining; leave unset to use the model's built-in threshold.
+[ml_gate]
+model_dir = "models/ml_gate"
+embedding_model = "all-MiniLM-L6-v2"
+embedding_max_chars = 2000
+# threshold_override =    # unset; when set, overrides the model's built-in threshold
+max_candidates = 5000

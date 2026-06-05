@@ -19,6 +19,7 @@ from jobfeed.config_sources import (
     SourcesLinkedInSearchConfig,
     SourcesSpeedyApplyConfig,
 )
+from jobfeed.domain.filtering import HardFilters
 
 CONFIG_ENV_PREFIX = "JOBFEED_"
 ENV_NESTED_DELIMITER = "__"
@@ -72,6 +73,54 @@ class ScoringSettings(BaseModel):
     ml_gate_enabled: bool = False
 
 
+class MLGateSettings(BaseModel):
+    """Configuration for the XGBoost ML gate used in Phase 5 evaluation funnel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_dir: str = "models/ml_gate"
+    # The fastembed embedder maps this legacy short name to its full Hugging
+    # Face id ("sentence-transformers/all-MiniLM-L6-v2"); both forms work.
+    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_max_chars: int = Field(default=2000, gt=0)
+    threshold_override: float | None = Field(default=None, ge=0, le=1)
+    max_candidates: int = Field(default=5000, ge=1)
+
+
+class HardFiltersSettings(BaseModel):
+    """Hard filter settings mirroring HardFilters domain object.
+
+    Empty defaults mean no filtering — a config file without a [hard_filters]
+    section is equivalent to no filters at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title_blocklist: list[str] = Field(default_factory=list)
+    company_blocklist: list[str] = Field(default_factory=list)
+    location_allowlist: list[str] = Field(default_factory=list)
+    location_blocklist: list[str] = Field(default_factory=list)
+    posted_within_days: int | None = Field(default=None, ge=1)
+    big_company_list: list[str] = Field(default_factory=list)
+    big_company_days: int = Field(default=90, ge=1)
+
+    def to_domain(self) -> HardFilters:
+        """Build the pure domain HardFilters from this settings object.
+
+        Returns:
+            HardFilters domain object with values copied from this settings model.
+        """
+        return HardFilters(
+            title_blocklist=list(self.title_blocklist),
+            company_blocklist=list(self.company_blocklist),
+            location_allowlist=list(self.location_allowlist),
+            location_blocklist=list(self.location_blocklist),
+            posted_within_days=self.posted_within_days,
+            big_company_list=list(self.big_company_list),
+            big_company_days=self.big_company_days,
+        )
+
+
 class ExecutionSettings(BaseModel):
     """Execution mode settings for local workflow orchestration."""
 
@@ -100,6 +149,8 @@ class Settings(BaseModel):
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
+    ml_gate: MLGateSettings = Field(default_factory=MLGateSettings)
+    hard_filters: HardFiltersSettings = Field(default_factory=HardFiltersSettings)
 
 
 def load_settings(config_path: Path | None = None) -> Settings:
@@ -210,7 +261,9 @@ def _merge_dicts(
 __all__ = [
     "DBSettings",
     "ExecutionSettings",
+    "HardFiltersSettings",
     "LLMSettings",
+    "MLGateSettings",
     "ObservabilitySettings",
     "ScoringSettings",
     "Settings",
