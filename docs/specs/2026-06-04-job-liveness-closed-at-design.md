@@ -54,15 +54,22 @@ Conservative backfill of stale stock.
 Replace the bare CXS GET with the two-step flow, returning a result that distinguishes three outcomes:
 
 1. GET the apply HTML (`User-Agent`, follow redirects). HTTP 404/410 → **closed** (`gone:<code>`).
+   Any other non-2xx HTML status (403/429/5xx) or empty body → **transient** (do NOT parse the flag).
 2. Parse inline config: `postingAvailable: (true|false)` and `token: "<uuid>"`.
 3. `postingAvailable=false` → **closed** (`closed:posting-unavailable:workday`), no JD.
-4. `postingAvailable=true` → GET the CXS URL on the **same client** (cookies) with headers
-   `X-CALYPSO-CSRF-TOKEN: <token>`, `Accept: application/json`, `Referer: <url>`; parse
-   `jobPostingInfo.jobDescription` → **JD recovered**. CXS 404/410 → **closed**; other non-2xx /
-   timeout → **transient** (no JD, no closed mark — current behavior).
+4. `postingAvailable=true` **(or absent — best-effort, see below)** → GET the CXS URL with headers
+   `X-CALYPSO-CSRF-TOKEN: <token>`, `Accept: application/json`, `Referer: <url>`; require
+   `jobPostingInfo.jobDescription` to be a **string** (non-string → no JD) → **JD recovered**. CXS
+   404/410 → **closed**; other non-2xx / timeout → **transient** (no JD, no closed mark).
 
-Cookie isolation: use a per-fetch cookie context (fresh jar) so tenants don't share cookies. The CXS
-URL transform is the existing `_build_cxs_url` (unchanged).
+**Missing `postingAvailable` (format drift):** when the flag is absent but a token exists, the CXS
+call is still attempted (best-effort). This is safe: `posting-unavailable` closed is set ONLY on an
+explicit `false`; a missing flag can only yield JD (200), `gone` (CXS 404/410), or transient.
+
+Cookie isolation: each fetch uses a fully **independent** `httpx.AsyncClient` (own jar + own
+transport — NOT the shared client's `_transport`, which would race-close under concurrent routing),
+preserving the shared client's `headers`/`follow_redirects`/`timeout`. The CXS URL transform is the
+existing `_build_cxs_url` (unchanged).
 
 ### 3.3 Closed-signal contract through routing → SpeedyApply
 `_ats_workday.fetch_jd` returns a small result (`jd_text: str`, `is_closed: bool`, `reason: str|None`)
