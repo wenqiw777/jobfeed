@@ -1,168 +1,128 @@
-# Job Liveness: `closed_at` — confirmed-gone marking from JD fetch — Design
+# Job Liveness: `closed_at` + Workday JD Recovery — Design
 
-**Status:** Approved design (2026-06-04). Branch: `phase4/job-liveness-closed-at`.
-**Owner consumer split:** This spec ships the **producer + persistence + backfill** only. The
-**candidate-selection consumer** (filtering closed jobs out of scoring) is **deferred to Phase 5**,
-which already restructures that load path (see *Phase 5 Handoff*).
+**Status:** Approved design, **revised 2026-06-04** after empirical disproof of the "WAF" hypothesis.
+Branch: `phase4/job-liveness-closed-at` / worktree `worktree-job-liveness-closed-at`.
+**Consumer split:** ships **producer + persistence + backfill**; the candidate-selection consumer
+(filter closed jobs out of scoring) is **deferred to Phase 5** (its plan carries the `closed_at IS NULL`
+requirement).
 
-## 1. Problem
+## 1. Problem & root cause (corrected)
 
-Aggregator sources (notably SpeedyApply, a curated GitHub list) lag reality: a posting can be
-**closed/expired** by the time we scan, yet the list keeps re-listing it, so `discovered_at`
-(last-seen) keeps refreshing and the row never ages out of the freshness window. The only current
-liveness signal is passive `discovered_at` staleness — worst case **90 days** (the Phase 5
-big-company freshness window) before a dead job stops being a scoring candidate.
+Aggregator sources (SpeedyApply) lag reality: a posting can be closed by the time we scan, yet the
+list keeps re-listing it, so `discovered_at` (last-seen) never lets it age out.
 
-Empirically (this repo's dev DB, 2026-06-04): of 142 SpeedyApply→Workday "failed-JD" rows, ~99
-already had usable JD (preserved by the quality-monotonic upsert across scans); **43 were truly
-missing JD; of those only 8 had a JD-bearing cross-source twin; ~33 are permanently JD-less** —
-their Workday reqs are closed (manually verified) but Akamai WAF returns 403/404 so no scraper
-(httpx, headless Chromium, **headful Chromium** — all tested, all 403/404) can fetch them.
+**Corrected root cause:** the Workday JD failures were NOT an Akamai WAF (earlier hypothesis,
+**disproved**). Our `_ats_workday.fetch_jd` does a **bare CXS API GET with no session cookie / CSRF
+token**, which Workday rejects. The Workday job HTML carries an inline config with the real signal:
 
-When a per-job JD fetch returns a **definitive "not here" HTTP status (404 / 410 / 403)**, that is a
-fast, direct signal the posting is gone — far better than waiting out the passive window.
+- `postingAvailable: true|false` — the **authoritative open/closed flag**.
+- `token: "<uuid>"` — the CSRF token (`X-CALYPSO-CSRF-TOKEN`).
+
+The correct fetch is **two-step**: GET the HTML (seeds session cookies + yields `token` +
+`postingAvailable`), then GET the CXS API on the **same client** (cookies) with the CSRF header.
+
+**Measured (25 random previously-failed Workday URLs, 2026-06-04):**
+**9/25 (36%) JD recovered** (`postingAvailable=true` → CXS 200, JD 5–11k chars); **16/25 (64%)
+confirmed closed** (`postingAvailable=false` → CXS 403, or HTML/CXS 404); **0 WAF / 0 ambiguous.**
+
+So a "403" is simply Workday's response for a **closed** req (`postingAvailable=false`) — not a wall.
+This makes `postingAvailable` a clean closed signal AND unlocks recovering JD for the open ~36%.
 
 ## 2. Goal / Non-Goals
 
-**Goal:** When a per-job JD fetch returns 404 / 410 / 403, mark the job **closed** immediately and
-durably, with a reason that distinguishes confidence; make it **reversible** (a later successful
-enrich un-marks it); backfill the existing stock conservatively.
+**Goal (two wins):**
+1. **Recover JD** for open Workday postings by fixing the fetch to the two-step cookie+CSRF flow.
+2. **Mark `closed_at`** authoritatively when Workday says `postingAvailable=false`, or any vendor
+   returns HTTP 404/410 (page gone) — so closed reqs leave the funnel immediately, reversibly.
+Conservative backfill of stale stock.
 
-**Non-Goals (explicitly deferred):**
-- **Candidate-selection / hard-filter consumer** → **Phase 5** (`load_gate_candidates`,
-  `apply_hard_filters`). This spec only requires Phase 5 to add `closed_at IS NULL`; it does not
-  modify the eval funnel here.
-- **Digest consumer** → follow-up (not Phase 5's surface; small, deferred to keep this PR to one
-  concern).
-- **LinkedIn / ATS per-job closed marking** → SpeedyApply is the only per-job-JD-fetch source whose
-  individual req can return 404/410/403. ATS board-level death is already handled (dead-slug,
-  `_ats_probe`). LinkedIn enrich is a later follow-up.
-- **WAF bypass / scraping the closed Workday reqs** → proven impossible without evasion; out of
-  scope, will not be attempted.
+**Non-Goals (deferred):**
+- Candidate-selection / hard-filter consumer → **Phase 5** (`closed_at IS NULL` predicate).
+- Digest consumer → follow-up.
+- Closed marking for LinkedIn/ATS-board per-job (ATS board death is already dead-slug handled).
+- No browser, no WAF evasion, no IP rotation — and now **unnecessary** (plain httpx two-step works).
 
 ## 3. Key Decisions
 
-### 3.1 Storage — new column `jobs.closed_at` + reuse `jobs.enrich_error`
-- **`closed_at TIMESTAMPTZ NULL`** (new): `NULL` = open/unknown; set = first time we confirmed the
-  posting unobtainable. Clean, NULL-safe liveness predicate (`closed_at IS NULL`). Records *when*.
-- **`enrich_error TEXT`** (exists; **currently not written by `save_job`** — Phase 4 deferred it):
-  human-readable reason, also distinguishes confidence:
-  - `gone:404:<vendor>` / `gone:410:<vendor>` — server says the req does not exist (**high
-    confidence**).
-  - `unreachable:403:<vendor>` — server refuses (WAF); the req is *very likely* closed but
-    not server-confirmed (**lower confidence**, auditable/reversible separately if 403 ever
-    proves a false-positive source).
-- One Alembic migration adds `closed_at` (nullable, default NULL → non-breaking, no backfill in the
-  migration itself).
+### 3.1 Storage — new `jobs.closed_at` + reuse `jobs.enrich_error`
+- **`closed_at TIMESTAMPTZ NULL`** (new): NULL = open/unknown; set = first confirmed-closed time.
+- **`enrich_error TEXT`** (exists, currently unwritten by `save_job`): reason, e.g.
+  `closed:posting-unavailable:workday`, `gone:404:<vendor>`, `gone:410:<vendor>`.
+- One Alembic migration adds `closed_at` (nullable, default NULL).
 
-### 3.2 Trigger (producer) — status-code branch in SpeedyApply
-In `SpeedyApplySource._route`'s `except ATSFetchError`, inspect `exc.status_code`:
+### 3.2 Workday fetch fix (`_ats_workday.fetch_jd`) — recovers JD + emits closed
+Replace the bare CXS GET with the two-step flow, returning a result that distinguishes three outcomes:
 
-| JD fetch outcome        | `closed_at` | `enrich_error`              | `enrich_source` |
-|-------------------------|-------------|-----------------------------|-----------------|
-| 404 / 410               | `now`       | `gone:<code>:<vendor>`      | `speedyapply-error` (unchanged) |
-| 403                     | `now`       | `unreachable:403:<vendor>`  | `speedyapply-error` |
-| timeout / 5xx / network | unchanged   | unchanged                   | `speedyapply-error` |
-| success (JD obtained)   | **cleared** | cleared                     | `speedyapply-<vendor>` |
+1. GET the apply HTML (`User-Agent`, follow redirects). HTTP 404/410 → **closed** (`gone:<code>`).
+2. Parse inline config: `postingAvailable: (true|false)` and `token: "<uuid>"`.
+3. `postingAvailable=false` → **closed** (`closed:posting-unavailable:workday`), no JD.
+4. `postingAvailable=true` → GET the CXS URL on the **same client** (cookies) with headers
+   `X-CALYPSO-CSRF-TOKEN: <token>`, `Accept: application/json`, `Referer: <url>`; parse
+   `jobPostingInfo.jobDescription` → **JD recovered**. CXS 404/410 → **closed**; other non-2xx /
+   timeout → **transient** (no JD, no closed mark — current behavior).
 
-- **Only 403/404/410** — explicit "server says not-here / refuses". Timeout/5xx/connection errors are
-  **transient**; marking them closed would wrong-kill live jobs.
-- `ATSFetchError.status_code` already carries the code (`_http.py:118`); it is currently discarded at
-  the catch site. The vendor is derivable from the apply-URL host (already matched in routing).
-- The `<vendor>-notfound` labels in the existing DB are **historical** (old code/legacy import);
-  current code does not produce them and the backfill must not trust them (see 3.5).
+Cookie isolation: use a per-fetch cookie context (fresh jar) so tenants don't share cookies. The CXS
+URL transform is the existing `_build_cxs_url` (unchanged).
 
-### 3.3 `save_job` upsert — `closed_at` orthogonal to the quality-monotonic gate
-`closed_at` gets its own `ON CONFLICT ... SET` rule, **independent** of the `jd_text`/`jd_quality`/
-`enrich_source` quality-monotonic `CASE` (which must stay untouched):
+### 3.3 Closed-signal contract through routing → SpeedyApply
+`_ats_workday.fetch_jd` returns a small result (`jd_text: str`, `is_closed: bool`, `reason: str|None`)
+— implementer's choice of shape (dataclass or a typed exception for the closed case). The
+`_speedyapply_routing.route_and_fetch` and `SpeedyApplySource._route` propagate it so the built
+`JobPosting` carries `closed_at`/`enrich_error`:
+
+| Outcome                                   | `jd_text` | `closed_at` | `enrich_error`                         |
+|-------------------------------------------|-----------|-------------|----------------------------------------|
+| Workday `postingAvailable=false`          | ""        | `now`       | `closed:posting-unavailable:workday`   |
+| HTTP 404 / 410 (HTML or CXS, any vendor)  | ""        | `now`       | `gone:<code>:<vendor>`                 |
+| JD recovered (`postingAvailable=true`,200)| `<jd>`    | NULL        | NULL (`enrich_source=speedyapply-workday`) |
+| Transient (timeout / 5xx / other)         | ""        | unchanged   | unchanged (`enrich_source=speedyapply-error`) |
+
+**A bare 403 is no longer a standalone closed trigger** — for Workday it is now subsumed by reading
+`postingAvailable` (false → closed); for other vendors a 403 is treated as transient (not closed).
+
+### 3.4 `save_job` upsert — `closed_at` orthogonal to the quality-monotonic gate
+Independent `ON CONFLICT ... SET`, not touching the `jd_text`/`jd_quality`/`enrich_source` CASE:
 
 ```sql
-closed_at = CASE
-    WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL                       -- job came back with JD → un-mark
-    ELSE COALESCE(jobs.closed_at, EXCLUDED.closed_at)                 -- keep EARLIEST confirmed-gone time
-END,
-enrich_error = CASE
-    WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL                       -- cleared on recovery
-    ELSE COALESCE(EXCLUDED.enrich_error, jobs.enrich_error)           -- adopt new reason, else keep
-END
+closed_at = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
+                 ELSE COALESCE(jobs.closed_at, EXCLUDED.closed_at) END,
+enrich_error = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
+                    ELSE COALESCE(EXCLUDED.enrich_error, jobs.enrich_error) END
 ```
+Reversible/self-healing (recovered JD clears it), earliest-confirmed-closed wins.
 
-- **Reversible / self-healing:** any future scan that obtains real JD (`EXCLUDED.jd_text IS NOT NULL`)
-  clears both columns → a false-positive (e.g. an open-but-WAF-walled 403 job that later enriches)
-  recovers automatically.
-- **Earliest-wins** for `closed_at` (truthful "gone since"); never overwritten by a later re-confirm.
-- Fresh INSERT path writes whatever the posting carries (`closed_at` NULL unless the discovering
-  fetch already 403/404/410'd it).
+### 3.5 Domain model — `JobPosting`
+Add `closed_at: datetime | None = None`, `enrich_error: str | None = None`. Pure stdlib.
 
-### 3.4 Domain model — `JobPosting`
-Add `closed_at: datetime | None = None` and (if absent) `enrich_error: str | None = None` to
-`JobPosting` (`domain/models.py`). Pure stdlib; no boundary change. SpeedyApply sets them; `save_job`
-persists them; `_job_from_record` hydrates them.
+### 3.6 Backfill — one-time, conservative, no network
+`(jd_quality IS NULL OR jd_quality IN ('missing','abandoned')) AND discovered_at < now()-30d AND
+closed_at IS NULL` → `closed_at=now()`, `enrich_error='backfill:stale-no-jd'`. Dry-run default. Not
+label-based. (A re-scan with the fixed fetch will recover ~36% of these before backfill even runs.)
 
-### 3.5 Backfill — one-time, conservative, no network
-A guarded maintenance routine marks existing stock that is **confidently** gone. Criterion:
+## 4. Phase 5 Handoff (consumer)
+Phase 5's eligibility predicate (`_stage_a_pending_filters`, used by `load_gate_candidates` and
+`claim_pending_stage_a`) MUST add `AND jobs.closed_at IS NULL`. Recorded in the Phase 5 plan, Task 5.
 
-```
-(jd_quality IS NULL OR jd_quality IN ('missing','abandoned'))
-  AND discovered_at < now() - INTERVAL '30 days'
-  AND closed_at IS NULL
-→ set closed_at = now(), enrich_error = 'backfill:stale-no-jd'
-```
+## 5. Testing
+- **Workday fetch (unit, mocked HTTP via respx):** two-step happy path recovers JD; `postingAvailable=false`
+  → closed (no CXS call needed past the flag); HTML 404 → closed; CXS 404 → closed; transient 5xx/timeout
+  → no JD/no closed; CSRF header + cookies are sent on the CXS call.
+- **Routing/producer (unit):** closed outcome → posting `closed_at` set + correct `enrich_error`; JD
+  outcome → `closed_at` None; transient → unchanged.
+- **Store (`postgres`):** save_job sets/earliest-preserves/clears `closed_at`; quality-monotonic JD gate
+  unaffected; `_job_from_record` hydrates.
+- **Backfill (`postgres`):** marks stale-no-JD only; dry-run/apply; idempotent.
+- **Migration (`postgres`):** upgrade adds nullable column, downgrade drops.
+- **Gates:** boundaries, ≤300 lines (store exempt), complexity ≤10. Optional `@pytest.mark.live`
+  smoke that hits 1–2 real Workday URLs (manual).
 
-- Pure staleness — **no network, no re-probe**; defensible and reversible.
-- **Not** label-based (`enrich_source LIKE '%notfound%'`): those legacy labels mix 403/404 and are
-  untrustworthy.
-- Delivery: a `jobfeed` maintenance subcommand (preferred) or a one-off `scripts/` script; dry-run by
-  default, `--apply` to write; logs counts.
+## 6. Risks
+- **Workday HTML/token format drift:** the parse (`postingAvailable:`, `token:`) is tied to Workday's
+  current inline-config shape; a redesign would break recovery → falls back to "transient" (no JD, no
+  false-closed). Covered by the optional live smoke.
+- **Closed false-positive:** near-zero now — `postingAvailable=false` is Workday's own authoritative
+  flag (not an inferred 403). Still reversible (recovered JD clears `closed_at`).
+- **Producer/consumer split:** signal populated but inert until Phase 5 wires the filter (intentional).
 
-## 4. Data Flow
-
-```
-SpeedyApply scan
-  └─ _route(row) → route_and_fetch
-        ├─ JD obtained        → (jd_text, "speedyapply-<vendor>"),       closed_at=None
-        └─ ATSFetchError
-              ├─ status 404/410 → ("", "speedyapply-error"), closed_at=now, enrich_error="gone:..."
-              ├─ status 403     → ("", "speedyapply-error"), closed_at=now, enrich_error="unreachable:403:..."
-              └─ else (timeout) → ("", "speedyapply-error"), closed_at=None
-  └─ JobPosting(..., closed_at, enrich_error) → store.save_job (upsert rule 3.3)
-
-[deferred → Phase 5]  load_gate_candidates(...) AND ... AND closed_at IS NULL
-[one-time]            backfill maintenance command
-```
-
-## 5. Phase 5 Handoff (the consumer)
-
-Phase 5's `load_gate_candidates` (Task 5) and the `_stage_a_pending_filters` eligibility predicate are
-the correct home for the consumer. **Requirement added to the Phase 5 plan:** the candidate
-eligibility predicate must include `AND jobs.closed_at IS NULL`, so closed jobs never enter the eval
-funnel. (This spec amends the Phase 5 doc with that line; it does not implement it here.)
-
-## 6. Testing
-
-- **Unit (SpeedyApply):** 404→`closed_at` set + `gone:404`; 410→`gone:410`; 403→`closed_at` set +
-  `unreachable:403`; timeout/5xx→`closed_at` stays None; success→None. (status-code branch)
-- **Store (`@pytest.mark.postgres`):** `save_job` sets `closed_at` on a gone posting; preserves the
-  **earliest** across re-confirm; **clears** on a later posting carrying JD; the quality-monotonic
-  `jd_text`/`jd_quality` gate is **unaffected** by closed_at logic (regression).
-- **Backfill (`@pytest.mark.postgres`):** marks stale-no-JD rows; leaves fresh rows and rows with JD
-  untouched; `--apply`/dry-run honored; idempotent.
-- **Migration:** upgrade adds nullable `closed_at`; downgrade drops it; round-trips on PG.
-- **Gates:** architecture boundaries, ≤300 lines/file (store layer exempt), complexity ≤10.
-
-## 7. Risks
-
-- **403 false-positive:** a genuinely-open but WAF-walled job is marked closed and (once Phase 5 lands)
-  excluded. **Mitigated:** (a) such a job has no JD so it is barely evaluable anyway; (b) `closed_at`
-  is never a delete and **self-heals** on any successful enrich; (c) `enrich_error='unreachable:403'`
-  keeps it auditable/recoverable as a class. Accepted per owner's domain knowledge that their 403s are
-  predominantly closed reqs.
-- **Producer/consumer split:** the signal is populated but inert until Phase 5 wires the filter. This
-  is intentional (owner directive: leave Phase-5-owned consumption to Phase 5); the column is queryable
-  and the backfill makes it immediately observable.
-
-## 8. Out of plan note
-
-This feature is not in an enumerated phase plan; it is owner-directed, sits between Phase 4 and Phase 5,
-and depends on Phase 4 source code (branch cut from the Phase-4 tip, not `main`). A `writing-plans`
-implementation plan follows this spec.
+## 7. Out-of-plan note
+Owner-directed, between Phase 4 and Phase 5; depends on Phase 4 source (branch cut from Phase-4 tip).
