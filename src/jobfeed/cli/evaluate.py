@@ -10,6 +10,7 @@ from typing import cast
 import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
+from jobfeed.cli.ml_gate import build_hard_filters, build_ml_gate, needs_ml_gate
 from jobfeed.domain.models import PipelineRun
 
 
@@ -249,6 +250,10 @@ async def _build_and_run(
         if params.threshold is not None
         else settings.scoring.stage_a_threshold
     )
+    ml_gate_enabled = settings.scoring.ml_gate_enabled
+    needs_gate = needs_ml_gate(
+        params.stage, params.limit, ml_gate_enabled=ml_gate_enabled
+    )
     service = EvaluateService(
         deps=EvaluateDependencies(
             store=store,
@@ -257,6 +262,8 @@ async def _build_and_run(
             llm_stage_a=llm_a,
             llm_stage_b=llm_b,
             llm_stage_b_sweep=llm_b_sweep,
+            ml_gate=build_ml_gate(settings) if needs_gate else None,
+            hard_filters=build_hard_filters(settings),
         ),
         config=EvaluateRuntimeConfig(
             llm=EvaluateLLMConfig(
@@ -268,6 +275,8 @@ async def _build_and_run(
             ),
             stage_a_threshold=threshold,
             resume_text=resume_text,
+            ml_gate_enabled=ml_gate_enabled,
+            ml_gate_max_candidates=settings.ml_gate.max_candidates,
         ),
         logger=logger,
     )
