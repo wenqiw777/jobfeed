@@ -2,10 +2,9 @@
 
 SpeedyApply rows carry only an apply URL; the JD body lives behind whichever ATS
 the company uses. This module matches the apply URL host against the known
-vendors and dispatches to the right JD fetch, returning ``(jd_text,
-enrich_source)``.
+vendors and dispatches to the right JD fetch, returning a ``RouteResult``.
 
-  apply_url ──host-regex──► vendor ──dispatch──► JD fetch ──► (jd_text, label)
+  apply_url ──host-regex──► vendor ──dispatch──► JD fetch ──► RouteResult
   ─────────────────────────────────────────────────────────────────────────────
   boards[.region].greenhouse.io/<slug>/jobs/<id>  greenhouse  fetch_job (1 GET)
   jobs.ashbyhq.com/<slug>/<uuid>                  ashby       fetch_jobs (cached)
@@ -18,6 +17,9 @@ call) and match the target posting by ``canonical_id``; a target absent from the
 returned list (``fetch_jobs`` drops blank-field rows) yields
 ``speedyapply-notfound``. Adding a 7th vendor is a localized change: add a host
 regex + a branch in ``_match_vendor`` and a fetch in ``_fetch_jd``.
+
+The ``RouteResult`` carries ``closed_at`` and ``enrich_error`` for Workday
+postings that are definitively closed (``is_closed=True``).
 """
 
 from __future__ import annotations
@@ -57,6 +59,25 @@ _WORKDAY_RE = re.compile(r"^https?://[^/]+\.(?:myworkdayjobs|myworkdaysite)\.com
 
 
 @dataclass(frozen=True, kw_only=True)
+class RouteResult:
+    """Result of routing + fetching a single SpeedyApply row's JD.
+
+    Attributes:
+        jd_text: Plain-text JD body, or empty string when unavailable.
+        enrich_source: Label identifying which vendor/path produced the JD.
+        closed_at: Timestamp when the posting was detected as closed/gone,
+            or None for live postings and transient failures.
+        enrich_error: Machine-readable reason string for definitive closures
+            (e.g. ``closed:posting-unavailable:workday``), or None otherwise.
+    """
+
+    jd_text: str
+    enrich_source: str
+    closed_at: datetime | None = None
+    enrich_error: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class _BoardVendor:
     """A vendor matched to a full-board fetch (Ashby/Lever): cache by canonical_id."""
 
@@ -82,10 +103,6 @@ async def _fetch_icims(client: httpx.AsyncClient, url: str, timeout: float) -> s
     return await icims.fetch_jd(client, url, timeout=timeout)
 
 
-async def _fetch_workday(client: httpx.AsyncClient, url: str, timeout: float) -> str:
-    return await workday.fetch_jd(client, url, timeout=timeout)
-
-
 @dataclass(frozen=True, kw_only=True)
 class _JdVendor:
     """A vendor matched to a single JD fetch returning (jd_text)."""
@@ -100,7 +117,7 @@ async def route_and_fetch(
     *,
     slug_cache: SlugCache,
     timeout: float,
-) -> tuple[str, str]:
+) -> RouteResult:
     """Route an apply URL to its vendor and fetch the JD.
 
     Args:
@@ -110,9 +127,11 @@ async def route_and_fetch(
         timeout: Per-request timeout passed to every vendor fetch.
 
     Returns:
-        ``(jd_text, enrich_source)``. Unrouted hosts yield
-        ``("", "speedyapply-unrouted")``; an Ashby/Lever id missing from its
-        board yields ``("", "speedyapply-notfound")``.
+        ``RouteResult`` with ``jd_text``, ``enrich_source``, and optionally
+        ``closed_at`` / ``enrich_error`` for definitively-closed Workday
+        postings.  Unrouted hosts yield ``("", "speedyapply-unrouted")``;
+        an Ashby/Lever id missing from its board yields
+        ``("", "speedyapply-notfound")``.
 
     Raises:
         ATSFetchError: Propagated from the vendor fetch on HTTP/network failure
@@ -126,24 +145,52 @@ async def route_and_fetch(
     if board_vendor is not None:
         return await _fetch_from_board(client, board_vendor, slug_cache, timeout)
 
+    if _WORKDAY_RE.match(apply_url):
+        return await _fetch_workday_result(client, apply_url, timeout)
+
     jd_vendor = _match_jd_vendor(apply_url)
     if jd_vendor is not None:
         jd_text = await jd_vendor.fetch(client, apply_url, timeout)
-        return (jd_text, f"speedyapply-{jd_vendor.vendor}")
+        return RouteResult(
+            jd_text=jd_text, enrich_source=f"speedyapply-{jd_vendor.vendor}"
+        )
 
-    return ("", "speedyapply-unrouted")
+    return RouteResult(jd_text="", enrich_source="speedyapply-unrouted")
 
 
 async def _fetch_greenhouse(
     client: httpx.AsyncClient, match: re.Match[str], timeout: float
-) -> tuple[str, str]:
+) -> RouteResult:
     """Greenhouse path: a single targeted per-job GET via fetch_job."""
     slug, job_id = match.group(1), match.group(2)
     posting = await greenhouse.fetch_job(
         client, slug, job_id, discovered_at=_now(), timeout=timeout
     )
     jd_text = posting.jd_text if posting and posting.jd_text else ""
-    return (jd_text, "speedyapply-greenhouse")
+    return RouteResult(jd_text=jd_text, enrich_source="speedyapply-greenhouse")
+
+
+async def _fetch_workday_result(
+    client: httpx.AsyncClient, apply_url: str, timeout: float
+) -> RouteResult:
+    """Workday path: uses fetch_jd_result to carry the closed signal.
+
+    Maps WorkdayFetch outcomes to RouteResult:
+      - is_closed=True  → closed_at=now, enrich_error=reason, source=error
+      - is_closed=False, jd_text non-empty → source=speedyapply-workday
+      - is_closed=False, jd_text empty (transient) → source=speedyapply-error
+    """
+    result = await workday.fetch_jd_result(client, apply_url, timeout=timeout)
+    if result.is_closed:
+        return RouteResult(
+            jd_text="",
+            enrich_source="speedyapply-error",
+            closed_at=_now(),
+            enrich_error=result.reason,
+        )
+    if result.jd_text:
+        return RouteResult(jd_text=result.jd_text, enrich_source="speedyapply-workday")
+    return RouteResult(jd_text="", enrich_source="speedyapply-error")
 
 
 def _match_board_vendor(apply_url: str) -> _BoardVendor | None:
@@ -168,13 +215,15 @@ def _match_board_vendor(apply_url: str) -> _BoardVendor | None:
 
 
 def _match_jd_vendor(apply_url: str) -> _JdVendor | None:
-    """Match the single-JD-fetch vendors (SmartRecruiters / iCIMS / Workday)."""
+    """Match the single-JD-fetch vendors (SmartRecruiters / iCIMS).
+
+    Workday is handled separately via ``_fetch_workday_result`` to carry the
+    closed signal through ``WorkdayFetch``.
+    """
     if _SMARTRECRUITERS_RE.match(apply_url):
         return _JdVendor(vendor="smartrecruiters", fetch=_fetch_smartrecruiters)
     if _ICIMS_RE.match(apply_url):
         return _JdVendor(vendor="icims", fetch=_fetch_icims)
-    if _WORKDAY_RE.match(apply_url):
-        return _JdVendor(vendor="workday", fetch=_fetch_workday)
     return None
 
 
@@ -183,13 +232,16 @@ async def _fetch_from_board(
     matched: _BoardVendor,
     slug_cache: SlugCache,
     timeout: float,
-) -> tuple[str, str]:
+) -> RouteResult:
     """Fetch the vendor board once (cached) and match the target by id."""
     postings = await _cached_board(client, matched, slug_cache, timeout)
     for posting in postings:
         if posting.canonical_id == matched.job_id:
-            return (posting.jd_text or "", f"speedyapply-{matched.vendor}")
-    return ("", "speedyapply-notfound")
+            return RouteResult(
+                jd_text=posting.jd_text or "",
+                enrich_source=f"speedyapply-{matched.vendor}",
+            )
+    return RouteResult(jd_text="", enrich_source="speedyapply-notfound")
 
 
 async def _cached_board(
@@ -227,4 +279,4 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-__all__ = ["SlugCache", "route_and_fetch"]
+__all__ = ["RouteResult", "SlugCache", "route_and_fetch"]
