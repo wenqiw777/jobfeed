@@ -12,8 +12,17 @@ dependencies = [
     "asyncpg >= 0.30",
     "beautifulsoup4 >= 4.12",
     "click",
+    # ML gate (Phase 5): numpy (feature vectorizer), xgboost (model load), and
+    # the fastembed ONNX embedder are all core — exercised by `make quality`
+    # unit tests and lazy-imported in the gate. fastembed runs `all-MiniLM-L6-v2`
+    # via onnxruntime (~200MB, NO torch), so the default Docker image runs the
+    # real gate and there is no OpenMP/torch segfault risk. Its only outbound
+    # network is a one-time HuggingFace download of the ONNX model weights.
+    "fastembed >= 0.4",
     "httpx >= 0.28",
     "jinja2 >= 3.1",
+    "numpy >= 1.26",
+    "xgboost >= 3.2.0",
     # OpenAI SDK drives the `openai-compat` LLM backend (Decision 9). Lazy-imported
     # inside the factory branch + under TYPE_CHECKING in the adapter, so the rest
     # of the package imports cleanly even when the SDK is absent.
@@ -67,6 +76,10 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 # decisive key; that is the point of the helper, not accidental sprawl.
 "tests/unit/test_dedupe.py" = ["PLR0913"]
 "tests/contract/test_dedupe_contract.py" = ["PLR0913"]
+# The evaluation-persistence contract pins exact Stage A / Stage B / gate scores
+# (75, 72, …) as frozen fixtures; those literals ARE the contract, so PLR2004
+# magic-value warnings on them are noise.
+"tests/contract/test_evaluation_persistence.py" = ["PLR2004"]
 "tests/conftest.py" = ["PLC0415"]
 # SpeedyApply markdown-table fixtures embed HTML anchors that are inherently
 # wider than 88 chars; the table rows cannot be wrapped without corrupting the
@@ -74,6 +87,15 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 "tests/unit/test_speedyapply_markdown.py" = ["E501"]
 "tests/unit/test_speedyapply_routing.py" = ["E501"]
 "tests/fixtures/generate_legacy_fixture.py" = ["PLR2004", "E501", "C901", "PLC0415"]
+# The ML-feature parity battery asserts the exact legacy-pinned vocab widths
+# (39 techs, 9 domains, STRUCTURED_DIM=66); those literals ARE the contract,
+# so PLR2004 magic-value warnings on them are noise.
+"tests/unit/test_ml_features.py" = ["PLR2004"]
+# The vectorize + gate batteries pin the exact 450-dim layout widths, block
+# sums, the meta threshold (0.5), and small batch/survivor counts; those
+# literals ARE the contract, so PLR2004 magic-value warnings are noise.
+"tests/unit/test_ml_vectorize.py" = ["PLR2004"]
+"tests/unit/test_xgboost_gate_load.py" = ["PLR2004"]
 "migrations/env.py" = ["PLC0415"]
 "migrations/versions/*.py" = ["E501"]
 
@@ -93,9 +115,11 @@ mypy_path = "src"
 
 # jobspy and pandas ship no type stubs / py.typed marker. They are confined to
 # the JobSpy isolation boundary (adapters/sources/_jobspy*.py); treat their
-# imports as untyped rather than failing strict mode.
+# imports as untyped rather than failing strict mode. xgboost, fastembed, and
+# onnxruntime likewise ship no stubs and are confined to the lazily imported
+# ML-gate adapter (adapters/ml/*); treat them as untyped too.
 [[tool.mypy.overrides]]
-module = ["jobspy.*", "pandas"]
+module = ["jobspy.*", "pandas", "xgboost.*", "fastembed.*", "onnxruntime.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -104,5 +128,6 @@ markers = [
     "postgres: requires PostgreSQL (Docker)",
     "live: requires real HTTP to external APIs (manual only)",
     "browser: requires Playwright browser binaries",
+    "mlmodel: requires the real ML model + embedder download",
 ]
-addopts = "-m 'not postgres and not live and not browser'"
+addopts = "-m 'not postgres and not live and not browser and not mlmodel'"

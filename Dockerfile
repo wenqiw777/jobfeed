@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PATH="/opt/venv/bin:${PATH}" \
     PIP_NO_CACHE_DIR=1 \
