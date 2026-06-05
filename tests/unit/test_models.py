@@ -6,6 +6,7 @@ import ast
 import subprocess
 import sys
 from dataclasses import fields, is_dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -140,6 +141,55 @@ def test_job_posting_defaults_and_natural_identity_fields() -> None:
     assert job.posted_at is None
     assert job.enriched_at is None
     assert job.enrich_source is None
+
+
+def test_job_posting_closed_at_and_enrich_error_default_to_none() -> None:
+    """closed_at and enrich_error should default to None when not supplied."""
+    job = JobPosting(
+        platform="greenhouse",
+        canonical_id="xyz789",
+        url="https://example.com/jobs/xyz789",
+        title="Data Engineer",
+        company="Acme Corp",
+        location="Remote",
+        discovered_at=fixed_time(),
+    )
+
+    assert job.closed_at is None
+    assert job.enrich_error is None
+
+
+def test_job_posting_closed_at_accepts_datetime() -> None:
+    """closed_at should round-trip a datetime value."""
+    ts = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
+    job = JobPosting(
+        platform="greenhouse",
+        canonical_id="xyz789",
+        url="https://example.com/jobs/xyz789",
+        title="Data Engineer",
+        company="Acme Corp",
+        location="Remote",
+        discovered_at=fixed_time(),
+        closed_at=ts,
+    )
+
+    assert job.closed_at == ts
+
+
+def test_job_posting_enrich_error_accepts_str() -> None:
+    """enrich_error should round-trip a string value."""
+    job = JobPosting(
+        platform="greenhouse",
+        canonical_id="xyz789",
+        url="https://example.com/jobs/xyz789",
+        title="Data Engineer",
+        company="Acme Corp",
+        location="Remote",
+        discovered_at=fixed_time(),
+        enrich_error="HTTP 404: posting not found",
+    )
+
+    assert job.enrich_error == "HTTP 404: posting not found"
 
 
 def test_pipeline_run_uses_zero_and_none_defaults() -> None:
