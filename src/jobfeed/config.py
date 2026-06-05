@@ -45,6 +45,9 @@ class LLMSettings(BaseModel):
     stage_b: str = "codex-cli/gpt-5.5"
     codex_timeout_s: float = 60.0
     claude_timeout_s: float = 210.0
+    openai_compat_base_url: str = "https://api.openai.com/v1"
+    openai_compat_api_key_env: str = "OPENAI_API_KEY"
+    openai_compat_timeout_s: float = 60.0
     max_concurrent: int = 4
     master_resume_path: str = ".jobfeed-dev/resume.md"
     preamble_personal_path: str | None = None

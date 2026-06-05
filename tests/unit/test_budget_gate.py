@@ -200,3 +200,30 @@ async def test_record_usage_uses_reserved_ledger_day() -> None:
     assert usage.job_id == "job-1"
     assert usage.stage == "b"
     assert usage.run_id == "run-1"
+
+
+async def test_record_usage_with_none_cost_degrades_to_zero() -> None:
+    """An unpriced backend (e.g. openai-compat on deepseek/minimax) returns
+    ``cost_usd=None``; the dollar tally must degrade to $0 without crashing while
+    the call counter (recorded separately by ``record_call_attempt``) is
+    unaffected — i.e. the budget gate degrades to call-count-only.
+    """
+    ops = StubStoreOps()
+    response = LLMResponse(
+        content="{}",
+        model="deepseek-chat",
+        input_tokens=10,
+        output_tokens=5,
+        cost_usd=None,
+        cached=False,
+        latency_ms=42,
+    )
+
+    await record_usage(
+        ops,  # type: ignore[arg-type]
+        response,
+        UsageRecordContext("job-2", "a", "run-2", "2026-05-24"),
+    )
+
+    assert ops.costs == [("2026-05-24", 0.0, 0)]
+    assert ops.usages[0].cost_usd == 0.0

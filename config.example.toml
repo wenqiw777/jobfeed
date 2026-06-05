@@ -4,10 +4,62 @@
 url = "postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev"
 
 [llm]
-stage_a = "codex-cli/gpt-5.4-mini"         # or "claude-cli/claude-haiku-4-5", "mock/stage-a"
-stage_b = "codex-cli/gpt-5.5"              # or "claude-cli/claude-sonnet-4-6", "mock/stage-b"
+# Recommended: the low-latency pair. codex-cli reuses your subscription auth at
+# zero marginal token cost; openai-compat (below) serves users without a
+# subscription, or CI/server contexts, via any OpenAI-compatible API.
+# Measured Stage-B P99 (Phase 3 Decision 5): codex-cli 28s vs claude-cli 128s,
+# so claude-cli + the Anthropic compat endpoint are the higher-latency
+# alternatives shown commented below.
+stage_a = "codex-cli/gpt-5.4-mini"         # or "openai-compat/gpt-4o-mini", "claude-cli/claude-haiku-4-5", "mock/stage-a"
+stage_b = "codex-cli/gpt-5.5"              # or "openai-compat/gpt-4o",      "claude-cli/claude-sonnet-4-6", "mock/stage-b"
 codex_timeout_s = 60
 claude_timeout_s = 210
+
+# --- openai-compat backend (Decision 9) ---------------------------------
+# ONE adapter drives every OpenAI-compatible provider, parameterised only by
+# base_url + which env var holds the key + the model in the spec string. Adding
+# a provider is a config change, not code. SECURITY: only the env-var NAME goes
+# in this file (openai_compat_api_key_env) — NEVER the key value itself. The
+# adapter reads os.environ[that name] at build time. DOCKER: ./bin/jobfeed runs
+# in a container; docker-compose.yml forwards OPENAI_API_KEY / DEEPSEEK_API_KEY /
+# MINIMAX_API_KEY / ANTHROPIC_API_KEY from the host. For a different key env name,
+# add it there too.
+#
+# Both openai-compat/* specs (stage_a AND stage_b) target the SINGLE
+# openai_compat_base_url below; cross-provider stage_a/stage_b over
+# openai-compat is out of Phase 4 scope.
+#
+# Latency note: openai-compat latency is the PROVIDER's, not the adapter's. A
+# local Ollama or a large model can be slow, so the low-latency recommendation
+# is bound to a FAST hosted provider (OpenAI / DeepSeek / MiniMax).
+#
+# OpenAI (default):
+# openai_compat_base_url = "https://api.openai.com/v1"
+# openai_compat_api_key_env = "OPENAI_API_KEY"
+# openai_compat_timeout_s = 60
+#
+# DeepSeek:
+# openai_compat_base_url = "https://api.deepseek.com"
+# openai_compat_api_key_env = "DEEPSEEK_API_KEY"   # then: stage_a = "openai-compat/deepseek-chat"
+#
+# MiniMax:
+# openai_compat_base_url = "https://api.minimax.io/v1"
+# openai_compat_api_key_env = "MINIMAX_API_KEY"    # then: stage_a = "openai-compat/MiniMax-Text-01"
+#
+# Local Ollama (no real key; the SDK still requires the env var to be non-empty):
+# openai_compat_base_url = "http://localhost:11434/v1"
+# openai_compat_api_key_env = "OLLAMA_API_KEY"     # set OLLAMA_API_KEY=ollama; then: stage_a = "openai-compat/llama3.1"
+#   DOCKER: localhost is the container, not the host daemon — use
+#   http://host.docker.internal:11434/v1 and forward OLLAMA_API_KEY in
+#   docker-compose.yml (as with the hosted providers above).
+#
+# Anthropic via its OpenAI-compat endpoint (higher latency; test-only per
+# Anthropic — no prompt caching / extended thinking, but the eval use case
+# needs none of those). Subscription users should prefer claude-cli instead.
+# openai_compat_base_url = "https://api.anthropic.com/v1/"
+# openai_compat_api_key_env = "ANTHROPIC_API_KEY"  # then: stage_b = "openai-compat/claude-sonnet-4-6"
+# ------------------------------------------------------------------------
+
 max_daily_score_calls = 150
 max_daily_cost_usd = 10.0
 max_concurrent = 4

@@ -22,6 +22,17 @@ services:
     working_dir: /app
     environment:
       JOBFEED_DB_URL: "postgresql://jobfeed:jobfeed_dev@postgres:5432/jobfeed_dev"
+      # Forward host LLM API keys into the container so the openai-compat
+      # backend works through the canonical ./bin/jobfeed (docker compose run)
+      # path, not only the host venv. Only the documented providers
+      # (openai_compat_api_key_env in config.example.toml) are forwarded; add a
+      # line here for any custom key env name. Default-empty so compose never
+      # warns on unused providers — _require_api_key() then fails fast with its
+      # teaching message when the configured key is unset.
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
     depends_on:
       postgres:
         condition: service_healthy
