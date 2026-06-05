@@ -31,6 +31,22 @@ pre-commit install
 
 Host-native commands are for local debugging only. Use `make docker-quality` and the Docker-first quickstart for production-parity verification.
 
+### ML-gate end-to-end test (`pytest -m mlmodel`)
+
+The ML pre-filter gate has one end-to-end check that runs the **real** XGBoost model and the **real** fastembed (ONNX) embedder over a handful of clear jobs and asserts the gate's pass/block decisions (including the exact deterministic hard-fail reasons). It is **not** part of `make quality` — it carries the `mlmodel` marker, which is excluded from the default test selection, so the fast quality gate never triggers the one-time model download. Treat it as a manual / CI ML check.
+
+```sh
+pytest -m mlmodel        # runs tests/mlmodel/test_ml_gate_e2e.py
+```
+
+- The trained XGBoost model is **committed in-repo** under `models/ml_gate/` (`v*.json` booster + `.meta.json` threshold), so a plain `git clone` is self-contained — no model download or training step is needed to run the gate.
+- The embedder is `all-MiniLM-L6-v2` served by [`fastembed`](https://github.com/qdrant/fastembed) over **onnxruntime** (no PyTorch). `fastembed` is a **core** dependency, so the gate runs in the default install and the default Docker image. The ONNX model weights are **downloaded once from Hugging Face** on the first run and then cached locally; the first invocation is therefore slower and needs network access. That one-time download is the gate's only outbound network call.
+- **Where the weights are cached:** the embedder passes an explicit `cache_dir` to fastembed instead of its ephemeral temp default. It resolves to `$JOBFEED_ML_CACHE_DIR` when set, else `~/.cache/jobfeed/fastembed` (never `~/.jobfeed`). For host-native runs this works with zero config and persists the weights across runs. The `jobfeed-cli` Docker service sets `JOBFEED_ML_CACHE_DIR=/cache/jobfeed/fastembed` and mounts the named `mlcache` volume there, so the ~90MB download survives `docker compose run --rm` and is reused on every later run (and reruns work offline).
+
+#### Running the real ML gate
+
+Because the fastembed/onnxruntime embedder is a core dependency (no heavy torch optional extra), the **real** ML gate runs anywhere the package is installed — including the canonical Docker image, which installs `.[dev]` and therefore pulls fastembed. Enable it with `scoring.ml_gate_enabled=true`, or point `ml_gate.model_dir="mock"` at the deterministic mock gate to exercise the funnel without the embedder or the one-time model download.
+
 ## Architecture
 
 The Python package lives under `src/jobfeed/`. The project follows a hexagonal architecture: `domain/` contains pure business logic and shared domain errors, `ports/` defines async Protocol contracts, `adapters/` implements concrete IO, `services/` orchestrates domain logic through ports, and `services/error_handler.py` centralizes recoverable service errors. PostgreSQL migrations live under `migrations/`; store access is async through `PostgresStore`. Evaluation uses configured LLM concurrency, timeout, budget, and claim-lease limits, preserves unknown per-call cost as `None`, and persists recoverable scoring failures as explicit stage errors. The CLI is a thin sync boundary that uses `asyncio.run()` to call async services. The full design is in [docs/specs/2026-05-20-jobfeed-rewrite-design.md](docs/specs/2026-05-20-jobfeed-rewrite-design.md).
