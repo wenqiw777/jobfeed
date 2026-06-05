@@ -11,7 +11,6 @@ from jobfeed.domain.scoring_parse import parse_stage_a_response, parse_stage_b_r
 from jobfeed.observability import JobfeedLogger, bind_run_id
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.prompts import PromptBundle
-from jobfeed.ports.store_ext import StoreEvaluationBatchMixin
 from jobfeed.services._evaluate_budget import EvaluateBudgetGate
 from jobfeed.services._evaluate_claims import (
     load_stage_a_for_run,
@@ -19,8 +18,10 @@ from jobfeed.services._evaluate_claims import (
     maintain_stage_b_claim,
     release_stage_a_for_run,
     release_stage_b_for_run,
+    sync_stage_b_threshold,
     validate_evaluate_stage,
 )
+from jobfeed.services._evaluate_funnel import run_funnel
 from jobfeed.services._evaluate_helpers import (
     SHORT_JD_THRESHOLD,
     DryRunRequest,
@@ -61,11 +62,8 @@ class EvaluateService:
         """Evaluate pending jobs and persist run counters.
 
         Args:
-            stage: "both", "a", or "b".
-            corpus: "unrated", "all", or "failed".
-            limit: Max jobs per stage.
-            max_days: Freshness filter.
-            dry_run: Skip LLM calls.
+            stage: "both"/"a"/"b"; corpus: "unrated"/"all"/"failed"; limit caps
+                jobs per stage; max_days filters freshness; dry_run skips LLM calls.
 
         Returns:
             Recorded pipeline run with counters.
@@ -75,33 +73,42 @@ class EvaluateService:
         bind_run_id(run.run_id)
         lim = 100 if limit is None else limit
         if dry_run:
-            threshold = self._config.stage_a_threshold
-            request = DryRunRequest(
-                self._deps.store, self._logger, stage, corpus, lim, max_days, threshold
-            )
-            run.dry_run_preview = await build_dry_run_preview(request)
+            request = DryRunRequest(self._logger, stage, corpus, lim, max_days)
+            await build_dry_run_preview(self._deps, self._config, run, request)
         else:
-            await self._real_run(run, stage, corpus, lim, max_days)
+            if stage != "b":
+                await self._run_stage_a(run, corpus, lim, max_days)
+            if stage != "a":
+                await self._run_stage_b(run, lim, max_days)
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
         run.finished_at = datetime.now(UTC)
         if not dry_run:
             await self._deps.store.record_pipeline_run(run)
         return run
 
-    async def _real_run(
-        self, run: PipelineRun, stg: str, corp: str, lim: int, md: int | None
-    ) -> None:
-        if stg != "b":
-            await self._run_stage_a(run, corp, lim, md)
-        if stg != "a":
-            await self._run_stage_b(run, lim, md)
-
     async def _run_stage_a(
         self, run: PipelineRun, corpus: str, limit: int, max_days: int | None
     ) -> None:
+        if limit <= 0:
+            return  # "max jobs"=0 means do no funnel work (mirrors _run_stage_b)
+        # Budget BEFORE the funnel: an exhausted budget runs no Stage A call, so
+        # the candidate load + ML gate would be wasted (Stage B gates first too).
         if not await self._budget.has_budget():
             return
-        jobs = await load_stage_a_for_run(self._deps.store, corpus, limit, max_days)
+        survivors = await run_funnel(
+            self._deps,
+            self._config,
+            run,
+            corpus,
+            max_days,
+            logger=self._logger,
+            dry_run=False,
+        )
+        if not survivors:
+            return
+        jobs = await load_stage_a_for_run(
+            self._deps.store, corpus, limit, max_days, survivors
+        )
         sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
 
         async def _worker(job: JobPosting) -> None:
@@ -114,14 +121,12 @@ class EvaluateService:
         job_id = require_job_id(job)
         if len(job.jd_text or "") < SHORT_JD_THRESHOLD:
             await self._deps.store.save_stage_a_error(
-                job_id,
-                f"jd_text_too_short: {len(job.jd_text or '')} chars",
+                job_id, f"jd_text_too_short: {len(job.jd_text or '')} chars"
             )
             run.errors += 1
             return
         bundle = self._deps.prompt_renderer.render_stage_a(
-            resume_text=self._config.resume_text,
-            job=job,
+            resume_text=self._config.resume_text, job=job
         )
         req = LLMRequest(messages=bundle.messages, model=self._config.llm.stage_a)
         result = await self._call_parse_a(job_id, req, bundle, run)
@@ -189,7 +194,9 @@ class EvaluateService:
     ) -> None:
         if limit <= 0:
             return
-        await self._sync_stage_b_threshold(max_days)
+        await sync_stage_b_threshold(
+            self._deps.store, self._config.stage_a_threshold, max_days
+        )
         if not await self._budget.has_budget():
             return
         jobs = await load_stage_b_for_run(
@@ -289,11 +296,3 @@ class EvaluateService:
             if outcome != "completed":
                 await self._deps.store.save_stage_b_error(jid, "stage_b_sweep_failed")
                 run.errors += 1
-
-    async def _sync_stage_b_threshold(self, max_days: int | None) -> None:
-        store = self._deps.store
-        if not isinstance(store, StoreEvaluationBatchMixin):
-            return
-        threshold = self._config.stage_a_threshold
-        await store.reopen_stage_b_at_or_above_threshold(threshold, max_days=max_days)
-        await store.mark_stage_b_below_threshold(threshold, max_days=max_days)

@@ -11,13 +11,15 @@ from jobfeed.domain.models import (
     JobPosting,
     LLMResponse,
     LLMUsage,
+    PipelineRun,
 )
 from jobfeed.domain.types import StageName
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ext import StoreEvaluationBatchMixin, StoreStageBPreviewMixin
 from jobfeed.ports.store_ops import StoreOpsMixin
-from jobfeed.services._evaluate_claims import preview_stage_a_for_run
+from jobfeed.services._evaluate_funnel import run_funnel
+from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 
 SHORT_JD_THRESHOLD = 200
 
@@ -34,15 +36,17 @@ class UsageRecordContext:
 
 @dataclass(frozen=True)
 class DryRunRequest:
-    """Inputs needed to preview an evaluate dry-run."""
+    """Loose run params for an evaluate dry-run preview.
 
-    store: JobStore
+    ``deps`` / ``config`` / ``run`` are passed alongside (not stored) so this
+    stays a small value object the CLI-facing service can build inline.
+    """
+
     logger: JobfeedLogger
     stage: str
     corpus: str
     limit: int
     max_days: int | None
-    threshold: int
 
 
 def require_job_id(job: JobPosting) -> str:
@@ -140,52 +144,52 @@ async def record_usage(
     )
 
 
-async def build_dry_run_preview(request: DryRunRequest) -> list[DryRunPreviewItem]:
-    """Load and log jobs that a dry-run would evaluate.
+async def build_dry_run_preview(
+    deps: EvaluateDependencies,
+    config: EvaluateRuntimeConfig,
+    run: PipelineRun,
+    request: DryRunRequest,
+) -> list[DryRunPreviewItem]:
+    """Build the jobs a dry-run would evaluate: Stage A funnel + Stage B preview.
+
+    Stage A survivors come from the unconditional funnel (load -> hard-filter ->
+    dedupe -> optional gate, persisting nothing in dry-run); ``run_funnel`` writes
+    them onto ``run.dry_run_preview``, sliced to the Stage A ``limit`` in claim
+    order so the preview matches what a real run would actually claim. Stage B
+    preview rows are appended after, so non-representative twins and gate failures
+    never appear.
 
     Args:
-        request: Dry-run preview inputs.
+        deps: Evaluate dependencies (store, optional ml_gate / hard_filters).
+        config: Runtime config (ml_gate flag + Stage A threshold).
+        run: Pipeline run whose preview list is populated in place.
+        request: Loose dry-run params (stage / corpus / limit / max_days).
 
     Returns:
         Stable preview items suitable for CLI output.
     """
-    preview: list[DryRunPreviewItem] = []
-    if request.stage != "b":
-        jobs_a = await preview_stage_a_for_run(
-            request.store, request.corpus, request.limit, request.max_days
+    # ``--limit 0`` means "max jobs"=0: claim/score nothing. Short-circuit the
+    # Stage-A funnel BEFORE loading candidates or gating, mirroring the real-run
+    # guard (``_run_stage_a`` early-returns on ``limit <= 0``). Without this, the
+    # funnel would load candidates and call the ML gate's ``predict_batch`` (and
+    # thus the heavy embedder) only to slice the preview to ``[]`` afterwards.
+    if request.stage != "b" and request.limit > 0:
+        await run_funnel(
+            deps,
+            config,
+            run,
+            request.corpus,
+            request.max_days,
+            logger=request.logger,
+            dry_run=True,
+            limit=request.limit,
         )
-        preview.extend(log_dry_run(request.logger, "stage_a", jobs_a))
     if request.stage != "a":
         jobs_b = await load_stage_b_dry_run(
-            request.store, request.limit, request.max_days, request.threshold
+            deps.store, request.limit, request.max_days, config.stage_a_threshold
         )
-        preview.extend(log_dry_run(request.logger, "stage_b", jobs_b))
-    return preview
-
-
-async def load_stage_a(
-    store: JobStore,
-    corpus: str,
-    limit: int,
-    max_days: int | None,
-) -> list[JobPosting]:
-    """Load pending Stage A jobs with quality band filter.
-
-    Args:
-        store: Job store port.
-        corpus: Corpus filter value.
-        limit: Max jobs to load.
-        max_days: Freshness filter.
-
-    Returns:
-        List of pending Stage A jobs.
-    """
-    return await store.load_pending_stage_a(
-        quality_bands=frozenset({"full", "good"}),
-        corpus=corpus,
-        limit=limit,
-        max_days=max_days,
-    )
+        run.dry_run_preview.extend(log_dry_run(request.logger, "stage_b", jobs_b))
+    return run.dry_run_preview
 
 
 async def load_stage_b_dry_run(
@@ -276,7 +280,6 @@ __all__ = [
     "UsageRecordContext",
     "build_dry_run_preview",
     "check_budget",
-    "load_stage_a",
     "load_stage_a_scores",
     "load_stage_b_dry_run",
     "log_dry_run",
