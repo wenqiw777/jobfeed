@@ -19,6 +19,7 @@ from jobfeed.domain.models import (
     LLMResponse,
     LLMUsage,
     Message,
+    MLGateResult,
     StageAResult,
 )
 from jobfeed.observability import configure_logging, get_logger
@@ -452,23 +453,34 @@ async def test_postgres_claim_stage_a_excludes_already_claimed(
     assert [job.id for job in reclaimed] == [first[0].id]
 
 
-async def test_evaluate_dry_run_previews_stale_stage_a_claim(
+async def test_evaluate_dry_run_previews_gated_unscored_via_funnel(
     store: PostgresStore,
 ) -> None:
-    """Dry-run should show stale Stage A claims a real run would reclaim."""
+    """Dry-run previews the funnel survivor set (Decision 14), not the legacy
+    claimable preview.
+
+    Phase 5 makes the funnel (``load_gate_candidates`` -> hard-filter -> dedupe ->
+    gate) the sole Stage-A candidate source for both real and dry runs, retiring
+    ``claim_pending_stage_a``/``preview_claimable_stage_a`` from the evaluate path
+    (Rev3 pt 4). A row that has a gate decision written but is not yet
+    Stage-A-scored (gate-then-crash) stays an unrated funnel candidate and so is
+    previewed — the Decision 8 crash-recovery case. (A row stranded
+    ``in_progress`` past the claim TTL by an interrupted *scoring* run is now ALSO
+    re-surfaced under "unrated" via the gate-candidates stale-takeover predicate;
+    covered by ``test_phase5_evaluate_chain`` /
+    ``test_gate_candidates_query``.)
+    """
     await ScanService(store, RecordingLogger()).run(
         [("mock", MockSource(), {"count": 1})]
     )
-    claimed = await store.claim_pending_stage_a(
-        quality_bands=frozenset({"full", "good"}),
-        limit=1,
-    )
-    assert claimed[0].id is not None
-    await _age_evaluation_claim(store, claimed[0].id)
+    job = (await store.list_jobs())[0]
+    assert job.id is not None
+    # Gate-then-crash: a gate decision exists but no Stage A row yet.
+    await store.save_ml_gate_result(job.id, make_pass_gate_result())
 
     run = await _make_service(store, CountingLLM()).run(stage="a", dry_run=True)
 
-    assert [item.job_id for item in run.dry_run_preview] == [claimed[0].id]
+    assert [item.job_id for item in run.dry_run_preview] == [job.id]
 
 
 async def test_postgres_claim_stage_b_excludes_already_claimed(
@@ -1395,6 +1407,11 @@ def make_stage_a_result(score: int = 75) -> StageAResult:
         prompt_hash="prompt",
         resume_hash="resume",
     )
+
+
+def make_pass_gate_result() -> MLGateResult:
+    """Return a minimal passing ML gate decision for funnel setup."""
+    return MLGateResult(score=1.0, result="pass", version="mock")
 
 
 async def _age_evaluation_claim(store: PostgresStore, job_id: str) -> None:
