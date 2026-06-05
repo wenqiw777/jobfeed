@@ -2,9 +2,26 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import JobPosting
+
+
+@dataclass(frozen=True)
+class GateCandidate:
+    """A non-claiming gate candidate plus its persisted ML-gate state.
+
+    Surfacing ``ml_gate_result`` lets the funnel skip re-gating a rep that is
+    already persisted ``'pass'`` (avoiding a model/threshold swap silently
+    flipping it to ``fail`` and dropping it from survivors). ``None`` means the
+    row has not been gated yet; ``'fail'`` rows are pre-excluded by the load
+    predicate when ``exclude_gate_failed`` is set.
+    """
+
+    job: JobPosting
+    ml_gate_result: str | None
 
 
 @runtime_checkable
@@ -50,6 +67,58 @@ class StoreEvaluationClaimMixin(Protocol):
 
         Returns:
             Claimable Stage A jobs without mutating lease state.
+        """
+        ...
+
+    async def load_gate_candidates(
+        self,
+        *,
+        corpus: str = "unrated",
+        quality_bands: frozenset[str] | None = None,
+        max_days: int | None = None,
+        limit: int = 100,
+        exclude_gate_failed: bool = True,
+        after: tuple[datetime, int] | None = None,
+    ) -> list[GateCandidate]:
+        """Load ML-gate candidates pending Stage A without claiming.
+
+        Args:
+            corpus: Corpus filter value.
+            quality_bands: Optional JD quality allow-list.
+            max_days: Freshness filter on discovered_at.
+            limit: Max jobs (one page).
+            exclude_gate_failed: When True, drop rows whose gate result is 'fail';
+                when False, gate state is ignored entirely.
+            after: Optional ``(discovered_at, id)`` keyset cursor; when set, only
+                rows strictly past it in ``discovered_at DESC, id DESC`` order are
+                returned (used to page past hard-filtered drops).
+
+        Returns:
+            Gate candidates (job + persisted ``ml_gate_result``) pending Stage A,
+            without mutating lease state.
+        """
+        ...
+
+    async def claim_stage_a_by_ids(
+        self,
+        job_ids: list[str],
+        *,
+        quality_bands: frozenset[str] | None = None,
+        corpus: str = "unrated",
+        max_days: int | None = None,
+        limit: int = 100,
+    ) -> list[JobPosting]:
+        """Atomically claim Stage A jobs restricted to an explicit id set.
+
+        Args:
+            job_ids: Store-assigned identities to claim from.
+            quality_bands: Optional JD quality allow-list.
+            corpus: Corpus filter value.
+            max_days: Freshness filter on discovered_at.
+            limit: Max jobs.
+
+        Returns:
+            Claimed Stage A jobs (a subset of ``job_ids``); ``[]`` for empty input.
         """
         ...
 
