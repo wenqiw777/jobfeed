@@ -2,21 +2,18 @@
 
 Jobfeed is a local-first job scanning and evaluation pipeline. The current rewrite branch uses a Dockerized Click CLI, PostgreSQL persistence, ATS source adapters, configurable LLM backends, and Markdown digest rendering.
 
-## Quick start — one command
+## Quick start
 
-A fresh machine needs only **Git + Docker** (PostgreSQL is required, so Docker is the single prerequisite). Then:
+A fresh machine needs only **Git + Docker** (PostgreSQL is required, so Docker is the single prerequisite; `uv` is optional and gives a faster host runtime). Then:
 
 ```sh
 git clone https://github.com/wenqiw777/jobfeed.git
 cd jobfeed
-./scan --source mock      # offline smoke; or just ./scan for the configured sources
+./setup                   # one-time: config + runtime + Postgres + migrations
+./scan --source mock      # offline smoke; then ./scan for your configured sources
 ```
 
-`./scan` bootstraps everything itself — it creates `config.toml` from the template on first run, then:
-- **with the project venv** (`.venv`) → runs host-native (fast); only Postgres uses Docker;
-- **with only Docker** → `docker compose pull` the prebuilt image (no local build), then sets up + migrates Postgres and scans.
-
-Either way you never run `docker compose` / `alembic` by hand. The first Docker run pulls the published image (`ghcr.io/wenqiw777/jobfeed`); if it isn't reachable it falls back to a local build.
+`./setup` bootstraps everything: it creates `config.toml` from the template, sets up the runtime (a host venv if `uv` is present, else it pulls — or builds — the Docker image `ghcr.io/wenqiw777/jobfeed`), starts Postgres, and applies migrations. `./scan` afterwards just makes sure Postgres is up and scans. You never run `docker compose` / `alembic` by hand.
 
 ## Docker-First Quickstart
 
