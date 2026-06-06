@@ -16,6 +16,11 @@ services:
       retries: 5
 
   jobfeed-cli:
+    # Prebuilt image published to GHCR on release (see
+    # .github/workflows/publish-image.yml). `docker compose pull jobfeed-cli`
+    # fetches it so a fresh machine needs no local build; `build:` stays as the
+    # fallback for local development / commits newer than the published image.
+    image: ghcr.io/wenqiw777/jobfeed:latest
     build:
       context: .
       dockerfile: Dockerfile

@@ -2,10 +2,26 @@
 
 Jobfeed is a local-first job scanning and evaluation pipeline. The current rewrite branch uses a Dockerized Click CLI, PostgreSQL persistence, ATS source adapters, configurable LLM backends, and Markdown digest rendering.
 
+## Quick start — one command
+
+A fresh machine needs only **Git + Docker** (PostgreSQL is required, so Docker is the single prerequisite). Then:
+
+```sh
+git clone https://github.com/wenqiw777/jobfeed.git
+cd jobfeed
+./scan --source mock      # offline smoke; or just ./scan for the configured sources
+```
+
+`./scan` bootstraps everything itself — it creates `config.toml` from the template on first run, then:
+- **with the project venv** (`.venv`) → runs host-native (fast); only Postgres uses Docker;
+- **with only Docker** → `docker compose pull` the prebuilt image (no local build), then sets up + migrates Postgres and scans.
+
+Either way you never run `docker compose` / `alembic` by hand. The first Docker run pulls the published image (`ghcr.io/wenqiw777/jobfeed`); if it isn't reachable it falls back to a local build.
+
 ## Docker-First Quickstart
 
 ```sh
-docker compose build jobfeed-cli
+docker compose pull jobfeed-cli   # prebuilt image; or build locally: docker compose build jobfeed-cli
 docker compose run --rm jobfeed-cli alembic -c migrations/alembic.ini upgrade head
 ./bin/jobfeed --config tests/fixtures/docker-smoke.toml scan --source mock
 ./bin/jobfeed --config tests/fixtures/docker-smoke.toml evaluate --limit 3
