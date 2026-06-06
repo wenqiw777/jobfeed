@@ -12,8 +12,10 @@ Jobfeed is a local-first job scanning and evaluation pipeline. Phase 0 was a Doc
 make quality          # lint + test (unit + contract, no PG needed)
 make lint             # ruff check . && ruff format --check . && mypy src/
 make fmt              # ruff format . && ruff check --fix .
-pip install -e ".[dev]"  # local dev install
+pip install -e ".[dev]"  # local dev install (or: uv pip install --python .venv/bin/python -e ".[dev]")
 ```
+
+Run entry points (repo root): `./setup` (one-time: config + runtime + Postgres + migrations) then `./scan` (run a scan; `./scan --source mock` for an offline smoke). `./bin/jobfeed` is the canonical Docker CLI (`docker compose run --rm jobfeed-cli jobfeed ...`).
 
 Run a single test: `python -m pytest tests/unit/test_scoring.py::test_name -v`
 
