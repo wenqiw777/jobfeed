@@ -1,4 +1,4 @@
-"""Extended store port: batch evaluation, status/workflow, application audit."""
+"""Extended store port: batch evaluation, stage-B preview, application audit."""
 
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ from jobfeed.domain.models import (
     ApplicationStats,
     JobPosting,
     ResumeSnapshot,
-    StatusInfo,
-    WorkflowAttention,
 )
 
 
@@ -93,79 +91,6 @@ class StoreStageBPreviewMixin(Protocol):
         Returns:
             Jobs a real Stage B run would consider after threshold sync,
             without mutating evaluation status.
-        """
-        ...
-
-
-@runtime_checkable
-class StoreStatusMixin(Protocol):
-    """Status listing, notes, and workflow queries."""
-
-    async def list_statuses(
-        self,
-        *,
-        statuses: frozenset[str] | None = None,
-        days: int | None = None,
-        no_response_days: int | None = None,
-        needs_followup: bool = False,
-        notes_contain: str | None = None,
-        limit: int | None = None,
-    ) -> list[StatusInfo]:
-        """Query jobs by status with optional filters.
-
-        Args:
-            statuses: Restrict to these status values.
-            days: Only changes within N days.
-            no_response_days: Applied but silent for N days.
-            needs_followup: Follow-up date in past or today.
-            notes_contain: Substring match in notes.
-            limit: Max results.
-
-        Returns:
-            Matching status info records.
-        """
-        ...
-
-    async def append_note(self, *, job_id: str, text: str) -> None:
-        """Append timestamped note, reset ghost clock.
-
-        Args:
-            job_id: Store-assigned job identity.
-            text: Note text to append.
-        """
-        ...
-
-    async def workflow_attention(
-        self,
-        *,
-        auto_ghost_days: int = 30,
-        lookahead_days: int = 5,
-    ) -> WorkflowAttention:
-        """Three-bucket workflow attention report.
-
-        Args:
-            auto_ghost_days: Ghost threshold.
-            lookahead_days: Early warning window.
-
-        Returns:
-            Follow-up, interview prep, and going-ghosted lists.
-        """
-        ...
-
-    async def compute_reapply_notice(
-        self,
-        *,
-        job_id: str,
-        lookback_days: int = 60,
-    ) -> str | None:
-        """Detect same-company active application.
-
-        Args:
-            job_id: Job to check.
-            lookback_days: How far back to look.
-
-        Returns:
-            Notice string if detected, else None.
         """
         ...
 

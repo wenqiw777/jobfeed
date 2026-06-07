@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import (
-    AutoDecayResult,
     JobEvaluation,
     JobPosting,
     MLGateResult,
@@ -13,13 +12,17 @@ from jobfeed.domain.models import (
     SaveJobResult,
     StageAResult,
     StageBResult,
-    StatusInfo,
 )
 
 
 @runtime_checkable
 class JobStore(Protocol):
-    """Full persistence capability for the Jobfeed pipeline."""
+    """Core persistence capability for the Jobfeed pipeline.
+
+    Jobs, staged evaluation, ML-gate results, and pipeline runs. Optional
+    capabilities (ops, claims, batch eval, status/workflow, applications)
+    live in their own port mixins.
+    """
 
     async def connect(self) -> None:
         """Open backing store resources."""
@@ -228,73 +231,5 @@ class JobStore(Protocol):
 
         Returns:
             Pipeline run if found, else None.
-        """
-        ...
-
-    # --- status management ---
-
-    async def transition_status(
-        self,
-        *,
-        job_id: str,
-        new_status: str,
-        reason: str | None = None,
-        resume_variant: str | None = None,
-        force: bool = False,
-        i_mean_it: bool = False,
-        followup_grace_days: int = 7,
-    ) -> str:
-        """Transition a job's status with validation and history.
-
-        Args:
-            job_id: Store-assigned identity.
-            new_status: Target status.
-            reason: Optional reason tag.
-            resume_variant: Optional variant name.
-            force: Bypass transition graph.
-            i_mean_it: Required with force for archived to new.
-            followup_grace_days: Days until next follow-up.
-
-        Returns:
-            The new status string.
-        """
-        ...
-
-    async def get_status(self, job_id: str) -> StatusInfo | None:
-        """Get current status for a job.
-
-        Args:
-            job_id: Store-assigned identity.
-
-        Returns:
-            Status info if found, else None.
-        """
-        ...
-
-    async def restore_from_archived(self, job_id: str) -> str:
-        """Restore archived job to pre-archive status.
-
-        Args:
-            job_id: Store-assigned identity.
-
-        Returns:
-            Restored status string.
-        """
-        ...
-
-    async def auto_decay(
-        self,
-        *,
-        ghost_days: int = 30,
-        archive_ignored_days: int = 14,
-    ) -> AutoDecayResult:
-        """Sweep stale jobs to ghosted/archived.
-
-        Args:
-            ghost_days: Days before ghosting.
-            archive_ignored_days: Days before archiving ignored.
-
-        Returns:
-            Counts of ghosted and archived jobs.
         """
         ...
