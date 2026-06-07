@@ -29,8 +29,10 @@ from jobfeed.domain.quality import assess_quality
 from jobfeed.ports.source import DiscoverResult, EnrichResult
 
 # ``jobfeed.cli`` rebinds the ``scan`` attribute to the Click command, so the
-# submodule (which holds ``create_http_client``) is reached via ``sys.modules``.
+# submodules are reached via ``sys.modules``: ``scan`` holds the command,
+# ``_scan_sources`` holds the source builders (LinkedInSource, create_http_client).
 scan_module = sys.modules["jobfeed.cli.scan"]
+sources_module = sys.modules["jobfeed.cli._scan_sources"]
 
 # ``--source all`` here disables ats + linkedin-jobspy + linkedin -> skips.
 _EXPECTED_SKIPS = 3
@@ -265,7 +267,7 @@ def test_scan_linkedin_runs_session_source(
     tmp_path: Path, fake_store: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``--source linkedin`` runs the Playwright SessionSource path."""
-    monkeypatch.setattr(scan_module, "LinkedInSource", FakeLinkedInSource)
+    monkeypatch.setattr(sources_module, "LinkedInSource", FakeLinkedInSource)
     config_path = _write_config(tmp_path, {"linkedin": True})
     _enable_linkedin_playwright_url(config_path)
 
@@ -411,8 +413,8 @@ def test_scan_all_closes_every_http_client(
         created.append(client)
         return client
 
-    # scan.py looks up create_http_client in its own module namespace.
-    monkeypatch.setattr(scan_module, "create_http_client", spy_create)
+    # _scan_sources looks up create_http_client in its own module namespace.
+    monkeypatch.setattr(sources_module, "create_http_client", spy_create)
     monkeypatch.setattr(
         ATSSource, "fetch_jobs", _fetch_returning(_posting("greenhouse", "1"))
     )

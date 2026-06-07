@@ -1,8 +1,8 @@
-"""Unit tests for seed_ats_companies in cli/scan.py."""
+"""Unit tests for seed_ats_companies in cli/_scan_sources.py."""
 
 from __future__ import annotations
 
-from jobfeed.cli.scan import seed_ats_companies
+from jobfeed.cli._scan_sources import seed_ats_companies
 from jobfeed.domain.models import CompanyRecord
 
 _EXISTING_FAILURES = 5
