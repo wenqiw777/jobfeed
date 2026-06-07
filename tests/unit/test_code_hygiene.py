@@ -272,3 +272,16 @@ def test_length_gate_exempts_store_adapter(tmp_path: Path) -> None:
     write_source(root, "adapters/store/big_store.py", f"{CLEAN_CODE}\n{padding}\n")
 
     assert_no_hygiene_violations(root)
+
+
+def test_length_gate_exempts_ml_features(tmp_path: Path) -> None:
+    """domain/ml_features.py is exempt from the file-length gate.
+
+    Args:
+        tmp_path: Temporary package root for the synthetic fixture.
+    """
+    root = tmp_path / "src" / "jobfeed"
+    padding = "\n".join(f"# padding {index}" for index in range(310))
+    write_source(root, "domain/ml_features.py", f"{CLEAN_CODE}\n{padding}\n")
+
+    assert_no_hygiene_violations(root)

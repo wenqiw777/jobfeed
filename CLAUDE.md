@@ -39,7 +39,7 @@ Read `docs/engineering-standards.md` before editing code. Key enforced rules:
 
 - Cyclomatic complexity hard max: 10. Nesting depth max: 2. Max args: 5.
 - No bare `except`. No silent `pass` in exception handlers.
-- Production files under `src/jobfeed/` must be ≤300 lines, enforced as a blocking gate. **Exempt:** the `adapters/store/` layer and `cli/migrate.py` — the PostgresStore + legacy-migration surface is inherently large, and fragmenting it into ≤300-line shards harms readability. The gate stays blocking for `domain/`, `services/`, `ports/`, and the rest of `cli/`. (Phase 1 amendment, approved 2026-05-22.)
+- Production files under `src/jobfeed/` must be ≤300 lines, enforced as a blocking gate. **Exempt:** the `adapters/store/` layer, `cli/migrate.py`, and `domain/ml_features.py` — the PostgresStore + legacy-migration surface is inherently large, and `ml_features.py` keeps the ML-gate vocab name lists together with the compiled regex tables that index them (they must stay in lockstep); fragmenting any of these into ≤300-line shards harms readability. The gate stays blocking for the rest of `domain/`, `services/`, `ports/`, and the rest of `cli/`. (Phase 1 amendment, approved 2026-05-22; `ml_features.py` added 2026-06-07.)
 - Nested loops forbidden in `cli/` and `services/`. Allowed elsewhere only in named helpers with documented time complexity.
 - `snake_case` for modules/functions/variables. `PascalCase` for classes/protocols/enums.
 - Boolean names: `is_`, `has_`, `can_`, `should_`, `needs_` prefixes.

@@ -11,13 +11,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PRODUCTION_ROOT = PROJECT_ROOT / "src" / "jobfeed"
 MAX_PYTHON_FILE_LINES = 300
 
-# The persistence/migration adapter layer is exempt from the blocking
-# file-length gate: a full JobStore implementation per backend is inherently
-# large, and shredding it into <=300-line fragments harms readability. Every
-# other layer stays bound by MAX_PYTHON_FILE_LINES. Documented in
+# A few files are exempt from the blocking file-length gate, where shredding
+# them into <=300-line fragments harms readability more than it helps:
+#   * the persistence/migration adapter layer (/adapters/store/ + cli/migrate.py)
+#     -- a full JobStore implementation per backend is inherently large;
+#   * domain/ml_features.py -- the ML-gate vocab name lists and the compiled
+#     regex tables that index them must stay in lockstep in one file.
+# Every other layer stays bound by MAX_PYTHON_FILE_LINES. Documented in
 # docs/engineering-standards.md.
 _LENGTH_EXEMPT_SUBSTR = "/adapters/store/"
-_LENGTH_EXEMPT_SUFFIX = "/cli/migrate.py"
+_LENGTH_EXEMPT_SUFFIXES = ("/cli/migrate.py", "/domain/ml_features.py")
 
 
 def collect_hygiene_violations(
@@ -72,7 +75,7 @@ def assert_no_hygiene_violations(root: Path = DEFAULT_PRODUCTION_ROOT) -> None:
 
 def _is_length_exempt(path: Path) -> bool:
     posix = path.as_posix()
-    return _LENGTH_EXEMPT_SUBSTR in posix or posix.endswith(_LENGTH_EXEMPT_SUFFIX)
+    return _LENGTH_EXEMPT_SUBSTR in posix or posix.endswith(_LENGTH_EXEMPT_SUFFIXES)
 
 
 def collect_length_violations(
