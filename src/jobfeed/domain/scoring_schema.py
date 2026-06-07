@@ -5,8 +5,12 @@ from __future__ import annotations
 from typing import cast
 
 from jobfeed.domain.errors import ScoringParseError
-
-JsonObject = dict[str, object]
+from jobfeed.domain.scoring_json import (
+    JsonObject,
+    _require_list,
+    _require_object,
+    _require_string,
+)
 
 _STAGE_A_KEYS = frozenset({"score", "one_line", "timing_eligible"})
 _STAGE_B_KEYS = frozenset({"verdict", "jd_summary", "fit_analysis", "resume_hooks"})
@@ -42,7 +46,7 @@ def _validate_stage_b_shape(data: JsonObject) -> None:
 
     hooks = _require_object(data, "resume_hooks")
     _require_exact_keys(hooks, _HOOKS_KEYS, "resume_hooks")
-    _require_string_list(hooks, "avoid_mentioning")
+    _validate_string_list(hooks, "avoid_mentioning")
 
 
 def _require_exact_keys(
@@ -63,20 +67,6 @@ def _require_exact_keys(
     raise ScoringParseError(f"{label} keys invalid: {'; '.join(parts)}")
 
 
-def _require_object(data: JsonObject, key: str) -> JsonObject:
-    value = data.get(key)
-    if not isinstance(value, dict):
-        raise ScoringParseError(f"missing or invalid object: {key}")
-    return cast(JsonObject, value)
-
-
-def _require_list(data: JsonObject, key: str) -> list[object]:
-    value = data.get(key)
-    if not isinstance(value, list):
-        raise ScoringParseError(f"missing or invalid list: {key}")
-    return cast(list[object], value)
-
-
 def _require_object_items(
     data: JsonObject,
     key: str,
@@ -88,17 +78,10 @@ def _require_object_items(
         _require_exact_keys(cast(JsonObject, item), expected_keys, key)
 
 
-def _require_string_list(data: JsonObject, key: str) -> None:
+def _validate_string_list(data: JsonObject, key: str) -> None:
     for item in _require_list(data, key):
         if not isinstance(item, str) or not item:
             raise ScoringParseError(f"invalid string item in {key}")
-
-
-def _require_string(data: JsonObject, key: str) -> str:
-    value = data.get(key)
-    if not isinstance(value, str) or not value:
-        raise ScoringParseError(f"missing or invalid string: {key}")
-    return value
 
 
 def _require_int_range(

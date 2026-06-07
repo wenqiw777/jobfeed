@@ -14,6 +14,12 @@ from jobfeed.domain.models import (
     StageBResult,
     Verdict,
 )
+from jobfeed.domain.scoring_json import (
+    JsonObject,
+    _require_list,
+    _require_object,
+    _require_string,
+)
 from jobfeed.domain.scoring_refusal import (
     _detect_refusal,
     _detect_refusal_fields,
@@ -24,8 +30,6 @@ from jobfeed.domain.scoring_schema import (
     _validate_stage_b_shape,
 )
 from jobfeed.domain.types import VALID_SEVERITIES, Severity
-
-JsonObject = dict[str, object]
 
 MIN_FENCED_JSON_LINES = 2
 _VALID_TIMING_ELIGIBLE = frozenset(
@@ -167,27 +171,6 @@ def _strip_markdown_json(raw: str) -> str:
     if len(lines) < MIN_FENCED_JSON_LINES or lines[-1].strip() != "```":
         return stripped
     return "\n".join(lines[1:-1]).strip()
-
-
-def _require_object(data: JsonObject, key: str) -> JsonObject:
-    value = data.get(key)
-    if not isinstance(value, dict):
-        raise ScoringParseError(f"missing or invalid object: {key}")
-    return cast(JsonObject, value)
-
-
-def _require_list(data: JsonObject, key: str) -> list[object]:
-    value = data.get(key)
-    if not isinstance(value, list):
-        raise ScoringParseError(f"missing or invalid list: {key}")
-    return cast(list[object], value)
-
-
-def _require_string(data: JsonObject, key: str) -> str:
-    value = data.get(key)
-    if not isinstance(value, str) or not value:
-        raise ScoringParseError(f"missing or invalid string: {key}")
-    return value
 
 
 def _require_int(data: JsonObject, key: str) -> int:
