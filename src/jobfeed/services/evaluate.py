@@ -21,12 +21,11 @@ from jobfeed.services._evaluate_claims import (
     sync_stage_b_threshold,
     validate_evaluate_stage,
 )
+from jobfeed.services._evaluate_dryrun import DryRunRequest, build_dry_run_preview
 from jobfeed.services._evaluate_funnel import run_funnel
 from jobfeed.services._evaluate_helpers import (
     SHORT_JD_THRESHOLD,
-    DryRunRequest,
     UsageRecordContext,
-    build_dry_run_preview,
     load_stage_a_scores,
     record_usage,
     require_job_id,

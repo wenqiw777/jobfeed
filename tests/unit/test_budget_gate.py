@@ -7,12 +7,8 @@ from datetime import UTC, datetime
 import pytest
 
 from jobfeed.domain.models import CostEntry, LLMResponse, LLMUsage
-from jobfeed.services._evaluate_helpers import (
-    UsageRecordContext,
-    check_budget,
-    record_call_attempt,
-    record_usage,
-)
+from jobfeed.services._evaluate_budget import check_budget, record_call_attempt
+from jobfeed.services._evaluate_helpers import UsageRecordContext, record_usage
 
 
 class RecordingLogger:

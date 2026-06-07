@@ -25,8 +25,8 @@ from jobfeed.domain.models import (
 from jobfeed.ports.ml_gate import GateInput
 from jobfeed.ports.prompts import PromptBundle
 from jobfeed.ports.store_claims import GateCandidate
+from jobfeed.services._evaluate_dryrun import DryRunRequest, build_dry_run_preview
 from jobfeed.services._evaluate_funnel import _limit_survivors, run_funnel
-from jobfeed.services._evaluate_helpers import DryRunRequest, build_dry_run_preview
 from jobfeed.services.evaluate import EvaluateService
 from jobfeed.services.evaluate_types import (
     EvaluateDependencies,
