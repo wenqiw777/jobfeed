@@ -426,18 +426,18 @@ def test_build_ml_gate_not_called_for_stage_b_or_limit_zero(
     def _record(_settings: object) -> None:
         calls.append(True)
 
-    # The package binds `jobfeed.cli.evaluate` to the Click Command; the real
-    # module (which owns the imported build_ml_gate) is already in sys.modules
-    # via the top-level `from jobfeed.cli import cli` import.
-    evaluate_module = sys.modules["jobfeed.cli.evaluate"]
-    monkeypatch.setattr(evaluate_module, "build_ml_gate", _record)
+    # build_ml_gate now lives in the evaluate composition root
+    # (jobfeed.cli._evaluate_build), already in sys.modules via the top-level
+    # `from jobfeed.cli import cli`; patch it where the gated call site reads it.
+    build_module = sys.modules["jobfeed.cli._evaluate_build"]
+    monkeypatch.setattr(build_module, "build_ml_gate", _record)
 
     skip = [("b", None), ("b", 5), ("a", 0), ("both", 0)]
     for stage, limit in skip:
         needs = needs_ml_gate(stage, limit, ml_gate_enabled=True)
-        _ = evaluate_module.build_ml_gate(object()) if needs else None
+        _ = build_module.build_ml_gate(object()) if needs else None
     assert calls == []  # no build for any skip case
 
     needs = needs_ml_gate("both", None, ml_gate_enabled=True)
-    _ = evaluate_module.build_ml_gate(object()) if needs else None
+    _ = build_module.build_ml_gate(object()) if needs else None
     assert calls == [True]  # built exactly once for the default run
