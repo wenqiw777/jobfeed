@@ -41,3 +41,9 @@ pip-wheel-metadata/
 
 # Local/personal config (use config.example.toml as the template)
 /config.toml
+
+# Personal data — provide your own; never commit a real résumé / PII.
+# The committed templates are resume.example.md / preamble_personal.example.md;
+# your real files (copied from them) are resume.md / preamble_personal.md.
+/resume.md
+/preamble_personal.md

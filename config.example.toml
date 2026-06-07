@@ -63,8 +63,16 @@ claude_timeout_s = 210
 max_daily_score_calls = 150
 max_daily_cost_usd = 10.0
 max_concurrent = 4
-master_resume_path = ".jobfeed-dev/resume.md"
-# preamble_personal_path = ".jobfeed-dev/preamble_personal.md"
+# jobfeed scores each job against YOUR master résumé. This points at the committed
+# example so `evaluate` runs the moment you clone. To use your own (it's personal
+# data — never commit it):  cp resume.example.md resume.md  (resume.md is gitignored)
+# then edit resume.md and set:  master_resume_path = "resume.md"
+master_resume_path = "resume.example.md"
+# Optional: personal calibration anchors (hiring window, real-outcome anchors, GPA
+# notes) appended to the scoring prompt — see preamble_personal.example.md. To enable:
+#   cp preamble_personal.example.md preamble_personal.md   (preamble_personal.md is gitignored)
+# then edit it and uncomment the next line:
+# preamble_personal_path = "preamble_personal.md"
 
 [scoring]
 stage_a_threshold = 60

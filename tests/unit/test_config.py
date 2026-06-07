@@ -215,7 +215,7 @@ def test_llm_settings_defaults() -> None:
     assert cfg.codex_timeout_s == LLM_DEFAULT_CODEX_TIMEOUT_S
     assert cfg.claude_timeout_s == LLM_DEFAULT_CLAUDE_TIMEOUT_S
     assert cfg.max_concurrent == LLM_DEFAULT_MAX_CONCURRENT
-    assert cfg.master_resume_path == ".jobfeed-dev/resume.md"
+    assert cfg.master_resume_path == "resume.example.md"
     assert cfg.preamble_personal_path is None
     assert cfg.max_daily_score_calls == LLM_DEFAULT_MAX_DAILY_SCORE_CALLS
     assert cfg.max_daily_cost_usd == LLM_DEFAULT_MAX_DAILY_COST_USD
