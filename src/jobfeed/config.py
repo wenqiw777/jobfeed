@@ -79,6 +79,7 @@ class MLGateSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model_dir: str = "models/ml_gate"
+    model_version: str = "v20260601T170453Z"
     # The fastembed embedder maps this legacy short name to its full Hugging
     # Face id ("sentence-transformers/all-MiniLM-L6-v2"); both forms work.
     embedding_model: str = "all-MiniLM-L6-v2"

@@ -4,7 +4,7 @@ PostgreSQL is the only supported store backend. PG-backed fixtures resolve a
 DSN once per session — preferring ``PGTEST_DSN`` (a CI service or local
 Postgres), otherwise starting a single testcontainers Postgres for the run.
 When neither is available the PG fixtures skip (so the pure-unit suite still
-runs without Docker), unless ``PGTEST_REQUIRE=1`` forces a failure.
+runs without Docker), unless ``JOBFEED_REQUIRE_POSTGRES=1`` forces a failure.
 """
 
 from __future__ import annotations
@@ -85,7 +85,10 @@ def pg_url() -> Iterator[str]:
         yield dsn
         return
 
-    require_pg = os.environ.get("PGTEST_REQUIRE") == "1"
+    require_pg = (
+        os.environ.get("JOBFEED_REQUIRE_POSTGRES") == "1"
+        or os.environ.get("PGTEST_REQUIRE") == "1"
+    )
     try:
         from testcontainers.postgres import PostgresContainer
     except ImportError:

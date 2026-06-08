@@ -15,15 +15,12 @@ specific things to weigh, in order of importance:
    role) count partially; missing entire categories (e.g. no ML at all for
    an ML engineer role) is a heavy penalty.
 
-2. **Seniority calibration.** The candidate is in the entry-band hiring
-   window and applies to **all of** the following: internships, new-grad /
-   entry-level full-time, junior roles, associate roles, "SWE I" / "SDE 1"
-   numbered roles, and any role whose JD does not specify mid-level or
-   senior expectations. Roles that ARE structural mismatches (Staff
-   Engineer, Principal, Lead, Manager, "5+ years of professional experience
-   required", "10+ years required") count as seniority disqualifiers.
-   Anything inside the entry band — full-time OR internship, junior or
-   unspecified-level — is a full match on this axis.
+2. **Seniority calibration.** Compare the JD's stated seniority, years of
+   professional experience, and scope against the Master Resume. Intern,
+   new-grad, entry-level, junior, associate, and numbered SWE I / SDE 1 roles
+   are entry-band signals; Staff, Principal, Lead, Manager, high-year
+   requirements, and explicit mid/senior scope are mismatch signals unless the
+   Master Resume demonstrates that level.
 
 3. **Domain & company-stage alignment.** ML lab vs. enterprise SaaS vs. fast-
    moving startup vs. quant trading — the Master Resume's project mix and
@@ -82,12 +79,12 @@ specialty selector.
 
 - **Required clearance the candidate doesn't hold** → cap at 30
 - **Required degree the candidate doesn't hold** (PhD / Master's only) → cap at 30
-- **Required years of professional experience > candidate's experience + 1**
-  → cap at 50. (Candidate has ~6 months of internship experience, so the
-  buffer is 1.5 years total — internship/new-grad/SWE I roles that don't
-  state a year count, or that ask for "1+ year" / "≤1 year" / "0-2 years",
-  remain uncapped. Anything requiring **2+ years** of professional
-  non-internship experience triggers this cap, including:
+- **Required years of professional experience materially exceed the Master
+  Resume's professional experience** → cap at 50. Use the candidate-personal
+  preamble, when present, for the exact experience buffer. For entry-band
+  resumes, internship/new-grad/SWE I roles that do not state a year count, or
+  that ask for "0-2 years", usually remain uncapped. A cap applies when the JD
+  asks for experience beyond the resume's demonstrated band, including:
   - "2+ years professional", "2-4 years", "1-3 years", "minimum 2 years"
   - Title-only signals: "Software Engineer II", "SWE II", "SDE 2",
     "Engineer II", "Associate II", "SWE II / III"
@@ -106,12 +103,10 @@ specialty selector.
   only fellowships, neurodiversity-specific intake programs, etc.) where
   candidate doesn't qualify → cap at 5
 - **Mid-level / senior / staff title or scope** ("Staff Engineer",
-  "Principal", "Lead", "Manager", or JD body explicitly asks for ≥3 yrs
-  professional non-internship experience) → cap at 30. NOTE: full-time
-  vs. internship is NOT itself a hard cap. The candidate applies to BOTH
-  internships AND full-time entry-level / junior / new-grad / associate /
-  SWE I / SDE 1 roles. Only seniority-band mismatches (mid-level and above)
-  trigger this.
+  "Principal", "Lead", "Manager", or JD body explicitly asks for experience
+  above the resume's demonstrated band) → cap at 30. NOTE: full-time vs.
+  internship is NOT itself a hard cap; only seniority-band mismatches trigger
+  this cap.
 
 ### Hard-cap worked examples (study before scoring)
 
@@ -342,11 +337,10 @@ in this shared template.
 
 ### 60-74 band: forced two-sided justification (anti-midpoint rule)
 
-The 60-74 "Reach" band has zero historical empirical anchors — the user's
-prior application history filters out everything below ~76 (he ranked JDs
-first and only applied to high-rank cases). This band is therefore
-calibration-uncertain and is the most common site of unconscious midpoint
-default scoring (everything bunches around 65-68).
+The 60-74 "Reach" band is often calibration-uncertain and is the most common
+site of unconscious midpoint default scoring (everything bunches around 65-68).
+Candidate-specific historical anchors, when available, live in the personal
+preamble.
 
 **The rule**: When you assign a Stage B `score_0_100` in `[60, 74]`,
 your `fit_analysis.gaps[]` and `verdict.one_line` MUST collectively answer:
@@ -431,12 +425,12 @@ or rejected at HR call before any technical signal).
 
 ## Calibrated anchors
 
-Specific anchor cases (real applications, real outcomes, named
-companies, project-bullet excerpts, real GPA values) are calibration
-data tied to one candidate. They live in the candidate-personal
-preamble appendix at `~/.jobfeed/preamble_personal.md`, which the
-evaluator concatenates onto this template at render time. The repo
-template stays generic so it can be committed without leaking PII.
+Specific anchor cases (real applications, real outcomes, named companies,
+project-bullet excerpts, real GPA values) are calibration data tied to one
+candidate. They live in the configured candidate-personal preamble path
+(`llm.preamble_personal_path`), which the evaluator concatenates onto this
+template at render time. The repo template stays generic so it can be committed
+without leaking PII.
 
 If `preamble_personal.md` is missing, the evaluator falls back to
 the generic calibration above (score bands + hard caps + ghost

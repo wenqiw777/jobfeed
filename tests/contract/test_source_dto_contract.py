@@ -4,11 +4,11 @@ Each new source parses a committed fixture to EXACT ``JobPosting`` field values
 under a FIXED reference time, so any drift in a source's field mapping fails the
 test deliberately. Coverage: SpeedyApply (markdown + greenhouse routing),
 Indeed JobSpy, and LinkedIn JobSpy (DataFrame built from JSON fixtures with
-``jobspy.scrape_jobs`` monkeypatched).
+the JobSpy process runner monkeypatched).
 
 This file must NOT require PostgreSQL — it is pure parse + mock and runs inside
-``make quality``. All network is mocked (respx for HTTP, monkeypatched
-``jobspy.scrape_jobs``); nothing reaches the wire.
+``make quality``. All network is mocked (respx for HTTP, monkeypatched JobSpy
+process runner); nothing reaches the wire.
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import jobspy
 import pandas as pd
 import pytest
 import respx
 
+from jobfeed.adapters.sources import _jobspy
 from jobfeed.adapters.sources import speedyapply as speedyapply_mod
 from jobfeed.adapters.sources._ats_greenhouse import JOB_URL as GH_JOB_URL
 from jobfeed.adapters.sources._http import create_http_client
@@ -202,12 +202,18 @@ class TestSpeedyApplyDTOContract:
 
 
 def _install_fake_scrape(monkeypatch: pytest.MonkeyPatch, frame: pd.DataFrame) -> None:
-    """Replace ``jobspy.scrape_jobs`` with a fake returning ``frame``."""
+    """Replace the JobSpy process runner with one converting ``frame``."""
 
-    def _fake(**_kwargs: object) -> pd.DataFrame:
-        return frame
+    def _fake(request: object, _timeout_s: float) -> object:
+        return _jobspy._ScrapeProcessOutcome(
+            postings=_jobspy._frame_to_postings(
+                frame,
+                platform=request.platform,
+                discovered_at=request.discovered_at,
+            )
+        )
 
-    monkeypatch.setattr(jobspy, "scrape_jobs", _fake)
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake)
 
 
 def _indeed_frame() -> pd.DataFrame:

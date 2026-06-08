@@ -46,6 +46,9 @@ ATS_ENV_MAX_CONCURRENT = 5
 SPEEDYAPPLY_DEFAULT_MAX_CONCURRENT = 10
 SPEEDYAPPLY_DEFAULT_FETCH_TIMEOUT_S = 30.0
 JOBSPY_DEFAULT_MAX_JOBS = 100
+JOBSPY_DEFAULT_MAX_CONCURRENT = 2
+JOBSPY_DEFAULT_TIMEOUT_S = 60.0
+JOBSPY_DEFAULT_COUNTRY_INDEED = "usa"
 INDEED_ENV_MAX_JOBS = 50
 INDEED_TOML_MAX_JOBS = 25
 INDEED_TOML_HOURS_OLD = 48
@@ -418,10 +421,15 @@ def test_settings_exposes_phase4a_source_defaults() -> None:
     assert sources.indeed.search_urls == []
     assert sources.indeed.max_jobs == JOBSPY_DEFAULT_MAX_JOBS
     assert sources.indeed.hours_old is None
+    assert sources.indeed.max_concurrent == JOBSPY_DEFAULT_MAX_CONCURRENT
+    assert sources.indeed.timeout_s == JOBSPY_DEFAULT_TIMEOUT_S
+    assert sources.indeed.country_indeed == JOBSPY_DEFAULT_COUNTRY_INDEED
 
     assert sources.linkedin_jobspy.search_urls == []
     assert sources.linkedin_jobspy.max_jobs == JOBSPY_DEFAULT_MAX_JOBS
     assert sources.linkedin_jobspy.hours_old is None
+    assert sources.linkedin_jobspy.max_concurrent == JOBSPY_DEFAULT_MAX_CONCURRENT
+    assert sources.linkedin_jobspy.timeout_s == JOBSPY_DEFAULT_TIMEOUT_S
 
 
 def test_settings_exposes_phase4b_linkedin_defaults() -> None:
@@ -490,6 +498,7 @@ def test_load_settings_parses_phase4a_source_sections(tmp_path: Path) -> None:
         'search_urls = ["https://example.test/indeed"]\n'
         f"max_jobs = {INDEED_TOML_MAX_JOBS}\n"
         f"hours_old = {INDEED_TOML_HOURS_OLD}\n"
+        'country_indeed = "canada"\n'
         "[sources.linkedin_jobspy]\n"
         "enabled = true\n"
         'search_urls = ["https://example.test/li"]\n',
@@ -504,6 +513,7 @@ def test_load_settings_parses_phase4a_source_sections(tmp_path: Path) -> None:
     assert sources.indeed.search_urls == ["https://example.test/indeed"]
     assert sources.indeed.max_jobs == INDEED_TOML_MAX_JOBS
     assert sources.indeed.hours_old == INDEED_TOML_HOURS_OLD
+    assert sources.indeed.country_indeed == "canada"
     assert sources.linkedin_jobspy.enabled is True
     assert sources.linkedin_jobspy.search_urls == ["https://example.test/li"]
 
@@ -512,6 +522,12 @@ def test_sources_speedyapply_config_rejects_unknown_key() -> None:
     """An unknown key in [sources.speedyapply] should fail (extra='forbid')."""
     with pytest.raises(ValidationError):
         SourcesSpeedyApplyConfig(unknown_key="value")  # type: ignore[call-arg]
+
+
+def test_speedyapply_config_rejects_enabled_without_search_urls() -> None:
+    """Enabled SpeedyApply must name the cycle/list URLs explicitly."""
+    with pytest.raises(ValidationError):
+        SourcesSpeedyApplyConfig(enabled=True)
 
 
 def test_sources_indeed_config_rejects_unknown_key() -> None:
@@ -607,6 +623,20 @@ def test_sources_indeed_config_rejects_max_jobs_zero() -> None:
         SourcesIndeedConfig(max_jobs=0)
 
 
+def test_jobspy_config_rejects_nonpositive_timeout_or_concurrency() -> None:
+    """JobSpy timeout/concurrency are runtime safety bounds."""
+    with pytest.raises(ValidationError):
+        SourcesIndeedConfig(timeout_s=0)
+    with pytest.raises(ValidationError):
+        SourcesLinkedInJobSpyConfig(max_concurrent=0)
+
+
+def test_indeed_config_rejects_blank_country() -> None:
+    """Indeed country must be explicit and non-blank when configured."""
+    with pytest.raises(ValidationError):
+        SourcesIndeedConfig(country_indeed=" ")
+
+
 def test_sources_linkedin_config_rejects_nonpositive_limits() -> None:
     """Playwright LinkedIn source limits should be positive where required."""
     with pytest.raises(ValidationError):
@@ -630,24 +660,24 @@ def test_load_settings_env_overrides_indeed_max_jobs(
     assert settings.sources.indeed.max_jobs == INDEED_ENV_MAX_JOBS
 
 
-def test_load_settings_env_overrides_speedyapply_enabled(
+def test_load_settings_env_enable_speedyapply_without_urls_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A scalar JOBFEED_SOURCES__SPEEDYAPPLY__ENABLED env var should override config.
+    """Enabling SpeedyApply by env alone fails because list URLs are TOML-only.
 
     Args:
         monkeypatch: Pytest helper used to set scoped environment variables.
     """
     monkeypatch.setenv("JOBFEED_SOURCES__SPEEDYAPPLY__ENABLED", "true")
 
-    settings = load_settings()
-
-    assert settings.sources.speedyapply.enabled is True
+    with pytest.raises(ValidationError):
+        load_settings()
 
 
 # --- Phase 5 MLGateSettings tests ---
 
 ML_GATE_DEFAULT_MODEL_DIR = "models/ml_gate"
+ML_GATE_DEFAULT_MODEL_VERSION = "v20260601T170453Z"
 ML_GATE_DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 ML_GATE_DEFAULT_EMBEDDING_MAX_CHARS = 2000
 ML_GATE_DEFAULT_MAX_CANDIDATES = 5000
@@ -663,6 +693,7 @@ def test_ml_gate_settings_defaults() -> None:
     cfg = MLGateSettings()
 
     assert cfg.model_dir == ML_GATE_DEFAULT_MODEL_DIR
+    assert cfg.model_version == ML_GATE_DEFAULT_MODEL_VERSION
     assert cfg.embedding_model == ML_GATE_DEFAULT_EMBEDDING_MODEL
     assert cfg.embedding_max_chars == ML_GATE_DEFAULT_EMBEDDING_MAX_CHARS
     assert cfg.threshold_override is None
@@ -688,6 +719,7 @@ def test_settings_exposes_ml_gate_field() -> None:
 
     assert isinstance(settings.ml_gate, MLGateSettings)
     assert settings.ml_gate.model_dir == ML_GATE_DEFAULT_MODEL_DIR
+    assert settings.ml_gate.model_version == ML_GATE_DEFAULT_MODEL_VERSION
     assert settings.ml_gate.embedding_model == ML_GATE_DEFAULT_EMBEDDING_MODEL
     assert settings.ml_gate.embedding_max_chars == ML_GATE_DEFAULT_EMBEDDING_MAX_CHARS
     assert settings.ml_gate.threshold_override is None
@@ -739,6 +771,7 @@ def test_load_settings_parses_ml_gate_section(tmp_path: Path) -> None:
     config_path.write_text(
         "[ml_gate]\n"
         'model_dir = "models/custom_gate"\n'
+        'model_version = "v20990101T000000Z"\n'
         'embedding_model = "all-mpnet-base-v2"\n'
         f"embedding_max_chars = {ML_GATE_TOML_EMBEDDING_MAX_CHARS}\n"
         f"threshold_override = {ML_GATE_TOML_THRESHOLD_OVERRIDE}\n"
@@ -749,6 +782,7 @@ def test_load_settings_parses_ml_gate_section(tmp_path: Path) -> None:
     settings = load_settings(config_path)
 
     assert settings.ml_gate.model_dir == "models/custom_gate"
+    assert settings.ml_gate.model_version == "v20990101T000000Z"
     assert settings.ml_gate.embedding_model == "all-mpnet-base-v2"
     assert settings.ml_gate.embedding_max_chars == ML_GATE_TOML_EMBEDDING_MAX_CHARS
     assert settings.ml_gate.threshold_override == ML_GATE_TOML_THRESHOLD_OVERRIDE

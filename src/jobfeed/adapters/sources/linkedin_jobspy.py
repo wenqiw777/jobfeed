@@ -7,7 +7,7 @@ replace) the authenticated Playwright source: this path is anonymous and inline.
 
 This source is a thin shell: it delegates the entire per-URL scrape loop to the
 shared ``_jobspy.scrape_urls`` (the SAME loop Indeed JobSpy reuses — the
-``asyncio.to_thread`` + per-URL error containment lives there, never here).
+child-process timeout + per-URL error containment lives there, never here).
 Unlike Indeed, there is NO ``dateOnIndeed`` date patch (that knob is
 Indeed-specific). JobSpy returns each posting fully populated with an inline JD,
 so ``fetch_jobs`` returns ready-to-save postings and no later enrich step is
@@ -60,6 +60,8 @@ class LinkedInJobSpySource:
             search_urls=self._config.search_urls,
             max_jobs=self._config.max_jobs,
             hours_old=self._config.hours_old,
+            timeout_s=self._config.timeout_s,
+            max_concurrent=self._config.max_concurrent,
             logger=self._log,
             discovered_at=datetime.now(UTC),
         )

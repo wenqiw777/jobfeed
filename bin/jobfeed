@@ -1,4 +1,13 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
-exec docker compose run --rm jobfeed-cli jobfeed "$@"
+REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+args=(docker compose run --rm)
+for file in config.toml resume.md preamble_personal.md; do
+    if [ -f "$REPO_ROOT/$file" ]; then
+        args+=(-v "$REPO_ROOT/$file:/app/$file:ro")
+    fi
+done
+
+exec "${args[@]}" jobfeed-cli jobfeed "$@"

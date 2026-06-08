@@ -1,11 +1,10 @@
-"""SpeedyApply source: GitHub markdown lists + multi-vendor JD routing.
+"""SpeedyApply source: configured GitHub markdown lists + JD routing.
 
-The speedyapply/2026-SWE-College-Jobs repo publishes daily-updated markdown
-tables of SWE intern + new-grad postings. This source fetches each configured
-markdown list, parses the rows (``_speedyapply_markdown``), dedupes by
-``canonical_id``, then routes each row's apply URL to the matching ATS to fetch
-the JD body (``_speedyapply_routing``). It implements ``SimpleSource`` — one
-async ``fetch_jobs`` call returns fully-populated postings.
+This source fetches each configured markdown list, parses the rows
+(``_speedyapply_markdown``), dedupes by ``canonical_id``, then routes each
+row's apply URL to the matching ATS to fetch the JD body
+(``_speedyapply_routing``). It implements ``SimpleSource`` — one async
+``fetch_jobs`` call returns fully-populated postings.
 
 A single per-call slug cache is shared across rows so multiple postings from the
 same Ashby/Lever board fetch the board once. Per-row fetch errors are contained:
@@ -27,12 +26,6 @@ from jobfeed.config import SourcesSpeedyApplyConfig
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger
-
-# USA internships only by default. The repo also publishes NEW_GRAD_USA.md + the
-# two _INTL.md files; users add those to config.search_urls if they want them.
-DEFAULT_URL = (
-    "https://raw.githubusercontent.com/speedyapply/2026-SWE-College-Jobs/main/README.md"
-)
 
 _VENDOR = "speedyapply"
 _DEAD_STATUSES = frozenset({404, 410})
@@ -72,9 +65,8 @@ class SpeedyApplySource:
 
     async def _collect_rows(self, discovered_at: datetime) -> list[markdown.SpeedyRow]:
         """Fetch each markdown list, parse rows, dedupe by canonical_id."""
-        urls = self._config.search_urls or [DEFAULT_URL]
         parsed: list[markdown.SpeedyRow] = []
-        for url in urls:
+        for url in self._config.search_urls:
             parsed.extend(await self._parse_url(url, discovered_at))
         rows = _dedupe_rows(parsed)
         self._log.info("speedyapply_rows_parsed", count=len(rows))
@@ -187,4 +179,4 @@ def _dedupe_rows(rows: list[markdown.SpeedyRow]) -> list[markdown.SpeedyRow]:
     return deduped
 
 
-__all__ = ["DEFAULT_URL", "SpeedyApplySource"]
+__all__ = ["SpeedyApplySource"]

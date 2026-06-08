@@ -13,9 +13,10 @@ Pipeline (ASCII)::
 
 ``scrape`` runs ONE synchronous ``jobspy.scrape_jobs`` call (jobspy/pandas are
 lazy-imported inside it, so importing this module is cheap and does not require
-jobspy installed). ``scrape_urls`` is the shared async per-URL loop both JobSpy
-sources reuse: each URL is offloaded with ``asyncio.to_thread`` and its errors
-are contained so one bad URL never aborts the rest.
+jobspy installed). ``scrape_urls`` is the shared async fan-out both JobSpy
+sources reuse: each URL runs inside a child process so configured timeouts can
+stop a hung JobSpy scrape; per-URL errors are contained so one bad URL never
+aborts the rest.
 
 The pure-stdlib URL -> kwargs parsing lives in ``_jobspy_url.py`` (split out to
 keep this module under the 300-line gate); the DataFrame -> JobPosting
@@ -25,7 +26,11 @@ conversion (the only pandas-touching code) stays here.
 from __future__ import annotations
 
 import asyncio
+import multiprocessing as mp
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from multiprocessing.queues import Queue
+from queue import Empty
 from typing import TYPE_CHECKING, Any
 
 from jobfeed.adapters.sources._jobspy_url import parse_search_url
@@ -35,6 +40,10 @@ from jobfeed.observability import JobfeedLogger
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
     import pandas as pd
+
+_PROCESS_START_METHOD = "spawn"
+_PROCESS_KILL_GRACE_S = 1.0
+_PROCESS_RESULT_GRACE_S = 0.5
 
 
 class JobSpyError(RuntimeError):
@@ -50,6 +59,24 @@ class JobSpyError(RuntimeError):
         self.search_url = search_url
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ScrapeRequest:
+    site_name: str
+    platform: str
+    search_url: str
+    max_jobs: int
+    hours_old: int | None
+    country_indeed: str | None
+    discovered_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ScrapeProcessOutcome:
+    postings: list[JobPosting]
+    error: str | None = None
+    timed_out: bool = False
+
+
 def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
     *,
     site_name: str,
@@ -57,6 +84,7 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
     search_url: str,
     max_jobs: int,
     hours_old: int | None,
+    country_indeed: str | None = None,
     discovered_at: datetime | None = None,
 ) -> list[JobPosting]:
     """Scrape ONE JobSpy search URL and return fully-populated postings.
@@ -74,6 +102,7 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
         max_jobs: Cap passed to ``results_wanted``.
         hours_old: When not None, OVERRIDES any freshness window in the URL
             (Indeed ``fromage`` / LinkedIn ``f_TPR``).
+        country_indeed: JobSpy country selector for Indeed searches.
         discovered_at: Scan-start timestamp; defaults to ``now`` if omitted.
 
     Returns:
@@ -99,7 +128,7 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
         frame = jobspy.scrape_jobs(
             site_name=site_name,
             results_wanted=max_jobs,
-            country_indeed="usa",
+            country_indeed=country_indeed or "usa",
             **kwargs,
         )
     except Exception as exc:  # contain every jobspy/tls-client failure
@@ -119,14 +148,18 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
     search_urls: list[str],
     max_jobs: int,
     hours_old: int | None,
+    timeout_s: float,
+    max_concurrent: int,
     logger: JobfeedLogger,
     discovered_at: datetime,
+    country_indeed: str | None = None,
 ) -> list[JobPosting]:
     """Scrape every search URL off the event loop, containing per-URL errors.
 
     Shared by both JobSpy sources (Indeed + LinkedIn). Each URL's synchronous
-    ``scrape`` runs in a worker thread (``asyncio.to_thread``) so the event loop
-    is never blocked. A ``JobSpyError`` on one URL is logged and skipped so the
+    ``scrape`` runs in a child process while the parent waits from a bounded
+    worker thread, so the event loop is never blocked and a hung JobSpy scrape
+    can be terminated. A failure on one URL is logged and skipped so the
     remaining URLs still contribute their postings.
 
     Args:
@@ -135,31 +168,149 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
         search_urls: Search URLs to scrape, in order.
         max_jobs: Per-URL cap.
         hours_old: Freshness override (see ``scrape``).
+        timeout_s: Per-URL wall-clock timeout for the blocking JobSpy call.
+        max_concurrent: Maximum number of URLs scraped concurrently.
         logger: Structured logger for contained per-URL failures.
         discovered_at: Scan-start timestamp stamped on every posting.
+        country_indeed: JobSpy country selector for Indeed searches.
 
     Returns:
         Aggregated postings across all URLs that did not fail.
     """
-    postings: list[JobPosting] = []
-    for url in search_urls:
-        try:
-            scraped = await asyncio.to_thread(
-                scrape,
+    sem = asyncio.Semaphore(max_concurrent)
+    batches = await asyncio.gather(
+        *[
+            _scrape_one_url(
+                sem=sem,
                 site_name=site_name,
                 platform=platform,
-                search_url=url,
+                url=url,
                 max_jobs=max_jobs,
                 hours_old=hours_old,
+                timeout_s=timeout_s,
+                logger=logger,
                 discovered_at=discovered_at,
+                country_indeed=country_indeed,
             )
-        except JobSpyError as exc:
+            for url in search_urls
+        ]
+    )
+    return [posting for batch in batches for posting in batch]
+
+
+def _run_scrape_process(
+    request: _ScrapeRequest, timeout_s: float
+) -> _ScrapeProcessOutcome:
+    ctx: Any = mp.get_context(_PROCESS_START_METHOD)
+    result_queue: Queue[_ScrapeProcessOutcome] = ctx.Queue(maxsize=1)
+    process = ctx.Process(
+        target=_scrape_child_main,
+        args=(request, result_queue),
+        daemon=True,
+    )
+    try:
+        process.start()
+        process.join(timeout_s)
+        if process.is_alive():
+            _stop_process(process)
+            return _ScrapeProcessOutcome(postings=[], timed_out=True)
+        return _read_scrape_process_result(process, result_queue)
+    finally:
+        result_queue.close()
+        result_queue.join_thread()
+
+
+def _scrape_child_main(
+    request: _ScrapeRequest, result_queue: Queue[_ScrapeProcessOutcome]
+) -> None:
+    try:
+        postings = scrape(
+            site_name=request.site_name,
+            platform=request.platform,
+            search_url=request.search_url,
+            max_jobs=request.max_jobs,
+            hours_old=request.hours_old,
+            country_indeed=request.country_indeed,
+            discovered_at=request.discovered_at,
+        )
+    except Exception as exc:  # contain every child-side jobspy/tls-client failure
+        result_queue.put(_ScrapeProcessOutcome(postings=[], error=str(exc)))
+        return
+    result_queue.put(_ScrapeProcessOutcome(postings=postings))
+
+
+def _stop_process(process: Any) -> None:
+    process.terminate()
+    process.join(_PROCESS_KILL_GRACE_S)
+    if not process.is_alive():
+        return
+    process.kill()
+    process.join(_PROCESS_KILL_GRACE_S)
+
+
+def _read_scrape_process_result(
+    process: Any, result_queue: Queue[_ScrapeProcessOutcome]
+) -> _ScrapeProcessOutcome:
+    try:
+        result = result_queue.get(timeout=_PROCESS_RESULT_GRACE_S)
+    except Empty:
+        exitcode = getattr(process, "exitcode", None)
+        return _ScrapeProcessOutcome(
+            postings=[],
+            error=f"jobspy child exited without result (exitcode={exitcode})",
+        )
+    if isinstance(result, _ScrapeProcessOutcome):
+        return result
+    return _ScrapeProcessOutcome(
+        postings=[],
+        error=f"jobspy child returned unexpected result type: {type(result).__name__}",
+    )
+
+
+async def _scrape_one_url(  # noqa: PLR0913 - carries the shared scrape contract
+    *,
+    sem: asyncio.Semaphore,
+    site_name: str,
+    platform: str,
+    url: str,
+    max_jobs: int,
+    hours_old: int | None,
+    timeout_s: float,
+    logger: JobfeedLogger,
+    discovered_at: datetime,
+    country_indeed: str | None,
+) -> list[JobPosting]:
+    async with sem:
+        request = _ScrapeRequest(
+            site_name=site_name,
+            platform=platform,
+            search_url=url,
+            max_jobs=max_jobs,
+            hours_old=hours_old,
+            country_indeed=country_indeed,
+            discovered_at=discovered_at,
+        )
+        try:
+            outcome = await asyncio.to_thread(_run_scrape_process, request, timeout_s)
+        except Exception as exc:
             logger.warning(
                 "jobspy_scrape_failed", site=site_name, url=url, error=str(exc)
             )
-            continue
-        postings.extend(scraped)
-    return postings
+            return []
+        if outcome.timed_out:
+            logger.warning(
+                "jobspy_scrape_timed_out",
+                site=site_name,
+                url=url,
+                timeout_s=timeout_s,
+            )
+            return []
+        if outcome.error is not None:
+            logger.warning(
+                "jobspy_scrape_failed", site=site_name, url=url, error=outcome.error
+            )
+            return []
+        return outcome.postings
 
 
 # ---------------------------------------------------------------------------

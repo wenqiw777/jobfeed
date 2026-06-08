@@ -1,9 +1,9 @@
 """Unit tests for the JobSpy isolation boundary + Indeed source.
 
-``jobspy.scrape_jobs`` is always monkeypatched — NO real network. Tests build
-real ``pandas.DataFrame``s and assert the boundary converts them to
-``JobPosting``s, parses search URLs site-aware, contains scrape failures, runs
-off the event loop, and imports lazily.
+``jobspy.scrape_jobs`` or the process runner is always monkeypatched — NO real
+network. Tests build real ``pandas.DataFrame``s and assert the boundary converts
+them to ``JobPosting``s, parses search URLs site-aware, contains scrape
+failures, runs off the event loop, and imports lazily.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from datetime import UTC, date, datetime, timedelta
+from queue import Empty
 
 import jobspy
 import pandas as pd
@@ -40,6 +41,14 @@ _EXPECTED_LI_DISTANCE = 10
 _EXPECTED_LI_HOURS = 24  # f_TPR=r86400 seconds // 3600
 _EXPECTED_LI_HOURS_NO_PREFIX = 2  # f_TPR=7200 seconds // 3600
 _EXPECTED_LI_MAX_JOBS = 7
+_DEFAULT_JOBSPY_TIMEOUT_S = 60.0
+_DEFAULT_JOBSPY_MAX_CONCURRENT = 2
+_JOBSPY_TIMEOUT_S = 0.01
+_JOBSPY_MAX_CONCURRENT = 2
+_CUSTOM_JOBSPY_TIMEOUT_S = 12.5
+_CUSTOM_JOBSPY_MAX_CONCURRENT = 3
+_CUSTOM_INDEED_COUNTRY = "canada"
+_CONCURRENCY_SLEEP_S = 0.02
 
 
 def _frame(rows: list[dict[str, object]]) -> pd.DataFrame:
@@ -60,6 +69,91 @@ def _good_row(**overrides: object) -> dict[str, object]:
     }
     row.update(overrides)
     return row
+
+
+def _posting_for_url(search_url: str, *, platform: str) -> JobPosting:
+    """Build a real posting whose id reflects the URL suffix."""
+    posting = _jobspy._row_to_posting(
+        _good_row(id=f"in-{search_url[-1]}"),
+        platform=platform,
+        discovered_at=_DISCOVERED_AT,
+    )
+    assert posting is not None
+    return posting
+
+
+def _scrape_outcome(
+    postings: list[JobPosting] | None = None,
+    *,
+    error: str | None = None,
+    timed_out: bool = False,
+) -> object:
+    """Build a private JobSpy process outcome for fan-out tests."""
+    return _jobspy._ScrapeProcessOutcome(
+        postings=postings or [],
+        error=error,
+        timed_out=timed_out,
+    )
+
+
+class _HungQueue:
+    def __init__(self) -> None:
+        self.closed = False
+        self.joined = False
+
+    def get(self, *, timeout: float) -> object:  # noqa: ARG002
+        raise Empty
+
+    def close(self) -> None:
+        self.closed = True
+
+    def join_thread(self) -> None:
+        self.joined = True
+
+
+class _HungProcess:
+    def __init__(self) -> None:
+        self.started = False
+        self.terminated = False
+        self.killed = False
+        self.joins: list[float | None] = []
+
+    def start(self) -> None:
+        self.started = True
+
+    def join(self, timeout: float | None = None) -> None:
+        self.joins.append(timeout)
+
+    def is_alive(self) -> bool:
+        return not self.killed
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+class _HungContext:
+    def __init__(self) -> None:
+        self.queue = _HungQueue()
+        self.process = _HungProcess()
+        self.method = ""
+
+    def Queue(self, *, maxsize: int) -> _HungQueue:  # noqa: ARG002
+        return self.queue
+
+    def Process(
+        self,
+        *,
+        target: object,
+        args: tuple[object, ...],
+        daemon: bool,
+    ) -> _HungProcess:
+        assert target is _jobspy._scrape_child_main
+        assert args[-1] is self.queue
+        assert daemon is True
+        return self.process
 
 
 @pytest.fixture
@@ -408,20 +502,15 @@ async def test_scrape_urls_contains_one_failing_url(
 ) -> None:
     """One URL raising JobSpyError is logged and skipped; others still return."""
 
-    def _fake_scrape(*, search_url: str, platform: str, **_kwargs: object):
-        if "bad" in search_url:
-            raise _jobspy.JobSpyError(
-                "Cloudflare challenge", site_name="indeed", search_url=search_url
-            )
-        return [
-            _jobspy._row_to_posting(  # build a real posting via the boundary
-                _good_row(id=f"in-{search_url[-1]}"),
-                platform=platform,
-                discovered_at=_DISCOVERED_AT,
-            )
-        ]
+    def _fake_run_scrape_process(request: object, timeout_s: float) -> object:
+        assert timeout_s == _DEFAULT_JOBSPY_TIMEOUT_S
+        if "bad" in request.search_url:
+            return _scrape_outcome(error="Cloudflare challenge")
+        return _scrape_outcome(
+            [_posting_for_url(request.search_url, platform=request.platform)]
+        )
 
-    monkeypatch.setattr(_jobspy, "scrape", _fake_scrape)
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake_run_scrape_process)
     postings = await _jobspy.scrape_urls(
         site_name="indeed",
         platform="indeed",
@@ -432,11 +521,124 @@ async def test_scrape_urls_contains_one_failing_url(
         ],
         max_jobs=10,
         hours_old=None,
+        timeout_s=_DEFAULT_JOBSPY_TIMEOUT_S,
+        max_concurrent=2,
         logger=get_logger(),
         discovered_at=_DISCOVERED_AT,
     )
     # The two good URLs contributed; the bad one was contained.
     assert {p.canonical_id for p in postings} == {"in-1", "in-3"}
+
+
+def test_run_scrape_process_terminates_and_kills_timed_out_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timed-out child process is stopped instead of being left running."""
+    context = _HungContext()
+
+    def _fake_get_context(method: str) -> _HungContext:
+        context.method = method
+        return context
+
+    monkeypatch.setattr(_jobspy.mp, "get_context", _fake_get_context)
+
+    outcome = _jobspy._run_scrape_process(
+        _jobspy._ScrapeRequest(
+            site_name="indeed",
+            platform="indeed",
+            search_url="https://indeed.com/jobs?q=slow",
+            max_jobs=10,
+            hours_old=None,
+            country_indeed=None,
+            discovered_at=_DISCOVERED_AT,
+        ),
+        timeout_s=_JOBSPY_TIMEOUT_S,
+    )
+
+    assert context.method == "spawn"
+    assert outcome.timed_out is True
+    assert outcome.postings == []
+    assert context.process.started is True
+    assert context.process.terminated is True
+    assert context.process.killed is True
+    assert context.process.joins == [
+        _JOBSPY_TIMEOUT_S,
+        _jobspy._PROCESS_KILL_GRACE_S,
+        _jobspy._PROCESS_KILL_GRACE_S,
+    ]
+    assert context.queue.closed is True
+    assert context.queue.joined is True
+
+
+async def test_scrape_urls_times_out_one_hanging_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hanging JobSpy call is timed out and contained per URL."""
+
+    calls: list[tuple[str, float]] = []
+
+    def _timeout_run_scrape_process(request: object, timeout_s: float) -> object:
+        calls.append((request.search_url, timeout_s))
+        return _scrape_outcome(timed_out=True)
+
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _timeout_run_scrape_process)
+    postings = await _jobspy.scrape_urls(
+        site_name="indeed",
+        platform="indeed",
+        search_urls=["https://indeed.com/jobs?q=slow"],
+        max_jobs=10,
+        hours_old=None,
+        timeout_s=_JOBSPY_TIMEOUT_S,
+        max_concurrent=1,
+        logger=get_logger(),
+        discovered_at=_DISCOVERED_AT,
+    )
+
+    assert calls == [("https://indeed.com/jobs?q=slow", _JOBSPY_TIMEOUT_S)]
+    assert postings == []
+
+
+async def test_scrape_urls_honors_max_concurrent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JobSpy URL fan-out is bounded by the configured max_concurrent."""
+    active = 0
+    max_seen = 0
+    lock = threading.Lock()
+
+    def _tracked_run_scrape_process(request: object, timeout_s: float) -> object:
+        nonlocal active, max_seen
+        assert timeout_s == _DEFAULT_JOBSPY_TIMEOUT_S
+        with lock:
+            active += 1
+            max_seen = max(max_seen, active)
+        time.sleep(_CONCURRENCY_SLEEP_S)
+        with lock:
+            active -= 1
+        return _scrape_outcome(
+            [_posting_for_url(request.search_url, platform=request.platform)]
+        )
+
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _tracked_run_scrape_process)
+
+    postings = await _jobspy.scrape_urls(
+        site_name="indeed",
+        platform="indeed",
+        search_urls=[
+            "https://indeed.com/jobs?q=1",
+            "https://indeed.com/jobs?q=2",
+            "https://indeed.com/jobs?q=3",
+        ],
+        max_jobs=10,
+        hours_old=None,
+        timeout_s=_DEFAULT_JOBSPY_TIMEOUT_S,
+        max_concurrent=_JOBSPY_MAX_CONCURRENT,
+        logger=get_logger(),
+        discovered_at=_DISCOVERED_AT,
+    )
+
+    assert max_seen == _JOBSPY_MAX_CONCURRENT
+    assert {p.canonical_id for p in postings} == {"in-1", "in-2", "in-3"}
 
 
 async def test_single_url_scrape_raises_on_challenge(
@@ -457,7 +659,7 @@ async def test_single_url_scrape_raises_on_challenge(
 
 
 # ---------------------------------------------------------------------------
-# IndeedSource: SimpleSource protocol, to_thread non-blocking, delegation
+# IndeedSource: SimpleSource protocol, process-runner non-blocking, delegation
 # ---------------------------------------------------------------------------
 
 
@@ -476,32 +678,69 @@ def test_indeed_source_satisfies_simple_source_protocol() -> None:
 
 
 async def test_indeed_fetch_jobs_returns_inline_postings(
-    patched_scrape_jobs,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """fetch_jobs applies the date patch and returns indeed-tagged postings."""
-    patched_scrape_jobs.frame = _frame([_good_row()])
     patches: list[str] = []
+    captured: list[object] = []
+
+    def _fake_run_scrape_process(request: object, timeout_s: float) -> object:
+        assert timeout_s == _DEFAULT_JOBSPY_TIMEOUT_S
+        captured.append(request)
+        return _scrape_outcome(
+            [_posting_for_url(request.search_url, platform=request.platform)]
+        )
+
     monkeypatch.setattr(
         "jobfeed.adapters.sources.indeed_jobspy.apply_indeed_date_patch",
         lambda: patches.append("patched"),
     )
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake_run_scrape_process)
     postings = await _indeed_source().fetch_jobs({})
     assert patches == ["patched"]
     assert len(postings) == 1
     assert postings[0].platform == "indeed"
     assert postings[0].enrich_source == "jobspy_inline"
+    assert captured[-1].country_indeed == "usa"
+
+
+async def test_indeed_fetch_jobs_forwards_runtime_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """IndeedSource forwards timeout/concurrency/country config to JobSpy loop."""
+    captured: dict[str, object] = {}
+
+    async def _spy_scrape_urls(**kwargs: object) -> list[JobPosting]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        "jobfeed.adapters.sources.indeed_jobspy.apply_indeed_date_patch",
+        lambda: None,
+    )
+    monkeypatch.setattr(_jobspy, "scrape_urls", _spy_scrape_urls)
+    source = _indeed_source(
+        timeout_s=_CUSTOM_JOBSPY_TIMEOUT_S,
+        max_concurrent=_CUSTOM_JOBSPY_MAX_CONCURRENT,
+        country_indeed=_CUSTOM_INDEED_COUNTRY,
+    )
+
+    assert await source.fetch_jobs({}) == []
+
+    assert captured["timeout_s"] == _CUSTOM_JOBSPY_TIMEOUT_S
+    assert captured["max_concurrent"] == _CUSTOM_JOBSPY_MAX_CONCURRENT
+    assert captured["country_indeed"] == _CUSTOM_INDEED_COUNTRY
 
 
 async def test_indeed_fetch_jobs_runs_scrape_off_event_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The blocking scrape runs via asyncio.to_thread, freeing the loop.
+    """The blocking process runner runs via asyncio.to_thread, freeing the loop.
 
     A concurrent coroutine flips a flag during ``asyncio.sleep(0)`` WHILE the
-    synchronous scrape is busy-waiting inside the worker thread. If
-    ``fetch_jobs`` ran scrape inline it would block the loop and the flag would
-    still be False when scrape returns.
+    synchronous process runner is busy-waiting inside the worker thread. If
+    ``fetch_jobs`` ran the runner inline it would block the loop and the flag
+    would still be False when the runner returns.
     """
     monkeypatch.setattr(
         "jobfeed.adapters.sources.indeed_jobspy.apply_indeed_date_patch",
@@ -510,7 +749,9 @@ async def test_indeed_fetch_jobs_runs_scrape_off_event_loop(
     flag = {"flipped": False}
     scrape_started = threading.Event()
 
-    def _blocking_scrape(**_kwargs: object):
+    def _blocking_run_scrape_process(request: object, timeout_s: float) -> object:
+        assert request.site_name == "indeed"
+        assert timeout_s == _DEFAULT_JOBSPY_TIMEOUT_S
         scrape_started.set()
         # Busy-wait (no asyncio): if this ran on the loop thread the concurrent
         # coroutine below could never run. It only runs because we're in a
@@ -518,12 +759,12 @@ async def test_indeed_fetch_jobs_runs_scrape_off_event_loop(
         deadline = time.perf_counter() + 1.0
         while not flag["flipped"] and time.perf_counter() < deadline:
             pass
-        return []
+        return _scrape_outcome()
 
-    monkeypatch.setattr(_jobspy, "scrape", _blocking_scrape)
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _blocking_run_scrape_process)
 
     async def _flip_flag() -> None:
-        # Wait until the worker thread has actually started the scrape.
+        # Wait until the worker thread has actually started the process runner.
         while not scrape_started.is_set():
             await asyncio.sleep(0)
         flag["flipped"] = True
@@ -555,17 +796,26 @@ def test_linkedin_jobspy_source_satisfies_simple_source_protocol() -> None:
 
 
 async def test_linkedin_jobspy_fetch_jobs_returns_inline_postings(
-    patched_scrape_jobs,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """fetch_jobs returns postings tagged linkedin_jobspy with inline JD."""
-    patched_scrape_jobs.frame = _frame([_good_row()])
+    captured: list[object] = []
+
+    def _fake_run_scrape_process(request: object, timeout_s: float) -> object:
+        assert timeout_s == _DEFAULT_JOBSPY_TIMEOUT_S
+        captured.append(request)
+        return _scrape_outcome(
+            [_posting_for_url(request.search_url, platform=request.platform)]
+        )
+
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake_run_scrape_process)
     postings = await _li_jobspy_source().fetch_jobs({})
     assert len(postings) == 1
     assert postings[0].platform == "linkedin_jobspy"
     assert postings[0].enrich_source == "jobspy_inline"
     assert postings[0].jd_text is not None
     # The shared boundary scraped the linkedin site (not indeed).
-    assert patched_scrape_jobs.calls[-1]["site_name"] == "linkedin"
+    assert captured[-1].site_name == "linkedin"
 
 
 async def test_linkedin_jobspy_fetch_jobs_delegates_to_shared_scrape_urls(
@@ -574,7 +824,7 @@ async def test_linkedin_jobspy_fetch_jobs_delegates_to_shared_scrape_urls(
     """fetch_jobs reuses _jobspy.scrape_urls with the LinkedIn site/platform.
 
     Spying on the shared loop proves the source duplicates NO DataFrame /
-    to_thread / containment logic — it forwards every config field verbatim.
+    process-runner / containment logic — it forwards every config field verbatim.
     """
     captured: dict[str, object] = {}
 
@@ -589,11 +839,12 @@ async def test_linkedin_jobspy_fetch_jobs_delegates_to_shared_scrape_urls(
     assert captured["platform"] == "linkedin_jobspy"
     assert captured["search_urls"] == ["https://li/a", "https://li/b"]
     assert captured["max_jobs"] == _EXPECTED_LI_MAX_JOBS
+    assert captured["timeout_s"] == _DEFAULT_JOBSPY_TIMEOUT_S
+    assert captured["max_concurrent"] == _DEFAULT_JOBSPY_MAX_CONCURRENT
     assert isinstance(captured["discovered_at"], datetime)
 
 
 async def test_linkedin_jobspy_does_not_apply_indeed_date_patch(
-    patched_scrape_jobs,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The Indeed-only date patch is NEVER invoked by the LinkedIn source.
@@ -606,6 +857,12 @@ async def test_linkedin_jobspy_does_not_apply_indeed_date_patch(
         "jobfeed.adapters.sources._jobspy_patches.apply_indeed_date_patch",
         lambda: patches.append("patched"),
     )
-    patched_scrape_jobs.frame = _frame([_good_row()])
+    monkeypatch.setattr(
+        _jobspy,
+        "_run_scrape_process",
+        lambda request, _timeout_s: _scrape_outcome(
+            [_posting_for_url(request.search_url, platform=request.platform)]
+        ),
+    )
     await _li_jobspy_source().fetch_jobs({})
     assert patches == []  # LinkedIn must not touch the Indeed date patch

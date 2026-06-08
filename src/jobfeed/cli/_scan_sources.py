@@ -149,7 +149,7 @@ async def _build_indeed(
     sources: list[SourceSpec],
     stack: contextlib.AsyncExitStack,  # noqa: ARG001 - no client to own
 ) -> None:
-    """Build the Indeed JobSpy source (no httpx client; scrape via to_thread)."""
+    """Build the Indeed JobSpy source (no httpx client; scrape subprocess-owned)."""
     config = app["settings"].sources.indeed
     _require_enabled(config.enabled, "indeed")
     sources.append(
@@ -166,7 +166,7 @@ async def _build_linkedin_jobspy(
     sources: list[SourceSpec],
     stack: contextlib.AsyncExitStack,  # noqa: ARG001 - no client to own
 ) -> None:
-    """Build the LinkedIn JobSpy source (no httpx client; scrape via to_thread)."""
+    """Build the LinkedIn JobSpy source (no httpx client; scrape subprocess-owned)."""
     config = app["settings"].sources.linkedin_jobspy
     _require_enabled(config.enabled, "linkedin-jobspy")
     sources.append(

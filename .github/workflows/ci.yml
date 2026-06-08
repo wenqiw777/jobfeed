@@ -54,7 +54,7 @@ jobs:
       - name: Run PostgreSQL-backed tests
         env:
           PGTEST_DSN: "postgresql://jobfeed:jobfeed@localhost:5432/jobfeed_test"
-          PGTEST_REQUIRE: "1"
+          JOBFEED_REQUIRE_POSTGRES: "1"
         run: pytest -m postgres -o "addopts=" -v --tb=short
 
   browser-tests:
@@ -92,7 +92,7 @@ jobs:
       - name: Run browser tests
         env:
           PGTEST_DSN: "postgresql://jobfeed:jobfeed@localhost:5432/jobfeed_test"
-          PGTEST_REQUIRE: "1"
+          JOBFEED_REQUIRE_POSTGRES: "1"
         run: pytest -m browser -o "addopts=" -v --tb=short
 
   docker-build:

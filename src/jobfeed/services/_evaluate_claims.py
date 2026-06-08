@@ -13,6 +13,7 @@ from jobfeed.ports.store_claims import GateCandidate, StoreEvaluationClaimMixin
 from jobfeed.ports.store_ext import StoreEvaluationBatchMixin
 
 VALID_EVALUATE_STAGES = frozenset({"a", "b", "both"})
+STAGE_A_QUALITY_BANDS = frozenset({"full", "good"})
 STAGE_B_LEASE_HEARTBEAT_SECONDS = 1800.0
 
 
@@ -57,14 +58,14 @@ async def load_gate_candidates_for_run(  # noqa: PLR0913 - distinct load filters
     if isinstance(store, StoreEvaluationClaimMixin):
         return await store.load_gate_candidates(
             corpus=corpus,
-            quality_bands=frozenset({"full", "good"}),
+            quality_bands=STAGE_A_QUALITY_BANDS,
             max_days=max_days,
             limit=limit,
             exclude_gate_failed=exclude_gate_failed,
             after=after,
         )
     jobs = await store.load_pending_stage_a(
-        quality_bands=frozenset({"full", "good"}),
+        quality_bands=STAGE_A_QUALITY_BANDS,
         corpus=corpus,
         limit=limit,
         max_days=max_days,
@@ -101,13 +102,13 @@ async def load_stage_a_for_run(
         )
     if isinstance(store, StoreEvaluationClaimMixin):
         return await store.claim_pending_stage_a(
-            quality_bands=frozenset({"full", "good"}),
+            quality_bands=STAGE_A_QUALITY_BANDS,
             corpus=corpus,
             limit=limit,
             max_days=max_days,
         )
     return await store.load_pending_stage_a(
-        quality_bands=frozenset({"full", "good"}),
+        quality_bands=STAGE_A_QUALITY_BANDS,
         corpus=corpus,
         limit=limit,
         max_days=max_days,
@@ -138,14 +139,14 @@ async def _claim_stage_a_by_ids_for_run(
     if isinstance(store, StoreEvaluationClaimMixin):
         return await store.claim_stage_a_by_ids(
             survivor_ids,
-            quality_bands=frozenset({"full", "good"}),
+            quality_bands=STAGE_A_QUALITY_BANDS,
             corpus=corpus,
             limit=limit,
             max_days=max_days,
         )
     wanted = set(survivor_ids)
     loaded = await store.load_pending_stage_a(
-        quality_bands=frozenset({"full", "good"}),
+        quality_bands=STAGE_A_QUALITY_BANDS,
         corpus=corpus,
         limit=limit,
         max_days=max_days,

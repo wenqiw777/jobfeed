@@ -158,6 +158,7 @@ def _write_config(tmp_path: Path, enabled: dict[str, bool]) -> Path:
         "",
         "[sources.speedyapply]",
         f"enabled = {str(enabled.get('speedyapply', False)).lower()}",
+        'search_urls = ["https://lists.example.test/speedyapply.md"]',
         "",
         "[sources.indeed]",
         f"enabled = {str(enabled.get('indeed', False)).lower()}",
@@ -198,6 +199,17 @@ def _fetch_returning(*postings: JobPosting) -> Any:
     return _fetch
 
 
+def _mock_jobspy_process(
+    monkeypatch: pytest.MonkeyPatch, *postings: JobPosting
+) -> None:
+    """Mock the JobSpy process boundary without launching child processes."""
+
+    def _fake(_request: object, _timeout_s: float) -> object:
+        return _jobspy._ScrapeProcessOutcome(postings=list(postings))
+
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake)
+
+
 # ---------------------------------------------------------------------------
 # Per-source scan tests (network mocked)
 # ---------------------------------------------------------------------------
@@ -229,11 +241,7 @@ def test_scan_indeed_runs_source(
         "jobfeed.adapters.sources.indeed_jobspy.apply_indeed_date_patch",
         lambda: None,
     )
-    monkeypatch.setattr(
-        _jobspy,
-        "scrape",
-        lambda **_kwargs: [_posting("indeed", "1")],
-    )
+    _mock_jobspy_process(monkeypatch, _posting("indeed", "1"))
     config_path = _write_config(tmp_path, {"indeed": True})
     _enable_indeed_url(config_path)
 
@@ -247,12 +255,8 @@ def test_scan_indeed_runs_source(
 def test_scan_linkedin_jobspy_runs_source(
     tmp_path: Path, fake_store: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``--source linkedin-jobspy`` runs LinkedIn JobSpy with scrape mocked."""
-    monkeypatch.setattr(
-        _jobspy,
-        "scrape",
-        lambda **_kwargs: [_posting("linkedin_jobspy", "1")],
-    )
+    """``--source linkedin-jobspy`` runs LinkedIn JobSpy with process mocked."""
+    _mock_jobspy_process(monkeypatch, _posting("linkedin_jobspy", "1"))
     config_path = _write_config(tmp_path, {"linkedin_jobspy": True})
     _enable_linkedin_url(config_path)
 
@@ -322,7 +326,7 @@ def test_scan_all_runs_enabled_and_logs_skips(
         "jobfeed.adapters.sources.indeed_jobspy.apply_indeed_date_patch",
         lambda: None,
     )
-    monkeypatch.setattr(_jobspy, "scrape", lambda **_kwargs: [_posting("indeed", "1")])
+    _mock_jobspy_process(monkeypatch, _posting("indeed", "1"))
     config_path = _write_config(tmp_path, {"speedyapply": True, "indeed": True})
     _enable_indeed_url(config_path)
 

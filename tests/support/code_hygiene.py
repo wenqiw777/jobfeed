@@ -16,11 +16,18 @@ MAX_PYTHON_FILE_LINES = 300
 #   * the persistence/migration adapter layer (/adapters/store/ + cli/migrate.py)
 #     -- a full JobStore implementation per backend is inherently large;
 #   * domain/ml_features.py -- the ML-gate vocab name lists and the compiled
-#     regex tables that index them must stay in lockstep in one file.
+#     regex tables that index them must stay in lockstep in one file;
+#   * adapters/sources/_jobspy.py -- the single JobSpy isolation boundary keeps
+#     lazy imports, timeout/concurrency containment, and DataFrame conversion
+#     together so pandas/jobspy details cannot leak into source adapters.
 # Every other layer stays bound by MAX_PYTHON_FILE_LINES. Documented in
 # docs/engineering-standards.md.
 _LENGTH_EXEMPT_SUBSTR = "/adapters/store/"
-_LENGTH_EXEMPT_SUFFIXES = ("/cli/migrate.py", "/domain/ml_features.py")
+_LENGTH_EXEMPT_SUFFIXES = (
+    "/cli/migrate.py",
+    "/domain/ml_features.py",
+    "/adapters/sources/_jobspy.py",
+)
 
 
 def collect_hygiene_violations(

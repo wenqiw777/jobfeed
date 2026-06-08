@@ -3,9 +3,7 @@
 ``FastEmbedEmbedder`` wraps a configurable model (default
 ``all-MiniLM-L6-v2``) to turn a posting's ``title | jd_text`` string into a
 normalized 384-d vector. The ``fastembed`` import is deferred to the first
-``embed_batch`` call, so this module — and the ``XGBoostGate`` that injects it —
-both import AND construct without the ONNX runtime loaded; only an actual embed
-materializes it.
+``embed_batch`` call, so wiring stays cheap until an actual embed runs.
 
 fastembed runs ``all-MiniLM-L6-v2`` through onnxruntime (no torch), and its
 output is byte-identical (float32) to ``sentence_transformers``'
@@ -15,9 +13,8 @@ removes the OpenMP-collision segfault risk that the previous backend carried.
 
 Legacy double-truncation is preserved exactly: ``format_input`` slices the JD to
 ``max_chars - len(title) - 3`` before joining, and ``embed_batch`` re-slices each
-text to ``max_chars`` (legacy ``embedder.py`` does both). ``EmbedderProtocol`` is
-the structural seam injected into the gate; it lives here (an internal
-collaborator), deliberately NOT in ``ports/``.
+text to ``max_chars`` (legacy ``embedder.py`` does both). ``EmbedderProtocol``
+is internal here, deliberately NOT in ``ports/``.
 """
 
 from __future__ import annotations
@@ -33,7 +30,6 @@ import structlog
 
 # fastembed addresses ``all-MiniLM-L6-v2`` by its full Hugging Face id. The
 # legacy short name is mapped to it so existing ``[ml_gate].embedding_model``
-# configs keep working unchanged.
 FASTEMBED_MINILM_ID = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
 DEFAULT_MAX_CHARS = 2000
@@ -47,6 +43,10 @@ _MODEL_NAME_ALIASES = {DEFAULT_MODEL_NAME: FASTEMBED_MINILM_ID}
 # convention, NEVER ~/.jobfeed) so host runs persist with zero config, and the
 # docker-compose service overrides it via JOBFEED_ML_CACHE_DIR onto a named volume.
 ML_CACHE_DIR_ENV = "JOBFEED_ML_CACHE_DIR"
+
+
+def _canonical_model_name(model_name: str) -> str:
+    return _MODEL_NAME_ALIASES.get(model_name, model_name)
 
 
 @runtime_checkable
@@ -105,7 +105,7 @@ class FastEmbedEmbedder:
             max_chars: Per-text character cap applied in ``embed_batch`` and
                 ``format_input`` (legacy default 2000).
         """
-        self._model_name = _MODEL_NAME_ALIASES.get(model_name, model_name)
+        self._model_name = _canonical_model_name(model_name)
         self._max_chars = max_chars
         self._model: Any | None = None
 

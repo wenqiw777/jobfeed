@@ -18,6 +18,9 @@ dist/
 .jobfeed-dev/
 .env
 .env.*
+/config.toml
+/resume.md
+/preamble_personal.md
 
 .DS_Store
 .idea/

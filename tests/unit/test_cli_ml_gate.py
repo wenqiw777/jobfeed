@@ -34,6 +34,11 @@ from jobfeed.config import Settings
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models" / "ml_gate"
 MODEL_VERSION = "v20260601T170453Z"
 MODEL_THRESHOLD = "0.19"
+MODEL_META = {
+    "threshold": 0.5,
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_dim": 384,
+}
 
 # Sentinel that diverts the real XGBoostGate to the lightweight MockGate.
 MOCK_MODEL_DIR = "mock"
@@ -46,10 +51,14 @@ def _settings(
     *,
     ml_gate_enabled: bool,
     model_dir: str = "models/ml_gate",
+    model_version: str = "v20260601T170453Z",
     embedding_model: str | None = None,
 ) -> Settings:
     """Build Settings with the given scoring/ml_gate knobs (offline, pure)."""
-    ml_gate: dict[str, object] = {"model_dir": model_dir}
+    ml_gate: dict[str, object] = {
+        "model_dir": model_dir,
+        "model_version": model_version,
+    }
     if embedding_model is not None:
         ml_gate["embedding_model"] = embedding_model
     return Settings.model_validate(
@@ -287,6 +296,7 @@ def test_build_ml_gate_forwards_embedding_model_to_xgboost_gate(
         build_ml_gate(settings)
 
     assert _RecordingGate.last_kwargs.get("embedding_model") == "custom/embed-model"
+    assert _RecordingGate.last_kwargs.get("model_version") == MODEL_VERSION
 
 
 def test_xgboost_gate_forwards_embedding_model_to_default_embedder(
@@ -303,7 +313,15 @@ def test_xgboost_gate_forwards_embedding_model_to_default_embedder(
     monkeypatch.setattr(
         xgboost_gate_module,
         "_load_booster",
-        lambda _model_dir: (object(), "v-test"),
+        lambda _model_dir, **_kwargs: (object(), "v-test"),
+    )
+    monkeypatch.setattr(
+        xgboost_gate_module,
+        "_read_meta",
+        lambda _model_dir, _version: {
+            **MODEL_META,
+            "embedding_model": "custom/embed-model",
+        },
     )
 
     with _no_ml_toolchain_imported():
@@ -324,7 +342,12 @@ def test_xgboost_gate_default_embedding_model_falls_back(
     monkeypatch.setattr(
         xgboost_gate_module,
         "_load_booster",
-        lambda _model_dir: (object(), "v-test"),
+        lambda _model_dir, **_kwargs: (object(), "v-test"),
+    )
+    monkeypatch.setattr(
+        xgboost_gate_module,
+        "_read_meta",
+        lambda _model_dir, _version: MODEL_META,
     )
 
     with _no_ml_toolchain_imported():
@@ -344,7 +367,15 @@ def test_xgboost_gate_injected_embedder_ignores_embedding_model(
     monkeypatch.setattr(
         xgboost_gate_module,
         "_load_booster",
-        lambda _model_dir: (object(), "v-test"),
+        lambda _model_dir, **_kwargs: (object(), "v-test"),
+    )
+    monkeypatch.setattr(
+        xgboost_gate_module,
+        "_read_meta",
+        lambda _model_dir, _version: {
+            **MODEL_META,
+            "embedding_model": "custom/embed-model",
+        },
     )
     injected = _RecordingEmbedder()
     _RecordingEmbedder.last_kwargs = {}  # reset after the injected construction

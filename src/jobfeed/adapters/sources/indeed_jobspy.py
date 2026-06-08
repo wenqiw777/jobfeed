@@ -8,7 +8,7 @@ browser, no challenge to clear, no login.
 This source is a thin shell: it applies the Indeed ``dateOnIndeed`` date patch
 once, then delegates the entire per-URL scrape loop to the shared
 ``_jobspy.scrape_urls`` (the SAME loop LinkedIn JobSpy reuses — the
-``asyncio.to_thread`` + per-URL error containment lives there, never here).
+child-process timeout + per-URL error containment lives there, never here).
 JobSpy returns each posting fully populated with an inline JD, so ``fetch_jobs``
 returns ready-to-save postings and no later enrich step is needed.
 """
@@ -56,8 +56,11 @@ class IndeedSource:
             search_urls=self._config.search_urls,
             max_jobs=self._config.max_jobs,
             hours_old=self._config.hours_old,
+            timeout_s=self._config.timeout_s,
+            max_concurrent=self._config.max_concurrent,
             logger=self._log,
             discovered_at=datetime.now(UTC),
+            country_indeed=self._config.country_indeed,
         )
 
 

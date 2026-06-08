@@ -39,6 +39,9 @@ _LINKEDIN_QUERY = (
     "https://www.linkedin.com/jobs/search/?keywords=software%20engineer%20intern"
     "&location=United%20States"
 )
+_SPEEDYAPPLY_README = (
+    "https://raw.githubusercontent.com/speedyapply/2026-SWE-College-Jobs/main/README.md"
+)
 
 
 class TestSpeedyApplyLiveSmoke:
@@ -46,7 +49,9 @@ class TestSpeedyApplyLiveSmoke:
 
     async def test_speedyapply_live(self) -> None:
         """Fetch the real README, parse rows, and route at least one JD."""
-        config = SourcesSpeedyApplyConfig(enabled=True)  # built-in default README
+        config = SourcesSpeedyApplyConfig(
+            enabled=True, search_urls=[_SPEEDYAPPLY_README]
+        )
         async with create_http_client() as client:
             source = SpeedyApplySource(
                 client=client, config=config, logger=get_logger()

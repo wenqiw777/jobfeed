@@ -246,6 +246,7 @@ def build_ml_gate(settings: Settings) -> MLGate | None:
 
     return XGBoostGate(
         model_dir=ml.model_dir,
+        model_version=ml.model_version,
         embedding_max_chars=ml.embedding_max_chars,
         threshold_override=ml.threshold_override,
         embedding_model=ml.embedding_model,

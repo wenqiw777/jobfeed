@@ -97,6 +97,22 @@ def test_order_discovered_postings_prioritizes_fall_interns() -> None:
     ]
 
 
+def test_order_discovered_postings_does_not_prioritize_year_literal() -> None:
+    """Recruiting-cycle years are config/search terms, not ranking literals."""
+    intern = _posting("intern", "Backend Intern")
+    year_only = _posting("year-only", "Summer 2026 Software Engineer Intern")
+
+    ordered = order_discovered_postings(
+        [year_only, intern],
+        {
+            "year-only": "https://linkedin.test/search?keywords=summer",
+            "intern": "https://linkedin.test/search?keywords=backend",
+        },
+    )
+
+    assert [posting.canonical_id for posting in ordered] == ["intern", "year-only"]
+
+
 @pytest.mark.asyncio
 async def test_discover_signals_reauth_via_return_value(
     monkeypatch: pytest.MonkeyPatch,

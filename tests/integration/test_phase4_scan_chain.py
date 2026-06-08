@@ -3,8 +3,8 @@
 Every scenario drives the EXISTING ``ScanService.run`` SimpleSource path with a
 freshly migrated PostgreSQL schema (the ``store`` fixture) and asserts the rows
 that actually land in the database. All network is mocked — respx for HTTP
-(SpeedyApply markdown + ATS/greenhouse JD endpoints) and a monkeypatched
-``jobspy.scrape_jobs`` for the JobSpy sources — so nothing reaches the wire.
+(SpeedyApply markdown + ATS/greenhouse JD endpoints) and a monkeypatched JobSpy
+process runner for the JobSpy sources — so nothing reaches the wire.
 
 Scenarios (Phase 4a subset of plan Task 8):
   1. SpeedyApply happy path (routed + unrouted enrich_source labels).
@@ -25,12 +25,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-import jobspy
 import pandas as pd
 import pytest
 import respx
 import structlog
 
+from jobfeed.adapters.sources import _jobspy
 from jobfeed.adapters.sources._ats_greenhouse import JOB_URL as GH_JOB_URL
 from jobfeed.adapters.sources._ats_greenhouse import JOBS_URL as GH_JOBS_URL
 from jobfeed.adapters.sources._http import create_http_client
@@ -118,12 +118,18 @@ async def _seed_gh_company(store: PostgresStore, slug: str) -> None:
 
 
 def _install_fake_scrape(monkeypatch: pytest.MonkeyPatch, frame: pd.DataFrame) -> None:
-    """Replace ``jobspy.scrape_jobs`` with a fake returning ``frame``."""
+    """Replace the JobSpy process runner with one converting ``frame``."""
 
-    def _fake(**_kwargs: object) -> pd.DataFrame:
-        return frame
+    def _fake(request: object, _timeout_s: float) -> object:
+        return _jobspy._ScrapeProcessOutcome(
+            postings=_jobspy._frame_to_postings(
+                frame,
+                platform=request.platform,
+                discovered_at=request.discovered_at,
+            )
+        )
 
-    monkeypatch.setattr(jobspy, "scrape_jobs", _fake)
+    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake)
 
 
 def _readme(rows: list[tuple[str, str, str, str, str]]) -> str:
