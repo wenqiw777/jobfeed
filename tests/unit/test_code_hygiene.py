@@ -285,16 +285,3 @@ def test_length_gate_exempts_ml_features(tmp_path: Path) -> None:
     write_source(root, "domain/ml_features.py", f"{CLEAN_CODE}\n{padding}\n")
 
     assert_no_hygiene_violations(root)
-
-
-def test_length_gate_exempts_jobspy_boundary(tmp_path: Path) -> None:
-    """The JobSpy isolation boundary is exempt from file-length fragmentation.
-
-    Args:
-        tmp_path: Temporary package root for the synthetic fixture.
-    """
-    root = tmp_path / "src" / "jobfeed"
-    padding = "\n".join(f"# padding {index}" for index in range(310))
-    write_source(root, "adapters/sources/_jobspy.py", f"{CLEAN_CODE}\n{padding}\n")
-
-    assert_no_hygiene_violations(root)

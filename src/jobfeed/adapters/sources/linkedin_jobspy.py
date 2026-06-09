@@ -6,7 +6,7 @@ fingerprint) — no browser, no login, no cookie profile. It complements (does n
 replace) the authenticated Playwright source: this path is anonymous and inline.
 
 This source is a thin shell: it delegates the entire per-URL scrape loop to the
-shared ``_jobspy.scrape_urls`` (the SAME loop Indeed JobSpy reuses — the
+shared ``_jobspy_process.scrape_urls`` (the SAME loop Indeed JobSpy reuses — the
 child-process timeout + per-URL error containment lives there, never here).
 Unlike Indeed, there is NO ``dateOnIndeed`` date patch (that knob is
 Indeed-specific). JobSpy returns each posting fully populated with an inline JD,
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from jobfeed.adapters.sources import _jobspy
+from jobfeed.adapters.sources import _jobspy_process
 from jobfeed.config import SourcesLinkedInJobSpyConfig
 from jobfeed.domain.models import JobPosting
 from jobfeed.observability import JobfeedLogger
@@ -54,7 +54,7 @@ class LinkedInJobSpySource:
             Fully-populated job postings (inline JD) tagged
             ``platform="linkedin_jobspy"``.
         """
-        return await _jobspy.scrape_urls(
+        return await _jobspy_process.scrape_urls(
             site_name=_SITE_NAME,
             platform=_PLATFORM,
             search_urls=self._config.search_urls,

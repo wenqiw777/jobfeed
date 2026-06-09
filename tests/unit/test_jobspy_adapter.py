@@ -20,7 +20,7 @@ import jobspy
 import pandas as pd
 import pytest
 
-from jobfeed.adapters.sources import _jobspy
+from jobfeed.adapters.sources import _jobspy, _jobspy_process
 from jobfeed.adapters.sources.indeed_jobspy import IndeedSource
 from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
 from jobfeed.config import SourcesIndeedConfig, SourcesLinkedInJobSpyConfig
@@ -89,7 +89,7 @@ def _scrape_outcome(
     timed_out: bool = False,
 ) -> object:
     """Build a private JobSpy process outcome for fan-out tests."""
-    return _jobspy._ScrapeProcessOutcome(
+    return _jobspy_process._ScrapeProcessOutcome(
         postings=postings or [],
         error=error,
         timed_out=timed_out,
@@ -152,7 +152,7 @@ class _HungContext:
         args: tuple[object, ...],
         daemon: bool,
     ) -> _HungProcess:
-        assert target is _jobspy._scrape_child_main
+        assert target is _jobspy_process._scrape_child_main
         assert args[-1] is self.queue
         assert daemon is True
         return self.process
@@ -472,14 +472,18 @@ def test_linkedin_f_tpr_without_r_prefix(patched_scrape_jobs) -> None:
 
 
 def test_module_imports_without_jobspy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Importing _jobspy succeeds even when jobspy is absent (lazy import).
+    """Importing the JobSpy modules succeeds even when jobspy is absent.
 
-    jobspy/pandas are imported INSIDE ``scrape``, not at module level, so the
-    module is importable on a box without jobspy. We hide jobspy from the import
-    system and re-import the module fresh to prove it.
+    jobspy/pandas are imported INSIDE ``scrape``, not at module level, so both
+    the pandas-confined core (``_jobspy``) and the orchestration layer
+    (``_jobspy_process``, which imports the core) are importable on a box without
+    jobspy. We hide jobspy from the import system and re-import them fresh.
     """
     monkeypatch.delitem(sys.modules, "jobspy", raising=False)
     monkeypatch.delitem(sys.modules, "jobfeed.adapters.sources._jobspy", raising=False)
+    monkeypatch.delitem(
+        sys.modules, "jobfeed.adapters.sources._jobspy_process", raising=False
+    )
 
     real_import = __import__
 
@@ -489,9 +493,10 @@ def test_module_imports_without_jobspy(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr("builtins.__import__", _blocking_import)
-    module = importlib.import_module("jobfeed.adapters.sources._jobspy")
-    assert hasattr(module, "scrape")
-    assert hasattr(module, "scrape_urls")
+    core = importlib.import_module("jobfeed.adapters.sources._jobspy")
+    process = importlib.import_module("jobfeed.adapters.sources._jobspy_process")
+    assert hasattr(core, "scrape")
+    assert hasattr(process, "scrape_urls")
 
 
 # ---------------------------------------------------------------------------
@@ -512,8 +517,10 @@ async def test_scrape_urls_contains_one_failing_url(
             [_posting_for_url(request.search_url, platform=request.platform)]
         )
 
-    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake_run_scrape_process)
-    postings = await _jobspy.scrape_urls(
+    monkeypatch.setattr(
+        _jobspy_process, "_run_scrape_process", _fake_run_scrape_process
+    )
+    postings = await _jobspy_process.scrape_urls(
         site_name="indeed",
         platform="indeed",
         search_urls=[
@@ -542,10 +549,10 @@ def test_run_scrape_process_terminates_and_kills_timed_out_child(
         context.method = method
         return context
 
-    monkeypatch.setattr(_jobspy.mp, "get_context", _fake_get_context)
+    monkeypatch.setattr(_jobspy_process.mp, "get_context", _fake_get_context)
 
-    outcome = _jobspy._run_scrape_process(
-        _jobspy._ScrapeRequest(
+    outcome = _jobspy_process._run_scrape_process(
+        _jobspy_process._ScrapeRequest(
             site_name="indeed",
             platform="indeed",
             search_url="https://indeed.com/jobs?q=slow",
@@ -567,8 +574,8 @@ def test_run_scrape_process_terminates_and_kills_timed_out_child(
     # process.join calls are the two kill-grace waits inside _stop_process.
     assert context.queue.get_timeout == _JOBSPY_TIMEOUT_S
     assert context.process.joins == [
-        _jobspy._PROCESS_KILL_GRACE_S,
-        _jobspy._PROCESS_KILL_GRACE_S,
+        _jobspy_process._PROCESS_KILL_GRACE_S,
+        _jobspy_process._PROCESS_KILL_GRACE_S,
     ]
     assert context.queue.closed is True
     assert context.queue.joined is True
@@ -617,7 +624,7 @@ class _DeliveringContext:
     def Process(
         self, *, target: object, args: tuple[object, ...], daemon: bool
     ) -> _AliveDeliveringProcess:
-        assert target is _jobspy._scrape_child_main
+        assert target is _jobspy_process._scrape_child_main
         assert args[-1] is self.queue
         assert daemon is True
         return self.process
@@ -635,10 +642,10 @@ def test_run_scrape_process_drains_queue_before_joining(
         [_posting_for_url("https://indeed.com/jobs", platform="indeed")]
     )
     context = _DeliveringContext(delivered)
-    monkeypatch.setattr(_jobspy.mp, "get_context", lambda _method: context)
+    monkeypatch.setattr(_jobspy_process.mp, "get_context", lambda _method: context)
 
-    outcome = _jobspy._run_scrape_process(
-        _jobspy._ScrapeRequest(
+    outcome = _jobspy_process._run_scrape_process(
+        _jobspy_process._ScrapeRequest(
             site_name="indeed",
             platform="indeed",
             search_url="https://indeed.com/jobs?q=swe",
@@ -716,8 +723,10 @@ async def test_scrape_urls_times_out_one_hanging_url(
         calls.append((request.search_url, timeout_s))
         return _scrape_outcome(timed_out=True)
 
-    monkeypatch.setattr(_jobspy, "_run_scrape_process", _timeout_run_scrape_process)
-    postings = await _jobspy.scrape_urls(
+    monkeypatch.setattr(
+        _jobspy_process, "_run_scrape_process", _timeout_run_scrape_process
+    )
+    postings = await _jobspy_process.scrape_urls(
         site_name="indeed",
         platform="indeed",
         search_urls=["https://indeed.com/jobs?q=slow"],
@@ -754,9 +763,11 @@ async def test_scrape_urls_honors_max_concurrent(
             [_posting_for_url(request.search_url, platform=request.platform)]
         )
 
-    monkeypatch.setattr(_jobspy, "_run_scrape_process", _tracked_run_scrape_process)
+    monkeypatch.setattr(
+        _jobspy_process, "_run_scrape_process", _tracked_run_scrape_process
+    )
 
-    postings = await _jobspy.scrape_urls(
+    postings = await _jobspy_process.scrape_urls(
         site_name="indeed",
         platform="indeed",
         search_urls=[
@@ -830,7 +841,9 @@ async def test_indeed_fetch_jobs_returns_inline_postings(
         "jobfeed.adapters.sources.indeed_jobspy.apply_indeed_date_patch",
         lambda: patches.append("patched"),
     )
-    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake_run_scrape_process)
+    monkeypatch.setattr(
+        _jobspy_process, "_run_scrape_process", _fake_run_scrape_process
+    )
     postings = await _indeed_source().fetch_jobs({})
     assert patches == ["patched"]
     assert len(postings) == 1
@@ -853,7 +866,7 @@ async def test_indeed_fetch_jobs_forwards_runtime_bounds(
         "jobfeed.adapters.sources.indeed_jobspy.apply_indeed_date_patch",
         lambda: None,
     )
-    monkeypatch.setattr(_jobspy, "scrape_urls", _spy_scrape_urls)
+    monkeypatch.setattr(_jobspy_process, "scrape_urls", _spy_scrape_urls)
     source = _indeed_source(
         timeout_s=_CUSTOM_JOBSPY_TIMEOUT_S,
         max_concurrent=_CUSTOM_JOBSPY_MAX_CONCURRENT,
@@ -896,7 +909,9 @@ async def test_indeed_fetch_jobs_runs_scrape_off_event_loop(
             pass
         return _scrape_outcome()
 
-    monkeypatch.setattr(_jobspy, "_run_scrape_process", _blocking_run_scrape_process)
+    monkeypatch.setattr(
+        _jobspy_process, "_run_scrape_process", _blocking_run_scrape_process
+    )
 
     async def _flip_flag() -> None:
         # Wait until the worker thread has actually started the process runner.
@@ -943,7 +958,9 @@ async def test_linkedin_jobspy_fetch_jobs_returns_inline_postings(
             [_posting_for_url(request.search_url, platform=request.platform)]
         )
 
-    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake_run_scrape_process)
+    monkeypatch.setattr(
+        _jobspy_process, "_run_scrape_process", _fake_run_scrape_process
+    )
     postings = await _li_jobspy_source().fetch_jobs({})
     assert len(postings) == 1
     assert postings[0].platform == "linkedin_jobspy"
@@ -956,7 +973,7 @@ async def test_linkedin_jobspy_fetch_jobs_returns_inline_postings(
 async def test_linkedin_jobspy_fetch_jobs_delegates_to_shared_scrape_urls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """fetch_jobs reuses _jobspy.scrape_urls with the LinkedIn site/platform.
+    """fetch_jobs reuses _jobspy_process.scrape_urls with the LinkedIn site/platform.
 
     Spying on the shared loop proves the source duplicates NO DataFrame /
     process-runner / containment logic — it forwards every config field verbatim.
@@ -967,7 +984,7 @@ async def test_linkedin_jobspy_fetch_jobs_delegates_to_shared_scrape_urls(
         captured.update(kwargs)
         return []
 
-    monkeypatch.setattr(_jobspy, "scrape_urls", _spy_scrape_urls)
+    monkeypatch.setattr(_jobspy_process, "scrape_urls", _spy_scrape_urls)
     source = _li_jobspy_source(search_urls=["https://li/a", "https://li/b"], max_jobs=7)
     assert await source.fetch_jobs({}) == []
     assert captured["site_name"] == "linkedin"
@@ -993,7 +1010,7 @@ async def test_linkedin_jobspy_does_not_apply_indeed_date_patch(
         lambda: patches.append("patched"),
     )
     monkeypatch.setattr(
-        _jobspy,
+        _jobspy_process,
         "_run_scrape_process",
         lambda request, _timeout_s: _scrape_outcome(
             [_posting_for_url(request.search_url, platform=request.platform)]

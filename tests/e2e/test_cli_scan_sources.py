@@ -20,7 +20,7 @@ import httpx
 import pytest
 from click.testing import CliRunner, Result
 
-from jobfeed.adapters.sources import _jobspy
+from jobfeed.adapters.sources import _jobspy_process
 from jobfeed.adapters.sources.ats import ATSSource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.cli import _resolve_config_path, cli
@@ -205,9 +205,9 @@ def _mock_jobspy_process(
     """Mock the JobSpy process boundary without launching child processes."""
 
     def _fake(_request: object, _timeout_s: float) -> object:
-        return _jobspy._ScrapeProcessOutcome(postings=list(postings))
+        return _jobspy_process._ScrapeProcessOutcome(postings=list(postings))
 
-    monkeypatch.setattr(_jobspy, "_run_scrape_process", _fake)
+    monkeypatch.setattr(_jobspy_process, "_run_scrape_process", _fake)
 
 
 # ---------------------------------------------------------------------------
