@@ -24,7 +24,7 @@ pipeline" identity and pull toward a worse version of an existing product.
 
 ## README first-screen — current draft
 
-```
+```text
 Local-first job search filtering for technical candidates.
 
 Jobfeed scans configured job sources, deduplicates postings, applies rule-based
@@ -35,7 +35,7 @@ workflow to a hosted SaaS product.
 
 ## Tightened variant (parked for consideration)
 
-```
+```text
 Local-first job search engine for technical candidates.
 
 Jobfeed pulls from the job sources you configure, dedupes, and prefilters with

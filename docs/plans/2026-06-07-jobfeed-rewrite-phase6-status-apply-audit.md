@@ -50,7 +50,7 @@ Phase 6 is the first **human-in-the-loop** slice. Phases 0–5 mutate job state 
 `new, scored, shortlisted, awaiting_referral, applied, interviewing, offer, rejected, ghosted, archived, ignored`. (Removed from live: `oa, hr_call, second_round, final_round`.)
 
 ### A4.2 Transition graph
-```
+```text
 new            → scored
 scored         → shortlisted | awaiting_referral | applied | archived | ignored
 shortlisted    → awaiting_referral | applied | archived
@@ -94,7 +94,7 @@ Web UI (Phase 8), Temporal runner (Phase 9), digest overhaul to fold attention (
 # PART B — IMPLEMENTATION PLAN
 
 ## File Structure
-```
+```text
 src/jobfeed/
 ├── domain/{status.py(MOD), interview.py(NEW), models.py(MOD: JobStatus enum)}
 ├── ports/{store.py, store_ext.py}(MOD)

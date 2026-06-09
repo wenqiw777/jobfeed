@@ -52,7 +52,7 @@ class _ScrapeRequest:
 class _ScrapeProcessOutcome:
     postings: list[JobPosting]
     error: str | None = None
-    timed_out: bool = False
+    is_timed_out: bool = False
 
 
 async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
@@ -182,15 +182,15 @@ def _await_scrape_outcome(
 
 def _stopped_outcome(process: Any) -> _ScrapeProcessOutcome:
     """Stop a child that delivered nothing, distinguishing a crash from a hang."""
-    crashed = not process.is_alive()
+    is_crashed = not process.is_alive()
     exitcode = getattr(process, "exitcode", None)
     _stop_process(process)
-    if crashed:
+    if is_crashed:
         return _ScrapeProcessOutcome(
             postings=[],
             error=f"jobspy child exited without result (exitcode={exitcode})",
         )
-    return _ScrapeProcessOutcome(postings=[], timed_out=True)
+    return _ScrapeProcessOutcome(postings=[], is_timed_out=True)
 
 
 def _coerce_outcome(result: object) -> _ScrapeProcessOutcome:
@@ -232,7 +232,7 @@ async def _scrape_one_url(  # noqa: PLR0913 - carries the shared scrape contract
                 "jobspy_scrape_failed", site=site_name, url=url, error=str(exc)
             )
             return []
-        if outcome.timed_out:
+        if outcome.is_timed_out:
             logger.warning(
                 "jobspy_scrape_timed_out",
                 site=site_name,

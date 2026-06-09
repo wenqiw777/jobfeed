@@ -58,11 +58,12 @@ async def build_dry_run_preview(
     Returns:
         Stable preview items suitable for CLI output.
     """
-    # ``--limit 0`` means "max jobs"=0: claim/score nothing. Short-circuit the
-    # Stage-A funnel BEFORE loading candidates or gating, mirroring the real-run
-    # guard (``_run_stage_a`` early-returns on ``limit <= 0``). Without this, the
-    # funnel would load candidates and call the ML gate's ``predict_batch`` (and
-    # thus the heavy embedder) only to slice the preview to ``[]`` afterwards.
+    # ``--limit 0`` means "max jobs"=0: claim/score nothing. Short-circuit BOTH
+    # stages BEFORE loading candidates or gating, mirroring the real-run guards
+    # (``_run_stage_a`` and ``_run_stage_b`` both early-return on ``limit <= 0``).
+    # Without this, Stage A would load candidates and call the ML gate's
+    # ``predict_batch`` (and thus the heavy embedder), and Stage B would query the
+    # store for candidates, only to slice the preview to ``[]`` afterwards.
     if request.stage != "b" and request.limit > 0:
         await run_funnel(
             deps,
@@ -74,7 +75,7 @@ async def build_dry_run_preview(
             dry_run=True,
             limit=request.limit,
         )
-    if request.stage != "a":
+    if request.stage != "a" and request.limit > 0:
         jobs_b = await load_stage_b_dry_run(
             deps.store, request.limit, request.max_days, config.stage_a_threshold
         )

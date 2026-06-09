@@ -9,6 +9,7 @@ download and run fast under ``make quality``.
 
 from __future__ import annotations
 
+import importlib
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -458,9 +459,10 @@ def test_build_ml_gate_not_called_for_stage_b_or_limit_zero(
         calls.append(True)
 
     # build_ml_gate now lives in the evaluate composition root
-    # (jobfeed.cli._evaluate_build), already in sys.modules via the top-level
-    # `from jobfeed.cli import cli`; patch it where the gated call site reads it.
-    build_module = sys.modules["jobfeed.cli._evaluate_build"]
+    # (jobfeed.cli._evaluate_build); import it explicitly (cached, so no real
+    # reimport) and patch it where the gated call site reads it. Avoids a
+    # KeyError if module import order ever changes.
+    build_module = importlib.import_module("jobfeed.cli._evaluate_build")
     monkeypatch.setattr(build_module, "build_ml_gate", _record)
 
     skip = [("b", None), ("b", 5), ("a", 0), ("both", 0)]

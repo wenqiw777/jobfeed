@@ -51,8 +51,8 @@ claude_timeout_s = 210
 # openai_compat_base_url = "http://localhost:11434/v1"
 # openai_compat_api_key_env = "JOBFEED_OPENAI_COMPAT_API_KEY"  # set JOBFEED_OPENAI_COMPAT_API_KEY=ollama; then: stage_a = "openai-compat/llama3.1"
 #   DOCKER: localhost is the container, not the host daemon — use
-#   http://host.docker.internal:11434/v1 and forward OLLAMA_API_KEY in
-#   docker-compose.yml (as with the hosted providers above).
+#   http://host.docker.internal:11434/v1 and forward JOBFEED_OPENAI_COMPAT_API_KEY
+#   in docker-compose.yml (as with the hosted providers above).
 #
 # Anthropic via its OpenAI-compat endpoint (higher latency; test-only per
 # Anthropic — no prompt caching / extended thinking, but the eval use case

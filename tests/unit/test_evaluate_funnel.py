@@ -831,6 +831,24 @@ async def test_dry_run_stage_a_limit_zero_skips_load_and_gate() -> None:
     assert run.dry_run_preview == []  # empty preview, zero not all
 
 
+@pytest.mark.asyncio
+async def test_dry_run_stage_b_limit_zero_skips_preview_load() -> None:
+    """Dry-run Stage B with limit=0 loads NO Stage B candidates (mirrors live).
+
+    Live ``_run_stage_b`` early-returns on ``limit <= 0``; the dry-run preview
+    must match. Stage B candidates are seeded here, so a non-empty preview would
+    mean the ``limit > 0`` guard on the Stage B branch is missing.
+    """
+    store = FakeStore([], stage_b_candidates=[_job("b1")])
+    deps = _deps(store, gate=MockGate(), filters=None)
+    run = _run()
+    request = DryRunRequest(RecordingLogger(), "b", "unrated", 0, None)
+
+    await build_dry_run_preview(deps, _config(ml_gate_enabled=True), run, request)
+
+    assert run.dry_run_preview == []  # Stage B preview skipped at limit=0
+
+
 def test_numeric_job_ids_coerces_valid_and_skips_malformed() -> None:
     """Plain/signed bigint ids coerce; malformed ids are skipped, never raise.
 

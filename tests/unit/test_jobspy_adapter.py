@@ -86,13 +86,13 @@ def _scrape_outcome(
     postings: list[JobPosting] | None = None,
     *,
     error: str | None = None,
-    timed_out: bool = False,
+    is_timed_out: bool = False,
 ) -> object:
     """Build a private JobSpy process outcome for fan-out tests."""
     return _jobspy_process._ScrapeProcessOutcome(
         postings=postings or [],
         error=error,
-        timed_out=timed_out,
+        is_timed_out=is_timed_out,
     )
 
 
@@ -565,7 +565,7 @@ def test_run_scrape_process_terminates_and_kills_timed_out_child(
     )
 
     assert context.method == "spawn"
-    assert outcome.timed_out is True
+    assert outcome.is_timed_out is True
     assert outcome.postings == []
     assert context.process.started is True
     assert context.process.terminated is True
@@ -657,7 +657,7 @@ def test_run_scrape_process_drains_queue_before_joining(
         timeout_s=_JOBSPY_TIMEOUT_S,
     )
 
-    assert outcome.timed_out is False
+    assert outcome.is_timed_out is False
     assert outcome.postings == delivered.postings
     assert context.queue.get_timeout == _JOBSPY_TIMEOUT_S
     # The result was read before the process was joined.
@@ -721,7 +721,7 @@ async def test_scrape_urls_times_out_one_hanging_url(
 
     def _timeout_run_scrape_process(request: object, timeout_s: float) -> object:
         calls.append((request.search_url, timeout_s))
-        return _scrape_outcome(timed_out=True)
+        return _scrape_outcome(is_timed_out=True)
 
     monkeypatch.setattr(
         _jobspy_process, "_run_scrape_process", _timeout_run_scrape_process
