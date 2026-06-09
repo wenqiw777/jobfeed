@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SourcesATSConfig(BaseModel):
@@ -22,10 +22,11 @@ class SourcesATSConfig(BaseModel):
 class SourcesSpeedyApplyConfig(BaseModel):
     """Runtime limits and tuning knobs for the SpeedyApply source.
 
-    ``search_urls`` lists the GitHub markdown job lists to scan; an empty list
-    selects the built-in default README. List fields are TOML-only: the nested
-    env setter stores a bare string at the leaf, which Pydantic will not coerce
-    into a list, so ``JOBFEED_SOURCES__SPEEDYAPPLY__SEARCH_URLS`` is unsupported.
+    ``search_urls`` lists the GitHub markdown job lists to scan. Enabled
+    configs must set it explicitly because list fields are TOML-only: the
+    nested env setter stores a bare string at the leaf, which Pydantic will not
+    coerce into a list, so ``JOBFEED_SOURCES__SPEEDYAPPLY__SEARCH_URLS`` is
+    unsupported.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -34,6 +35,19 @@ class SourcesSpeedyApplyConfig(BaseModel):
     search_urls: list[str] = Field(default_factory=list)
     max_concurrent: int = Field(default=10, ge=1)
     fetch_timeout_s: float = Field(default=30.0, gt=0)
+
+    @model_validator(mode="after")
+    def _require_urls_when_enabled(self) -> SourcesSpeedyApplyConfig:
+        """Fail loud if enabled with no explicit markdown list URL."""
+        if self.enabled and (
+            not self.search_urls or any(not url.strip() for url in self.search_urls)
+        ):
+            raise ValueError(
+                "SpeedyApply source is enabled but search_urls is empty or has "
+                "a blank entry; set the recruiting-cycle list URL explicitly "
+                "or set enabled = false."
+            )
+        return self
 
 
 class _JobSpySourceConfig(BaseModel):
@@ -45,6 +59,8 @@ class _JobSpySourceConfig(BaseModel):
     search_urls: list[str] = Field(default_factory=list)
     max_jobs: int = Field(default=100, ge=1)
     hours_old: int | None = None
+    max_concurrent: int = Field(default=2, ge=1)
+    timeout_s: float = Field(default=60.0, gt=0)
 
     @model_validator(mode="after")
     def _require_urls_when_enabled(self) -> _JobSpySourceConfig:
@@ -62,6 +78,17 @@ class _JobSpySourceConfig(BaseModel):
 
 class SourcesIndeedConfig(_JobSpySourceConfig):
     """Runtime limits and tuning knobs for the Indeed (JobSpy) source."""
+
+    country_indeed: str = "usa"
+
+    @field_validator("country_indeed")
+    @classmethod
+    def _reject_blank_country(cls, value: str) -> str:
+        """Reject blank JobSpy country names that would hide geo mistakes."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("country_indeed must not be blank")
+        return stripped
 
 
 class SourcesLinkedInJobSpyConfig(_JobSpySourceConfig):

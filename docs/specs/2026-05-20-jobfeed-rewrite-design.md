@@ -355,7 +355,7 @@ system prompt = base_template + preamble_personal (if exists)
 user prompt   = resume.md + score_rubric.md + JD text
 ```
 
-`~/.jobfeed/preamble_personal.md` is a per-machine personal calibration layer (preferred companies, directions to emphasize, timing judgments). It is **included in `prompt_hash`** so that:
+The configured `llm.preamble_personal_path` file is a per-machine personal calibration layer (preferred companies, directions to emphasize, timing judgments). It is **included in `prompt_hash`** so that:
 - Results are traceable to the exact prompt version + personal calibration
 - Changing preamble changes the hash, enabling re-evaluation with new calibration
 - Reproducibility: same hash = same prompt inputs

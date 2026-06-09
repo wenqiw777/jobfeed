@@ -13,25 +13,22 @@ Pipeline (ASCII)::
 
 ``scrape`` runs ONE synchronous ``jobspy.scrape_jobs`` call (jobspy/pandas are
 lazy-imported inside it, so importing this module is cheap and does not require
-jobspy installed). ``scrape_urls`` is the shared async per-URL loop both JobSpy
-sources reuse: each URL is offloaded with ``asyncio.to_thread`` and its errors
-are contained so one bad URL never aborts the rest.
-
-The pure-stdlib URL -> kwargs parsing lives in ``_jobspy_url.py`` (split out to
-keep this module under the 300-line gate); the DataFrame -> JobPosting
-conversion (the only pandas-touching code) stays here.
+jobspy installed). The pure-stdlib URL -> kwargs parsing lives in
+``_jobspy_url.py``; the subprocess isolation + async fan-out both JobSpy sources
+reuse (``scrape_urls``) lives in ``_jobspy_process.py`` (it contains no pandas
+and just orchestrates this module's ``scrape``). Both were split out to keep
+each file under the 300-line gate and the pandas-touching code confined here.
 """
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
+from jobfeed.adapters.sources._jobspy_patches import apply_indeed_date_patch
 from jobfeed.adapters.sources._jobspy_url import parse_search_url
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.quality import assess_quality
-from jobfeed.observability import JobfeedLogger
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
     import pandas as pd
@@ -57,6 +54,7 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
     search_url: str,
     max_jobs: int,
     hours_old: int | None,
+    country_indeed: str | None = None,
     discovered_at: datetime | None = None,
 ) -> list[JobPosting]:
     """Scrape ONE JobSpy search URL and return fully-populated postings.
@@ -74,6 +72,7 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
         max_jobs: Cap passed to ``results_wanted``.
         hours_old: When not None, OVERRIDES any freshness window in the URL
             (Indeed ``fromage`` / LinkedIn ``f_TPR``).
+        country_indeed: JobSpy country selector for Indeed searches.
         discovered_at: Scan-start timestamp; defaults to ``now`` if omitted.
 
     Returns:
@@ -94,12 +93,21 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
         # jd_text=None despite our enrich_source="jobspy_inline" contract. Costs
         # one extra detail fetch per job (the price of an inline JD via JobSpy).
         kwargs["linkedin_fetch_description"] = True
+    if site_name == "indeed":
+        # Apply the dateOnIndeed patch HERE, where jobspy actually runs, not only
+        # in IndeedSource.fetch_jobs(): scrape() executes inside a `spawn` child
+        # process (see _jobspy_process), which gets a fresh interpreter and does
+        # NOT inherit the parent's monkeypatch. Without this, every Indeed
+        # subprocess scrape silently falls back to JobSpy's unpatched
+        # datePublished mapping. The patch is idempotent, so the parent's
+        # early-fail-loud call remains harmless.
+        apply_indeed_date_patch()
 
     try:
         frame = jobspy.scrape_jobs(
             site_name=site_name,
             results_wanted=max_jobs,
-            country_indeed="usa",
+            country_indeed=country_indeed or "usa",
             **kwargs,
         )
     except Exception as exc:  # contain every jobspy/tls-client failure
@@ -110,56 +118,6 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
         ) from exc
 
     return _frame_to_postings(frame, platform=platform, discovered_at=stamp)
-
-
-async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
-    *,
-    site_name: str,
-    platform: str,
-    search_urls: list[str],
-    max_jobs: int,
-    hours_old: int | None,
-    logger: JobfeedLogger,
-    discovered_at: datetime,
-) -> list[JobPosting]:
-    """Scrape every search URL off the event loop, containing per-URL errors.
-
-    Shared by both JobSpy sources (Indeed + LinkedIn). Each URL's synchronous
-    ``scrape`` runs in a worker thread (``asyncio.to_thread``) so the event loop
-    is never blocked. A ``JobSpyError`` on one URL is logged and skipped so the
-    remaining URLs still contribute their postings.
-
-    Args:
-        site_name: JobSpy site passed through to ``scrape``.
-        platform: Platform tag passed through to ``scrape`` (and onto postings).
-        search_urls: Search URLs to scrape, in order.
-        max_jobs: Per-URL cap.
-        hours_old: Freshness override (see ``scrape``).
-        logger: Structured logger for contained per-URL failures.
-        discovered_at: Scan-start timestamp stamped on every posting.
-
-    Returns:
-        Aggregated postings across all URLs that did not fail.
-    """
-    postings: list[JobPosting] = []
-    for url in search_urls:
-        try:
-            scraped = await asyncio.to_thread(
-                scrape,
-                site_name=site_name,
-                platform=platform,
-                search_url=url,
-                max_jobs=max_jobs,
-                hours_old=hours_old,
-                discovered_at=discovered_at,
-            )
-        except JobSpyError as exc:
-            logger.warning(
-                "jobspy_scrape_failed", site=site_name, url=url, error=str(exc)
-            )
-            continue
-        postings.extend(scraped)
-    return postings
 
 
 # ---------------------------------------------------------------------------
@@ -285,4 +243,4 @@ def _is_pandas_na(value: Any) -> bool:
     return bool(result) if isinstance(result, bool) else False
 
 
-__all__ = ["JobSpyError", "scrape", "scrape_urls"]
+__all__ = ["JobSpyError", "scrape"]

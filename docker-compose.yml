@@ -20,7 +20,7 @@ services:
     # .github/workflows/publish-image.yml). `docker compose pull jobfeed-cli`
     # fetches it so a fresh machine needs no local build; `build:` stays as the
     # fallback for local development / commits newer than the published image.
-    image: ghcr.io/wenqiw777/jobfeed:latest
+    image: ${JOBFEED_IMAGE:-ghcr.io/wenqiw777/jobfeed:latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -37,9 +37,12 @@ services:
       # backend works through the canonical ./bin/jobfeed (docker compose run)
       # path, not only the host venv. Only the documented providers
       # (openai_compat_api_key_env in config.example.toml) are forwarded; add a
-      # line here for any custom key env name. Default-empty so compose never
-      # warns on unused providers — _require_api_key() then fails fast with its
-      # teaching message when the configured key is unset.
+      # line here for any custom key env name, or configure
+      # openai_compat_api_key_env="JOBFEED_OPENAI_COMPAT_API_KEY" and set that
+      # generic host env var. Default-empty so compose never warns on unused
+      # providers — _require_api_key() then fails fast with its teaching message
+      # when the configured key is unset.
+      JOBFEED_OPENAI_COMPAT_API_KEY: "${JOBFEED_OPENAI_COMPAT_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"

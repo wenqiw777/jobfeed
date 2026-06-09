@@ -50,7 +50,7 @@ class LLMSettings(BaseModel):
     openai_compat_api_key_env: str = "OPENAI_API_KEY"
     openai_compat_timeout_s: float = 60.0
     max_concurrent: int = 4
-    master_resume_path: str = ".jobfeed-dev/resume.md"
+    master_resume_path: str = "resume.example.md"
     preamble_personal_path: str | None = None
     max_daily_score_calls: int = Field(default=150, ge=0)
     max_daily_cost_usd: float = Field(default=10.0, ge=0)
@@ -79,6 +79,7 @@ class MLGateSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model_dir: str = "models/ml_gate"
+    model_version: str = "v20260601T170453Z"
     # The fastembed embedder maps this legacy short name to its full Hugging
     # Face id ("sentence-transformers/all-MiniLM-L6-v2"); both forms work.
     embedding_model: str = "all-MiniLM-L6-v2"

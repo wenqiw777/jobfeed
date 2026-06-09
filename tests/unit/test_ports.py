@@ -31,6 +31,7 @@ from jobfeed.ports.source import (
     SimpleSource,
 )
 from jobfeed.ports.store import JobStore
+from jobfeed.ports.store_status import StoreStatusMixin
 from tests.support.factories import fixed_time, make_job
 
 MAX_STAGE_A_SCORE = 100
@@ -414,10 +415,6 @@ def test_job_store_protocol_has_required_async_methods() -> None:
         "get_evaluation",
         "top_evaluated_jobs",
         "save_ml_gate_result",
-        "transition_status",
-        "get_status",
-        "restore_from_archived",
-        "auto_decay",
         "record_pipeline_run",
         "get_pipeline_run",
         "connect",
@@ -427,6 +424,22 @@ def test_job_store_protocol_has_required_async_methods() -> None:
     assert isinstance(FakeStore(), JobStore)
     for method_name in required_methods:
         assert inspect.iscoroutinefunction(getattr(JobStore, method_name))
+
+
+def test_store_status_mixin_has_full_status_surface() -> None:
+    """StoreStatusMixin owns the complete status/workflow contract in one place."""
+    status_methods = [
+        "transition_status",
+        "get_status",
+        "restore_from_archived",
+        "auto_decay",
+        "list_statuses",
+        "append_note",
+        "workflow_attention",
+        "compute_reapply_notice",
+    ]
+    for method_name in status_methods:
+        assert inspect.iscoroutinefunction(getattr(StoreStatusMixin, method_name))
 
 
 @pytest.mark.asyncio

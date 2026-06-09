@@ -21,9 +21,10 @@ claude_timeout_s = 210
 # a provider is a config change, not code. SECURITY: only the env-var NAME goes
 # in this file (openai_compat_api_key_env) — NEVER the key value itself. The
 # adapter reads os.environ[that name] at build time. DOCKER: ./bin/jobfeed runs
-# in a container; docker-compose.yml forwards OPENAI_API_KEY / DEEPSEEK_API_KEY /
-# MINIMAX_API_KEY / ANTHROPIC_API_KEY from the host. For a different key env name,
-# add it there too.
+# in a container; docker-compose.yml forwards JOBFEED_OPENAI_COMPAT_API_KEY plus
+# the common provider-specific names from the host. For custom providers, set
+# openai_compat_api_key_env = "JOBFEED_OPENAI_COMPAT_API_KEY" and put the key in
+# that generic host env var.
 #
 # Both openai-compat/* specs (stage_a AND stage_b) target the SINGLE
 # openai_compat_base_url below; cross-provider stage_a/stage_b over
@@ -48,10 +49,10 @@ claude_timeout_s = 210
 #
 # Local Ollama (no real key; the SDK still requires the env var to be non-empty):
 # openai_compat_base_url = "http://localhost:11434/v1"
-# openai_compat_api_key_env = "OLLAMA_API_KEY"     # set OLLAMA_API_KEY=ollama; then: stage_a = "openai-compat/llama3.1"
+# openai_compat_api_key_env = "JOBFEED_OPENAI_COMPAT_API_KEY"  # set JOBFEED_OPENAI_COMPAT_API_KEY=ollama; then: stage_a = "openai-compat/llama3.1"
 #   DOCKER: localhost is the container, not the host daemon — use
-#   http://host.docker.internal:11434/v1 and forward OLLAMA_API_KEY in
-#   docker-compose.yml (as with the hosted providers above).
+#   http://host.docker.internal:11434/v1 and forward JOBFEED_OPENAI_COMPAT_API_KEY
+#   in docker-compose.yml (as with the hosted providers above).
 #
 # Anthropic via its OpenAI-compat endpoint (higher latency; test-only per
 # Anthropic — no prompt caching / extended thinking, but the eval use case
@@ -63,8 +64,16 @@ claude_timeout_s = 210
 max_daily_score_calls = 150
 max_daily_cost_usd = 10.0
 max_concurrent = 4
-master_resume_path = ".jobfeed-dev/resume.md"
-# preamble_personal_path = ".jobfeed-dev/preamble_personal.md"
+# jobfeed scores each job against YOUR master résumé. This points at the committed
+# example so `evaluate` runs the moment you clone. To use your own (it's personal
+# data — never commit it):  cp resume.example.md resume.md  (resume.md is gitignored)
+# then edit resume.md and set:  master_resume_path = "resume.md"
+master_resume_path = "resume.example.md"
+# Optional: personal calibration anchors (hiring window, real-outcome anchors, GPA
+# notes) appended to the scoring prompt — see preamble_personal.example.md. To enable:
+#   cp preamble_personal.example.md preamble_personal.md   (preamble_personal.md is gitignored)
+# then edit it and uncomment the next line:
+# preamble_personal_path = "preamble_personal.md"
 
 [scoring]
 stage_a_threshold = 60
@@ -89,7 +98,7 @@ seed_companies = ["anthropic", "openai", "palantir"]
 
 [sources.speedyapply]
 enabled = false
-# search_urls = []          # empty selects the built-in default README
+# search_urls = ["https://raw.githubusercontent.com/speedyapply/2026-SWE-College-Jobs/main/README.md"]
 # max_concurrent = 10
 # fetch_timeout_s = 30.0
 
@@ -97,12 +106,17 @@ enabled = false
 enabled = false
 # search_urls = []
 # max_jobs = 100
+# max_concurrent = 2
+# timeout_s = 60.0
+# country_indeed = "usa"
 # hours_old =               # unset; when set, overrides each URL's fromage window
 
 [sources.linkedin_jobspy]
 enabled = false
 # search_urls = []
 # max_jobs = 100
+# max_concurrent = 2
+# timeout_s = 60.0
 # hours_old =               # unset; when set, overrides each URL's fromage window
 
 # LinkedIn JobSpy and LinkedIn Playwright are alternative LinkedIn paths; pick
@@ -136,6 +150,7 @@ big_company_days = 90            # stale cutoff for big-company postings (defaul
 # runtime without retraining; leave unset to use the model's built-in threshold.
 [ml_gate]
 model_dir = "models/ml_gate"
+model_version = "v20260601T170453Z"
 embedding_model = "all-MiniLM-L6-v2"
 embedding_max_chars = 2000
 # threshold_override =    # unset; when set, overrides the model's built-in threshold

@@ -20,7 +20,10 @@ MAX_PYTHON_FILE_LINES = 300
 # Every other layer stays bound by MAX_PYTHON_FILE_LINES. Documented in
 # docs/engineering-standards.md.
 _LENGTH_EXEMPT_SUBSTR = "/adapters/store/"
-_LENGTH_EXEMPT_SUFFIXES = ("/cli/migrate.py", "/domain/ml_features.py")
+_LENGTH_EXEMPT_SUFFIXES = (
+    "/cli/migrate.py",
+    "/domain/ml_features.py",
+)
 
 
 def collect_hygiene_violations(

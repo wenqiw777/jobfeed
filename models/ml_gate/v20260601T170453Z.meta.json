@@ -1,6 +1,8 @@
 {
   "version": "v20260601T170453Z",
   "threshold": 0.19,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedding_dim": 384,
   "recall_pos": 0.9730377471539844,
   "precision_pos": 0.5438713998660415,
   "f1": 0.6977443609022557,

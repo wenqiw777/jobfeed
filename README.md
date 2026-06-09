@@ -15,6 +15,20 @@ cd jobfeed
 
 `./setup` bootstraps everything: it creates `config.toml` from the template, sets up the runtime (a host venv if `uv` is present, else it pulls — or builds — the Docker image `ghcr.io/wenqiw777/jobfeed`), starts Postgres, and applies migrations. `./scan` afterwards just makes sure Postgres is up and scans. You never run `docker compose` / `alembic` by hand.
 
+## Evaluate against your résumé
+
+`jobfeed evaluate` scores every job by how well it fits **your** résumé (résumé ↔ job-description match), so it needs one Markdown file: your *master résumé*. Your real résumé is personal data and is **never committed** — instead the repo ships an example so you can see the format and run end-to-end the moment you clone. Out of the box `config.example.toml` points `master_resume_path` at the committed [`resume.example.md`](resume.example.md), so `evaluate` works immediately, scoring against the example candidate until you swap in your own:
+
+```sh
+cp resume.example.md resume.md     # resume.md is gitignored
+$EDITOR resume.md                  # replace the example with your real résumé
+#  then in config.toml:  master_resume_path = "resume.md"
+```
+
+**Format** is plain Markdown with no fixed schema. The scorer weights **project / work bullets** highest (skills-line keywords and coursework count less), so lead with concrete projects; state your graduation date / availability so the timing check works. You may keep internal-only sections (e.g. a compensation floor) — they inform scoring but are never echoed in any output. Optionally, a personal calibration appendix (hiring window, real-outcome anchors, GPA notes) sharpens scoring — copy [`preamble_personal.example.md`](preamble_personal.example.md) to `preamble_personal.md` (also gitignored) and set `preamble_personal_path`.
+
+Scoring needs an LLM backend. To try it with **no toolchain**, use the mock config — `./bin/jobfeed --config tests/fixtures/docker-smoke.toml evaluate` selects mock LLM backends. For real scoring set `stage_a` / `stage_b` to a real backend (`codex-cli/*`, `openai-compat/*`, or `claude-cli/*`); see the `[llm]` block in `config.example.toml`.
+
 ## Docker-First Quickstart
 
 ```sh

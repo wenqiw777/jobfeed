@@ -115,11 +115,22 @@ def test_wrong_objective_fails_fast(tmp_path: Path) -> None:
         XGBoostGate(model_dir=model_dir, embedder=CountingFakeEmbedder())
 
 
-def test_missing_meta_defaults_threshold(tmp_path: Path) -> None:
-    """A model with no meta sidecar falls back to threshold 0.5."""
+def test_missing_meta_fails_fast(tmp_path: Path) -> None:
+    """A model with no meta sidecar cannot choose hidden threshold/contracts."""
     model_dir = _model_dir(tmp_path, model=TINY_MODEL, meta=None)
-    gate = XGBoostGate(model_dir=model_dir, embedder=CountingFakeEmbedder())
-    assert gate._threshold == 0.5
+    with pytest.raises(FileNotFoundError, match="meta"):
+        XGBoostGate(model_dir=model_dir, embedder=CountingFakeEmbedder())
+
+
+def test_configured_embedding_model_must_match_meta(tmp_path: Path) -> None:
+    """A mismatched configured embedder id is rejected at gate construction."""
+    model_dir = _model_dir(tmp_path, model=TINY_MODEL, meta=TINY_META)
+    with pytest.raises(ValueError, match="embedding_model"):
+        XGBoostGate(
+            model_dir=model_dir,
+            embedder=None,
+            embedding_model="BAAI/bge-small-en-v1.5",
+        )
 
 
 async def test_empty_batch_returns_empty(tmp_path: Path) -> None:

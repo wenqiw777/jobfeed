@@ -9,6 +9,7 @@ download and run fast under ``make quality``.
 
 from __future__ import annotations
 
+import importlib
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -34,6 +35,11 @@ from jobfeed.config import Settings
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models" / "ml_gate"
 MODEL_VERSION = "v20260601T170453Z"
 MODEL_THRESHOLD = "0.19"
+MODEL_META = {
+    "threshold": 0.5,
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_dim": 384,
+}
 
 # Sentinel that diverts the real XGBoostGate to the lightweight MockGate.
 MOCK_MODEL_DIR = "mock"
@@ -46,10 +52,14 @@ def _settings(
     *,
     ml_gate_enabled: bool,
     model_dir: str = "models/ml_gate",
+    model_version: str = "v20260601T170453Z",
     embedding_model: str | None = None,
 ) -> Settings:
     """Build Settings with the given scoring/ml_gate knobs (offline, pure)."""
-    ml_gate: dict[str, object] = {"model_dir": model_dir}
+    ml_gate: dict[str, object] = {
+        "model_dir": model_dir,
+        "model_version": model_version,
+    }
     if embedding_model is not None:
         ml_gate["embedding_model"] = embedding_model
     return Settings.model_validate(
@@ -287,6 +297,7 @@ def test_build_ml_gate_forwards_embedding_model_to_xgboost_gate(
         build_ml_gate(settings)
 
     assert _RecordingGate.last_kwargs.get("embedding_model") == "custom/embed-model"
+    assert _RecordingGate.last_kwargs.get("model_version") == MODEL_VERSION
 
 
 def test_xgboost_gate_forwards_embedding_model_to_default_embedder(
@@ -303,7 +314,15 @@ def test_xgboost_gate_forwards_embedding_model_to_default_embedder(
     monkeypatch.setattr(
         xgboost_gate_module,
         "_load_booster",
-        lambda _model_dir: (object(), "v-test"),
+        lambda _model_dir, **_kwargs: (object(), "v-test"),
+    )
+    monkeypatch.setattr(
+        xgboost_gate_module,
+        "_read_meta",
+        lambda _model_dir, _version: {
+            **MODEL_META,
+            "embedding_model": "custom/embed-model",
+        },
     )
 
     with _no_ml_toolchain_imported():
@@ -324,7 +343,12 @@ def test_xgboost_gate_default_embedding_model_falls_back(
     monkeypatch.setattr(
         xgboost_gate_module,
         "_load_booster",
-        lambda _model_dir: (object(), "v-test"),
+        lambda _model_dir, **_kwargs: (object(), "v-test"),
+    )
+    monkeypatch.setattr(
+        xgboost_gate_module,
+        "_read_meta",
+        lambda _model_dir, _version: MODEL_META,
     )
 
     with _no_ml_toolchain_imported():
@@ -344,7 +368,15 @@ def test_xgboost_gate_injected_embedder_ignores_embedding_model(
     monkeypatch.setattr(
         xgboost_gate_module,
         "_load_booster",
-        lambda _model_dir: (object(), "v-test"),
+        lambda _model_dir, **_kwargs: (object(), "v-test"),
+    )
+    monkeypatch.setattr(
+        xgboost_gate_module,
+        "_read_meta",
+        lambda _model_dir, _version: {
+            **MODEL_META,
+            "embedding_model": "custom/embed-model",
+        },
     )
     injected = _RecordingEmbedder()
     _RecordingEmbedder.last_kwargs = {}  # reset after the injected construction
@@ -426,18 +458,19 @@ def test_build_ml_gate_not_called_for_stage_b_or_limit_zero(
     def _record(_settings: object) -> None:
         calls.append(True)
 
-    # The package binds `jobfeed.cli.evaluate` to the Click Command; the real
-    # module (which owns the imported build_ml_gate) is already in sys.modules
-    # via the top-level `from jobfeed.cli import cli` import.
-    evaluate_module = sys.modules["jobfeed.cli.evaluate"]
-    monkeypatch.setattr(evaluate_module, "build_ml_gate", _record)
+    # build_ml_gate now lives in the evaluate composition root
+    # (jobfeed.cli._evaluate_build); import it explicitly (cached, so no real
+    # reimport) and patch it where the gated call site reads it. Avoids a
+    # KeyError if module import order ever changes.
+    build_module = importlib.import_module("jobfeed.cli._evaluate_build")
+    monkeypatch.setattr(build_module, "build_ml_gate", _record)
 
     skip = [("b", None), ("b", 5), ("a", 0), ("both", 0)]
     for stage, limit in skip:
         needs = needs_ml_gate(stage, limit, ml_gate_enabled=True)
-        _ = evaluate_module.build_ml_gate(object()) if needs else None
+        _ = build_module.build_ml_gate(object()) if needs else None
     assert calls == []  # no build for any skip case
 
     needs = needs_ml_gate("both", None, ml_gate_enabled=True)
-    _ = evaluate_module.build_ml_gate(object()) if needs else None
+    _ = build_module.build_ml_gate(object()) if needs else None
     assert calls == [True]  # built exactly once for the default run

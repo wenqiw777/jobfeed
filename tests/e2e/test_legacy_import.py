@@ -8,8 +8,6 @@ assertion harness.
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -26,18 +24,11 @@ pytestmark = pytest.mark.postgres
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 LEGACY_DB = FIXTURE_DIR / "legacy_v16.db"
 MANIFEST_JSON = FIXTURE_DIR / "legacy_v16_manifest.json"
-GENERATOR = FIXTURE_DIR / "generate_legacy_fixture.py"
 
 
 @pytest.fixture(autouse=True, scope="module")
 def ensure_fixture_exists() -> None:
-    """Generate the legacy fixture DB if it doesn't exist."""
-    if not LEGACY_DB.exists() or not MANIFEST_JSON.exists():
-        subprocess.run(
-            [sys.executable, str(GENERATOR)],
-            check=True,
-            capture_output=True,
-        )
+    """Require the checked-in legacy fixture DB and manifest."""
     assert LEGACY_DB.exists(), f"Fixture DB not found: {LEGACY_DB}"
     assert MANIFEST_JSON.exists(), f"Manifest not found: {MANIFEST_JSON}"
 

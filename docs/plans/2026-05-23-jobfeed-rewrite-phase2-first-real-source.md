@@ -964,7 +964,7 @@ addopts = "-m 'not postgres and not live'"
 **CI update:**
 - Current CI has a single PG-backed `quality` job. Phase 2 changes it to two jobs:
   - `quality-gate`: installs `.[dev]`, runs `make quality`, no Postgres service, no live HTTP
-  - `postgres-tests`: starts the Postgres service, sets `PGTEST_DSN` and `PGTEST_REQUIRE=1`, then runs `pytest -m postgres -o "addopts=" -v --tb=short`
+  - `postgres-tests`: starts the Postgres service, sets `PGTEST_DSN` and `JOBFEED_REQUIRE_POSTGRES=1`, then runs `pytest -m postgres -o "addopts=" -v --tb=short`
 - Before adding default `addopts`, mark every existing PG-backed test with `@pytest.mark.postgres` (or module-level `pytestmark = pytest.mark.postgres`). This includes tests that use the `store`, `contract_store`, `pg_url`, or `fresh_pg_dsn` fixtures. Otherwise `make quality` will still attempt Docker/testcontainers despite the default marker filter.
 - Add Phase 2 integration tests to the `postgres` marker group.
 - Live tests: **never in CI** — external API dependency makes them flaky and rate-limit-prone

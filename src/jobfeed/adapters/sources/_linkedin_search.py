@@ -117,9 +117,7 @@ def _priority_key(
 ) -> tuple[int, str]:
     title = posting.title.lower()
     source_url = source_search_urls.get(posting.canonical_id, "").lower()
-    if "intern" in title and (
-        "fall" in title or "fall" in source_url or "2026" in title
-    ):
+    if "intern" in title and ("fall" in title or "fall" in source_url):
         tier = 0
     elif "intern" in title:
         tier = 1

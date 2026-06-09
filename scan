@@ -20,10 +20,4 @@ fi
 # Make sure Postgres is up (idempotent; handles a stopped container after reboot).
 docker compose up -d --wait postgres
 
-# Use the host venv if ./setup created one (fast), else the Docker image.
-if [ -x "$REPO_ROOT/.venv/bin/jobfeed" ]; then
-  exec .venv/bin/jobfeed --config config.toml scan "$@"
-fi
-exec docker compose run --rm \
-  -v "$REPO_ROOT/config.toml:/app/config.toml:ro" \
-  jobfeed-cli jobfeed scan "$@"
+exec "$REPO_ROOT/bin/jobfeed" scan "$@"

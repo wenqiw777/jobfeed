@@ -1,4 +1,6 @@
 {
   "version": "ml_gate_wrong_objective",
-  "threshold": 0.5
+  "threshold": 0.5,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedding_dim": 384
 }

@@ -1,31 +1,24 @@
 """Generate a synthetic legacy v16 SQLite fixture for import testing.
 
 This script creates an anonymized legacy v16 database with fake data that
-exercises all import paths. Since we don't have the real legacy DB available,
-this generates a SYNTHETIC fixture with representative data.
+exercises all import paths. It is synthetic-only and must not be treated as the
+real legacy parity fixture described in the Phase 1 plan.
 
 Usage:
-    python tests/fixtures/generate_legacy_fixture.py
-
-Output:
-    tests/fixtures/legacy_v16.db
-    tests/fixtures/legacy_v16_manifest.json
+    python tests/fixtures/generate_legacy_fixture.py \
+        --out-db /tmp/legacy_v16.synthetic.db \
+        --out-manifest /tmp/legacy_v16.synthetic_manifest.json
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import random
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-# ---- Constants ----
-
-FIXTURE_DIR = Path(__file__).parent
-DB_PATH = FIXTURE_DIR / "legacy_v16.db"
-MANIFEST_PATH = FIXTURE_DIR / "legacy_v16_manifest.json"
 
 PLATFORMS = ["linkedin", "indeed", "greenhouse", "lever", "workday"]
 FAKE_COMPANIES = [
@@ -335,12 +328,12 @@ CREATE TABLE IF NOT EXISTS state (
 """
 
 
-def generate() -> dict:
+def generate(db_path: Path) -> dict:
     """Generate the legacy v16 fixture database and return row counts."""
-    if DB_PATH.exists():
-        DB_PATH.unlink()
+    if db_path.exists():
+        db_path.unlink()
 
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(db_path))
     conn.executescript(LEGACY_SCHEMA)
 
     counts: dict[str, int] = {}
@@ -655,24 +648,37 @@ def generate() -> dict:
     return counts
 
 
-def write_manifest(counts: dict[str, int]) -> None:
+def write_manifest(counts: dict[str, int], manifest_path: Path) -> None:
     """Write the manifest JSON with expected row counts."""
     manifest = {
         "schema_version": 16,
         "tables": {table: {"row_count": count} for table, count in counts.items()},
     }
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse explicit synthetic fixture output paths."""
+    parser = argparse.ArgumentParser(
+        description="Generate a synthetic legacy v16 fixture for local testing."
+    )
+    parser.add_argument("--out-db", type=Path, required=True)
+    parser.add_argument("--out-manifest", type=Path, required=True)
+    return parser.parse_args()
 
 
 def main() -> None:
     """Generate fixture and manifest."""
-    print(f"Generating legacy v16 fixture at {DB_PATH} ...")
-    counts = generate()
-    write_manifest(counts)
+    args = _parse_args()
+    args.out_db.parent.mkdir(parents=True, exist_ok=True)
+    args.out_manifest.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Generating synthetic legacy v16 fixture at {args.out_db} ...")
+    counts = generate(args.out_db)
+    write_manifest(counts, args.out_manifest)
     print("Row counts:")
     for table, count in sorted(counts.items()):
         print(f"  {table}: {count}")
-    print(f"Manifest written to {MANIFEST_PATH}")
+    print(f"Manifest written to {args.out_manifest}")
     print("Done.")
 
 

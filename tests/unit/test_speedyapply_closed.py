@@ -48,7 +48,10 @@ def _make_html(*, available: bool) -> str:
 def _source() -> SpeedyApplySource:
     return SpeedyApplySource(
         client=create_http_client(),
-        config=SourcesSpeedyApplyConfig(search_urls=[], enabled=True),
+        config=SourcesSpeedyApplyConfig(
+            search_urls=["https://lists.example.test/speedyapply.md"],
+            enabled=True,
+        ),
         logger=get_logger(),
     )
 
