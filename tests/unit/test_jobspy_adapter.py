@@ -100,8 +100,10 @@ class _HungQueue:
     def __init__(self) -> None:
         self.closed = False
         self.joined = False
+        self.get_timeout: float | None = None
 
-    def get(self, *, timeout: float) -> object:  # noqa: ARG002
+    def get(self, *, timeout: float) -> object:
+        self.get_timeout = timeout
         raise Empty
 
     def close(self) -> None:
@@ -561,13 +563,146 @@ def test_run_scrape_process_terminates_and_kills_timed_out_child(
     assert context.process.started is True
     assert context.process.terminated is True
     assert context.process.killed is True
+    # The result wait now happens on the queue (drain-before-join), so the only
+    # process.join calls are the two kill-grace waits inside _stop_process.
+    assert context.queue.get_timeout == _JOBSPY_TIMEOUT_S
     assert context.process.joins == [
-        _JOBSPY_TIMEOUT_S,
         _jobspy._PROCESS_KILL_GRACE_S,
         _jobspy._PROCESS_KILL_GRACE_S,
     ]
     assert context.queue.closed is True
     assert context.queue.joined is True
+
+
+class _DeliveringQueue:
+    """A queue whose ``get`` returns a real outcome (the child delivered)."""
+
+    def __init__(self, outcome: object) -> None:
+        self._outcome = outcome
+        self.get_timeout: float | None = None
+        self.closed = False
+        self.joined = False
+
+    def get(self, *, timeout: float) -> object:
+        self.get_timeout = timeout
+        return self._outcome
+
+    def close(self) -> None:
+        self.closed = True
+
+    def join_thread(self) -> None:
+        self.joined = True
+
+
+class _AliveDeliveringProcess(_HungProcess):
+    """A child that delivered a result but is still flagged alive (feeder-blocked).
+
+    Reproduces bug #2: a large successful payload keeps the child alive until the
+    parent drains the queue. Join-before-read would mistake this for a timeout.
+    """
+
+    def is_alive(self) -> bool:
+        return not self.killed
+
+
+class _DeliveringContext:
+    def __init__(self, outcome: object) -> None:
+        self.queue = _DeliveringQueue(outcome)
+        self.process = _AliveDeliveringProcess()
+        self.method = ""
+
+    def Queue(self, *, maxsize: int) -> _DeliveringQueue:  # noqa: ARG002
+        return self.queue
+
+    def Process(
+        self, *, target: object, args: tuple[object, ...], daemon: bool
+    ) -> _AliveDeliveringProcess:
+        assert target is _jobspy._scrape_child_main
+        assert args[-1] is self.queue
+        assert daemon is True
+        return self.process
+
+
+def test_run_scrape_process_drains_queue_before_joining(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delivered result is returned even while the child is still alive.
+
+    Regression for the join-before-drain deadlock: with the old code the child
+    would be reported as timed out and its postings dropped.
+    """
+    delivered = _scrape_outcome(
+        [_posting_for_url("https://indeed.com/jobs", platform="indeed")]
+    )
+    context = _DeliveringContext(delivered)
+    monkeypatch.setattr(_jobspy.mp, "get_context", lambda _method: context)
+
+    outcome = _jobspy._run_scrape_process(
+        _jobspy._ScrapeRequest(
+            site_name="indeed",
+            platform="indeed",
+            search_url="https://indeed.com/jobs?q=swe",
+            max_jobs=10,
+            hours_old=None,
+            country_indeed=None,
+            discovered_at=_DISCOVERED_AT,
+        ),
+        timeout_s=_JOBSPY_TIMEOUT_S,
+    )
+
+    assert outcome.timed_out is False
+    assert outcome.postings == delivered.postings
+    assert context.queue.get_timeout == _JOBSPY_TIMEOUT_S
+    # The result was read before the process was joined.
+    assert context.process.started is True
+    assert context.queue.closed is True
+    assert context.queue.joined is True
+
+
+@pytest.mark.usefixtures("patched_scrape_jobs")
+def test_scrape_applies_indeed_date_patch_in_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scrape() applies the dateOnIndeed patch for indeed (it runs in the child).
+
+    The patch must run wherever jobspy actually runs — the spawn child — not only
+    in IndeedSource.fetch_jobs() (the parent), which the child does not inherit.
+    """
+    patches: list[str] = []
+    monkeypatch.setattr(
+        _jobspy, "apply_indeed_date_patch", lambda: patches.append("indeed")
+    )
+
+    _jobspy.scrape(
+        site_name="indeed",
+        platform="indeed",
+        search_url="https://www.indeed.com/jobs?q=swe",
+        max_jobs=10,
+        hours_old=None,
+        discovered_at=_DISCOVERED_AT,
+    )
+    assert patches == ["indeed"]
+
+
+@pytest.mark.usefixtures("patched_scrape_jobs")
+def test_scrape_skips_indeed_patch_for_linkedin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scrape() does NOT apply the indeed-only date patch for LinkedIn searches."""
+    patches: list[str] = []
+    monkeypatch.setattr(
+        _jobspy, "apply_indeed_date_patch", lambda: patches.append("indeed")
+    )
+
+    _jobspy.scrape(
+        site_name="linkedin",
+        platform="linkedin_jobspy",
+        search_url="https://www.linkedin.com/jobs/search?keywords=swe",
+        max_jobs=10,
+        hours_old=None,
+        discovered_at=_DISCOVERED_AT,
+    )
+    assert patches == []
 
 
 async def test_scrape_urls_times_out_one_hanging_url(

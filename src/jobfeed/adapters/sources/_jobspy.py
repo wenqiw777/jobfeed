@@ -33,6 +33,7 @@ from multiprocessing.queues import Queue
 from queue import Empty
 from typing import TYPE_CHECKING, Any
 
+from jobfeed.adapters.sources._jobspy_patches import apply_indeed_date_patch
 from jobfeed.adapters.sources._jobspy_url import parse_search_url
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.quality import assess_quality
@@ -123,6 +124,15 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
         # jd_text=None despite our enrich_source="jobspy_inline" contract. Costs
         # one extra detail fetch per job (the price of an inline JD via JobSpy).
         kwargs["linkedin_fetch_description"] = True
+    if site_name == "indeed":
+        # Apply the dateOnIndeed patch HERE, where jobspy actually runs, not only
+        # in IndeedSource.fetch_jobs(): scrape() executes inside a `spawn` child
+        # process (see _run_scrape_process), which gets a fresh interpreter and
+        # does NOT inherit the parent's monkeypatch. Without this, every Indeed
+        # subprocess scrape silently falls back to JobSpy's unpatched
+        # datePublished mapping. The patch is idempotent, so the parent's
+        # early-fail-loud call remains harmless.
+        apply_indeed_date_patch()
 
     try:
         frame = jobspy.scrape_jobs(
@@ -210,11 +220,7 @@ def _run_scrape_process(
     )
     try:
         process.start()
-        process.join(timeout_s)
-        if process.is_alive():
-            _stop_process(process)
-            return _ScrapeProcessOutcome(postings=[], timed_out=True)
-        return _read_scrape_process_result(process, result_queue)
+        return _await_scrape_outcome(process, result_queue, timeout_s)
     finally:
         result_queue.close()
         result_queue.join_thread()
@@ -248,17 +254,42 @@ def _stop_process(process: Any) -> None:
     process.join(_PROCESS_KILL_GRACE_S)
 
 
-def _read_scrape_process_result(
-    process: Any, result_queue: Queue[_ScrapeProcessOutcome]
+def _await_scrape_outcome(
+    process: Any, result_queue: Queue[_ScrapeProcessOutcome], timeout_s: float
 ) -> _ScrapeProcessOutcome:
+    """Read the child's result, draining the queue BEFORE joining the process.
+
+    A ``multiprocessing.Queue`` child stays alive until the parent reads what it
+    ``put`` — its feeder thread blocks flushing a large payload through the pipe.
+    Joining first would let a successful large scrape (many rows / big inline
+    JDs) look like a timeout and get killed. Reading first unblocks the feeder so
+    the child can exit; ``timeout_s`` now bounds the *result wait*, with the same
+    wall-clock budget the old ``join(timeout_s)`` used.
+    """
     try:
-        result = result_queue.get(timeout=_PROCESS_RESULT_GRACE_S)
+        result = result_queue.get(timeout=timeout_s)
     except Empty:
-        exitcode = getattr(process, "exitcode", None)
+        return _stopped_outcome(process)
+    process.join(_PROCESS_RESULT_GRACE_S)
+    if process.is_alive():
+        _stop_process(process)
+    return _coerce_outcome(result)
+
+
+def _stopped_outcome(process: Any) -> _ScrapeProcessOutcome:
+    """Stop a child that delivered nothing, distinguishing a crash from a hang."""
+    crashed = not process.is_alive()
+    exitcode = getattr(process, "exitcode", None)
+    _stop_process(process)
+    if crashed:
         return _ScrapeProcessOutcome(
             postings=[],
             error=f"jobspy child exited without result (exitcode={exitcode})",
         )
+    return _ScrapeProcessOutcome(postings=[], timed_out=True)
+
+
+def _coerce_outcome(result: object) -> _ScrapeProcessOutcome:
     if isinstance(result, _ScrapeProcessOutcome):
         return result
     return _ScrapeProcessOutcome(
