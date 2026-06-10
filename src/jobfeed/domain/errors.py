@@ -21,6 +21,14 @@ class ScoringParseError(JobfeedError):
         self.raw_response = raw_response
 
 
+class SnapshotNotFoundError(LookupError):
+    """Raised when no resume snapshot matches a hash prefix."""
+
+
+class SnapshotAmbiguousError(LookupError):
+    """Raised when a resume hash prefix matches two or more snapshots."""
+
+
 class SourceBusyError(JobfeedError):
     """Raised when a source's exclusive session is already held elsewhere.
 
@@ -31,4 +39,10 @@ class SourceBusyError(JobfeedError):
     """
 
 
-__all__ = ["JobfeedError", "ScoringParseError", "SourceBusyError"]
+__all__ = [
+    "JobfeedError",
+    "ScoringParseError",
+    "SnapshotAmbiguousError",
+    "SnapshotNotFoundError",
+    "SourceBusyError",
+]

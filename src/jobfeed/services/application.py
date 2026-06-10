@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import ApplicationRecord, ApplicationStats, ResumeSnapshot
 from jobfeed.observability import JobfeedLogger
-from jobfeed.ports.store_ext import StoreApplicationMixin
+from jobfeed.ports.store_application import StoreApplicationMixin
 
 
 @dataclass(kw_only=True, frozen=True)

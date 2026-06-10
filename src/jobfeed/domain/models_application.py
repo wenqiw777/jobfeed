@@ -39,6 +39,16 @@ class ResumeSnapshot:
             raise ValueError("resume_hash must be a non-empty hex string")
 
 
+@dataclass(frozen=True, kw_only=True)
+class ResumeSnapshotSummary:
+    """Snapshot listing row: identity, provenance, usage count — no content."""
+
+    resume_hash: str
+    captured_at: datetime
+    source: str
+    usage_count: int
+
+
 @dataclass(kw_only=True)
 class ResumeVariant:
     """Named resume variant for A/B tracking."""
@@ -76,6 +86,7 @@ __all__ = [
     "ApplicationRecord",
     "ApplicationStats",
     "ResumeSnapshot",
+    "ResumeSnapshotSummary",
     "ResumeVariant",
     "ResumeVariantStats",
 ]

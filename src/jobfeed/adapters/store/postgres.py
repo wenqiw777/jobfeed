@@ -26,6 +26,7 @@ from jobfeed.adapters.store.legacy_import import (
     StateRow,
     StatusHistoryRow,
 )
+from jobfeed.domain.errors import SnapshotAmbiguousError, SnapshotNotFoundError
 from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models import (
     ApplicationRecord,
@@ -47,6 +48,7 @@ from jobfeed.domain.models import (
     PipelineRun,
     QualityBand,
     ResumeSnapshot,
+    ResumeSnapshotSummary,
     ResumeVariantStats,
     SaveJobResult,
     StageAResult,
@@ -78,6 +80,19 @@ from jobfeed.ports.store_claims import GateCandidate
 # ---------------------------------------------------------------------------
 # Row mapping helpers
 # ---------------------------------------------------------------------------
+
+
+def _escape_like_prefix(prefix: str) -> str:
+    """Backslash-escape LIKE wildcards so a user prefix matches literally.
+
+    Args:
+        prefix: Raw user-supplied prefix.
+
+    Returns:
+        Prefix safe for ``LIKE ... ESCAPE '\\'`` (no wildcard expansion).
+    """
+    # Escape the escape char first, or the % / _ escapes below get double-escaped.
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _job_from_record(r: asyncpg.Record) -> JobPosting:
@@ -3721,28 +3736,40 @@ class PostgresStore:
         self,
         *,
         limit: int = 100,
+        resume_hash_prefix: str | None = None,
     ) -> list[ApplicationRecord]:
         """List application records by recency.
 
         Args:
             limit: Max records.
+            resume_hash_prefix: Optional literal hash prefix; keeps only
+                records whose master OR tailored resume hash starts with it.
 
         Returns:
             Application records.
         """
+        pattern = (
+            None
+            if resume_hash_prefix is None
+            else _escape_like_prefix(resume_hash_prefix) + "%"
+        )
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT a.job_id, a.applied_at,
+                r"""SELECT a.job_id, a.applied_at,
                           a.master_resume_hash, a.tailored_resume_hash,
                           a.cover_letter, a.application_method,
                           a.verdict_snapshot, a.fit_snapshot,
                           a.hooks_snapshot, a.notes
                    FROM applied a
                    JOIN jobs j ON a.job_id = j.id
+                   WHERE $2::text IS NULL
+                      OR a.master_resume_hash LIKE $2 ESCAPE '\'
+                      OR a.tailored_resume_hash LIKE $2 ESCAPE '\'
                    ORDER BY a.applied_at DESC
                    LIMIT $1""",
                 limit,
+                pattern,
             )
 
         return [
@@ -3945,6 +3972,84 @@ class PostgresStore:
             content=row["content"],
             notes=row["notes"],
         )
+
+    async def get_resume_snapshot_by_prefix(self, prefix: str) -> ResumeSnapshot:
+        """Resolve a resume snapshot by a unique hash prefix.
+
+        Args:
+            prefix: Literal hash prefix (LIKE wildcards are escaped).
+
+        Returns:
+            The single matching snapshot.
+
+        Raises:
+            SnapshotNotFoundError: If no snapshot matches the prefix.
+            SnapshotAmbiguousError: If two or more snapshots match.
+        """
+        pattern = _escape_like_prefix(prefix) + "%"
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                r"""SELECT resume_hash, captured_at, source, content, notes
+                   FROM resume_snapshots
+                   WHERE resume_hash LIKE $1 ESCAPE '\'
+                   LIMIT 2""",
+                pattern,
+            )
+        if not rows:
+            raise SnapshotNotFoundError(f"no resume snapshot matches prefix {prefix!r}")
+        if len(rows) > 1:
+            raise SnapshotAmbiguousError(
+                f"resume hash prefix {prefix!r} matches multiple snapshots"
+            )
+        row = rows[0]
+        return ResumeSnapshot(
+            resume_hash=row["resume_hash"],
+            captured_at=row["captured_at"],
+            source=row["source"],
+            content=row["content"],
+            notes=row["notes"],
+        )
+
+    async def list_resume_snapshots(
+        self,
+        source: str | None = None,
+    ) -> list[ResumeSnapshotSummary]:
+        """List every resume snapshot with its applied-row usage count.
+
+        Usage count is the number of ``applied`` rows referencing the hash
+        as master OR tailored resume (LEFT JOIN, so orphans count 0 and
+        still appear).
+
+        Args:
+            source: Optional filter on the stored source column.
+
+        Returns:
+            Snapshot summaries (without content), newest first.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT s.resume_hash, s.captured_at, s.source,
+                          COUNT(a.job_id)::int AS usage_count
+                   FROM resume_snapshots s
+                   LEFT JOIN applied a
+                     ON a.master_resume_hash = s.resume_hash
+                     OR a.tailored_resume_hash = s.resume_hash
+                   WHERE $1::text IS NULL OR s.source = $1
+                   GROUP BY s.resume_hash, s.captured_at, s.source
+                   ORDER BY s.captured_at DESC, s.resume_hash""",
+                source,
+            )
+        return [
+            ResumeSnapshotSummary(
+                resume_hash=r["resume_hash"],
+                captured_at=r["captured_at"],
+                source=r["source"],
+                usage_count=r["usage_count"],
+            )
+            for r in rows
+        ]
 
     async def register_resume_variant(
         self,
