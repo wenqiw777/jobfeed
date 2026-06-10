@@ -22,7 +22,11 @@ import pytest
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models_application import ApplicationRecord
-from jobfeed.domain.models_status import AutoDecayResult
+from jobfeed.domain.models_status import (
+    AutoDecayResult,
+    BulkTransitionRequest,
+    TransitionRequest,
+)
 from jobfeed.domain.status import (
     DECAY_SOURCES,
     REASON_BULK_CASCADE,
@@ -132,10 +136,12 @@ class TestRowShapeAssertions:
 
         await contract_store.register_resume_variant(name="v1-technical")
         await contract_store.transition_status(
-            job_id=job_id,
-            new_status="scored",
-            reason="manual",
-            resume_variant="v1-technical",
+            TransitionRequest(
+                job_id=job_id,
+                new_status="scored",
+                reason="manual",
+                resume_variant="v1-technical",
+            )
         )
 
         pool = contract_store._get_pool()
@@ -166,14 +172,16 @@ class TestRowShapeAssertions:
         # Score both so they can be shortlisted.
         for jid in (res_a.job_id, res_b.job_id):
             await contract_store.transition_status(
-                job_id=jid, new_status="scored", force=True
+                TransitionRequest(job_id=jid, new_status="scored", force=True)
             )
 
         # Bulk-transition job_a to shortlisted.
         await contract_store.transition_status_bulk(
-            [(res_a.job_id, "shortlisted")],
-            reason_selected=REASON_BULK_SELECTED,
-            reason_cascade=REASON_BULK_CASCADE,
+            BulkTransitionRequest(
+                items=[(res_a.job_id, "shortlisted")],
+                reason_selected=REASON_BULK_SELECTED,
+                reason_cascade=REASON_BULK_CASCADE,
+            )
         )
 
         pool = contract_store._get_pool()
@@ -257,11 +265,13 @@ class TestEdgeCases:
 
         assert result == "applied"
         store.transition_status.assert_awaited_once_with(
-            job_id="42",
-            new_status="applied",
-            force=True,
-            i_mean_it=True,
-            reason="restore",
+            TransitionRequest(
+                job_id="42",
+                new_status="applied",
+                force=True,
+                i_mean_it=True,
+                reason="restore",
+            )
         )
 
     def test_awaiting_referral_not_in_decay_sources(self) -> None:

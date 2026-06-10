@@ -12,7 +12,7 @@ import asyncpg
 import pytest
 
 from jobfeed.adapters.store.postgres import PostgresStore
-from jobfeed.domain.models import QualityBand
+from jobfeed.domain.models import QualityBand, TransitionRequest
 from tests.support.factories import make_job
 
 pytestmark = pytest.mark.postgres
@@ -143,7 +143,7 @@ async def test_list_upcoming_interviews(store: PostgresStore) -> None:
     """list_upcoming_interviews returns future, non-completed rounds in window."""
     saved = await store.save_job(_make_job("upcoming-1"))
     await store.transition_status(
-        job_id=saved.job_id, new_status="interviewing", force=True
+        TransitionRequest(job_id=saved.job_id, new_status="interviewing", force=True)
     )
 
     tomorrow = datetime.now(UTC) + timedelta(days=1)
@@ -175,7 +175,7 @@ async def test_upcoming_excludes_completed(store: PostgresStore) -> None:
     """Completed rounds do not appear in upcoming even if scheduled in window."""
     saved = await store.save_job(_make_job("upcoming-2"))
     await store.transition_status(
-        job_id=saved.job_id, new_status="interviewing", force=True
+        TransitionRequest(job_id=saved.job_id, new_status="interviewing", force=True)
     )
     tomorrow = datetime.now(UTC) + timedelta(days=1)
 

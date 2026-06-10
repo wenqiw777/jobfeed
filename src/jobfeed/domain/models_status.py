@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     # would create a cycle, since jobfeed.domain.models re-exports this module.
     from jobfeed.domain.models import JobStatus
 
+_DEFAULT_FOLLOWUP_GRACE_DAYS = 7
+
 
 @dataclass(kw_only=True)
 class StatusTransition:
@@ -78,11 +80,50 @@ class BulkResult:
     skipped: int = 0  # terminal jobs in cluster
 
 
+@dataclass(frozen=True, kw_only=True)
+class TransitionRequest:
+    """Parameters for a single status transition."""
+
+    job_id: str
+    new_status: str
+    reason: str | None = None
+    resume_variant: str | None = None
+    force: bool = False
+    i_mean_it: bool = False
+    followup_grace_days: int = _DEFAULT_FOLLOWUP_GRACE_DAYS
+
+
+@dataclass(frozen=True, kw_only=True)
+class BulkTransitionRequest:
+    """Parameters for a bulk twin-cascade transition."""
+
+    items: list[tuple[str, str]]
+    reason_selected: str
+    reason_cascade: str
+    force: bool = False
+    i_mean_it: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class StatusFilter:
+    """Filter parameters for list_statuses queries."""
+
+    statuses: frozenset[str] | None = None
+    days: int | None = None
+    no_response_days: int | None = None
+    needs_followup: bool = False
+    notes_contain: str | None = None
+    limit: int | None = None
+
+
 __all__ = [
     "AutoDecayResult",
     "BulkResult",
+    "BulkTransitionRequest",
+    "StatusFilter",
     "StatusInfo",
     "StatusTransition",
+    "TransitionRequest",
     "WorkflowAttention",
     "WorkflowAttentionItem",
 ]

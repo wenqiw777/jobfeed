@@ -9,6 +9,8 @@ from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models_status import (
     AutoDecayResult,
     BulkResult,
+    BulkTransitionRequest,
+    TransitionRequest,
     WorkflowAttention,
 )
 from jobfeed.domain.status import (
@@ -53,52 +55,33 @@ class WorkflowService:
     """Orchestrates status transitions, notes, interview rounds, and housekeeping."""
 
     def __init__(self, store: WorkflowStore, logger: JobfeedLogger) -> None:
-        """Create a workflow service.
-
-        Args:
-            store: Persistence port with status and interview capabilities.
-            logger: Structured logger.
-        """
+        """Create a workflow service backed by *store* and emitting to *logger*."""
         self._store = store
         self._logger = logger
 
-    async def transition(  # noqa: PLR0913
+    async def transition(
         self,
-        job_id: str,
-        new_status: str,
+        request: TransitionRequest,
         *,
-        force: bool = False,
-        i_mean_it: bool = False,
         note: str | None = None,
-        resume_variant: str | None = None,
     ) -> str:
-        """Transition a single job to *new_status*.
+        """Transition a single job to a new status.
 
         Args:
-            job_id: Store-assigned job identity.
-            new_status: Target status value.
-            force: Bypass the transition graph.
-            i_mean_it: Required with force for archived to new.
+            request: Transition parameters.
             note: Optional note to append after the transition.
-            resume_variant: Optional resume variant name.
 
         Returns:
             The new status string.
         """
-        if resume_variant is not None:
-            await self._store.register_resume_variant(name=resume_variant)
-        result = await self._store.transition_status(
-            job_id=job_id,
-            new_status=new_status,
-            force=force,
-            i_mean_it=i_mean_it,
-            resume_variant=resume_variant,
-        )
+        if request.resume_variant is not None:
+            await self._store.register_resume_variant(name=request.resume_variant)
+        result = await self._store.transition_status(request)
         if note is not None:
-            await self._store.append_note(job_id=job_id, text=note)
+            await self._store.append_note(job_id=request.job_id, text=note)
         self._logger.info(
             "workflow_transition",
-            job_id=job_id,
+            job_id=request.job_id,
             new_status=result,
         )
         return result
@@ -122,13 +105,14 @@ class WorkflowService:
         """
         job_ids = [int(jid) for jid, _ in items]  # raises ValueError for non-numeric
         await self._store.expand_twin_ids(job_ids)
-        result = await self._store.transition_status_bulk(
-            items,
+        bulk_req = BulkTransitionRequest(
+            items=items,
             reason_selected=REASON_BULK_SELECTED,
             reason_cascade=REASON_BULK_CASCADE,
             force=force,
             i_mean_it=i_mean_it,
         )
+        result = await self._store.transition_status_bulk(bulk_req)
         self._logger.info(
             "workflow_transition_bulk",
             succeeded=result.succeeded,
@@ -156,13 +140,14 @@ class WorkflowService:
             raise ValueError(msg)
         history = await self._store.get_status_history(job_id)
         target = pick_restore_target(history) or _APPLIED
-        result = await self._store.transition_status(
+        req = TransitionRequest(
             job_id=job_id,
             new_status=target,
+            reason="restore",
             force=True,
             i_mean_it=True,
-            reason="restore",
         )
+        result = await self._store.transition_status(req)
         self._logger.info(
             "workflow_restore",
             job_id=job_id,
@@ -200,8 +185,7 @@ class WorkflowService:
         status_info = await self._store.get_status(job_id)
         if status_info is not None and getattr(status_info, "status", None) == _APPLIED:
             await self._store.transition_status(
-                job_id=job_id,
-                new_status=_INTERVIEWING,
+                TransitionRequest(job_id=job_id, new_status=_INTERVIEWING)
             )
             self._logger.info(
                 "workflow_auto_transition",

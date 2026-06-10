@@ -17,6 +17,8 @@ from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models_status import (
     AutoDecayResult,
     BulkResult,
+    BulkTransitionRequest,
+    TransitionRequest,
     WorkflowAttention,
 )
 from jobfeed.domain.status import REASON_BULK_CASCADE, REASON_BULK_SELECTED
@@ -111,15 +113,17 @@ class TestTransition:
         store = _make_store(transition_status="interviewing")
         svc = _svc(store)
         result = asyncio.run(
-            svc.transition("42", "interviewing"),
+            svc.transition(TransitionRequest(job_id="42", new_status="interviewing")),
         )
         assert result == "interviewing"
         store.transition_status.assert_awaited_once_with(
-            job_id="42",
-            new_status="interviewing",
-            force=False,
-            i_mean_it=False,
-            resume_variant=None,
+            TransitionRequest(
+                job_id="42",
+                new_status="interviewing",
+                force=False,
+                i_mean_it=False,
+                resume_variant=None,
+            )
         )
 
     def test_transition_with_note_appends(self) -> None:
@@ -127,7 +131,10 @@ class TestTransition:
         store = _make_store(transition_status="applied")
         svc = _svc(store)
         asyncio.run(
-            svc.transition("42", "applied", note="sent follow-up"),
+            svc.transition(
+                TransitionRequest(job_id="42", new_status="applied"),
+                note="sent follow-up",
+            ),
         )
         store.append_note.assert_awaited_once_with(
             job_id="42",
@@ -139,7 +146,7 @@ class TestTransition:
         store = _make_store()
         svc = _svc(store)
         asyncio.run(
-            svc.transition("42", "applied"),
+            svc.transition(TransitionRequest(job_id="42", new_status="applied")),
         )
         store.append_note.assert_not_awaited()
 
@@ -148,14 +155,23 @@ class TestTransition:
         store = _make_store(transition_status="new")
         svc = _svc(store)
         asyncio.run(
-            svc.transition("42", "new", force=True, i_mean_it=True),
+            svc.transition(
+                TransitionRequest(
+                    job_id="42",
+                    new_status="new",
+                    force=True,
+                    i_mean_it=True,
+                )
+            ),
         )
         store.transition_status.assert_awaited_once_with(
-            job_id="42",
-            new_status="new",
-            force=True,
-            i_mean_it=True,
-            resume_variant=None,
+            TransitionRequest(
+                job_id="42",
+                new_status="new",
+                force=True,
+                i_mean_it=True,
+                resume_variant=None,
+            )
         )
 
     def test_transition_raises_when_store_raises(self) -> None:
@@ -167,7 +183,7 @@ class TestTransition:
         svc = _svc(store)
         with pytest.raises(ValueError, match="transition not allowed"):
             asyncio.run(
-                svc.transition("42", "offer"),
+                svc.transition(TransitionRequest(job_id="42", new_status="offer")),
             )
 
     def test_transition_passes_resume_variant(self) -> None:
@@ -175,14 +191,22 @@ class TestTransition:
         store = _make_store(transition_status="applied")
         svc = _svc(store)
         asyncio.run(
-            svc.transition("42", "applied", resume_variant="ml-focused"),
+            svc.transition(
+                TransitionRequest(
+                    job_id="42",
+                    new_status="applied",
+                    resume_variant="ml-focused",
+                )
+            ),
         )
         store.transition_status.assert_awaited_once_with(
-            job_id="42",
-            new_status="applied",
-            force=False,
-            i_mean_it=False,
-            resume_variant="ml-focused",
+            TransitionRequest(
+                job_id="42",
+                new_status="applied",
+                force=False,
+                i_mean_it=False,
+                resume_variant="ml-focused",
+            )
         )
 
 
@@ -204,11 +228,13 @@ class TestTransitionBulk:
         )
         store.expand_twin_ids.assert_awaited_once_with([1, 2])
         store.transition_status_bulk.assert_awaited_once_with(
-            items,
-            reason_selected=REASON_BULK_SELECTED,
-            reason_cascade=REASON_BULK_CASCADE,
-            force=False,
-            i_mean_it=False,
+            BulkTransitionRequest(
+                items=items,
+                reason_selected=REASON_BULK_SELECTED,
+                reason_cascade=REASON_BULK_CASCADE,
+                force=False,
+                i_mean_it=False,
+            )
         )
 
     def test_bulk_returns_bulk_result(self) -> None:
@@ -243,11 +269,13 @@ class TestRestore:
         )
         assert result == "interviewing"
         store.transition_status.assert_awaited_once_with(
-            job_id="42",
-            new_status="interviewing",
-            force=True,
-            i_mean_it=True,
-            reason="restore",
+            TransitionRequest(
+                job_id="42",
+                new_status="interviewing",
+                force=True,
+                i_mean_it=True,
+                reason="restore",
+            )
         )
 
     def test_restore_falls_back_to_applied(self) -> None:
@@ -263,11 +291,13 @@ class TestRestore:
         )
         assert result == "applied"
         store.transition_status.assert_awaited_once_with(
-            job_id="42",
-            new_status="applied",
-            force=True,
-            i_mean_it=True,
-            reason="restore",
+            TransitionRequest(
+                job_id="42",
+                new_status="applied",
+                force=True,
+                i_mean_it=True,
+                reason="restore",
+            )
         )
 
     def test_restore_empty_history_falls_back(self) -> None:
@@ -337,8 +367,7 @@ class TestAddRound:
         )
         # Should have called transition_status to move to interviewing.
         store.transition_status.assert_any_await(
-            job_id="42",
-            new_status="interviewing",
+            TransitionRequest(job_id="42", new_status="interviewing")
         )
         store.add_interview_round.assert_awaited_once_with(
             job_id="42",

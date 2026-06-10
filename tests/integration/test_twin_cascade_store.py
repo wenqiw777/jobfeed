@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from jobfeed.adapters.store.postgres import PostgresStore
-from jobfeed.domain.models import QualityBand
+from jobfeed.domain.models import BulkTransitionRequest, QualityBand, TransitionRequest
 from tests.support.factories import make_job
 
 pytestmark = pytest.mark.postgres
@@ -90,20 +90,18 @@ async def test_bulk_transition_cascades_to_twins(store: PostgresStore) -> None:
     # Move both to applied state
     for s in [s1, s2]:
         await store.transition_status(
-            job_id=s.job_id,
-            new_status="scored",
-            force=True,
+            TransitionRequest(job_id=s.job_id, new_status="scored", force=True)
         )
         await store.transition_status(
-            job_id=s.job_id,
-            new_status="applied",
-            force=True,
+            TransitionRequest(job_id=s.job_id, new_status="applied", force=True)
         )
 
     result = await store.transition_status_bulk(
-        [(s1.job_id, "interviewing")],
-        reason_selected="user-action",
-        reason_cascade="twin-cascade",
+        BulkTransitionRequest(
+            items=[(s1.job_id, "interviewing")],
+            reason_selected="user-action",
+            reason_cascade="twin-cascade",
+        )
     )
 
     assert result.succeeded == 2  # s1 + s2
@@ -126,25 +124,21 @@ async def test_bulk_transition_skips_terminal_twins(
     # s1 -> applied, s2 -> rejected (terminal)
     for s in [s1, s2]:
         await store.transition_status(
-            job_id=s.job_id,
-            new_status="scored",
-            force=True,
+            TransitionRequest(job_id=s.job_id, new_status="scored", force=True)
         )
     await store.transition_status(
-        job_id=s1.job_id,
-        new_status="applied",
-        force=True,
+        TransitionRequest(job_id=s1.job_id, new_status="applied", force=True)
     )
     await store.transition_status(
-        job_id=s2.job_id,
-        new_status="rejected",
-        force=True,
+        TransitionRequest(job_id=s2.job_id, new_status="rejected", force=True)
     )
 
     result = await store.transition_status_bulk(
-        [(s1.job_id, "interviewing")],
-        reason_selected="user-action",
-        reason_cascade="twin-cascade",
+        BulkTransitionRequest(
+            items=[(s1.job_id, "interviewing")],
+            reason_selected="user-action",
+            reason_cascade="twin-cascade",
+        )
     )
 
     assert result.succeeded == 1  # only s1
@@ -158,23 +152,21 @@ async def test_bulk_transition_records_failure(store: PostgresStore) -> None:
     """A cluster failure is recorded; other clusters proceed."""
     s_ok = await store.save_job(_make_job("bulk-ok1", company="OkCo", title="Dev"))
     await store.transition_status(
-        job_id=s_ok.job_id,
-        new_status="scored",
-        force=True,
+        TransitionRequest(job_id=s_ok.job_id, new_status="scored", force=True)
     )
     await store.transition_status(
-        job_id=s_ok.job_id,
-        new_status="applied",
-        force=True,
+        TransitionRequest(job_id=s_ok.job_id, new_status="applied", force=True)
     )
 
     # Use a nonexistent job_id to trigger a KeyError in _transition_status_in_tx
     bad_id = "999999"
 
     result = await store.transition_status_bulk(
-        [(bad_id, "interviewing"), (s_ok.job_id, "interviewing")],
-        reason_selected="user-action",
-        reason_cascade="twin-cascade",
+        BulkTransitionRequest(
+            items=[(bad_id, "interviewing"), (s_ok.job_id, "interviewing")],
+            reason_selected="user-action",
+            reason_cascade="twin-cascade",
+        )
     )
 
     assert result.succeeded >= 1
@@ -189,20 +181,18 @@ async def test_bulk_transition_reason_tags(store: PostgresStore) -> None:
 
     for s in [s1, s2]:
         await store.transition_status(
-            job_id=s.job_id,
-            new_status="scored",
-            force=True,
+            TransitionRequest(job_id=s.job_id, new_status="scored", force=True)
         )
         await store.transition_status(
-            job_id=s.job_id,
-            new_status="applied",
-            force=True,
+            TransitionRequest(job_id=s.job_id, new_status="applied", force=True)
         )
 
     await store.transition_status_bulk(
-        [(s1.job_id, "interviewing")],
-        reason_selected="my-reason",
-        reason_cascade="cascade-reason",
+        BulkTransitionRequest(
+            items=[(s1.job_id, "interviewing")],
+            reason_selected="my-reason",
+            reason_cascade="cascade-reason",
+        )
     )
 
     # Check history for reason tags

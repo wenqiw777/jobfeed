@@ -9,7 +9,7 @@ from typing import cast
 import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
-from jobfeed.domain.models_status import StatusInfo
+from jobfeed.domain.models_status import StatusFilter, StatusInfo
 from jobfeed.services.application import ApplicationService, ApplicationStore
 from jobfeed.services.workflow import WorkflowStore
 
@@ -76,9 +76,11 @@ async def _run_list(
     async def action() -> list[StatusInfo]:
         store = cast(WorkflowStore, app["store"])
         return await store.list_statuses(
-            statuses=statuses,
-            needs_followup=needs_followup,
-            no_response_days=no_response_days,
+            StatusFilter(
+                statuses=statuses,
+                needs_followup=needs_followup,
+                no_response_days=no_response_days,
+            )
         )
 
     return await run_with_store(app, action)

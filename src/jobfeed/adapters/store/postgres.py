@@ -34,6 +34,7 @@ from jobfeed.domain.models import (
     AttentionReport,
     AutoDecayResult,
     BulkResult,
+    BulkTransitionRequest,
     CompanyRecord,
     CostEntry,
     DigestStats,
@@ -50,7 +51,9 @@ from jobfeed.domain.models import (
     SaveJobResult,
     StageAResult,
     StageBResult,
+    StatusFilter,
     StatusInfo,
+    TransitionRequest,
     Verdict,
     WorkflowAttention,
     WorkflowAttentionItem,
@@ -2770,14 +2773,7 @@ class PostgresStore:
     async def _transition_status_in_tx(
         self,
         conn: asyncpg.Connection,
-        *,
-        job_id: str,
-        new_status: str,
-        reason: str | None = None,
-        resume_variant: str | None = None,
-        force: bool = False,
-        i_mean_it: bool = False,
-        followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
+        request: TransitionRequest,
     ) -> str:
         """Write status transition inside an existing transaction.
 
@@ -2785,13 +2781,7 @@ class PostgresStore:
 
         Args:
             conn: Active asyncpg connection (transaction already open).
-            job_id: Store-assigned job identity.
-            new_status: Target status value.
-            reason: Optional reason tag.
-            resume_variant: Optional resume variant name.
-            force: Bypass transition graph.
-            i_mean_it: Required with force for archived to new.
-            followup_grace_days: Days until next follow-up after applying.
+            request: Transition parameters unpacked inside this method.
 
         Returns:
             The new status string.
@@ -2800,6 +2790,13 @@ class PostgresStore:
             ValueError: If the transition is invalid.
             KeyError: If the job has no status row.
         """
+        job_id = request.job_id
+        new_status = request.new_status
+        reason = request.reason
+        resume_variant = request.resume_variant
+        force = request.force
+        i_mean_it = request.i_mean_it
+        followup_grace_days = request.followup_grace_days
         row = await conn.fetchrow(
             "SELECT status FROM job_status WHERE job_id = $1",
             int(job_id),
@@ -2852,27 +2849,11 @@ class PostgresStore:
         )
         return new_status
 
-    async def transition_status(
-        self,
-        *,
-        job_id: str,
-        new_status: str,
-        reason: str | None = None,
-        resume_variant: str | None = None,
-        force: bool = False,
-        i_mean_it: bool = False,
-        followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
-    ) -> str:
+    async def transition_status(self, request: TransitionRequest) -> str:
         """Transition a job's status with validation and history.
 
         Args:
-            job_id: Store-assigned identity.
-            new_status: Target status.
-            reason: Optional reason tag.
-            resume_variant: Optional variant name.
-            force: Bypass transition graph.
-            i_mean_it: Required with force for archived to new.
-            followup_grace_days: Days until next follow-up.
+            request: Transition parameters.
 
         Returns:
             The new status string.
@@ -2884,16 +2865,7 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             async with conn.transaction():
-                return await self._transition_status_in_tx(
-                    conn,
-                    job_id=job_id,
-                    new_status=new_status,
-                    reason=reason,
-                    resume_variant=resume_variant,
-                    force=force,
-                    i_mean_it=i_mean_it,
-                    followup_grace_days=followup_grace_days,
-                )
+                return await self._transition_status_in_tx(conn, request)
 
     async def get_status(self, job_id: str) -> StatusInfo | None:
         """Get current status for a job.
@@ -2955,11 +2927,13 @@ class PostgresStore:
 
                 return await self._transition_status_in_tx(
                     conn,
-                    job_id=job_id,
-                    new_status=target_status,
-                    reason="restore_from_archived",
-                    force=True,
-                    i_mean_it=True,
+                    TransitionRequest(
+                        job_id=job_id,
+                        new_status=target_status,
+                        reason="restore_from_archived",
+                        force=True,
+                        i_mean_it=True,
+                    ),
                 )
 
     async def auto_decay(
@@ -2995,10 +2969,12 @@ class PostgresStore:
                 for row in ghost_rows:
                     await self._transition_status_in_tx(
                         conn,
-                        job_id=str(row["job_id"]),
-                        new_status="ghosted",
-                        reason="auto_decay",
-                        force=True,
+                        TransitionRequest(
+                            job_id=str(row["job_id"]),
+                            new_status="ghosted",
+                            reason="auto_decay",
+                            force=True,
+                        ),
                     )
 
                 archive_rows = await conn.fetch(
@@ -3011,10 +2987,12 @@ class PostgresStore:
                 for row in archive_rows:
                     await self._transition_status_in_tx(
                         conn,
-                        job_id=str(row["job_id"]),
-                        new_status="archived",
-                        reason="auto_decay",
-                        force=True,
+                        TransitionRequest(
+                            job_id=str(row["job_id"]),
+                            new_status="archived",
+                            reason="auto_decay",
+                            force=True,
+                        ),
                     )
 
         return AutoDecayResult(ghosted=ghost_count, archived=archive_count)
@@ -3024,28 +3002,24 @@ class PostgresStore:
     # ------------------------------------------------------------------
 
     async def list_statuses(
-        self,
-        *,
-        statuses: frozenset[str] | None = None,
-        days: int | None = None,
-        no_response_days: int | None = None,
-        needs_followup: bool = False,
-        notes_contain: str | None = None,
-        limit: int | None = None,
+        self, filters: StatusFilter | None = None
     ) -> list[StatusInfo]:
         """Query jobs by status with optional filters.
 
         Args:
-            statuses: Restrict to these status values.
-            days: Only changes within N days.
-            no_response_days: Applied/interviewing but silent for N days.
-            needs_followup: Follow-up date in past or today.
-            notes_contain: Substring match in notes.
-            limit: Max results.
+            filters: Filter parameters unpacked inside this method.
 
         Returns:
             Matching status info records.
         """
+        _f = filters or StatusFilter()
+        statuses = _f.statuses
+        days = _f.days
+        no_response_days = _f.no_response_days
+        needs_followup = _f.needs_followup
+        notes_contain = _f.notes_contain
+        limit = _f.limit
+
         clauses: list[str] = []
         params: list[object] = []
         param_idx = 0
@@ -3328,13 +3302,7 @@ class PostgresStore:
         return result
 
     async def transition_status_bulk(
-        self,
-        items: list[tuple[str, str]],
-        *,
-        reason_selected: str,
-        reason_cascade: str,
-        force: bool = False,
-        i_mean_it: bool = False,
+        self, request: BulkTransitionRequest
     ) -> BulkResult:
         """Transition each item plus its twin cluster. Atomic per cluster.
 
@@ -3346,15 +3314,17 @@ class PostgresStore:
         twin-cluster size (typically 1-3).
 
         Args:
-            items: Pairs of (job_id, new_status).
-            reason_selected: Reason tag for the explicitly selected job.
-            reason_cascade: Reason tag for twin-cluster siblings.
-            force: Bypass the transition graph.
-            i_mean_it: Required alongside force for archived to new.
+            request: Bulk transition parameters unpacked inside this method.
 
         Returns:
             Summary of succeeded, failed, and skipped transitions.
         """
+        items = request.items
+        reason_selected = request.reason_selected
+        reason_cascade = request.reason_cascade
+        force = request.force
+        i_mean_it = request.i_mean_it
+
         result = BulkResult()
         twin_map = await self.expand_twin_ids([int(jid) for jid, _ in items])
         pool = self._get_pool()
@@ -3371,11 +3341,13 @@ class PostgresStore:
                     async with conn.transaction():
                         await self._transition_status_in_tx(
                             conn,
-                            job_id=job_id,
-                            new_status=new_status,
-                            reason=reason_selected,
-                            force=force,
-                            i_mean_it=i_mean_it,
+                            TransitionRequest(
+                                job_id=job_id,
+                                new_status=new_status,
+                                reason=reason_selected,
+                                force=force,
+                                i_mean_it=i_mean_it,
+                            ),
                         )
                         cluster_ok += 1
                         for twin_id in cluster:
@@ -3392,11 +3364,13 @@ class PostgresStore:
                                 continue
                             await self._transition_status_in_tx(
                                 conn,
-                                job_id=str(twin_id),
-                                new_status=new_status,
-                                reason=reason_cascade,
-                                force=force,
-                                i_mean_it=i_mean_it,
+                                TransitionRequest(
+                                    job_id=str(twin_id),
+                                    new_status=new_status,
+                                    reason=reason_cascade,
+                                    force=force,
+                                    i_mean_it=i_mean_it,
+                                ),
                             )
                             cluster_ok += 1
                 result.succeeded += cluster_ok

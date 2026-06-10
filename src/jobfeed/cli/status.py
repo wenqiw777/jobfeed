@@ -8,7 +8,7 @@ from typing import cast
 import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
-from jobfeed.domain.models_status import BulkResult
+from jobfeed.domain.models_status import BulkResult, TransitionRequest
 from jobfeed.domain.status import STATUS_VALUES
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
 
@@ -105,14 +105,14 @@ async def _run_mark(app: AppContext, opts: dict[str, object]) -> None:
             return
 
         for jid in ids:
-            result = await svc.transition(
-                jid,
-                status,
+            req = TransitionRequest(
+                job_id=jid,
+                new_status=status,
                 force=force,
                 i_mean_it=i_mean_it,
-                note=note_text,
                 resume_variant=resume_variant,
             )
+            result = await svc.transition(req, note=note_text)
             click.echo(f"{jid} -> {result}")
 
     await run_with_store(app, action)
@@ -153,7 +153,8 @@ async def _run_archive(
     async def action() -> None:
         svc = _build_workflow(app)
         for jid in ids:
-            result = await svc.transition(jid, "archived", force=force)
+            req = TransitionRequest(job_id=jid, new_status="archived", force=force)
+            result = await svc.transition(req)
             click.echo(f"{jid} -> {result}")
 
     await run_with_store(app, action)
