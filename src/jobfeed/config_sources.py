@@ -61,6 +61,10 @@ class _JobSpySourceConfig(BaseModel):
     hours_old: int | None = None
     max_concurrent: int = Field(default=2, ge=1)
     timeout_s: float = Field(default=60.0, gt=0)
+    # JobSpy backends (Indeed especially) return a non-deterministic subset per
+    # call; re-running each URL ``repeat`` times and unioning by canonical_id
+    # recovers postings a single pass misses (legacy platforms.indeed.repeat).
+    repeat: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
     def _require_urls_when_enabled(self) -> _JobSpySourceConfig:

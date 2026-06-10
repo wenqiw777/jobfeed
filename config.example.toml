@@ -117,6 +117,8 @@ enabled = false
 # timeout_s = 60.0
 # country_indeed = "usa"
 # hours_old =               # unset; when set, overrides each URL's fromage window
+# repeat = 1                # re-run each URL N times, union by canonical_id;
+#                           # raise (e.g. 4) for Indeed's non-deterministic backend
 
 [sources.linkedin_jobspy]
 enabled = false

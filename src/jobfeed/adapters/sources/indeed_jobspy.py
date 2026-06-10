@@ -63,6 +63,7 @@ class IndeedSource:
             logger=self._log,
             discovered_at=datetime.now(UTC),
             country_indeed=self._config.country_indeed,
+            repeat=self._config.repeat,
         )
 
 
