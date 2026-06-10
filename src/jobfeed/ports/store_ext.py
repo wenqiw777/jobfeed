@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models import (
     ApplicationRecord,
     ApplicationStats,
@@ -110,6 +112,44 @@ class StoreApplicationMixin(Protocol):
         """
         ...
 
+    async def record_application_with_snapshots(
+        self,
+        record: ApplicationRecord,
+        *,
+        snapshots: list[ResumeSnapshot] | None = None,
+        resume_variant: str | None = None,
+    ) -> bool:
+        """Record application with resume snapshots in one atomic transaction.
+
+        Upserts snapshots, inserts the applied row, checks idempotency,
+        guards terminal status, transitions to applied, and optionally
+        auto-registers the resume variant -- all inside a single transaction.
+
+        Args:
+            record: Application audit record.
+            snapshots: Optional resume snapshots to persist atomically.
+            resume_variant: Optional variant name to set on the job status;
+                auto-registered if not already known.
+
+        Returns:
+            True if new, False if already applied.
+
+        Raises:
+            ValueError: If the job is in a terminal status.
+        """
+        ...
+
+    async def get_application(self, job_id: str) -> ApplicationRecord | None:
+        """Load a single application record by job_id.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Application record if found, else None.
+        """
+        ...
+
     async def list_applications(
         self,
         *,
@@ -178,5 +218,81 @@ class StoreApplicationMixin(Protocol):
 
         Returns:
             True if new, False if existed.
+        """
+        ...
+
+
+@runtime_checkable
+class StoreInterviewMixin(Protocol):
+    """Interview round CRUD for per-job interview tracking."""
+
+    async def add_interview_round(
+        self,
+        *,
+        job_id: str,
+        label: str,
+        scheduled_at: datetime | None = None,
+    ) -> InterviewRound:
+        """Append a new interview round to a job.
+
+        Assigns round_index automatically (max existing + 1).
+
+        Args:
+            job_id: Store-assigned job identity.
+            label: Human-readable round label (e.g. "Phone Screen").
+            scheduled_at: Optional scheduled interview time.
+
+        Returns:
+            The newly created interview round.
+        """
+        ...
+
+    async def list_interview_rounds(self, job_id: str) -> list[InterviewRound]:
+        """List all interview rounds for a job, ordered by round_index.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Interview rounds in ascending round_index order.
+        """
+        ...
+
+    async def complete_interview_round(
+        self,
+        *,
+        job_id: str,
+        round_index: int | None = None,
+        notes: str | None = None,
+    ) -> InterviewRound:
+        """Mark an interview round as completed.
+
+        If round_index is None, completes the latest open round.
+
+        Args:
+            job_id: Store-assigned job identity.
+            round_index: Specific round to complete, or None for latest open.
+            notes: Optional notes to attach.
+
+        Returns:
+            The completed interview round.
+
+        Raises:
+            ValueError: If no open interview round exists for the job.
+        """
+        ...
+
+    async def list_upcoming_interviews(
+        self,
+        *,
+        within_days: int = 7,
+    ) -> list[InterviewRound]:
+        """List scheduled but not-yet-completed interviews within a time window.
+
+        Args:
+            within_days: Number of days ahead to look.
+
+        Returns:
+            Upcoming interview rounds ordered by scheduled_at.
         """
         ...

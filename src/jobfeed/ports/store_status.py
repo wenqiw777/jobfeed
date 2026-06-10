@@ -10,7 +10,12 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from jobfeed.domain.models import AutoDecayResult, StatusInfo, WorkflowAttention
+from jobfeed.domain.models import (
+    AutoDecayResult,
+    BulkResult,
+    StatusInfo,
+    WorkflowAttention,
+)
 
 
 @runtime_checkable
@@ -98,7 +103,7 @@ class StoreStatusMixin(Protocol):
         Args:
             statuses: Restrict to these status values.
             days: Only changes within N days.
-            no_response_days: Applied but silent for N days.
+            no_response_days: Applied/interviewing but silent for N days.
             needs_followup: Follow-up date in past or today.
             notes_contain: Substring match in notes.
             limit: Max results.
@@ -148,5 +153,56 @@ class StoreStatusMixin(Protocol):
 
         Returns:
             Notice string if detected, else None.
+        """
+        ...
+
+    async def get_status_history(self, job_id: str) -> list[str]:
+        """Return to_status values from job_status_history, newest-first.
+
+        Args:
+            job_id: Store-assigned identity.
+
+        Returns:
+            List of status strings in reverse chronological order.
+        """
+        ...
+
+    async def expand_twin_ids(self, job_ids: list[int]) -> dict[int, list[int]]:
+        """Expand each job_id to its twin cluster (same company_norm + title_norm).
+
+        A row with blank company_norm or title_norm expands to itself only.
+
+        Args:
+            job_ids: Store-assigned job identities.
+
+        Returns:
+            Mapping of job_id to list of twin cluster member ids.
+        """
+        ...
+
+    async def transition_status_bulk(
+        self,
+        items: list[tuple[str, str]],
+        *,
+        reason_selected: str,
+        reason_cascade: str,
+        force: bool = False,
+        i_mean_it: bool = False,
+    ) -> BulkResult:
+        """Transition each item plus its twin cluster. Atomic per cluster.
+
+        The selected job gets reason_selected, twins get reason_cascade.
+        Each cluster is transitioned in its own transaction; a failing
+        cluster is recorded and does not block others.
+
+        Args:
+            items: Pairs of (job_id, new_status).
+            reason_selected: Reason tag for the explicitly selected job.
+            reason_cascade: Reason tag for twin-cluster siblings.
+            force: Bypass the transition graph.
+            i_mean_it: Required alongside force for archived to new.
+
+        Returns:
+            Summary of succeeded, failed, and skipped transitions.
         """
         ...
