@@ -242,14 +242,19 @@ def build_ml_gate(settings: Settings) -> MLGate | None:
         from jobfeed.adapters.ml.mock import MockGate  # noqa: PLC0415
 
         return MockGate()
-    from jobfeed.adapters.ml.xgboost_gate import XGBoostGate  # noqa: PLC0415
+    from jobfeed.adapters.ml.xgboost_gate import (  # noqa: PLC0415
+        EmbedderConfig,
+        XGBoostGate,
+    )
 
     return XGBoostGate(
         model_dir=ml.model_dir,
         model_version=ml.model_version,
-        embedding_max_chars=ml.embedding_max_chars,
         threshold_override=ml.threshold_override,
-        embedding_model=ml.embedding_model,
+        embedder_config=EmbedderConfig(
+            max_chars=ml.embedding_max_chars,
+            model_name=ml.embedding_model,
+        ),
     )
 
 

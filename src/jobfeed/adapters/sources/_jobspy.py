@@ -22,6 +22,7 @@ each file under the 300-line gate and the pandas-touching code confined here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -47,14 +48,29 @@ class JobSpyError(RuntimeError):
         self.search_url = search_url
 
 
-def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
+@dataclass(frozen=True, kw_only=True)
+class ScrapeConfig:
+    """Scrape behaviour knobs passed through to jobspy.scrape_jobs.
+
+    Bundled into a dataclass so ``scrape`` stays under the 5-argument limit.
+
+    Attributes:
+        max_jobs: Cap passed to ``results_wanted``.
+        hours_old: When not None, overrides any freshness window in the URL.
+        country_indeed: JobSpy country selector for Indeed searches.
+    """
+
+    max_jobs: int
+    hours_old: int | None
+    country_indeed: str | None = None
+
+
+def scrape(
     *,
     site_name: str,
     platform: str,
     search_url: str,
-    max_jobs: int,
-    hours_old: int | None,
-    country_indeed: str | None = None,
+    config: ScrapeConfig,
     discovered_at: datetime | None = None,
 ) -> list[JobPosting]:
     """Scrape ONE JobSpy search URL and return fully-populated postings.
@@ -69,10 +85,7 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
             from ``site_name`` so ``linkedin_jobspy`` tags differ from the
             scraped site, per Decision 5).
         search_url: A user-pasted search URL; query params become kwargs.
-        max_jobs: Cap passed to ``results_wanted``.
-        hours_old: When not None, OVERRIDES any freshness window in the URL
-            (Indeed ``fromage`` / LinkedIn ``f_TPR``).
-        country_indeed: JobSpy country selector for Indeed searches.
+        config: Scrape behaviour knobs (max_jobs, hours_old, country_indeed).
         discovered_at: Scan-start timestamp; defaults to ``now`` if omitted.
 
     Returns:
@@ -85,8 +98,8 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
 
     stamp = discovered_at or datetime.now(UTC)
     kwargs = parse_search_url(site_name, search_url)
-    if hours_old is not None:
-        kwargs["hours_old"] = hours_old
+    if config.hours_old is not None:
+        kwargs["hours_old"] = config.hours_old
     if site_name == "linkedin":
         # JobSpy populates the LinkedIn `description` column ONLY when asked; the
         # default omits it, so without this every LinkedIn row would persist with
@@ -106,8 +119,8 @@ def scrape(  # noqa: PLR0913 - each arg is a distinct scrape input, all required
     try:
         frame = jobspy.scrape_jobs(
             site_name=site_name,
-            results_wanted=max_jobs,
-            country_indeed=country_indeed or "usa",
+            results_wanted=config.max_jobs,
+            country_indeed=config.country_indeed or "usa",
             **kwargs,
         )
     except Exception as exc:  # contain every jobspy/tls-client failure
@@ -243,4 +256,4 @@ def _is_pandas_na(value: Any) -> bool:
     return bool(result) if isinstance(result, bool) else False
 
 
-__all__ = ["JobSpyError", "scrape"]
+__all__ = ["JobSpyError", "ScrapeConfig", "scrape"]

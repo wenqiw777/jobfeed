@@ -296,7 +296,9 @@ def test_build_ml_gate_forwards_embedding_model_to_xgboost_gate(
     with _no_ml_toolchain_imported():
         build_ml_gate(settings)
 
-    assert _RecordingGate.last_kwargs.get("embedding_model") == "custom/embed-model"
+    cfg = _RecordingGate.last_kwargs.get("embedder_config")
+    assert cfg is not None
+    assert cfg.model_name == "custom/embed-model"
     assert _RecordingGate.last_kwargs.get("model_version") == MODEL_VERSION
 
 
@@ -327,7 +329,10 @@ def test_xgboost_gate_forwards_embedding_model_to_default_embedder(
 
     with _no_ml_toolchain_imported():
         gate = xgboost_gate_module.XGBoostGate(
-            model_dir="unused", embedding_model="custom/embed-model"
+            model_dir="unused",
+            embedder_config=xgboost_gate_module.EmbedderConfig(
+                model_name="custom/embed-model"
+            ),
         )
         embedder = gate._active_embedder  # triggers default-embedder construction
 
@@ -385,7 +390,9 @@ def test_xgboost_gate_injected_embedder_ignores_embedding_model(
         gate = xgboost_gate_module.XGBoostGate(
             model_dir="unused",
             embedder=injected,  # type: ignore[arg-type]
-            embedding_model="custom/embed-model",
+            embedder_config=xgboost_gate_module.EmbedderConfig(
+                model_name="custom/embed-model"
+            ),
         )
         embedder = gate._active_embedder
 

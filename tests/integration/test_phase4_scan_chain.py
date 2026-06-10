@@ -120,7 +120,9 @@ async def _seed_gh_company(store: PostgresStore, slug: str) -> None:
 def _install_fake_scrape(monkeypatch: pytest.MonkeyPatch, frame: pd.DataFrame) -> None:
     """Replace the JobSpy process runner with one converting ``frame``."""
 
-    def _fake(request: object, _timeout_s: float) -> object:
+    def _fake(
+        request: _jobspy_process._ScrapeRequest, _timeout_s: float
+    ) -> _jobspy_process._ScrapeProcessOutcome:
         return _jobspy_process._ScrapeProcessOutcome(
             postings=_jobspy._frame_to_postings(
                 frame,
