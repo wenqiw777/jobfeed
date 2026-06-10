@@ -194,6 +194,7 @@ def _create_store(settings: Settings) -> JobStore:
 
 
 from jobfeed.cli.apply import apply_cmd, apply_history, snapshots  # noqa: E402
+from jobfeed.cli.bootstrap import bootstrap_companies  # noqa: E402
 from jobfeed.cli.companies import companies  # noqa: E402
 from jobfeed.cli.digest import digest  # noqa: E402
 from jobfeed.cli.evaluate import evaluate  # noqa: E402
@@ -223,6 +224,7 @@ cli.add_command(apply_history)
 cli.add_command(snapshots)
 cli.add_command(interview)
 cli.add_command(companies)
+cli.add_command(bootstrap_companies)
 
 
 __all__ = [
