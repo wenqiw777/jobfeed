@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
-from jobfeed.domain.models import ApplicationRecord, ApplicationStats, ResumeSnapshot
+from jobfeed.domain.models import (
+    ApplicationRecord,
+    ApplicationStats,
+    ResumeSnapshot,
+    ResumeSnapshotSummary,
+)
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store_application import StoreApplicationMixin
 
@@ -192,30 +197,57 @@ class ApplicationService:
         """
         return await self._store.get_resume_snapshot(resume_hash)
 
-    async def diff_snapshots(self, hash_a: str, hash_b: str) -> str:
-        """Produce a unified diff between two resume snapshots.
+    async def get_snapshot_by_prefix(self, prefix: str) -> ResumeSnapshot:
+        """Resolve a resume snapshot by a unique hash prefix.
 
         Args:
-            hash_a: SHA-256 hash of the first snapshot.
-            hash_b: SHA-256 hash of the second snapshot.
+            prefix: Hash prefix (a full hash is its own prefix).
 
         Returns:
-            Unified diff string.
+            The single matching snapshot.
 
         Raises:
-            ValueError: If either snapshot is not found.
+            SnapshotNotFoundError: If no snapshot matches the prefix.
+            SnapshotAmbiguousError: If two or more snapshots match.
         """
-        snap_a = await self._store.get_resume_snapshot(hash_a)
-        if snap_a is None:
-            raise ValueError(f"snapshot not found: {hash_a}")
-        snap_b = await self._store.get_resume_snapshot(hash_b)
-        if snap_b is None:
-            raise ValueError(f"snapshot not found: {hash_b}")
+        return await self._store.get_resume_snapshot_by_prefix(prefix)
+
+    async def list_snapshots(
+        self,
+        *,
+        source: str | None = None,
+    ) -> list[ResumeSnapshotSummary]:
+        """List every resume snapshot with its usage count.
+
+        Args:
+            source: Optional source filter ('master' or 'tailored').
+
+        Returns:
+            Snapshot summaries (without content), newest first.
+        """
+        return await self._store.list_resume_snapshots(source=source)
+
+    async def diff_snapshots(self, prefix_a: str, prefix_b: str) -> str:
+        """Produce a unified diff between two prefix-resolved snapshots.
+
+        Args:
+            prefix_a: Hash or unique prefix of the first snapshot.
+            prefix_b: Hash or unique prefix of the second snapshot.
+
+        Returns:
+            Unified diff string (labelled with the full resolved hashes).
+
+        Raises:
+            SnapshotNotFoundError: If either prefix matches nothing.
+            SnapshotAmbiguousError: If either prefix matches more than one.
+        """
+        snap_a = await self._store.get_resume_snapshot_by_prefix(prefix_a)
+        snap_b = await self._store.get_resume_snapshot_by_prefix(prefix_b)
         lines = difflib.unified_diff(
             snap_a.content.splitlines(keepends=True),
             snap_b.content.splitlines(keepends=True),
-            fromfile=hash_a,
-            tofile=hash_b,
+            fromfile=snap_a.resume_hash,
+            tofile=snap_b.resume_hash,
         )
         return "".join(lines)
 

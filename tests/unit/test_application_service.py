@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from jobfeed.domain.errors import SnapshotAmbiguousError, SnapshotNotFoundError
 from jobfeed.domain.models import ApplicationRecord, ApplicationStats, ResumeSnapshot
 from jobfeed.domain.models_application import ResumeVariantStats
 from jobfeed.services.application import ApplicationService, ApplyRequest
@@ -356,47 +357,43 @@ class TestDiffSnapshots:
 
         store = AsyncMock()
 
-        async def _get_snap(h: str) -> ResumeSnapshot | None:
-            if h == _MASTER_HASH:
+        async def _get_snap(prefix: str) -> ResumeSnapshot:
+            if _MASTER_HASH.startswith(prefix):
                 return snap_a
-            if h == _TAILORED_HASH:
+            if _TAILORED_HASH.startswith(prefix):
                 return snap_b
-            return None
+            raise SnapshotNotFoundError(f"no resume snapshot matches prefix {prefix!r}")
 
-        store.get_resume_snapshot.side_effect = _get_snap
+        store.get_resume_snapshot_by_prefix.side_effect = _get_snap
         svc = ApplicationService(store=store, logger=_make_logger())
-        result = asyncio.run(svc.diff_snapshots(_MASTER_HASH, _TAILORED_HASH))
+        result = asyncio.run(svc.diff_snapshots(_MASTER_HASH[:12], _TAILORED_HASH[:12]))
         assert "--- " in result
         assert "+++ " in result
+        # Labels carry the full resolved hashes, not the input prefixes.
+        assert _MASTER_HASH in result
+        assert _TAILORED_HASH in result
         assert "-line two" in result
         assert "+line three" in result
 
-    def test_diff_snapshots_missing_first_raises(self) -> None:
-        """diff_snapshots should raise ValueError if hash_a not found."""
+    def test_diff_snapshots_missing_prefix_propagates(self) -> None:
+        """diff_snapshots should propagate SnapshotNotFoundError."""
         store = _make_store()
+        store.get_resume_snapshot_by_prefix.side_effect = SnapshotNotFoundError(
+            "no resume snapshot matches prefix 'aaa'"
+        )
         svc = _svc(store)
-        with pytest.raises(ValueError, match="snapshot not found"):
+        with pytest.raises(SnapshotNotFoundError, match="matches prefix"):
             asyncio.run(svc.diff_snapshots("aaa", "bbb"))
 
-    def test_diff_snapshots_missing_second_raises(self) -> None:
-        """diff_snapshots should raise ValueError if hash_b not found."""
-        snap_a = ResumeSnapshot(
-            resume_hash=_MASTER_HASH,
-            captured_at=datetime.now(UTC),
-            source="master",
-            content="hello\n",
+    def test_diff_snapshots_ambiguous_prefix_propagates(self) -> None:
+        """diff_snapshots should propagate SnapshotAmbiguousError."""
+        store = _make_store()
+        store.get_resume_snapshot_by_prefix.side_effect = SnapshotAmbiguousError(
+            "resume hash prefix 'a' matches multiple snapshots"
         )
-        store = AsyncMock()
-
-        async def _get_snap(h: str) -> ResumeSnapshot | None:
-            if h == _MASTER_HASH:
-                return snap_a
-            return None
-
-        store.get_resume_snapshot.side_effect = _get_snap
-        svc = ApplicationService(store=store, logger=_make_logger())
-        with pytest.raises(ValueError, match="snapshot not found"):
-            asyncio.run(svc.diff_snapshots(_MASTER_HASH, "deadbeef" * 8))
+        svc = _svc(store)
+        with pytest.raises(SnapshotAmbiguousError, match="multiple snapshots"):
+            asyncio.run(svc.diff_snapshots("a", "b"))
 
 
 # ---------------------------------------------------------------------------
