@@ -122,6 +122,15 @@ class HardFiltersSettings(BaseModel):
         )
 
 
+class DigestSettings(BaseModel):
+    """Digest output settings used by the digest CLI command."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # When set, `jobfeed digest` also writes today.md and YYYY-MM-DD.md here.
+    output_dir: str | None = None
+
+
 class ExecutionSettings(BaseModel):
     """Execution mode settings for local workflow orchestration."""
 
@@ -145,6 +154,7 @@ class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     db: DBSettings = Field(default_factory=DBSettings)
+    digest: DigestSettings = Field(default_factory=DigestSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
@@ -261,6 +271,7 @@ def _merge_dicts(
 
 __all__ = [
     "DBSettings",
+    "DigestSettings",
     "ExecutionSettings",
     "HardFiltersSettings",
     "LLMSettings",

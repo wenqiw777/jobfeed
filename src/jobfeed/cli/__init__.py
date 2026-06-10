@@ -14,7 +14,7 @@ from jobfeed.config import Settings, load_settings
 from jobfeed.observability import JobfeedLogger, configure_logging, get_logger
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
-from jobfeed.services.digest import DigestService
+from jobfeed.services.digest import DigestService, DigestStore
 from jobfeed.services.scan import ScanService
 
 T = TypeVar("T")
@@ -62,7 +62,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
         store=store,
         sources=sources,
         scan_service=ScanService(store, logger),
-        digest_service=DigestService(store, logger),
+        digest_service=DigestService(cast(DigestStore, store), logger),
         logger=logger,
         verbose=False,
     )
