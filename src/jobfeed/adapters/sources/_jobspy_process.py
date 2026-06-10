@@ -28,7 +28,7 @@ from multiprocessing.queues import Queue
 from queue import Empty
 from typing import Any
 
-from jobfeed.adapters.sources._jobspy import scrape
+from jobfeed.adapters.sources._jobspy import ScrapeConfig, scrape
 from jobfeed.domain.models import JobPosting
 from jobfeed.observability import JobfeedLogger
 
@@ -138,9 +138,11 @@ def _scrape_child_main(
             site_name=request.site_name,
             platform=request.platform,
             search_url=request.search_url,
-            max_jobs=request.max_jobs,
-            hours_old=request.hours_old,
-            country_indeed=request.country_indeed,
+            config=ScrapeConfig(
+                max_jobs=request.max_jobs,
+                hours_old=request.hours_old,
+                country_indeed=request.country_indeed,
+            ),
             discovered_at=request.discovered_at,
         )
     except Exception as exc:  # contain every child-side jobspy/tls-client failure

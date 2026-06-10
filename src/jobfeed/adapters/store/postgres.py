@@ -26,12 +26,15 @@ from jobfeed.adapters.store.legacy_import import (
     StateRow,
     StatusHistoryRow,
 )
+from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models import (
     ApplicationRecord,
     ApplicationStats,
     AttentionItem,
     AttentionReport,
     AutoDecayResult,
+    BulkResult,
+    BulkTransitionRequest,
     CompanyRecord,
     CostEntry,
     DigestStats,
@@ -48,7 +51,9 @@ from jobfeed.domain.models import (
     SaveJobResult,
     StageAResult,
     StageBResult,
+    StatusFilter,
     StatusInfo,
+    TransitionRequest,
     Verdict,
     WorkflowAttention,
     WorkflowAttentionItem,
@@ -1200,6 +1205,27 @@ def _build_stage_b_preview_query(
         f"LIMIT ${len(params)}"
     )
     return sql, params
+
+
+def _row_to_interview_round(row: asyncpg.Record) -> InterviewRound:
+    """Build an InterviewRound from an asyncpg Record.
+
+    Args:
+        row: Database record containing interview_rounds columns.
+
+    Returns:
+        Domain interview round.
+    """
+    return InterviewRound(
+        id=row["id"],
+        job_id=row["job_id"],
+        round_index=row["round_index"],
+        label=row["label"],
+        scheduled_at=row["scheduled_at"],
+        completed_at=row["completed_at"],
+        notes=row["notes"],
+        created_at=row["created_at"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2747,14 +2773,7 @@ class PostgresStore:
     async def _transition_status_in_tx(
         self,
         conn: asyncpg.Connection,
-        *,
-        job_id: str,
-        new_status: str,
-        reason: str | None = None,
-        resume_variant: str | None = None,
-        force: bool = False,
-        i_mean_it: bool = False,
-        followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
+        request: TransitionRequest,
     ) -> str:
         """Write status transition inside an existing transaction.
 
@@ -2762,13 +2781,7 @@ class PostgresStore:
 
         Args:
             conn: Active asyncpg connection (transaction already open).
-            job_id: Store-assigned job identity.
-            new_status: Target status value.
-            reason: Optional reason tag.
-            resume_variant: Optional resume variant name.
-            force: Bypass transition graph.
-            i_mean_it: Required with force for archived to new.
-            followup_grace_days: Days until next follow-up after applying.
+            request: Transition parameters unpacked inside this method.
 
         Returns:
             The new status string.
@@ -2777,6 +2790,13 @@ class PostgresStore:
             ValueError: If the transition is invalid.
             KeyError: If the job has no status row.
         """
+        job_id = request.job_id
+        new_status = request.new_status
+        reason = request.reason
+        resume_variant = request.resume_variant
+        force = request.force
+        i_mean_it = request.i_mean_it
+        followup_grace_days = request.followup_grace_days
         row = await conn.fetchrow(
             "SELECT status FROM job_status WHERE job_id = $1",
             int(job_id),
@@ -2829,27 +2849,11 @@ class PostgresStore:
         )
         return new_status
 
-    async def transition_status(
-        self,
-        *,
-        job_id: str,
-        new_status: str,
-        reason: str | None = None,
-        resume_variant: str | None = None,
-        force: bool = False,
-        i_mean_it: bool = False,
-        followup_grace_days: int = DEFAULT_FOLLOWUP_GRACE_DAYS,
-    ) -> str:
+    async def transition_status(self, request: TransitionRequest) -> str:
         """Transition a job's status with validation and history.
 
         Args:
-            job_id: Store-assigned identity.
-            new_status: Target status.
-            reason: Optional reason tag.
-            resume_variant: Optional variant name.
-            force: Bypass transition graph.
-            i_mean_it: Required with force for archived to new.
-            followup_grace_days: Days until next follow-up.
+            request: Transition parameters.
 
         Returns:
             The new status string.
@@ -2861,16 +2865,7 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             async with conn.transaction():
-                return await self._transition_status_in_tx(
-                    conn,
-                    job_id=job_id,
-                    new_status=new_status,
-                    reason=reason,
-                    resume_variant=resume_variant,
-                    force=force,
-                    i_mean_it=i_mean_it,
-                    followup_grace_days=followup_grace_days,
-                )
+                return await self._transition_status_in_tx(conn, request)
 
     async def get_status(self, job_id: str) -> StatusInfo | None:
         """Get current status for a job.
@@ -2932,11 +2927,13 @@ class PostgresStore:
 
                 return await self._transition_status_in_tx(
                     conn,
-                    job_id=job_id,
-                    new_status=target_status,
-                    reason="restore_from_archived",
-                    force=True,
-                    i_mean_it=True,
+                    TransitionRequest(
+                        job_id=job_id,
+                        new_status=target_status,
+                        reason="restore_from_archived",
+                        force=True,
+                        i_mean_it=True,
+                    ),
                 )
 
     async def auto_decay(
@@ -2972,10 +2969,12 @@ class PostgresStore:
                 for row in ghost_rows:
                     await self._transition_status_in_tx(
                         conn,
-                        job_id=str(row["job_id"]),
-                        new_status="ghosted",
-                        reason="auto_decay",
-                        force=True,
+                        TransitionRequest(
+                            job_id=str(row["job_id"]),
+                            new_status="ghosted",
+                            reason="auto_decay",
+                            force=True,
+                        ),
                     )
 
                 archive_rows = await conn.fetch(
@@ -2988,10 +2987,12 @@ class PostgresStore:
                 for row in archive_rows:
                     await self._transition_status_in_tx(
                         conn,
-                        job_id=str(row["job_id"]),
-                        new_status="archived",
-                        reason="auto_decay",
-                        force=True,
+                        TransitionRequest(
+                            job_id=str(row["job_id"]),
+                            new_status="archived",
+                            reason="auto_decay",
+                            force=True,
+                        ),
                     )
 
         return AutoDecayResult(ghosted=ghost_count, archived=archive_count)
@@ -3001,28 +3002,24 @@ class PostgresStore:
     # ------------------------------------------------------------------
 
     async def list_statuses(
-        self,
-        *,
-        statuses: frozenset[str] | None = None,
-        days: int | None = None,
-        no_response_days: int | None = None,
-        needs_followup: bool = False,
-        notes_contain: str | None = None,
-        limit: int | None = None,
+        self, filters: StatusFilter | None = None
     ) -> list[StatusInfo]:
         """Query jobs by status with optional filters.
 
         Args:
-            statuses: Restrict to these status values.
-            days: Only changes within N days.
-            no_response_days: Applied but silent for N days.
-            needs_followup: Follow-up date in past or today.
-            notes_contain: Substring match in notes.
-            limit: Max results.
+            filters: Filter parameters unpacked inside this method.
 
         Returns:
             Matching status info records.
         """
+        _f = filters or StatusFilter()
+        statuses = _f.statuses
+        days = _f.days
+        no_response_days = _f.no_response_days
+        needs_followup = _f.needs_followup
+        notes_contain = _f.notes_contain
+        limit = _f.limit
+
         clauses: list[str] = []
         params: list[object] = []
         param_idx = 0
@@ -3044,7 +3041,7 @@ class PostgresStore:
             params.append(str(days))
 
         if no_response_days is not None:
-            clauses.append("s.status = 'applied'")
+            clauses.append("s.status IN ('applied', 'interviewing')")
             param_idx += 1
             clauses.append(
                 f"s.last_status_change_at < now() - (${param_idx} || ' days')::interval"
@@ -3133,17 +3130,46 @@ class PostgresStore:
                 _attention_item_from_record(r, "follow-up due") for r in follow_rows
             ]
 
-            # Bucket 2: interview_prep
-            interview_rows = await conn.fetch(
-                f"""SELECT {_cols},
-                       EXTRACT(DAY FROM now() - s.last_status_change_at)::integer AS days_since
-                   FROM job_status s JOIN jobs j ON j.id = s.job_id
+            # Bucket 2: interview_prep — source from interview_rounds
+            # Jobs with upcoming scheduled rounds (bounded by lookahead window)
+            upcoming_rows = await conn.fetch(
+                f"""SELECT DISTINCT ON (s.job_id) {_cols},
+                       ir.scheduled_at AS round_scheduled,
+                       EXTRACT(DAY FROM now() - s.last_status_change_at)::integer
+                           AS days_since
+                   FROM job_status s
+                   JOIN jobs j ON j.id = s.job_id
+                   JOIN interview_rounds ir ON ir.job_id = s.job_id
                    WHERE s.status = 'interviewing'
-                   ORDER BY s.last_status_change_at DESC""",
+                     AND ir.completed_at IS NULL
+                     AND ir.scheduled_at IS NOT NULL
+                     AND ir.scheduled_at <= now() + ($1 || ' days')::interval
+                   ORDER BY s.job_id, ir.scheduled_at ASC""",
+                str(lookahead_days),
             )
             interview = [
-                _attention_item_from_record(r, "interview prep") for r in interview_rows
+                _attention_item_from_record(r, "interview prep") for r in upcoming_rows
             ]
+            # Also include interviewing jobs with no upcoming round
+            unscheduled_rows = await conn.fetch(
+                f"""SELECT {_cols},
+                       EXTRACT(DAY FROM now() - s.last_status_change_at)::integer
+                           AS days_since
+                   FROM job_status s
+                   JOIN jobs j ON j.id = s.job_id
+                   WHERE s.status = 'interviewing'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM interview_rounds ir
+                         WHERE ir.job_id = s.job_id
+                           AND ir.completed_at IS NULL
+                           AND ir.scheduled_at IS NOT NULL
+                     )
+                   ORDER BY s.last_status_change_at DESC""",
+            )
+            interview.extend(
+                _attention_item_from_record(r, "interviewing, unscheduled")
+                for r in unscheduled_rows
+            )
 
             # Bucket 3: going_ghosted — every decay-eligible status, not just
             # applied/interviewing, so substages warn before they are ghosted.
@@ -3219,6 +3245,141 @@ class PostgresStore:
             f"Active application at same company: "
             f"'{match['title']}' (job {match['id']}, status={match['status']})"
         )
+
+    async def get_status_history(self, job_id: str) -> list[str]:
+        """Return to_status values from job_status_history, newest-first.
+
+        Args:
+            job_id: Store-assigned identity.
+
+        Returns:
+            List of status strings in reverse chronological order.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT to_status FROM job_status_history"
+                " WHERE job_id = $1 ORDER BY changed_at DESC, id DESC",
+                int(job_id),
+            )
+        return [r["to_status"] for r in rows]
+
+    async def expand_twin_ids(self, job_ids: list[int]) -> dict[int, list[int]]:
+        """Expand each job_id to its twin cluster (same company_norm + title_norm).
+
+        A row with blank company_norm or title_norm expands to itself only.
+
+        Args:
+            job_ids: Store-assigned job identities.
+
+        Returns:
+            Mapping of job_id to list of twin cluster member ids.
+        """
+        if not job_ids:
+            return {}
+        pool = self._get_pool()
+        result: dict[int, list[int]] = {}
+        async with pool.acquire() as conn:
+            for jid in job_ids:
+                row = await conn.fetchrow(
+                    "SELECT company_norm, title_norm FROM jobs WHERE id = $1",
+                    jid,
+                )
+                if row is None:
+                    result[jid] = [jid]
+                    continue
+                cn = row["company_norm"] or ""
+                tn = row["title_norm"] or ""
+                if not cn or not tn:
+                    result[jid] = [jid]
+                    continue
+                twins = await conn.fetch(
+                    "SELECT id FROM jobs WHERE company_norm = $1 AND title_norm = $2",
+                    cn,
+                    tn,
+                )
+                result[jid] = [r["id"] for r in twins]
+        return result
+
+    async def transition_status_bulk(
+        self, request: BulkTransitionRequest
+    ) -> BulkResult:
+        """Transition each item plus its twin cluster. Atomic per cluster.
+
+        The selected job gets reason_selected, twins get reason_cascade.
+        Each cluster is transitioned in its own transaction; a failing
+        cluster is recorded and does not block others.
+
+        Time complexity: O(N * C) where N = len(items) and C is the average
+        twin-cluster size (typically 1-3).
+
+        Args:
+            request: Bulk transition parameters unpacked inside this method.
+
+        Returns:
+            Summary of succeeded, failed, and skipped transitions.
+        """
+        items = request.items
+        reason_selected = request.reason_selected
+        reason_cascade = request.reason_cascade
+        force = request.force
+        i_mean_it = request.i_mean_it
+
+        result = BulkResult()
+        twin_map = await self.expand_twin_ids([int(jid) for jid, _ in items])
+        pool = self._get_pool()
+        processed_ids: set[int] = set()
+
+        for job_id, new_status in items:
+            if int(job_id) in processed_ids:
+                continue
+            cluster = twin_map.get(int(job_id), [int(job_id)])
+            try:
+                cluster_ok = 0
+                cluster_skipped = 0
+                async with pool.acquire() as conn:
+                    async with conn.transaction():
+                        await self._transition_status_in_tx(
+                            conn,
+                            TransitionRequest(
+                                job_id=job_id,
+                                new_status=new_status,
+                                reason=reason_selected,
+                                force=force,
+                                i_mean_it=i_mean_it,
+                            ),
+                        )
+                        cluster_ok += 1
+                        for twin_id in cluster:
+                            if twin_id == int(job_id):
+                                continue
+                            status_row = await conn.fetchrow(
+                                "SELECT status FROM job_status WHERE job_id = $1",
+                                twin_id,
+                            )
+                            if status_row is None:
+                                continue
+                            if is_terminal(status_row["status"]):
+                                cluster_skipped += 1
+                                continue
+                            await self._transition_status_in_tx(
+                                conn,
+                                TransitionRequest(
+                                    job_id=str(twin_id),
+                                    new_status=new_status,
+                                    reason=reason_cascade,
+                                    force=force,
+                                    i_mean_it=i_mean_it,
+                                ),
+                            )
+                            cluster_ok += 1
+                result.succeeded += cluster_ok
+                result.skipped += cluster_skipped
+                processed_ids.update(cluster)
+            except Exception as exc:
+                result.failed.append((job_id, str(exc)))
+
+        return result
 
     # ------------------------------------------------------------------
     # StoreApplicationMixin
@@ -3311,6 +3472,220 @@ class PostgresStore:
                 )
 
         return True
+
+    # -- in-tx helpers ---------------------------------------------------
+
+    async def _save_resume_snapshot_in_tx(
+        self,
+        conn: asyncpg.Connection,
+        snapshot: ResumeSnapshot,
+    ) -> None:
+        """Write a resume snapshot inside an existing transaction.
+
+        Args:
+            conn: Connection with an active transaction.
+            snapshot: Resume snapshot to persist.
+        """
+        await conn.execute(
+            """INSERT INTO resume_snapshots
+                   (resume_hash, captured_at, source, content, notes)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (resume_hash) DO NOTHING""",
+            snapshot.resume_hash,
+            snapshot.captured_at,
+            snapshot.source,
+            snapshot.content,
+            snapshot.notes,
+        )
+
+    async def _register_resume_variant_in_tx(
+        self,
+        conn: asyncpg.Connection,
+        name: str,
+    ) -> None:
+        """Register a resume variant inside an existing transaction.
+
+        Args:
+            conn: Connection with an active transaction.
+            name: Variant name to register.
+        """
+        await conn.execute(
+            """INSERT INTO resume_variants (name, description)
+               VALUES ($1, NULL)
+               ON CONFLICT (name) DO NOTHING""",
+            name,
+        )
+
+    async def record_application_with_snapshots(
+        self,
+        record: ApplicationRecord,
+        *,
+        snapshots: list[ResumeSnapshot] | None = None,
+        resume_variant: str | None = None,
+    ) -> bool:
+        """Record application with resume snapshots in one atomic transaction.
+
+        Order: variant registration -> snapshot upserts -> applied INSERT ->
+        idempotency check -> terminal-status guard -> status transition.
+        On failure after snapshot upsert the entire transaction rolls back.
+
+        Args:
+            record: Application audit record.
+            snapshots: Optional resume snapshots to persist atomically.
+            resume_variant: Optional variant name to set on the job status;
+                auto-registered if not already known.
+
+        Returns:
+            True if new, False if already applied.
+
+        Raises:
+            ValueError: If the job is in a terminal status.
+        """
+        job_id_int = int(record.job_id)
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # 1. Auto-register variant if provided.
+                if resume_variant is not None:
+                    await self._register_resume_variant_in_tx(conn, resume_variant)
+
+                # 2. Upsert resume snapshots.
+                for snap in snapshots or []:
+                    await self._save_resume_snapshot_in_tx(conn, snap)
+
+                # 3. Insert application (ON CONFLICT DO NOTHING).
+                result = await conn.execute(
+                    """INSERT INTO applied
+                           (job_id, applied_at, notes,
+                            master_resume_hash, tailored_resume_hash,
+                            cover_letter, application_method,
+                            verdict_snapshot, fit_snapshot, hooks_snapshot)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                       ON CONFLICT (job_id) DO NOTHING""",
+                    job_id_int,
+                    record.applied_at,
+                    record.notes,
+                    record.master_resume_hash,
+                    record.tailored_resume_hash,
+                    record.cover_letter,
+                    record.application_method,
+                    record.verdict_snapshot,
+                    record.fit_snapshot,
+                    record.hooks_snapshot,
+                )
+
+                # 4. Idempotency: duplicate is a no-op.
+                if result == "INSERT 0 0":
+                    return False
+
+                # 5. Terminal-status guard.
+                status_row = await conn.fetchrow(
+                    "SELECT status FROM job_status WHERE job_id = $1",
+                    job_id_int,
+                )
+                if status_row is not None and is_terminal(status_row["status"]):
+                    raise ValueError(
+                        f"cannot apply from terminal status '{status_row['status']}'"
+                    )
+
+                # 6. Transition status to applied — but only if the job is
+                # not already in an active-application status (applied,
+                # interviewing).  Regressing from interviewing to applied
+                # would lose progress.
+                from_status: str | None = status_row["status"] if status_row else None
+                is_already_active = (
+                    from_status is not None
+                    and from_status in ACTIVE_APPLICATION_STATUSES
+                )
+                now = datetime.now(UTC)
+
+                if is_already_active:
+                    # Still record the audit trail without changing status.
+                    await conn.execute(
+                        """INSERT INTO job_status_history
+                               (job_id, from_status, to_status, changed_at,
+                                reason, resume_variant_at_change)
+                           VALUES ($1, $2, $3, $4,
+                                   'record_application_noop', $5)""",
+                        job_id_int,
+                        from_status,
+                        from_status,
+                        now,
+                        resume_variant,
+                    )
+                    # Update resume_variant even when status stays unchanged.
+                    if resume_variant:
+                        await conn.execute(
+                            "UPDATE job_status SET resume_variant = $1"
+                            " WHERE job_id = $2",
+                            resume_variant,
+                            job_id_int,
+                        )
+                else:
+                    followup_val = now + timedelta(
+                        days=DEFAULT_FOLLOWUP_GRACE_DAYS,
+                    )
+                    await conn.execute(
+                        """UPDATE job_status
+                           SET status = 'applied',
+                               last_status_change_at = $1,
+                               next_followup_at = COALESCE($2, next_followup_at),
+                               resume_variant = COALESCE($3, resume_variant)
+                           WHERE job_id = $4""",
+                        now,
+                        followup_val,
+                        resume_variant,
+                        job_id_int,
+                    )
+
+                    await conn.execute(
+                        """INSERT INTO job_status_history
+                               (job_id, from_status, to_status, changed_at,
+                                reason, resume_variant_at_change)
+                           VALUES ($1, $2, 'applied', $3,
+                                   'record_application', $4)""",
+                        job_id_int,
+                        from_status,
+                        now,
+                        resume_variant,
+                    )
+
+        return True
+
+    async def get_application(self, job_id: str) -> ApplicationRecord | None:
+        """Load a single application record by job_id.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Application record if found, else None.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT job_id, applied_at,
+                          master_resume_hash, tailored_resume_hash,
+                          cover_letter, application_method,
+                          verdict_snapshot, fit_snapshot,
+                          hooks_snapshot, notes
+                   FROM applied WHERE job_id = $1""",
+                int(job_id),
+            )
+        if row is None:
+            return None
+        return ApplicationRecord(
+            job_id=str(row["job_id"]),
+            applied_at=row["applied_at"],
+            master_resume_hash=row["master_resume_hash"],
+            tailored_resume_hash=row["tailored_resume_hash"],
+            cover_letter=row["cover_letter"],
+            application_method=row["application_method"],
+            verdict_snapshot=row["verdict_snapshot"],
+            fit_snapshot=row["fit_snapshot"],
+            hooks_snapshot=row["hooks_snapshot"],
+            notes=row["notes"],
+        )
 
     async def list_applications(
         self,
@@ -3567,6 +3942,166 @@ class PostgresStore:
             )
         # asyncpg returns "INSERT 0 1" for inserted, "INSERT 0 0" for conflict
         return bool(result == "INSERT 0 1")
+
+    # ------------------------------------------------------------------
+    # StoreInterviewMixin
+    # ------------------------------------------------------------------
+
+    async def add_interview_round(
+        self,
+        *,
+        job_id: str,
+        label: str,
+        scheduled_at: datetime | None = None,
+    ) -> InterviewRound:
+        """Append a new interview round to a job.
+
+        Assigns round_index atomically via INSERT ... SELECT MAX+1.
+        Retries once on the rare unique-constraint race.
+
+        Args:
+            job_id: Store-assigned job identity.
+            label: Human-readable round label.
+            scheduled_at: Optional scheduled interview time.
+
+        Returns:
+            The newly created interview round.
+        """
+        jid = int(job_id)
+        pool = self._get_pool()
+        sql = (
+            "INSERT INTO interview_rounds"
+            " (job_id, round_index, label, scheduled_at)"
+            " SELECT $1, COALESCE(MAX(round_index), 0) + 1, $2, $3"
+            " FROM interview_rounds WHERE job_id = $1"
+            " RETURNING *"
+        )
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                try:
+                    async with conn.transaction():  # savepoint
+                        row = await conn.fetchrow(sql, jid, label, scheduled_at)
+                except asyncpg.UniqueViolationError:
+                    row = await conn.fetchrow(sql, jid, label, scheduled_at)
+                await conn.execute(
+                    "UPDATE job_status"
+                    " SET last_status_change_at = now()"
+                    " WHERE job_id = $1",
+                    jid,
+                )
+        assert row is not None  # INSERT ... RETURNING always yields a row
+        return _row_to_interview_round(row)
+
+    async def list_interview_rounds(
+        self,
+        job_id: str,
+    ) -> list[InterviewRound]:
+        """List all interview rounds for a job, ordered by round_index.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Interview rounds in ascending round_index order.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM interview_rounds WHERE job_id = $1 ORDER BY round_index",
+                int(job_id),
+            )
+        return [_row_to_interview_round(r) for r in rows]
+
+    async def complete_interview_round(
+        self,
+        *,
+        job_id: str,
+        round_index: int | None = None,
+        notes: str | None = None,
+    ) -> InterviewRound:
+        """Mark an interview round as completed.
+
+        If round_index is None, completes the latest open round.
+
+        Args:
+            job_id: Store-assigned job identity.
+            round_index: Specific round to complete, or None for latest open.
+            notes: Optional notes to attach.
+
+        Returns:
+            The completed interview round.
+
+        Raises:
+            ValueError: If no open interview round exists.
+        """
+        jid = int(job_id)
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                if round_index is not None:
+                    target = await conn.fetchrow(
+                        "SELECT * FROM interview_rounds"
+                        " WHERE job_id = $1 AND round_index = $2"
+                        " AND completed_at IS NULL",
+                        jid,
+                        round_index,
+                    )
+                else:
+                    target = await conn.fetchrow(
+                        "SELECT * FROM interview_rounds"
+                        " WHERE job_id = $1 AND completed_at IS NULL"
+                        " ORDER BY round_index DESC LIMIT 1",
+                        jid,
+                    )
+                if target is None:
+                    raise ValueError(f"no open interview round for job_id={job_id}")
+                row = await conn.fetchrow(
+                    "UPDATE interview_rounds"
+                    " SET completed_at = now(),"
+                    " notes = COALESCE($1, notes)"
+                    " WHERE id = $2"
+                    " RETURNING *",
+                    notes,
+                    target["id"],
+                )
+                await conn.execute(
+                    "UPDATE job_status"
+                    " SET last_status_change_at = now()"
+                    " WHERE job_id = $1",
+                    jid,
+                )
+        assert row is not None
+        return _row_to_interview_round(row)
+
+    async def list_upcoming_interviews(
+        self,
+        *,
+        within_days: int = 7,
+    ) -> list[InterviewRound]:
+        """List scheduled but not-yet-completed interviews within a time window.
+
+        Only returns rounds whose parent job is currently in 'interviewing'
+        status, so rounds for rejected/ghosted/offered jobs are excluded.
+
+        Args:
+            within_days: Number of days ahead to look.
+
+        Returns:
+            Upcoming interview rounds ordered by scheduled_at.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT ir.* FROM interview_rounds ir"
+                " JOIN job_status js ON js.job_id = ir.job_id"
+                " WHERE ir.scheduled_at IS NOT NULL"
+                " AND ir.scheduled_at <= now() + interval '1 day' * $1"
+                " AND ir.completed_at IS NULL"
+                " AND js.status = 'interviewing'"
+                " ORDER BY ir.scheduled_at",
+                within_days,
+            )
+        return [_row_to_interview_round(r) for r in rows]
 
     # ------------------------------------------------------------------
     # StoreOpsMixin

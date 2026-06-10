@@ -11,11 +11,11 @@ from jobfeed.domain.status import (
     validate_transition,
 )
 
-EXPECTED_STATUS_COUNT = 14
+EXPECTED_STATUS_COUNT = 11
 
 
-def test_status_values_contains_all_14() -> None:
-    """STATUS_VALUES should have exactly 14 statuses."""
+def test_status_values_contains_all_11() -> None:
+    """STATUS_VALUES should have exactly 11 statuses (Phase 6)."""
     assert len(STATUS_VALUES) == EXPECTED_STATUS_COUNT
     assert "new" in STATUS_VALUES
     assert "ghosted" in STATUS_VALUES
@@ -86,115 +86,42 @@ def test_terminal_statuses_have_empty_transitions() -> None:
 
 
 def test_transition_graph_matches_design_spec() -> None:
-    """ALLOWED_TRANSITIONS must match the design spec graph exactly."""
+    """ALLOWED_TRANSITIONS must match the Phase 6 design spec graph."""
     assert ALLOWED_TRANSITIONS["new"] == frozenset({"scored"})
     assert ALLOWED_TRANSITIONS["scored"] == frozenset(
-        {
-            "shortlisted",
-            "applied",
-            "archived",
-            "ignored",
-        }
+        {"shortlisted", "awaiting_referral", "applied", "archived", "ignored"},
     )
     assert ALLOWED_TRANSITIONS["shortlisted"] == frozenset(
-        {
-            "applied",
-            "archived",
-        }
+        {"awaiting_referral", "applied", "archived"},
+    )
+    assert ALLOWED_TRANSITIONS["awaiting_referral"] == frozenset(
+        {"applied", "archived"},
     )
     assert ALLOWED_TRANSITIONS["applied"] == frozenset(
-        {
-            "oa",
-            "hr_call",
-            "second_round",
-            "final_round",
-            "interviewing",
-            "rejected",
-            "ghosted",
-            "offer",
-        }
-    )
-    assert ALLOWED_TRANSITIONS["oa"] == frozenset(
-        {
-            "hr_call",
-            "second_round",
-            "final_round",
-            "offer",
-            "rejected",
-            "ghosted",
-        }
-    )
-    assert ALLOWED_TRANSITIONS["hr_call"] == frozenset(
-        {
-            "second_round",
-            "final_round",
-            "offer",
-            "rejected",
-            "ghosted",
-        }
-    )
-    assert ALLOWED_TRANSITIONS["second_round"] == frozenset(
-        {
-            "final_round",
-            "offer",
-            "rejected",
-            "ghosted",
-        }
-    )
-    assert ALLOWED_TRANSITIONS["final_round"] == frozenset(
-        {
-            "offer",
-            "rejected",
-            "ghosted",
-        }
+        {"interviewing", "offer", "rejected", "ghosted"},
     )
     assert ALLOWED_TRANSITIONS["interviewing"] == frozenset(
-        {
-            "offer",
-            "rejected",
-            "ghosted",
-        }
+        {"offer", "rejected", "ghosted"},
     )
 
 
-def test_interview_stages_are_forward_only() -> None:
-    """Interview sub-stages cannot rewind (e.g., hr_call → oa)."""
-    assert validate_transition("hr_call", "oa") is not None
-    assert validate_transition("second_round", "oa") is not None
-    assert validate_transition("final_round", "hr_call") is not None
-    assert validate_transition("oa", "hr_call") is None
+def test_awaiting_referral_cannot_reach_ghosted() -> None:
+    """awaiting_referral has no edge to ghosted (dead referral → archive)."""
+    assert validate_transition("awaiting_referral", "ghosted") is not None
+    assert validate_transition("awaiting_referral", "applied") is None
 
 
-EXPECTED_DECAY = frozenset(
-    {
-        "applied",
-        "interviewing",
-        "oa",
-        "hr_call",
-        "second_round",
-        "final_round",
-    }
-)
-EXPECTED_RESPONSE = frozenset(
-    {
-        "interviewing",
-        "oa",
-        "hr_call",
-        "second_round",
-        "final_round",
-        "offer",
-        "rejected",
-    }
-)
+EXPECTED_DECAY = frozenset({"applied", "interviewing"})
+EXPECTED_RESPONSE = frozenset({"interviewing", "offer", "rejected"})
 
 
-def test_decay_sources_includes_interview_substages() -> None:
-    """DECAY_SOURCES should include all 6 ghostable statuses."""
+def test_decay_sources_matches_phase6() -> None:
+    """DECAY_SOURCES should include applied and interviewing only."""
     assert DECAY_SOURCES == EXPECTED_DECAY
 
 
-def test_response_statuses_includes_interview_substages() -> None:
-    """RESPONSE_STATUSES should include interview sub-stages."""
+def test_response_statuses_matches_phase6() -> None:
+    """RESPONSE_STATUSES should include interviewing, offer, rejected."""
     assert RESPONSE_STATUSES == EXPECTED_RESPONSE
 
 

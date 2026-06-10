@@ -196,8 +196,7 @@ def test_scrape_converts_dataframe_to_postings(patched_scrape_jobs) -> None:
         site_name="indeed",
         platform="indeed",
         search_url="https://www.indeed.com/jobs?q=swe",
-        max_jobs=50,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=50, hours_old=None),
         discovered_at=_DISCOVERED_AT,
     )
     assert len(postings) == 1
@@ -233,8 +232,7 @@ def test_scrape_coerces_nan_and_nat_to_none(patched_scrape_jobs) -> None:
         site_name="indeed",
         platform="indeed",
         search_url="https://www.indeed.com/jobs?q=swe",
-        max_jobs=50,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=50, hours_old=None),
         discovered_at=_DISCOVERED_AT,
     )
     assert len(postings) == 1
@@ -259,8 +257,7 @@ def test_scrape_skips_rows_missing_required_fields(patched_scrape_jobs) -> None:
         site_name="indeed",
         platform="indeed",
         search_url="https://www.indeed.com/jobs?q=swe",
-        max_jobs=50,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=50, hours_old=None),
     )
     assert [p.canonical_id for p in postings] == ["in-ok"]
 
@@ -273,8 +270,7 @@ def test_scrape_empty_and_none_frame_return_empty(patched_scrape_jobs) -> None:
             site_name="indeed",
             platform="indeed",
             search_url="https://www.indeed.com/jobs?q=swe",
-            max_jobs=10,
-            hours_old=None,
+            config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
         )
         == []
     )
@@ -284,8 +280,7 @@ def test_scrape_empty_and_none_frame_return_empty(patched_scrape_jobs) -> None:
             site_name="indeed",
             platform="indeed",
             search_url="https://www.indeed.com/jobs?q=swe",
-            max_jobs=10,
-            hours_old=None,
+            config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
         )
         == []
     )
@@ -298,8 +293,7 @@ def test_scrape_tags_platform_distinct_from_site(patched_scrape_jobs) -> None:
         site_name="linkedin",
         platform="linkedin_jobspy",
         search_url="https://www.linkedin.com/jobs/search/?keywords=swe",
-        max_jobs=10,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
     )
     assert postings[0].platform == "linkedin_jobspy"
 
@@ -316,8 +310,7 @@ def test_linkedin_scrape_requests_descriptions(patched_scrape_jobs) -> None:
         site_name="linkedin",
         platform="linkedin_jobspy",
         search_url="https://www.linkedin.com/jobs/search/?keywords=swe",
-        max_jobs=10,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
     )
     assert patched_scrape_jobs.calls[-1]["linkedin_fetch_description"] is True
 
@@ -329,8 +322,7 @@ def test_indeed_scrape_omits_linkedin_description_flag(patched_scrape_jobs) -> N
         site_name="indeed",
         platform="indeed",
         search_url="https://www.indeed.com/jobs?q=swe",
-        max_jobs=10,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
     )
     assert "linkedin_fetch_description" not in patched_scrape_jobs.calls[-1]
 
@@ -346,8 +338,7 @@ def test_scrape_row_without_description_is_unenriched(patched_scrape_jobs) -> No
         site_name="indeed",
         platform="indeed",
         search_url="https://www.indeed.com/jobs?q=swe",
-        max_jobs=10,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
     )
     assert postings[0].jd_text is None
     assert postings[0].enrich_source is None
@@ -368,8 +359,7 @@ def test_indeed_url_parse_maps_all_params(patched_scrape_jobs) -> None:
         site_name="indeed",
         platform="indeed",
         search_url=url,
-        max_jobs=42,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=42, hours_old=None),
     )
     kwargs = patched_scrape_jobs.calls[-1]
     assert kwargs["search_term"] == "software engineer"
@@ -388,8 +378,7 @@ def test_explicit_hours_old_overrides_url_fromage(patched_scrape_jobs) -> None:
         site_name="indeed",
         platform="indeed",
         search_url=url,
-        max_jobs=10,
-        hours_old=_EXPECTED_OVERRIDE_HOURS,
+        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=_EXPECTED_OVERRIDE_HOURS),
     )
     kwargs = patched_scrape_jobs.calls[-1]
     assert kwargs["hours_old"] == _EXPECTED_OVERRIDE_HOURS  # arg override, not 7*24
@@ -402,8 +391,7 @@ def test_indeed_url_parse_drops_blank_and_bad_params(patched_scrape_jobs) -> Non
         site_name="indeed",
         platform="indeed",
         search_url=url,
-        max_jobs=10,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
     )
     kwargs = patched_scrape_jobs.calls[-1]
     assert "search_term" not in kwargs
@@ -426,8 +414,7 @@ def test_linkedin_url_parse_uses_linkedin_keys(patched_scrape_jobs) -> None:
         site_name="linkedin",
         platform="linkedin_jobspy",
         search_url=url,
-        max_jobs=20,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=20, hours_old=None),
     )
     kwargs = patched_scrape_jobs.calls[-1]
     assert kwargs["search_term"] == "backend intern"
@@ -444,8 +431,7 @@ def test_linkedin_ignores_indeed_keys(patched_scrape_jobs) -> None:
         site_name="linkedin",
         platform="linkedin_jobspy",
         search_url=url,
-        max_jobs=20,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=20, hours_old=None),
     )
     kwargs = patched_scrape_jobs.calls[-1]
     assert "search_term" not in kwargs
@@ -460,8 +446,7 @@ def test_linkedin_f_tpr_without_r_prefix(patched_scrape_jobs) -> None:
         site_name="linkedin",
         platform="linkedin_jobspy",
         search_url=url,
-        max_jobs=20,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=20, hours_old=None),
     )
     assert patched_scrape_jobs.calls[-1]["hours_old"] == _EXPECTED_LI_HOURS_NO_PREFIX
 
@@ -684,8 +669,7 @@ def test_scrape_applies_indeed_date_patch_in_process(
         site_name="indeed",
         platform="indeed",
         search_url="https://www.indeed.com/jobs?q=swe",
-        max_jobs=10,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
         discovered_at=_DISCOVERED_AT,
     )
     assert patches == ["indeed"]
@@ -705,8 +689,7 @@ def test_scrape_skips_indeed_patch_for_linkedin(
         site_name="linkedin",
         platform="linkedin_jobspy",
         search_url="https://www.linkedin.com/jobs/search?keywords=swe",
-        max_jobs=10,
-        hours_old=None,
+        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
         discovered_at=_DISCOVERED_AT,
     )
     assert patches == []
@@ -797,8 +780,7 @@ async def test_single_url_scrape_raises_on_challenge(
             site_name="indeed",
             platform="indeed",
             search_url="https://indeed.com/jobs?q=swe",
-            max_jobs=10,
-            hours_old=None,
+            config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
         )
     assert excinfo.value.site_name == "indeed"
     assert "indeed.com" in excinfo.value.search_url

@@ -72,6 +72,7 @@ async def build_and_run(
     )
     from jobfeed.adapters.llm.mock import MockLLM  # noqa: PLC0415
     from jobfeed.ports.store_ops import StoreOpsMixin  # noqa: PLC0415
+    from jobfeed.ports.store_status import StoreStatusMixin  # noqa: PLC0415
     from jobfeed.services.evaluate import (  # noqa: PLC0415
         EvaluateService,
     )
@@ -158,6 +159,7 @@ async def build_and_run(
         deps=EvaluateDependencies(
             store=store,
             store_ops=cast(StoreOpsMixin, store),
+            store_status=cast(StoreStatusMixin, store),
             prompt_renderer=prompt_renderer,
             llm_stage_a=llm_a,
             llm_stage_b=llm_b,

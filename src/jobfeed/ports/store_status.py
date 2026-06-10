@@ -10,34 +10,27 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from jobfeed.domain.models import AutoDecayResult, StatusInfo, WorkflowAttention
+from jobfeed.domain.models import (
+    AutoDecayResult,
+    BulkResult,
+    BulkTransitionRequest,
+    StatusFilter,
+    StatusInfo,
+    TransitionRequest,
+    WorkflowAttention,
+)
 
 
 @runtime_checkable
 class StoreStatusMixin(Protocol):
     """Status lifecycle, listing, notes, and workflow queries."""
 
-    async def transition_status(
-        self,
-        *,
-        job_id: str,
-        new_status: str,
-        reason: str | None = None,
-        resume_variant: str | None = None,
-        force: bool = False,
-        i_mean_it: bool = False,
-        followup_grace_days: int = 7,
-    ) -> str:
+    async def transition_status(self, request: TransitionRequest) -> str:
         """Transition a job's status with validation and history.
 
         Args:
-            job_id: Store-assigned identity.
-            new_status: Target status.
-            reason: Optional reason tag.
-            resume_variant: Optional variant name.
-            force: Bypass transition graph.
-            i_mean_it: Required with force for archived to new.
-            followup_grace_days: Days until next follow-up.
+            request: Transition parameters (job_id, new_status, reason,
+                resume_variant, force, i_mean_it, followup_grace_days).
 
         Returns:
             The new status string.
@@ -84,24 +77,13 @@ class StoreStatusMixin(Protocol):
         ...
 
     async def list_statuses(
-        self,
-        *,
-        statuses: frozenset[str] | None = None,
-        days: int | None = None,
-        no_response_days: int | None = None,
-        needs_followup: bool = False,
-        notes_contain: str | None = None,
-        limit: int | None = None,
+        self, filters: StatusFilter | None = None
     ) -> list[StatusInfo]:
         """Query jobs by status with optional filters.
 
         Args:
-            statuses: Restrict to these status values.
-            days: Only changes within N days.
-            no_response_days: Applied but silent for N days.
-            needs_followup: Follow-up date in past or today.
-            notes_contain: Substring match in notes.
-            limit: Max results.
+            filters: Filter parameters (statuses, days, no_response_days,
+                needs_followup, notes_contain, limit).
 
         Returns:
             Matching status info records.
@@ -148,5 +130,47 @@ class StoreStatusMixin(Protocol):
 
         Returns:
             Notice string if detected, else None.
+        """
+        ...
+
+    async def get_status_history(self, job_id: str) -> list[str]:
+        """Return to_status values from job_status_history, newest-first.
+
+        Args:
+            job_id: Store-assigned identity.
+
+        Returns:
+            List of status strings in reverse chronological order.
+        """
+        ...
+
+    async def expand_twin_ids(self, job_ids: list[int]) -> dict[int, list[int]]:
+        """Expand each job_id to its twin cluster (same company_norm + title_norm).
+
+        A row with blank company_norm or title_norm expands to itself only.
+
+        Args:
+            job_ids: Store-assigned job identities.
+
+        Returns:
+            Mapping of job_id to list of twin cluster member ids.
+        """
+        ...
+
+    async def transition_status_bulk(
+        self, request: BulkTransitionRequest
+    ) -> BulkResult:
+        """Transition each item plus its twin cluster. Atomic per cluster.
+
+        The selected job gets reason_selected, twins get reason_cascade.
+        Each cluster is transitioned in its own transaction; a failing
+        cluster is recorded and does not block others.
+
+        Args:
+            request: Bulk transition parameters (items, reason_selected,
+                reason_cascade, force, i_mean_it).
+
+        Returns:
+            Summary of succeeded, failed, and skipped transitions.
         """
         ...

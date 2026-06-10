@@ -25,6 +25,7 @@ injected (``FastEmbedEmbedder`` by default) and likewise lazy.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -54,18 +55,29 @@ _META_EMBEDDING_DIM_KEY = "embedding_dim"
 _META_THRESHOLD_KEY = "threshold"
 
 
+@dataclass(frozen=True, kw_only=True)
+class EmbedderConfig:
+    """Embedder knobs for XGBoostGate (max_chars, model_name).
+
+    Bundled so ``XGBoostGate.__init__`` stays within the 5-argument limit.
+    Ignored when an embedder is injected directly.
+    """
+
+    max_chars: int = 2000
+    model_name: str | None = None
+
+
 class XGBoostGate:
     """MLGate backed by a committed XGBoost ``binary:logistic`` booster."""
 
-    def __init__(  # noqa: PLR0913 - mirrors independent ML-gate config fields
+    def __init__(
         self,
         *,
         model_dir: str | Path = DEFAULT_MODEL_DIR,
         model_version: str | None = None,
         embedder: EmbedderProtocol | None = None,
         threshold_override: float | None = None,
-        embedding_max_chars: int = 2000,
-        embedding_model: str | None = None,
+        embedder_config: EmbedderConfig | None = None,
     ) -> None:
         """Load the selected model + metadata and prepare the embedder.
 
@@ -77,16 +89,16 @@ class XGBoostGate:
             embedder: Injected text embedder; defaults to a lazily-loaded
                 ``FastEmbedEmbedder``.
             threshold_override: When set, overrides the meta-file threshold.
-            embedding_max_chars: Per-text cap passed to the default embedder.
-            embedding_model: Model id for the default embedder; ``None`` keeps
-                its built-in default. Ignored when ``embedder`` is injected.
+            embedder_config: Embedder knobs; uses defaults when omitted.
+                Ignored when ``embedder`` is injected.
 
         Raises:
             FileNotFoundError: If ``model_dir`` holds no ``v*.json`` model.
             ValueError: If the loaded booster's objective is not binary:logistic.
         """
-        self._embedding_max_chars = embedding_max_chars
-        model_name = embedding_model or DEFAULT_MODEL_NAME
+        cfg = embedder_config or EmbedderConfig()
+        self._embedding_max_chars = cfg.max_chars
+        model_name = cfg.model_name or DEFAULT_MODEL_NAME
         self._embedding_model = model_name
         self._embedder = embedder
         booster, version = _load_booster(Path(model_dir), model_version=model_version)
@@ -285,4 +297,4 @@ def _validate_embedding_contract(meta: dict[str, Any], model_name: str) -> None:
         )
 
 
-__all__ = ["XGBoostGate"]
+__all__ = ["EmbedderConfig", "XGBoostGate"]

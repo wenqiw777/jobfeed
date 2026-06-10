@@ -96,6 +96,13 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 # literals ARE the contract, so PLR2004 magic-value warnings are noise.
 "tests/unit/test_ml_vectorize.py" = ["PLR2004"]
 "tests/unit/test_xgboost_gate_load.py" = ["PLR2004"]
+# Interview round store tests assert sequential round_index values (1, 2, 3)
+# and scheduled date components; those literals ARE the contract.
+"tests/integration/test_interview_rounds_store.py" = ["PLR2004"]
+# Twin cascade / status query tests assert cluster sizes, succeeded counts,
+# and history lengths; those literals ARE the contract.
+"tests/integration/test_status_queries_store.py" = ["PLR2004"]
+"tests/integration/test_twin_cascade_store.py" = ["PLR2004"]
 "migrations/env.py" = ["PLC0415"]
 "migrations/versions/*.py" = ["E501"]
 

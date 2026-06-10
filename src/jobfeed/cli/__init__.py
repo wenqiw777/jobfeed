@@ -193,13 +193,17 @@ def _create_store(settings: Settings) -> JobStore:
     return PostgresStore(dsn)
 
 
+from jobfeed.cli.apply import apply_cmd, apply_history, snapshots  # noqa: E402
 from jobfeed.cli.digest import digest  # noqa: E402
 from jobfeed.cli.evaluate import evaluate  # noqa: E402
+from jobfeed.cli.interview import interview  # noqa: E402
 from jobfeed.cli.login import login  # noqa: E402
 from jobfeed.cli.maintenance import mark_stale_closed  # noqa: E402
 from jobfeed.cli.migrate import migrate  # noqa: E402
 from jobfeed.cli.ml_gate import ml_gate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
+from jobfeed.cli.status import archive, mark, note  # noqa: E402
+from jobfeed.cli.status_query import list_cmd, stats  # noqa: E402
 
 cli.add_command(scan)
 cli.add_command(evaluate)
@@ -208,6 +212,15 @@ cli.add_command(migrate)
 cli.add_command(login)
 cli.add_command(mark_stale_closed)
 cli.add_command(ml_gate)
+cli.add_command(mark)
+cli.add_command(archive)
+cli.add_command(note)
+cli.add_command(list_cmd)
+cli.add_command(stats)
+cli.add_command(apply_cmd)
+cli.add_command(apply_history)
+cli.add_command(snapshots)
+cli.add_command(interview)
 
 
 __all__ = [

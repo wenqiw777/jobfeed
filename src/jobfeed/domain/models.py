@@ -37,11 +37,8 @@ class JobStatus(StrEnum):
     NEW = "new"
     SCORED = "scored"
     SHORTLISTED = "shortlisted"
+    AWAITING_REFERRAL = "awaiting_referral"
     APPLIED = "applied"
-    OA = "oa"
-    HR_CALL = "hr_call"
-    SECOND_ROUND = "second_round"
-    FINAL_ROUND = "final_round"
     INTERVIEWING = "interviewing"
     OFFER = "offer"
     REJECTED = "rejected"
@@ -242,8 +239,12 @@ from jobfeed.domain.models_ops import (  # noqa: E402
 )
 from jobfeed.domain.models_status import (  # noqa: E402
     AutoDecayResult,
+    BulkResult,
+    BulkTransitionRequest,
+    StatusFilter,
     StatusInfo,
     StatusTransition,
+    TransitionRequest,
     WorkflowAttention,
     WorkflowAttentionItem,
 )
@@ -254,6 +255,8 @@ __all__ = [
     "AttentionItem",
     "AttentionReport",
     "AutoDecayResult",
+    "BulkResult",
+    "BulkTransitionRequest",
     "CompanyRecord",
     "CostEntry",
     "DigestStats",
@@ -277,8 +280,10 @@ __all__ = [
     "SaveJobResult",
     "StageAResult",
     "StageBResult",
+    "StatusFilter",
     "StatusInfo",
     "StatusTransition",
+    "TransitionRequest",
     "Verdict",
     "WorkflowAttention",
     "WorkflowAttentionItem",

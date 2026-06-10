@@ -21,6 +21,7 @@ from jobfeed.domain.models import (
     StageAResult,
     StageBResult,
     StatusInfo,
+    TransitionRequest,
 )
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.source import (
@@ -241,32 +242,16 @@ class FakeStore:
             result: Gate decision.
         """
 
-    async def transition_status(
-        self,
-        *,
-        job_id: str,
-        new_status: str,
-        reason: str | None = None,
-        resume_variant: str | None = None,
-        force: bool = False,
-        i_mean_it: bool = False,
-        followup_grace_days: int = 7,
-    ) -> str:
+    async def transition_status(self, request: TransitionRequest) -> str:
         """Transition job status.
 
         Args:
-            job_id: Store-assigned job identity.
-            new_status: Target status.
-            reason: Optional reason.
-            resume_variant: Optional variant.
-            force: Bypass graph.
-            i_mean_it: Double-gate for archived → new.
-            followup_grace_days: Days until follow-up.
+            request: Transition parameters.
 
         Returns:
             New status string.
         """
-        return new_status
+        return request.new_status
 
     async def get_status(self, job_id: str) -> StatusInfo | None:
         """Get current status.

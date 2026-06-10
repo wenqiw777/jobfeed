@@ -306,6 +306,7 @@ def _service(  # noqa: PLR0913 - keyword-only test knobs; readability over a wra
     deps = EvaluateDependencies(
         store=store,
         store_ops=store_ops or StubStoreOps(),  # type: ignore[arg-type]
+        store_status=store,  # type: ignore[arg-type]
         prompt_renderer=StubPromptRenderer(),  # type: ignore[arg-type]
         llm_stage_a=MockLLM(),
         llm_stage_b=MockLLM(),

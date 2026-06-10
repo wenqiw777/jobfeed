@@ -16,6 +16,7 @@ from jobfeed.adapters.ml.mock import MockGate
 from jobfeed.adapters.store.postgres import _numeric_job_ids
 from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.models import (
+    AutoDecayResult,
     JobPosting,
     LLMResponse,
     MLGateResult,
@@ -61,6 +62,7 @@ class FakeStore:
         *,
         gate_state: dict[str, str | None] | None = None,
         stage_b_candidates: list[JobPosting] | None = None,
+        decay_result: AutoDecayResult | None = None,
     ) -> None:
         self._candidates = candidates
         # Stage B dry-run candidates surfaced via load_pending_stage_b; empty
@@ -69,6 +71,7 @@ class FakeStore:
         # Persisted ml_gate_result per job id (None unless seeded); surfaced on
         # GateCandidate so the funnel can skip re-gating already-'pass' reps.
         self._gate_state = gate_state or {}
+        self._decay_result = decay_result or AutoDecayResult(ghosted=0, archived=0)
         self.gate_results: list[tuple[str, MLGateResult]] = []
         self.claim_calls: list[list[str]] = []
         self.stage_a_saved: list[str] = []
@@ -76,6 +79,7 @@ class FakeStore:
         self.stage_b_skipped: list[str] = []
         self.pipeline_runs: list[PipelineRun] = []
         self.load_gate_kwargs: list[dict[str, object]] = []
+        self.auto_decay_calls: list[dict[str, int]] = []
 
     async def load_gate_candidates(  # noqa: PLR0913 - mirrors the store port signature
         self,
@@ -175,6 +179,15 @@ class FakeStore:
     async def record_pipeline_run(self, run: PipelineRun) -> None:
         """Record the persisted pipeline run."""
         self.pipeline_runs.append(run)
+
+    async def auto_decay(
+        self, *, ghost_days: int = 30, archive_ignored_days: int = 14
+    ) -> AutoDecayResult:
+        """Record the call and return the configured decay result."""
+        self.auto_decay_calls.append(
+            {"ghost_days": ghost_days, "archive_ignored_days": archive_ignored_days}
+        )
+        return self._decay_result
 
 
 class StubStoreOps:
@@ -292,6 +305,7 @@ def _deps(store: FakeStore, *, gate: MockGate | None, filters: HardFilters | Non
     return EvaluateDependencies(
         store=store,  # type: ignore[arg-type]
         store_ops=StubStoreOps(),  # type: ignore[arg-type]
+        store_status=store,  # type: ignore[arg-type]
         prompt_renderer=StubPromptRenderer(),  # type: ignore[arg-type]
         llm_stage_a=StageALLM(),  # type: ignore[arg-type]
         llm_stage_b=StageALLM(),  # type: ignore[arg-type]
@@ -847,6 +861,109 @@ async def test_dry_run_stage_b_limit_zero_skips_preview_load() -> None:
     await build_dry_run_preview(deps, _config(ml_gate_enabled=True), run, request)
 
     assert run.dry_run_preview == []  # Stage B preview skipped at limit=0
+
+
+# ---------------------------------------------------------------------------
+# Auto-decay wiring tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_decay_called_before_stage_a() -> None:
+    """auto_decay runs BEFORE Stage A scoring, with config defaults (30/14)."""
+    store = FakeStore([_job("a")])
+    service = _service(store, gate=MockGate(), ml_gate_enabled=True)
+
+    run = await service.run(stage="a", corpus="unrated")
+
+    # auto_decay was called exactly once, before any scoring
+    assert len(store.auto_decay_calls) == 1
+    assert store.auto_decay_calls[0] == {
+        "ghost_days": 30,
+        "archive_ignored_days": 14,
+    }
+    # Stage A still scored after decay
+    assert run.stage_a_scored >= 1
+
+
+@pytest.mark.asyncio
+async def test_auto_decay_called_with_custom_thresholds() -> None:
+    """auto_decay uses ghost_days and archive_ignored_days from config."""
+    store = FakeStore([_job("a")])
+    config = EvaluateRuntimeConfig(
+        llm=EvaluateLLMConfig(
+            stage_a="mock-a",
+            stage_b="mock-b",
+            max_concurrent=4,
+            max_daily_score_calls=1000,
+            max_daily_cost_usd=100.0,
+        ),
+        stage_a_threshold=60,
+        resume_text="resume",
+        ml_gate_enabled=True,
+        ml_gate_max_candidates=GATE_MAX_CANDIDATES,
+        ghost_days=45,
+        archive_ignored_days=7,
+    )
+    service = EvaluateService(
+        deps=_deps(store, gate=MockGate(), filters=None),
+        config=config,
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+
+    await service.run(stage="a", corpus="unrated")
+
+    assert store.auto_decay_calls[0] == {
+        "ghost_days": 45,
+        "archive_ignored_days": 7,
+    }
+
+
+@pytest.mark.asyncio
+async def test_auto_decay_with_nonzero_results_logs() -> None:
+    """When decay transitions jobs, the service completes normally."""
+    decay = AutoDecayResult(ghosted=3, archived=1)
+    store = FakeStore([_job("a")], decay_result=decay)
+    service = _service(store, gate=MockGate(), ml_gate_enabled=True)
+
+    run = await service.run(stage="a", corpus="unrated")
+
+    assert len(store.auto_decay_calls) == 1
+    # Service still ran Stage A after decay
+    assert run.stage_a_scored >= 1
+
+
+@pytest.mark.asyncio
+async def test_auto_decay_skipped_on_dry_run() -> None:
+    """auto_decay must NOT run in dry-run mode to avoid mutating the DB."""
+    store = FakeStore([_job("a")])
+    service = _service(store, gate=MockGate(), ml_gate_enabled=True)
+
+    await service.run(stage="a", corpus="unrated", dry_run=True)
+
+    assert len(store.auto_decay_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_auto_decay_called_for_stage_b_only() -> None:
+    """auto_decay runs even when only Stage B is requested."""
+    store = FakeStore([])
+    service = _service(store, gate=MockGate(), ml_gate_enabled=True)
+
+    await service.run(stage="b", corpus="unrated")
+
+    assert len(store.auto_decay_calls) == 1
+
+
+def test_evaluate_service_imports_no_config() -> None:
+    """The evaluate service module must not import jobfeed.config."""
+    from pathlib import Path  # noqa: PLC0415
+
+    source_file = Path(__file__).resolve().parents[2] / (
+        "src/jobfeed/services/evaluate.py"
+    )
+    source = source_file.read_text()
+    assert "jobfeed.config" not in source, "evaluate.py must not import jobfeed.config"
 
 
 def test_numeric_job_ids_coerces_valid_and_skips_malformed() -> None:

@@ -18,6 +18,8 @@ from jobfeed.domain.models import (
     ResumeSnapshot,
     StageAResult,
     StageBResult,
+    StatusFilter,
+    TransitionRequest,
     Verdict,
 )
 from jobfeed.domain.scoring import parse_stage_b_response
@@ -214,7 +216,7 @@ async def _insert_scored_job(
     """
     job_id, _ = await _insert_job(store, canonical_id, **overrides)
     await store.save_stage_a(job_id, _make_stage_a(score))
-    await store.transition_status(job_id=job_id, new_status="scored")
+    await store.transition_status(TransitionRequest(job_id=job_id, new_status="scored"))
     return job_id
 
 
@@ -473,8 +475,12 @@ class TestStatusLifecycle:
         """Valid transition sequence new -> scored -> shortlisted -> applied."""
         job_id = await _insert_scored_job(contract_store, "happy-path")
 
-        await contract_store.transition_status(job_id=job_id, new_status="shortlisted")
-        await contract_store.transition_status(job_id=job_id, new_status="applied")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="shortlisted")
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="applied")
+        )
 
         status = await contract_store.get_status(job_id)
         assert status is not None
@@ -485,13 +491,15 @@ class TestStatusLifecycle:
         job_id, _ = await _insert_job(contract_store, "invalid-t")
         # new -> offer is not in ALLOWED_TRANSITIONS
         with pytest.raises(ValueError, match="not allowed"):
-            await contract_store.transition_status(job_id=job_id, new_status="offer")
+            await contract_store.transition_status(
+                TransitionRequest(job_id=job_id, new_status="offer")
+            )
 
     async def test_forced_transition_succeeds(self, contract_store):
         """Invalid transition with force=True should succeed."""
         job_id, _ = await _insert_job(contract_store, "force-t")
         result = await contract_store.transition_status(
-            job_id=job_id, new_status="offer", force=True
+            TransitionRequest(job_id=job_id, new_status="offer", force=True)
         )
         assert result == "offer"
 
@@ -502,8 +510,12 @@ class TestStatusLifecycle:
     async def test_transition_to_applied_sets_followup(self, contract_store):
         """Transition to applied should set next_followup_at."""
         job_id = await _insert_scored_job(contract_store, "followup-t")
-        await contract_store.transition_status(job_id=job_id, new_status="shortlisted")
-        await contract_store.transition_status(job_id=job_id, new_status="applied")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="shortlisted")
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="applied")
+        )
 
         status = await contract_store.get_status(job_id)
         assert status is not None
@@ -513,32 +525,36 @@ class TestStatusLifecycle:
         """archived -> new with force but no i_mean_it should raise."""
         job_id = await _insert_scored_job(contract_store, "double-gate")
         await contract_store.transition_status(
-            job_id=job_id, new_status="archived", force=True
+            TransitionRequest(job_id=job_id, new_status="archived", force=True)
         )
 
         with pytest.raises(ValueError, match="i_mean_it"):
             await contract_store.transition_status(
-                job_id=job_id, new_status="new", force=True
+                TransitionRequest(job_id=job_id, new_status="new", force=True)
             )
 
     async def test_archived_to_new_with_double_gate(self, contract_store):
         """archived -> new with force and i_mean_it should succeed."""
         job_id = await _insert_scored_job(contract_store, "double-gate-ok")
         await contract_store.transition_status(
-            job_id=job_id, new_status="archived", force=True
+            TransitionRequest(job_id=job_id, new_status="archived", force=True)
         )
 
         result = await contract_store.transition_status(
-            job_id=job_id, new_status="new", force=True, i_mean_it=True
+            TransitionRequest(
+                job_id=job_id, new_status="new", force=True, i_mean_it=True
+            )
         )
         assert result == "new"
 
     async def test_restore_from_archived(self, contract_store):
         """restore_from_archived should return job to pre-archive status."""
         job_id = await _insert_scored_job(contract_store, "restore-1")
-        await contract_store.transition_status(job_id=job_id, new_status="shortlisted")
         await contract_store.transition_status(
-            job_id=job_id, new_status="archived", force=True
+            TransitionRequest(job_id=job_id, new_status="shortlisted")
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="archived", force=True)
         )
 
         restored = await contract_store.restore_from_archived(job_id)
@@ -551,8 +567,12 @@ class TestStatusLifecycle:
     async def test_auto_decay_returns_result(self, contract_store):
         """auto_decay should return AutoDecayResult with ghosted/archived counts."""
         job_id = await _insert_scored_job(contract_store, "decay-result")
-        await contract_store.transition_status(job_id=job_id, new_status="shortlisted")
-        await contract_store.transition_status(job_id=job_id, new_status="applied")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="shortlisted")
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="applied")
+        )
 
         # With large thresholds, nothing should decay
         result = await contract_store.auto_decay(
@@ -571,7 +591,7 @@ class TestStatusLifecycle:
         """auto_decay should not archive recently-ignored jobs."""
         job_id = await _insert_scored_job(contract_store, "decay-fresh")
         await contract_store.transition_status(
-            job_id=job_id, new_status="ignored", force=True
+            TransitionRequest(job_id=job_id, new_status="ignored", force=True)
         )
 
         # Large threshold: freshly-ignored should not be archived
@@ -598,14 +618,21 @@ class TestStatusLifecycle:
     async def test_forward_only_interview_stages(self, contract_store):
         """Interview stage transitions should be forward-only."""
         job_id = await _insert_scored_job(contract_store, "interview-order")
-        await contract_store.transition_status(job_id=job_id, new_status="shortlisted")
-        await contract_store.transition_status(job_id=job_id, new_status="applied")
-        await contract_store.transition_status(job_id=job_id, new_status="oa")
-        await contract_store.transition_status(job_id=job_id, new_status="hr_call")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="shortlisted")
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="applied")
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="interviewing")
+        )
 
-        # hr_call -> oa is not allowed (backward)
+        # interviewing -> applied is not allowed (backward)
         with pytest.raises(ValueError, match="not allowed"):
-            await contract_store.transition_status(job_id=job_id, new_status="oa")
+            await contract_store.transition_status(
+                TransitionRequest(job_id=job_id, new_status="applied")
+            )
 
 
 # ===========================================================================
@@ -723,7 +750,9 @@ class TestApplicationAudit:
         await contract_store.record_application(
             ApplicationRecord(job_id=job_b, applied_at=FIXED_TIME)
         )
-        await contract_store.transition_status(job_id=job_a, new_status="oa")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_a, new_status="interviewing")
+        )
 
         stats = await contract_store.application_stats(
             since_days_ago=365, by_resume=True
@@ -745,7 +774,9 @@ class TestApplicationAudit:
         )
         assert first is True
 
-        await contract_store.transition_status(job_id=job_id, new_status="rejected")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="rejected")
+        )
 
         again = await contract_store.record_application(
             ApplicationRecord(job_id=job_id, applied_at=FIXED_TIME + timedelta(hours=1))
@@ -1163,12 +1194,18 @@ class TestStatusListing:
     async def test_filter_by_status(self, contract_store):
         """list_statuses(statuses={'applied'}) returns only applied jobs."""
         job_id = await _insert_scored_job(contract_store, "ls-applied")
-        await contract_store.transition_status(job_id=job_id, new_status="shortlisted")
-        await contract_store.transition_status(job_id=job_id, new_status="applied")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="shortlisted")
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="applied")
+        )
 
         await _insert_scored_job(contract_store, "ls-scored")
 
-        results = await contract_store.list_statuses(statuses=frozenset({"applied"}))
+        results = await contract_store.list_statuses(
+            StatusFilter(statuses=frozenset({"applied"}))
+        )
         statuses = {r.status for r in results}
         assert "applied" in statuses
         assert "scored" not in statuses
@@ -1177,7 +1214,7 @@ class TestStatusListing:
         """list_statuses(days=7) returns recent status changes."""
         job_id, _ = await _insert_job(contract_store, "ls-days")
 
-        results = await contract_store.list_statuses(days=7)
+        results = await contract_store.list_statuses(StatusFilter(days=7))
         job_ids = {r.job_id for r in results}
         assert job_id in job_ids
 
@@ -1186,7 +1223,9 @@ class TestStatusListing:
         job_id, _ = await _insert_job(contract_store, "ls-notes")
         await contract_store.append_note(job_id=job_id, text="recruiter called back")
 
-        results = await contract_store.list_statuses(notes_contain="recruiter")
+        results = await contract_store.list_statuses(
+            StatusFilter(notes_contain="recruiter")
+        )
         job_ids = {r.job_id for r in results}
         assert job_id in job_ids
 
@@ -1195,7 +1234,9 @@ class TestStatusListing:
         job_id, _ = await _insert_job(contract_store, "ls-no-match")
         await contract_store.append_note(job_id=job_id, text="sent follow-up email")
 
-        results = await contract_store.list_statuses(notes_contain="recruiter")
+        results = await contract_store.list_statuses(
+            StatusFilter(notes_contain="recruiter")
+        )
         job_ids = {r.job_id for r in results}
         assert job_id not in job_ids
 
@@ -1204,21 +1245,25 @@ class TestStatusListing:
         for i in range(LIST_LIMIT_SMALL + 2):
             await _insert_job(contract_store, f"ls-limit-{i}")
 
-        results = await contract_store.list_statuses(limit=LIST_LIMIT_SMALL)
+        results = await contract_store.list_statuses(
+            StatusFilter(limit=LIST_LIMIT_SMALL)
+        )
         assert len(results) <= LIST_LIMIT_SMALL
 
     async def test_filter_needs_followup(self, contract_store):
         """list_statuses(needs_followup=True) returns jobs with past followup date."""
         job_id = await _insert_scored_job(contract_store, "ls-followup")
-        await contract_store.transition_status(job_id=job_id, new_status="shortlisted")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="shortlisted")
+        )
         # Transition to applied sets followup in the future
         await contract_store.transition_status(
-            job_id=job_id,
-            new_status="applied",
-            followup_grace_days=0,
+            TransitionRequest(
+                job_id=job_id, new_status="applied", followup_grace_days=0
+            )
         )
 
-        results = await contract_store.list_statuses(needs_followup=True)
+        results = await contract_store.list_statuses(StatusFilter(needs_followup=True))
         job_ids = {r.job_id for r in results}
         assert job_id in job_ids
 

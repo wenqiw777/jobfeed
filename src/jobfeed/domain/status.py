@@ -7,11 +7,8 @@ STATUS_VALUES: frozenset[str] = frozenset(
         "new",
         "scored",
         "shortlisted",
+        "awaiting_referral",
         "applied",
-        "oa",
-        "hr_call",
-        "second_round",
-        "final_round",
         "interviewing",
         "offer",
         "rejected",
@@ -23,41 +20,12 @@ STATUS_VALUES: frozenset[str] = frozenset(
 
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "new": frozenset({"scored"}),
-    "scored": frozenset({"shortlisted", "applied", "archived", "ignored"}),
-    "shortlisted": frozenset({"applied", "archived"}),
-    "applied": frozenset(
-        {
-            "oa",
-            "hr_call",
-            "second_round",
-            "final_round",
-            "interviewing",
-            "rejected",
-            "ghosted",
-            "offer",
-        }
+    "scored": frozenset(
+        {"shortlisted", "awaiting_referral", "applied", "archived", "ignored"},
     ),
-    "oa": frozenset(
-        {
-            "hr_call",
-            "second_round",
-            "final_round",
-            "offer",
-            "rejected",
-            "ghosted",
-        }
-    ),
-    "hr_call": frozenset(
-        {
-            "second_round",
-            "final_round",
-            "offer",
-            "rejected",
-            "ghosted",
-        }
-    ),
-    "second_round": frozenset({"final_round", "offer", "rejected", "ghosted"}),
-    "final_round": frozenset({"offer", "rejected", "ghosted"}),
+    "shortlisted": frozenset({"awaiting_referral", "applied", "archived"}),
+    "awaiting_referral": frozenset({"applied", "archived"}),
+    "applied": frozenset({"interviewing", "offer", "rejected", "ghosted"}),
     "interviewing": frozenset({"offer", "rejected", "ghosted"}),
     "ignored": frozenset(),
     "archived": frozenset(),
@@ -76,16 +44,7 @@ _TERMINAL: frozenset[str] = frozenset(
     }
 )
 
-DECAY_SOURCES: frozenset[str] = frozenset(
-    {
-        "applied",
-        "interviewing",
-        "oa",
-        "hr_call",
-        "second_round",
-        "final_round",
-    }
-)
+DECAY_SOURCES: frozenset[str] = frozenset({"applied", "interviewing"})
 
 # Statuses where an application is still active (post-submit, pre-terminal).
 # Identical to DECAY_SOURCES: an application is "active" exactly while it remains
@@ -93,15 +52,7 @@ DECAY_SOURCES: frozenset[str] = frozenset(
 ACTIVE_APPLICATION_STATUSES: frozenset[str] = DECAY_SOURCES
 
 RESPONSE_STATUSES: frozenset[str] = frozenset(
-    {
-        "interviewing",
-        "oa",
-        "hr_call",
-        "second_round",
-        "final_round",
-        "offer",
-        "rejected",
-    }
+    {"interviewing", "offer", "rejected"},
 )
 
 # Status-decay / follow-up policy defaults. Single source of truth for the
@@ -109,6 +60,10 @@ RESPONSE_STATUSES: frozenset[str] = frozenset(
 DEFAULT_FOLLOWUP_GRACE_DAYS = 7
 DEFAULT_GHOST_DAYS = 30
 DEFAULT_ARCHIVE_IGNORED_DAYS = 14
+
+# Reason constants for bulk operations.
+REASON_BULK_SELECTED = "bulk"
+REASON_BULK_CASCADE = "bulk-cascade"
 
 
 def is_terminal(status: str) -> bool:
@@ -121,6 +76,39 @@ def is_terminal(status: str) -> bool:
         True if the status is terminal.
     """
     return status in _TERMINAL
+
+
+_RETIRED_TO_LIVE: dict[str, str] = {
+    "oa": "interviewing",
+    "hr_call": "interviewing",
+    "second_round": "interviewing",
+    "final_round": "interviewing",
+}
+
+_RESTORE_SKIP: frozenset[str] = frozenset({"ghosted", "archived"})
+
+
+def pick_restore_target(history: list[str]) -> str | None:
+    """Find the most recent restorable status from a history.
+
+    Skips only ghosted and archived (the states we are restoring FROM).
+    Other terminal statuses like ignored, rejected, offer are valid restore
+    targets — an archived-ignored job should restore to ignored, not further
+    back. Retired statuses are mapped to their Phase 6 equivalent.
+
+    Args:
+        history: List of to_status strings, newest-first.
+
+    Returns:
+        The first valid restorable status, or None if none qualify.
+    """
+    for status in history:
+        mapped = _RETIRED_TO_LIVE.get(status, status)
+        if mapped in _RESTORE_SKIP:
+            continue
+        if mapped in STATUS_VALUES:
+            return mapped
+    return None
 
 
 def validate_transition(
@@ -172,8 +160,11 @@ __all__ = [
     "DEFAULT_ARCHIVE_IGNORED_DAYS",
     "DEFAULT_FOLLOWUP_GRACE_DAYS",
     "DEFAULT_GHOST_DAYS",
+    "REASON_BULK_CASCADE",
+    "REASON_BULK_SELECTED",
     "RESPONSE_STATUSES",
     "STATUS_VALUES",
     "is_terminal",
+    "pick_restore_target",
     "validate_transition",
 ]

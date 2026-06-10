@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from jobfeed.adapters.ml.xgboost_gate import XGBoostGate
+from jobfeed.adapters.ml.xgboost_gate import EmbedderConfig, XGBoostGate
 from jobfeed.ports.ml_gate import GateInput, MLGate
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -129,7 +129,7 @@ def test_configured_embedding_model_must_match_meta(tmp_path: Path) -> None:
         XGBoostGate(
             model_dir=model_dir,
             embedder=None,
-            embedding_model="BAAI/bge-small-en-v1.5",
+            embedder_config=EmbedderConfig(model_name="BAAI/bge-small-en-v1.5"),
         )
 
 

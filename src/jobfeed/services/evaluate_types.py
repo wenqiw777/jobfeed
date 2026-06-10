@@ -10,6 +10,7 @@ from jobfeed.ports.ml_gate import MLGate
 from jobfeed.ports.prompts import PromptRenderer
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ops import StoreOpsMixin
+from jobfeed.ports.store_status import StoreStatusMixin
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -18,6 +19,7 @@ class EvaluateDependencies:
 
     store: JobStore
     store_ops: StoreOpsMixin
+    store_status: StoreStatusMixin
     prompt_renderer: PromptRenderer
     llm_stage_a: LLMClient
     llm_stage_b: LLMClient
@@ -46,6 +48,8 @@ class EvaluateRuntimeConfig:
     resume_text: str
     ml_gate_enabled: bool = False
     ml_gate_max_candidates: int = 5000
+    ghost_days: int = 30
+    archive_ignored_days: int = 14
 
 
 __all__ = ["EvaluateDependencies", "EvaluateLLMConfig", "EvaluateRuntimeConfig"]
