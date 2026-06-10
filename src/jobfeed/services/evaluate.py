@@ -58,16 +58,24 @@ class EvaluateService:
         max_days: int | None = None,
         dry_run: bool = False,
     ) -> PipelineRun:
-        """Evaluate pending jobs and persist run counters.
+        """Evaluate pending jobs, persist run counters.
 
         Args:
-            stage: "both"/"a"/"b"; corpus: "unrated"/"all"/"failed"; limit caps
-                jobs per stage; max_days filters freshness; dry_run skips LLM calls.
-
-        Returns:
-            Recorded pipeline run with counters.
+            stage: "both"/"a"/"b". corpus/limit/max_days/dry_run: filter knobs.
+        Returns: Recorded pipeline run with counters.
         """
         validate_evaluate_stage(stage)
+        if not dry_run:
+            decay = await self._deps.store_status.auto_decay(
+                ghost_days=self._config.ghost_days,
+                archive_ignored_days=self._config.archive_ignored_days,
+            )
+            if decay.ghosted or decay.archived:
+                self._logger.info(
+                    "auto_decay_sweep",
+                    ghosted=decay.ghosted,
+                    archived=decay.archived,
+                )
         run = start_pipeline_run("evaluate")
         bind_run_id(run.run_id)
         lim = 100 if limit is None else limit
@@ -90,8 +98,7 @@ class EvaluateService:
     ) -> None:
         if limit <= 0:
             return  # "max jobs"=0 means do no funnel work (mirrors _run_stage_b)
-        # Budget BEFORE the funnel: an exhausted budget runs no Stage A call, so
-        # the candidate load + ML gate would be wasted (Stage B gates first too).
+        # Budget check before funnel: exhausted budget wastes gate + load work.
         if not await self._budget.has_budget():
             return
         survivors = await run_funnel(
@@ -138,11 +145,7 @@ class EvaluateService:
             await self._deps.store.mark_stage_b_skipped(job_id)
 
     async def _call_parse_a(
-        self,
-        job_id: str,
-        req: LLMRequest,
-        bundle: PromptBundle,
-        run: PipelineRun,
+        self, job_id: str, req: LLMRequest, bundle: PromptBundle, run: PipelineRun
     ) -> StageAResult | None:
         for attempt in range(2):
             ledger_day = await self._budget.reserve()

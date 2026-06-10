@@ -362,6 +362,7 @@ def _make_deps(
     return EvaluateDependencies(
         store=store,
         store_ops=ops,  # type: ignore[arg-type]
+        store_status=store,  # type: ignore[arg-type]
         prompt_renderer=StubPromptRenderer(),  # type: ignore[arg-type]
         llm_stage_a=llm,  # type: ignore[arg-type]
         llm_stage_b=llm,  # type: ignore[arg-type]
