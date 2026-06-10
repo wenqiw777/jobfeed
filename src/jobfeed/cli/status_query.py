@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from typing import cast
 
 import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
+from jobfeed.cli._window import parse_window_back
 from jobfeed.domain.models_status import StatusFilter, StatusInfo
+from jobfeed.domain.status import LIST_DEFAULT_STATUSES
 from jobfeed.services.application import ApplicationService, ApplicationStore
 from jobfeed.services.workflow import WorkflowStore
+
+_COMPANY_WIDTH = 24
+_TITLE_WIDTH = 40
 
 # ── list ──────────────────────────────────────────────────────────────
 
@@ -21,7 +27,13 @@ from jobfeed.services.workflow import WorkflowStore
     "--status",
     "status_filter",
     default=None,
-    help="Comma-separated status values to filter by.",
+    help="Comma-separated status values, or 'all' for every status.",
+)
+@click.option(
+    "--days",
+    "days_window",
+    default=None,
+    help="Status changed within: Nd (days), Nw (weeks), or since YYYY-MM-DD.",
 )
 @click.option(
     "--needs-followup",
@@ -35,29 +47,42 @@ from jobfeed.services.workflow import WorkflowStore
     type=int,
     help="Applied/interviewing but silent for N days.",
 )
+@click.option(
+    "--notes-contain",
+    "notes_contain",
+    default=None,
+    help="Only jobs whose notes contain this text (case-insensitive).",
+)
+@click.option(
+    "--limit",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Maximum rows to show.",
+)
+@click.option(
+    "--allow-empty",
+    is_flag=True,
+    help="Exit 0 even when no jobs match.",
+)
 @click.option("--md", "markdown", is_flag=True, help="Markdown table output.")
 @click.option("--json", "as_json", is_flag=True, help="JSON array output.")
 @click.pass_context
 def list_cmd(ctx: click.Context, /, **kwargs: object) -> None:
-    """List jobs filtered by status and follow-up state.
+    """List jobs filtered by status, recency, notes, and follow-up state.
 
     Args:
         ctx: Click invocation context.
         kwargs: Click option values keyed by option name.
     """
     app = require_app(ctx)
-    status_filter = cast(str | None, kwargs["status_filter"])
-    statuses: frozenset[str] | None = None
-    if status_filter:
-        statuses = frozenset(s.strip() for s in status_filter.split(","))
-    rows = asyncio.run(
-        _run_list(
-            app,
-            statuses=statuses,
-            needs_followup=cast(bool, kwargs["needs_followup"]),
-            no_response_days=cast(int | None, kwargs["no_response_days"]),
-        )
-    )
+    filters = _build_filter(kwargs)
+    rows = asyncio.run(_run_list(app, filters))
+    if not rows:
+        click.echo("No matching jobs.", err=True)
+        if not cast(bool, kwargs["allow_empty"]):
+            ctx.exit(1)
+        # --allow-empty: fall through so --json still emits [] and plain
+        # prints nothing.
     if cast(bool, kwargs["as_json"]):
         _print_json(rows)
     elif cast(bool, kwargs["markdown"]):
@@ -66,24 +91,52 @@ def list_cmd(ctx: click.Context, /, **kwargs: object) -> None:
         _print_plain(rows)
 
 
-async def _run_list(
-    app: AppContext,
-    *,
-    statuses: frozenset[str] | None,
-    needs_followup: bool,
-    no_response_days: int | None,
-) -> list[StatusInfo]:
+def _build_filter(opts: dict[str, object]) -> StatusFilter:
+    """Translate CLI options into a store StatusFilter.
+
+    --days passes through parse_window_back as an exact ``since`` cutoff:
+    now-N for Nd/Nw, and midnight UTC for a YYYY-MM-DD date.
+    """
+    raw_window = cast(str | None, opts["days_window"])
+    return StatusFilter(
+        statuses=_parse_statuses(cast(str | None, opts["status_filter"])),
+        since=parse_window_back(raw_window) if raw_window is not None else None,
+        no_response_days=cast(int | None, opts["no_response_days"]),
+        needs_followup=cast(bool, opts["needs_followup"]),
+        notes_contain=cast(str | None, opts["notes_contain"]),
+        limit=cast(int | None, opts["limit"]),
+    )
+
+
+def _parse_statuses(raw: str | None) -> frozenset[str] | None:
+    """Resolve --status into a status filter set.
+
+    Absent applies LIST_DEFAULT_STATUSES (hides new/archived); 'all' is the
+    explicit no-filter escape hatch (legacy parity).
+    """
+    if raw is None:
+        return LIST_DEFAULT_STATUSES
+    values = frozenset(s.strip() for s in raw.split(",") if s.strip())
+    if "all" in values:
+        return None
+    return values or LIST_DEFAULT_STATUSES
+
+
+async def _run_list(app: AppContext, filters: StatusFilter) -> list[StatusInfo]:
     async def action() -> list[StatusInfo]:
         store = cast(WorkflowStore, app["store"])
-        return await store.list_statuses(
-            StatusFilter(
-                statuses=statuses,
-                needs_followup=needs_followup,
-                no_response_days=no_response_days,
-            )
-        )
+        return await store.list_statuses(filters)
 
     return await run_with_store(app, action)
+
+
+def _clip(text: str | None, width: int) -> str:
+    """Hard-truncate to width chars (legacy tabular parity)."""
+    return (text or "")[:width]
+
+
+def _fmt_date(dt: datetime | None) -> str:
+    return dt.date().isoformat() if dt else ""
 
 
 def _print_json(rows: list[StatusInfo]) -> None:
@@ -91,6 +144,9 @@ def _print_json(rows: list[StatusInfo]) -> None:
         {
             "id": r.job_id,
             "status": str(r.status),
+            "company": r.company,
+            "title": r.title,
+            "last_status_change_at": r.last_status_change_at.isoformat(),
             "next_followup_at": (
                 r.next_followup_at.isoformat() if r.next_followup_at else None
             ),
@@ -101,19 +157,26 @@ def _print_json(rows: list[StatusInfo]) -> None:
 
 
 def _print_markdown(rows: list[StatusInfo]) -> None:
-    click.echo("| id | status | next_followup_at |")
-    click.echo("|----|--------|------------------|")
+    click.echo("| id | status | company | title | last_change | followup |")
+    click.echo("|----|--------|---------|-------|-------------|----------|")
     for r in rows:
-        fu = r.next_followup_at.isoformat() if r.next_followup_at else ""
-        click.echo(f"| {r.job_id} | {r.status} | {fu} |")
+        click.echo(
+            f"| {r.job_id} | {r.status} | {_clip(r.company, _COMPANY_WIDTH)} "
+            f"| {_clip(r.title, _TITLE_WIDTH)} "
+            f"| {_fmt_date(r.last_status_change_at)} "
+            f"| {_fmt_date(r.next_followup_at)} |"
+        )
 
 
 def _print_plain(rows: list[StatusInfo]) -> None:
     for r in rows:
-        fu_str = ""
-        if r.next_followup_at:
-            fu_str = f"  followup={r.next_followup_at.isoformat()}"
-        click.echo(f"{r.job_id}  {r.status}{fu_str}")
+        click.echo(
+            f"{r.job_id:>6}  {r.status:<12}  "
+            f"{_clip(r.company, _COMPANY_WIDTH):<{_COMPANY_WIDTH}}  "
+            f"{_clip(r.title, _TITLE_WIDTH):<{_TITLE_WIDTH}}  "
+            f"{_fmt_date(r.last_status_change_at)}  "
+            f"{_fmt_date(r.next_followup_at)}"
+        )
 
 
 # ── stats ─────────────────────────────────────────────────────────────

@@ -193,10 +193,11 @@ def _create_store(settings: Settings) -> JobStore:
     return PostgresStore(dsn)
 
 
-from jobfeed.cli.apply import apply_cmd, apply_history, snapshots  # noqa: E402
+from jobfeed.cli.apply import apply_cmd, apply_history  # noqa: E402
 from jobfeed.cli.bootstrap import bootstrap_companies  # noqa: E402
 from jobfeed.cli.companies import companies  # noqa: E402
 from jobfeed.cli.digest import digest  # noqa: E402
+from jobfeed.cli.enrich import enrich_paste  # noqa: E402
 from jobfeed.cli.evaluate import evaluate  # noqa: E402
 from jobfeed.cli.interview import interview  # noqa: E402
 from jobfeed.cli.login import login  # noqa: E402
@@ -204,7 +205,8 @@ from jobfeed.cli.maintenance import mark_stale_closed  # noqa: E402
 from jobfeed.cli.migrate import migrate  # noqa: E402
 from jobfeed.cli.ml_gate import ml_gate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
-from jobfeed.cli.status import archive, mark, note  # noqa: E402
+from jobfeed.cli.snapshots import snapshots  # noqa: E402
+from jobfeed.cli.status import archive, followup, mark, note  # noqa: E402
 from jobfeed.cli.status_query import list_cmd, stats  # noqa: E402
 
 cli.add_command(scan)
@@ -217,11 +219,13 @@ cli.add_command(ml_gate)
 cli.add_command(mark)
 cli.add_command(archive)
 cli.add_command(note)
+cli.add_command(followup)
 cli.add_command(list_cmd)
 cli.add_command(stats)
 cli.add_command(apply_cmd)
 cli.add_command(apply_history)
 cli.add_command(snapshots)
+cli.add_command(enrich_paste)
 cli.add_command(interview)
 cli.add_command(companies)
 cli.add_command(bootstrap_companies)

@@ -7,7 +7,7 @@ import asyncio
 import importlib
 import pathlib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -433,6 +433,34 @@ class TestNote:
             job_id="42",
             text="recruiter emailed back",
         )
+
+
+# ---------------------------------------------------------------------------
+# set_followup
+# ---------------------------------------------------------------------------
+
+
+class TestSetFollowup:
+    """Tests for WorkflowService.set_followup."""
+
+    def test_set_followup_delegates_to_store(self) -> None:
+        """set_followup should forward job_id and at to the store."""
+        store = _make_store()
+        store.set_followup.return_value = True
+        svc = _svc(store)
+        at = datetime(2026, 6, 17, tzinfo=UTC)
+        result = asyncio.run(svc.set_followup(job_id="42", at=at))
+        assert result is True
+        store.set_followup.assert_awaited_once_with(job_id="42", at=at)
+
+    def test_set_followup_missing_job_returns_false(self) -> None:
+        """A store miss (no status row) should surface as False."""
+        store = _make_store()
+        store.set_followup.return_value = False
+        svc = _svc(store)
+        at = datetime(2026, 6, 17, tzinfo=UTC)
+        result = asyncio.run(svc.set_followup(job_id="999", at=at))
+        assert result is False
 
 
 # ---------------------------------------------------------------------------

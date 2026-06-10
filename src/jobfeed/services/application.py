@@ -23,6 +23,7 @@ class ApplyRequest:
     cover_letter: str | None = None
     variant: str | None = None
     application_method: str | None = None
+    notes: str | None = None
     verdict_snapshot: str | None = None
     fit_snapshot: str | None = None
     hooks_snapshot: str | None = None
@@ -31,6 +32,23 @@ class ApplyRequest:
 @runtime_checkable
 class ApplicationStore(StoreApplicationMixin, Protocol):
     """Combined store capability required by ApplicationService."""
+
+    async def compute_reapply_notice(
+        self,
+        *,
+        job_id: str,
+        lookback_days: int = 60,
+    ) -> str | None:
+        """Detect an active application at the same company.
+
+        Args:
+            job_id: Job to check (excluded from the search itself).
+            lookback_days: How far back to look.
+
+        Returns:
+            Notice string if detected, else None.
+        """
+        ...
 
 
 class ApplicationService:
@@ -78,6 +96,7 @@ class ApplicationService:
             tailored_resume_hash=tailored_hash,
             cover_letter=req.cover_letter,
             application_method=req.application_method,
+            notes=req.notes,
             verdict_snapshot=req.verdict_snapshot,
             fit_snapshot=req.fit_snapshot,
             hooks_snapshot=req.hooks_snapshot,
@@ -108,16 +127,39 @@ class ApplicationService:
         """
         return await self._store.get_application(job_id)
 
-    async def apply_history(self, *, limit: int = 100) -> list[ApplicationRecord]:
+    async def apply_history(
+        self,
+        *,
+        limit: int = 100,
+        resume_hash_prefix: str | None = None,
+    ) -> list[ApplicationRecord]:
         """List recent application records.
 
         Args:
             limit: Maximum number of records to return.
+            resume_hash_prefix: Optional literal resume-hash prefix filter.
 
         Returns:
             Application records ordered by recency.
         """
-        return await self._store.list_applications(limit=limit)
+        return await self._store.list_applications(
+            limit=limit,
+            resume_hash_prefix=resume_hash_prefix,
+        )
+
+    async def reapply_notice(self, job_id: str) -> str | None:
+        """Same-company active-application notice for a just-applied job.
+
+        The store method excludes *job_id* itself, so calling this right
+        after a successful apply is safe.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Human-readable notice, or None when no active sibling exists.
+        """
+        return await self._store.compute_reapply_notice(job_id=job_id)
 
     async def stats(
         self,

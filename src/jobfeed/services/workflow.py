@@ -165,6 +165,21 @@ class WorkflowService:
         await self._store.append_note(job_id=job_id, text=text)
         self._logger.info("workflow_note_appended", job_id=job_id)
 
+    async def set_followup(self, *, job_id: str, at: datetime) -> bool:
+        """Set the next follow-up time for a job.
+
+        Args:
+            job_id: Store-assigned job identity.
+            at: When the next follow-up is due.
+
+        Returns:
+            True if updated, False when the job has no status row.
+        """
+        was_set = await self._store.set_followup(job_id=job_id, at=at)
+        if was_set:
+            self._logger.info("workflow_followup_set", job_id=job_id)
+        return was_set
+
     async def add_round(
         self,
         job_id: str,

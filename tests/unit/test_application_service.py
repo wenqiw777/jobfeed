@@ -142,6 +142,22 @@ class TestApply:
         assert record.cover_letter == "Dear Hiring Manager..."
         assert record.application_method == "website"
 
+    def test_apply_passes_notes(self) -> None:
+        """notes should appear on the persisted record."""
+        store = _make_store()
+        svc = _svc(store)
+        asyncio.run(svc.apply(_req(notes="via Sam")))
+        record = store.record_application_with_snapshots.call_args.args[0]
+        assert record.notes == "via Sam"
+
+    def test_apply_without_notes_defaults_none(self) -> None:
+        """notes should default to None on the record."""
+        store = _make_store()
+        svc = _svc(store)
+        asyncio.run(svc.apply(_req()))
+        record = store.record_application_with_snapshots.call_args.args[0]
+        assert record.notes is None
+
     def test_apply_passes_evaluation_snapshots(self) -> None:
         """verdict/fit/hooks snapshots should appear on the record."""
         store = _make_store()
@@ -174,14 +190,55 @@ class TestApplyHistory:
         store = _make_store()
         svc = _svc(store)
         asyncio.run(svc.apply_history(limit=50))
-        store.list_applications.assert_awaited_once_with(limit=50)
+        store.list_applications.assert_awaited_once_with(
+            limit=50,
+            resume_hash_prefix=None,
+        )
 
     def test_apply_history_default_limit(self) -> None:
         """apply_history without limit should use 100."""
         store = _make_store()
         svc = _svc(store)
         asyncio.run(svc.apply_history())
-        store.list_applications.assert_awaited_once_with(limit=100)
+        store.list_applications.assert_awaited_once_with(
+            limit=100,
+            resume_hash_prefix=None,
+        )
+
+    def test_apply_history_passes_resume_hash_prefix(self) -> None:
+        """apply_history should forward the resume hash prefix filter."""
+        store = _make_store()
+        svc = _svc(store)
+        asyncio.run(svc.apply_history(limit=10, resume_hash_prefix="abc1"))
+        store.list_applications.assert_awaited_once_with(
+            limit=10,
+            resume_hash_prefix="abc1",
+        )
+
+
+# ---------------------------------------------------------------------------
+# reapply_notice
+# ---------------------------------------------------------------------------
+
+
+class TestReapplyNotice:
+    """Tests for ApplicationService.reapply_notice."""
+
+    def test_reapply_notice_delegates_to_store(self) -> None:
+        """reapply_notice should forward job_id to compute_reapply_notice."""
+        store = _make_store()
+        store.compute_reapply_notice.return_value = "Active application at acme"
+        svc = _svc(store)
+        result = asyncio.run(svc.reapply_notice("42"))
+        assert result == "Active application at acme"
+        store.compute_reapply_notice.assert_awaited_once_with(job_id="42")
+
+    def test_reapply_notice_none_passthrough(self) -> None:
+        """A None store result should pass through unchanged."""
+        store = _make_store()
+        store.compute_reapply_notice.return_value = None
+        svc = _svc(store)
+        assert asyncio.run(svc.reapply_notice("42")) is None
 
 
 # ---------------------------------------------------------------------------
