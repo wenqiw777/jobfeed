@@ -5,6 +5,7 @@ from __future__ import annotations
 from jobfeed.domain.status import (
     ALLOWED_TRANSITIONS,
     DECAY_SOURCES,
+    LIST_DEFAULT_STATUSES,
     RESPONSE_STATUSES,
     STATUS_VALUES,
     is_terminal,
@@ -24,6 +25,13 @@ def test_status_values_contains_all_11() -> None:
 def test_allowed_transitions_covers_all_statuses() -> None:
     """Every status must have an entry in ALLOWED_TRANSITIONS."""
     assert set(ALLOWED_TRANSITIONS.keys()) == STATUS_VALUES
+
+
+def test_list_default_statuses_is_all_minus_new_and_archived() -> None:
+    """LIST_DEFAULT_STATUSES is the live status set minus new/archived."""
+    expected = STATUS_VALUES - {"new", "archived"}
+    assert expected == LIST_DEFAULT_STATUSES
+    assert len(LIST_DEFAULT_STATUSES) == EXPECTED_STATUS_COUNT - 2
 
 
 def test_valid_transition_scored_to_shortlisted() -> None:

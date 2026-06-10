@@ -8,6 +8,7 @@ implements this as an optional capability alongside the core JobStore.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import (
@@ -82,8 +83,8 @@ class StoreStatusMixin(Protocol):
         """Query jobs by status with optional filters.
 
         Args:
-            filters: Filter parameters (statuses, days, no_response_days,
-                needs_followup, notes_contain, limit).
+            filters: Filter parameters (statuses, days, since,
+                no_response_days, needs_followup, notes_contain, limit).
 
         Returns:
             Matching status info records.
@@ -96,6 +97,18 @@ class StoreStatusMixin(Protocol):
         Args:
             job_id: Store-assigned job identity.
             text: Note text to append.
+        """
+        ...
+
+    async def set_followup(self, *, job_id: str, at: datetime) -> bool:
+        """Set the next follow-up time for a job.
+
+        Args:
+            job_id: Store-assigned job identity.
+            at: When the next follow-up is due.
+
+        Returns:
+            True if a job_status row was updated, False if none exists.
         """
         ...
 

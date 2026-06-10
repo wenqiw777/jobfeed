@@ -356,6 +356,8 @@ def _status_info_from_record(r: asyncpg.Record) -> StatusInfo:
         notes=r["notes"],
         last_status_change_at=r["last_status_change_at"]
         or datetime(1970, 1, 1, tzinfo=UTC),
+        company=r["company"],
+        title=r["title"],
     )
 
 
@@ -2880,7 +2882,8 @@ class PostgresStore:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """SELECT s.job_id, s.status, s.next_followup_at,
-                          s.resume_variant, s.notes, s.last_status_change_at
+                          s.resume_variant, s.notes, s.last_status_change_at,
+                          j.company, j.title
                    FROM job_status s
                    JOIN jobs j ON j.id = s.job_id
                    WHERE s.job_id = $1""",
@@ -3015,6 +3018,7 @@ class PostgresStore:
         _f = filters or StatusFilter()
         statuses = _f.statuses
         days = _f.days
+        since = _f.since
         no_response_days = _f.no_response_days
         needs_followup = _f.needs_followup
         notes_contain = _f.notes_contain
@@ -3040,6 +3044,11 @@ class PostgresStore:
             )
             params.append(str(days))
 
+        if since is not None:
+            param_idx += 1
+            clauses.append(f"s.last_status_change_at >= ${param_idx}")
+            params.append(since)
+
         if no_response_days is not None:
             clauses.append("s.status IN ('applied', 'interviewing')")
             param_idx += 1
@@ -3054,12 +3063,13 @@ class PostgresStore:
 
         if notes_contain:
             param_idx += 1
-            clauses.append(f"s.notes LIKE '%' || ${param_idx} || '%'")
+            clauses.append(f"s.notes ILIKE '%' || ${param_idx} || '%'")
             params.append(notes_contain)
 
         where = " AND ".join(clauses) if clauses else "1=1"
         sql = f"""SELECT s.job_id, s.status, s.next_followup_at,
-                         s.resume_variant, s.notes, s.last_status_change_at
+                         s.resume_variant, s.notes, s.last_status_change_at,
+                         j.company, j.title
                   FROM job_status s
                   JOIN jobs j ON j.id = s.job_id
                   WHERE {where}
@@ -3095,6 +3105,26 @@ class PostgresStore:
                 line,
                 int(job_id),
             )
+
+    async def set_followup(self, *, job_id: str, at: datetime) -> bool:
+        """Set the next follow-up time for a job.
+
+        Args:
+            job_id: Store-assigned job identity.
+            at: When the next follow-up is due.
+
+        Returns:
+            True if a job_status row was updated, False if none exists.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE job_status SET next_followup_at = $1 WHERE job_id = $2",
+                at,
+                int(job_id),
+            )
+        # asyncpg returns "UPDATE N" where N is the row count
+        return not result.endswith(" 0")
 
     async def workflow_attention(
         self,
