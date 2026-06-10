@@ -64,6 +64,35 @@ class EnrichmentLookup(Protocol):
 
 
 @runtime_checkable
+class ClosedJobLookup(Protocol):
+    """Read-only probe a source uses to skip re-fetching already-closed jobs.
+
+    A SimpleSource (e.g. SpeedyApply) re-derives its row set from an upstream
+    list every scan. Postings the store has already stamped ``closed_at`` (a
+    definitively gone 404/410 or an unavailable Workday req) are terminal, so
+    re-fetching their JD only burns HTTP and re-logs the same dead-link warning.
+    This bulk probe lets the source drop those rows before enrichment.
+    """
+
+    async def get_closed_canonical_ids(self, *, platform: str) -> set[str]:
+        """Return the canonical ids of definitively closed jobs for a platform.
+
+        Heuristic stale-backfill closures (``mark-stale-closed``) are excluded
+        so the save-path self-heal can recover them: clearing their
+        ``closed_at`` requires a later JD fetch to succeed, which means the
+        source must keep re-fetching them.
+
+        Args:
+            platform: Source platform to scope the lookup to.
+
+        Returns:
+            The set of ``canonical_id`` values whose row is definitively
+            closed. Empty when none are closed (or the platform is unknown).
+        """
+        ...
+
+
+@runtime_checkable
 class ScanSession(Protocol):
     """One source session that discovers postings then enriches them.
 

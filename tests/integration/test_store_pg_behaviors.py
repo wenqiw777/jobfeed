@@ -257,6 +257,49 @@ async def test_get_enrichment_returns_snapshot_by_natural_key(
     ) is None
 
 
+async def test_get_closed_canonical_ids_scopes_to_platform_and_closed(
+    store: PostgresStore,
+) -> None:
+    """Returns definitive closures only, scoped to the requested platform."""
+    closed_at = datetime.now(UTC)
+    await store.save_job(
+        make_job("sa-dead", platform="speedyapply", jd_text=None, closed_at=closed_at)
+    )
+    await store.save_job(
+        make_job(
+            "sa-gone",
+            platform="speedyapply",
+            jd_text=None,
+            closed_at=closed_at,
+            enrich_error="gone:404:greenhouse",
+        )
+    )
+    await store.save_job(
+        make_job(
+            "sa-stale",
+            platform="speedyapply",
+            jd_text=None,
+            closed_at=closed_at,
+            enrich_error="backfill:stale-no-jd",
+        )
+    )
+    await store.save_job(
+        make_job("sa-live", platform="speedyapply", jd_text="Detailed JD")
+    )
+    await store.save_job(
+        make_job("li-dead", platform="linkedin", jd_text=None, closed_at=closed_at)
+    )
+
+    closed = await store.get_closed_canonical_ids(platform="speedyapply")
+
+    # sa-stale is a heuristic mark-stale-closed backfill, not a proven-gone
+    # posting: it stays out of the set so the JD re-fetch (and the save-path
+    # self-heal that clears closed_at on a successful fetch) can recover it.
+    # Live row + other-platform row are excluded as before.
+    assert closed == {"sa-dead", "sa-gone"}
+    assert await store.get_closed_canonical_ids(platform="unknown") == set()
+
+
 async def test_load_pending_stage_a_corpus_filters(store: PostgresStore) -> None:
     """corpus selects unrated (no eval or error), failed (errors), or all."""
     await store.save_job(make_store_job("unrated"))

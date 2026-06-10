@@ -17,10 +17,12 @@ import respx
 from jobfeed.adapters.sources import _speedyapply_routing as routing
 from jobfeed.adapters.sources._ats_workday import WorkdayFetch
 from jobfeed.adapters.sources._http import ATSFetchError, create_http_client
+from jobfeed.adapters.sources._speedyapply_markdown import canonical_id_for
 from jobfeed.adapters.sources._speedyapply_routing import RouteResult
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.config import SourcesSpeedyApplyConfig
 from jobfeed.observability import get_logger
+from jobfeed.ports.source import ClosedJobLookup
 
 TIMEOUT = 30.0
 _LONG_JD = "Engineering role. " * 30
@@ -45,7 +47,7 @@ def _make_html(*, available: bool) -> str:
     )
 
 
-def _source() -> SpeedyApplySource:
+def _source(*, closed_lookup: ClosedJobLookup | None = None) -> SpeedyApplySource:
     return SpeedyApplySource(
         client=create_http_client(),
         config=SourcesSpeedyApplyConfig(
@@ -53,7 +55,44 @@ def _source() -> SpeedyApplySource:
             enabled=True,
         ),
         logger=get_logger(),
+        closed_lookup=closed_lookup,
     )
+
+
+class _FakeClosedLookup:
+    """ClosedJobLookup stub returning a fixed id set and recording calls."""
+
+    def __init__(self, ids: set[str]) -> None:
+        self._ids = ids
+        self.platforms: list[str] = []
+
+    async def get_closed_canonical_ids(self, *, platform: str) -> set[str]:
+        self.platforms.append(platform)
+        return set(self._ids)
+
+
+def _two_row_md(url_a: str, url_b: str) -> str:
+    """Two-row greenhouse markdown table for skip-filter tests."""
+    return (
+        "| Company | Position | Location | Posting | Age |\n"
+        "|---|---|---|---|---|\n"
+        f'| <a><strong>Alpha</strong></a> | SWE | SF | <a href="{url_a}">'
+        '<img src="x"/></a> | 1d |\n'
+        f'| <a><strong>Beta</strong></a> | SWE | NY | <a href="{url_b}">'
+        '<img src="x"/></a> | 2d |\n'
+    )
+
+
+def _recording_route(routed: list[str]):
+    """Build a fake route_and_fetch that records URLs and returns a live JD."""
+
+    async def fake_route_and_fetch(
+        _client: object, url: str, **_kwargs: object
+    ) -> RouteResult:
+        routed.append(url)
+        return RouteResult(jd_text=_LONG_JD, enrich_source="speedyapply-greenhouse")
+
+    return fake_route_and_fetch
 
 
 # ---------------------------------------------------------------------------
@@ -453,3 +492,90 @@ async def test_workday_cxs_500_transient_no_closed_at() -> None:
         )
     assert result.closed_at is None
     assert result.enrich_source == "speedyapply-error"
+
+
+# ---------------------------------------------------------------------------
+# closed_lookup: skip re-fetching JDs for already-closed canonical_ids
+# ---------------------------------------------------------------------------
+
+
+async def test_fetch_jobs_skips_closed_canonical_ids_before_routing() -> None:
+    """A row whose canonical_id is already closed is never re-routed/fetched."""
+    url_live = "https://job-boards.greenhouse.io/live/jobs/1"
+    url_dead = "https://job-boards.greenhouse.io/dead/jobs/2"
+    md = _two_row_md(url_live, url_dead)
+    routed: list[str] = []
+    lookup = _FakeClosedLookup({canonical_id_for(url_dead)})
+
+    with (
+        patch(
+            "jobfeed.adapters.sources.speedyapply.fetch_text",
+            new=AsyncMock(return_value=md),
+        ),
+        patch(
+            "jobfeed.adapters.sources.speedyapply.routing.route_and_fetch",
+            new=_recording_route(routed),
+        ),
+    ):
+        source = _source(closed_lookup=lookup)
+        postings = await source.fetch_jobs({})
+
+    assert routed == [url_live]  # dead URL never fetched
+    assert [p.canonical_id for p in postings] == [canonical_id_for(url_live)]
+    assert lookup.platforms == ["speedyapply"]
+
+
+async def test_fetch_jobs_routes_all_when_no_closed_lookup() -> None:
+    """With no closed_lookup, every row is routed (backward compatible)."""
+    url_a = "https://job-boards.greenhouse.io/aaa/jobs/1"
+    url_b = "https://job-boards.greenhouse.io/bbb/jobs/2"
+    md = _two_row_md(url_a, url_b)
+    routed: list[str] = []
+
+    with (
+        patch(
+            "jobfeed.adapters.sources.speedyapply.fetch_text",
+            new=AsyncMock(return_value=md),
+        ),
+        patch(
+            "jobfeed.adapters.sources.speedyapply.routing.route_and_fetch",
+            new=_recording_route(routed),
+        ),
+    ):
+        source = _source(closed_lookup=None)
+        postings = await source.fetch_jobs({})
+
+    assert set(routed) == {url_a, url_b}
+    assert {p.canonical_id for p in postings} == {
+        canonical_id_for(url_a),
+        canonical_id_for(url_b),
+    }
+
+
+async def test_fetch_jobs_routes_all_when_closed_set_empty() -> None:
+    """An empty closed set routes every row and still queries the lookup once."""
+    url_a = "https://job-boards.greenhouse.io/ccc/jobs/1"
+    url_b = "https://job-boards.greenhouse.io/ddd/jobs/2"
+    md = _two_row_md(url_a, url_b)
+    routed: list[str] = []
+    lookup = _FakeClosedLookup(set())
+
+    with (
+        patch(
+            "jobfeed.adapters.sources.speedyapply.fetch_text",
+            new=AsyncMock(return_value=md),
+        ),
+        patch(
+            "jobfeed.adapters.sources.speedyapply.routing.route_and_fetch",
+            new=_recording_route(routed),
+        ),
+    ):
+        source = _source(closed_lookup=lookup)
+        postings = await source.fetch_jobs({})
+
+    assert set(routed) == {url_a, url_b}
+    assert {p.canonical_id for p in postings} == {
+        canonical_id_for(url_a),
+        canonical_id_for(url_b),
+    }
+    assert lookup.platforms == ["speedyapply"]

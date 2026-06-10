@@ -557,6 +557,12 @@ def _derived_resume_hooks_block(result: StageBResult) -> dict[str, object]:
     }
 
 
+# Marker mark_stale_closed stamps on heuristically-closed no-JD rows. Shared
+# with get_closed_canonical_ids, which excludes these rows; both sites must use
+# this constant so the stamp and the exclusion cannot drift apart.
+_STALE_BACKFILL_MARKER = "backfill:stale-no-jd"
+
+
 # ---------------------------------------------------------------------------
 # Pending-queue query builders
 # ---------------------------------------------------------------------------
@@ -1975,6 +1981,34 @@ class PostgresStore:
             enriched_at=row["enriched_at"],
             enrich_source=row["enrich_source"],
         )
+
+    async def get_closed_canonical_ids(self, *, platform: str) -> set[str]:
+        """Return canonical ids of definitively closed jobs (ClosedJobLookup).
+
+        Heuristic ``mark-stale-closed`` backfill closures are excluded: they
+        are guesses, not proven-gone postings, and the save-path self-heal can
+        only clear their ``closed_at`` if a later JD fetch succeeds — which
+        requires the source to keep re-fetching them.
+
+        Args:
+            platform: Source platform to scope the lookup to.
+
+        Returns:
+            The set of ``canonical_id`` values whose row has ``closed_at`` set
+            and is not a heuristic stale-backfill closure.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            # Heuristic backfill closures stay re-fetchable: the save-path
+            # self-heal needs a successful fetch to recover a live posting.
+            rows = await conn.fetch(
+                """SELECT canonical_id FROM jobs
+                   WHERE platform = $1 AND closed_at IS NOT NULL
+                     AND enrich_error IS DISTINCT FROM $2""",
+                platform,
+                _STALE_BACKFILL_MARKER,
+            )
+        return {row["canonical_id"] for row in rows}
 
     async def save_stage_a(self, job_id: str, result: StageAResult) -> None:
         """Persist a successful Stage A result.
@@ -4741,9 +4775,10 @@ class PostgresStore:
             result = await conn.execute(
                 f"""UPDATE jobs
                     SET closed_at = now(),
-                        enrich_error = 'backfill:stale-no-jd'
+                        enrich_error = $2
                     WHERE {_STALE_WHERE}""",
                 older_than_days,
+                _STALE_BACKFILL_MARKER,
             )
         # asyncpg returns "UPDATE N"
         return int(result.split()[-1])
