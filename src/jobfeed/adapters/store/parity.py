@@ -91,6 +91,9 @@ STATUS_VALUES = frozenset(
         "rejected",
         "offer",
         "ghosted",
+        # Keeps retired values (oa/hr_call/second_round/final_round) because
+        # legacy import produces these status strings for historical rows;
+        # the Alembic 0006 migration converges them after import.
         "oa",
         "hr_call",
         "second_round",

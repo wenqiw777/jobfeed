@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -69,8 +69,18 @@ class WorkflowAttention:
     going_ghosted: list[WorkflowAttentionItem]
 
 
+@dataclass(kw_only=True)
+class BulkResult:
+    """Result of a bulk status transition with twin cascade."""
+
+    succeeded: int = 0
+    failed: list[tuple[str, str]] = field(default_factory=list)  # (job_id, error)
+    skipped: int = 0  # terminal jobs in cluster
+
+
 __all__ = [
     "AutoDecayResult",
+    "BulkResult",
     "StatusInfo",
     "StatusTransition",
     "WorkflowAttention",

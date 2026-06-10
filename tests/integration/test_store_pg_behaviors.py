@@ -395,16 +395,16 @@ async def test_list_evaluated_jobs_keeps_job_id_when_eval_id_differs(
 
 
 async def test_reapply_notice_detects_interview_substage(store: PostgresStore) -> None:
-    """Reapply notice flags an active same-company app in an interview substage."""
+    """Reapply notice flags an active same-company app in an interview stage."""
     first = await store.save_job(make_store_job("co-first"))
     second = await store.save_job(make_store_job("co-second"))
     await store.transition_status(job_id=first.job_id, new_status="applied", force=True)
-    await store.transition_status(job_id=first.job_id, new_status="oa")
+    await store.transition_status(job_id=first.job_id, new_status="interviewing")
 
     notice = await store.compute_reapply_notice(job_id=second.job_id)
 
     assert notice is not None
-    assert "oa" in notice
+    assert "interviewing" in notice
 
 
 async def test_transition_followup_lifecycle(store: PostgresStore) -> None:
@@ -415,7 +415,7 @@ async def test_transition_followup_lifecycle(store: PostgresStore) -> None:
     assert applied is not None
     assert applied.next_followup_at is not None
 
-    await store.transition_status(job_id=saved.job_id, new_status="oa")
+    await store.transition_status(job_id=saved.job_id, new_status="interviewing")
     advanced = await store.get_status(saved.job_id)
     assert advanced is not None
     assert advanced.next_followup_at == applied.next_followup_at
@@ -428,13 +428,13 @@ async def test_transition_followup_lifecycle(store: PostgresStore) -> None:
     assert closed.next_followup_at is None
 
 
-async def test_workflow_attention_warns_interview_substage(
+async def test_workflow_attention_warns_interview_stage(
     store: PostgresStore, pg_url: str
 ) -> None:
-    """going_ghosted warns on decay-eligible substages (oa), not just applied."""
-    saved = await store.save_job(make_store_job("ghost-oa"))
+    """going_ghosted warns on decay-eligible stages (interviewing), not just applied."""
+    saved = await store.save_job(make_store_job("ghost-interview"))
     await store.transition_status(job_id=saved.job_id, new_status="applied", force=True)
-    await store.transition_status(job_id=saved.job_id, new_status="oa")
+    await store.transition_status(job_id=saved.job_id, new_status="interviewing")
     # Backdate into the going-ghosted warn window (warn_days = 30 - 5 = 25).
     await _pg_execute(
         pg_url,

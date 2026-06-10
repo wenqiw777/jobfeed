@@ -600,12 +600,11 @@ class TestStatusLifecycle:
         job_id = await _insert_scored_job(contract_store, "interview-order")
         await contract_store.transition_status(job_id=job_id, new_status="shortlisted")
         await contract_store.transition_status(job_id=job_id, new_status="applied")
-        await contract_store.transition_status(job_id=job_id, new_status="oa")
-        await contract_store.transition_status(job_id=job_id, new_status="hr_call")
+        await contract_store.transition_status(job_id=job_id, new_status="interviewing")
 
-        # hr_call -> oa is not allowed (backward)
+        # interviewing -> applied is not allowed (backward)
         with pytest.raises(ValueError, match="not allowed"):
-            await contract_store.transition_status(job_id=job_id, new_status="oa")
+            await contract_store.transition_status(job_id=job_id, new_status="applied")
 
 
 # ===========================================================================
@@ -723,7 +722,7 @@ class TestApplicationAudit:
         await contract_store.record_application(
             ApplicationRecord(job_id=job_b, applied_at=FIXED_TIME)
         )
-        await contract_store.transition_status(job_id=job_a, new_status="oa")
+        await contract_store.transition_status(job_id=job_a, new_status="interviewing")
 
         stats = await contract_store.application_stats(
             since_days_ago=365, by_resume=True
