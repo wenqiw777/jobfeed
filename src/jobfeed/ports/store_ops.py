@@ -61,7 +61,7 @@ class StoreOpsMixin(Protocol):
             slug: Company slug.
 
         Returns:
-            True if matched.
+            True if a tracked, not-already-removed company was matched.
         """
         ...
 

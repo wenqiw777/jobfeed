@@ -4335,7 +4335,7 @@ class PostgresStore:
             slug: Company slug.
 
         Returns:
-            True if matched.
+            True if a tracked, not-already-removed company was matched.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -4343,7 +4343,8 @@ class PostgresStore:
                 """UPDATE companies SET
                        ats_vendor = 'removed', ats_override = 0,
                        last_verified_at = NULL
-                   WHERE slug = $1""",
+                   WHERE slug = $1
+                     AND ats_vendor IS DISTINCT FROM 'removed'""",
                 slug,
             )
         # asyncpg returns "UPDATE N" where N is the row count
