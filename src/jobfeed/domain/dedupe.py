@@ -5,11 +5,13 @@ that describe the SAME real job across sources by the already-persisted
 ``(company_norm, title_norm)`` soft key, and picks one representative per
 cluster so downstream stages (Phase 5 candidate selection) score the job once.
 
-NOTE: status-priority is deliberately NOT a key here — this primitive operates
-on ``JobPosting`` (pre-status). When Phase 8 wires dedupe into the status-aware
-display fold it MUST layer a status key (an ``applied``/``shortlisted`` twin
-wins) AHEAD of the quality key below, mirroring legacy
-``web/routes/jobs.py:_dedup_rep_order``. Do not add a status key here.
+NOTE: status-priority is deliberately NOT a key in ``pick_representatives`` —
+that primitive operates on ``JobPosting`` (pre-status) for the Phase 5 scoring
+funnel. The Phase 8 status-aware display fold is the separate
+``pick_display_representatives``, which layers a status-priority class (an
+``applied``/``shortlisted`` twin wins) AHEAD of the quality key below,
+mirroring legacy ``web/routes/jobs.py:_dedup_rep_order``. Do not add a status
+key to ``pick_representatives``.
 
 Representative decision ladder (first decisive key wins)::
 
@@ -28,7 +30,7 @@ Representative decision ladder (first decisive key wins)::
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from jobfeed.domain.models import JobPosting
@@ -54,6 +56,20 @@ _PLATFORM_RANK: dict[str, int] = {
     "indeed": 4,
 }
 _UNKNOWN_PLATFORM_RANK = 99
+
+# Phase 8 display fold: status-priority classes layered AHEAD of the Decision 8
+# key. In-flight applications outrank the shortlist tier, which outranks
+# everything else; missing/unknown statuses take the lowest-priority class.
+_APPLICATION_CLASS = 0
+_SHORTLIST_CLASS = 1
+_DEFAULT_STATUS_CLASS = 2
+_STATUS_CLASS: dict[str, int] = {
+    "applied": _APPLICATION_CLASS,
+    "interviewing": _APPLICATION_CLASS,
+    "offer": _APPLICATION_CLASS,
+    "shortlisted": _SHORTLIST_CLASS,
+    "awaiting_referral": _SHORTLIST_CLASS,
+}
 
 
 @dataclass(frozen=True)
@@ -196,9 +212,60 @@ def pick_representatives(jobs: Iterable[JobPosting]) -> list[JobPosting]:
     return [cluster.representative for cluster in cluster_twins(jobs)]
 
 
+def _status_class(job: JobPosting, status_by_id: Mapping[str, str]) -> int:
+    """Return the display-fold status-priority class for a posting.
+
+    Args:
+        job: Posting whose class to resolve.
+        status_by_id: Mapping of job id → current workflow status.
+
+    Returns:
+        0 for in-flight applications ({applied, interviewing, offer}), 1 for
+        the shortlist tier ({shortlisted, awaiting_referral}), 2 for every
+        other status and for id-less or unmapped postings.
+    """
+    if job.id is None:
+        return _DEFAULT_STATUS_CLASS
+    status = status_by_id.get(job.id)
+    if status is None:
+        return _DEFAULT_STATUS_CLASS
+    return _STATUS_CLASS.get(status, _DEFAULT_STATUS_CLASS)
+
+
+def pick_display_representatives(
+    jobs: Iterable[JobPosting],
+    status_by_id: Mapping[str, str],
+) -> list[JobPosting]:
+    """Return one status-aware display representative per twin cluster.
+
+    The Phase 8 display fold reserved by this module's header note: a
+    status-priority class is layered AHEAD of ``_representative_sort_key``,
+    so an in-flight ``applied`` twin wins its cluster even when another twin
+    has a better Decision 8 (quality/source/recency) key. Ties inside one
+    status class fall through to the existing key unchanged.
+
+    Args:
+        jobs: Postings to cluster and reduce.
+        status_by_id: Mapping of job id → current workflow status. Postings
+            whose id is missing from the mapping (or is None) take the
+            lowest-priority class.
+
+    Returns:
+        The display representative of each cluster, in cluster order.
+    """
+
+    def display_key(
+        job: JobPosting,
+    ) -> tuple[int, tuple[int, int, float, str, str]]:
+        return (_status_class(job, status_by_id), _representative_sort_key(job))
+
+    return [min(cluster.members, key=display_key) for cluster in cluster_twins(jobs)]
+
+
 __all__ = [
     "TwinCluster",
     "cluster_twins",
+    "pick_display_representatives",
     "pick_representatives",
     "twin_key",
 ]

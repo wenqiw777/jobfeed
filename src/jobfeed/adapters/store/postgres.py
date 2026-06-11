@@ -62,6 +62,12 @@ from jobfeed.domain.models import (
     WorkflowAttentionItem,
 )
 from jobfeed.domain.models_llm import LLMUsage
+from jobfeed.domain.models_views import (
+    VALID_TABS,
+    JobsViewPage,
+    JobsViewQuery,
+    JobsViewRow,
+)
 from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.domain.status import (
@@ -121,6 +127,127 @@ def _job_from_record(r: asyncpg.Record) -> JobPosting:
         enrich_source=r["enrich_source"],
         closed_at=r["closed_at"],
         enrich_error=r["enrich_error"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Jobs view (Phase 8 web read path)
+# ---------------------------------------------------------------------------
+
+# Tab predicates over jobs LEFT JOIN evaluations LEFT JOIN job_status. Triage
+# tabs (queue, pending_jd) exclude closed rows; Library tabs include them.
+# job_status rows are trigger-seeded on every jobs insert, so
+# job_status.status is never NULL despite the LEFT JOIN.
+_JOBS_VIEW_TAB_PREDICATES: dict[str, str] = {
+    "queue": (
+        "(job_status.status IN"
+        " ('new', 'scored', 'shortlisted', 'awaiting_referral')"
+        " AND jobs.closed_at IS NULL)"
+    ),
+    # Pending-JD: no usable JD (same quality predicate as
+    # mark_stale_jobs_closed), never Stage A-scored, not archived/ignored,
+    # still open (rewrite-spec §15 semantics).
+    "pending_jd": (
+        "((jobs.jd_quality IS NULL"
+        " OR jobs.jd_quality IN ('missing', 'abandoned'))"
+        " AND evaluations.stage_a_score IS NULL"
+        " AND job_status.status NOT IN ('archived', 'ignored')"
+        " AND jobs.closed_at IS NULL)"
+    ),
+    "all": "TRUE",
+    "scored": "job_status.status = 'scored'",
+    "shortlisted": "job_status.status IN ('shortlisted', 'awaiting_referral')",
+    "archived": "job_status.status IN ('archived', 'ignored')",
+}
+
+_JOBS_VIEW_FROM = (
+    "FROM jobs"
+    " LEFT JOIN evaluations ON evaluations.job_id = jobs.id"
+    " LEFT JOIN job_status ON job_status.job_id = jobs.id"
+)
+
+_JOBS_VIEW_COLUMNS = (
+    "jobs.*, job_status.status AS status,"
+    " evaluations.stage_a_score, evaluations.stage_b_verdict,"
+    " evaluations.stage_b_status,"
+    " (evaluations.stage_b_fit_json ->> 'score_0_100')::integer"
+    " AS stage_b_fit_score"
+)
+
+
+def _jobs_view_filters(query: JobsViewQuery) -> tuple[list[str], list[object]]:
+    """Build the request's shared WHERE fragments and their $1-based params.
+
+    These filters (statuses, search, freshness, require_verdict) apply to the
+    active tab's rows and total AND to every tab_counts bucket, so
+    tab_counts[t] always equals the total of re-running the request with
+    tab=t.
+
+    Args:
+        query: Jobs view query.
+
+    Returns:
+        Tuple of (SQL fragments, positional params), params numbered $1..$n.
+    """
+    fragments: list[str] = []
+    params: list[object] = []
+    if query.statuses:
+        params.append(list(query.statuses))
+        fragments.append(f"job_status.status = ANY(${len(params)}::text[])")
+    if query.search:
+        params.append(f"%{_escape_like_prefix(query.search)}%")
+        index = len(params)
+        fragments.append(f"(jobs.company ILIKE ${index} OR jobs.title ILIKE ${index})")
+    if query.posted_within_days is not None:
+        # Freshness cuts on discovered_at per rewrite-spec §15 — a job posted
+        # long ago but newly scraped is fresh to the user's workflow.
+        params.append(query.posted_within_days)
+        fragments.append(
+            f"jobs.discovered_at >= now() - make_interval(days => ${len(params)})"
+        )
+    if query.require_verdict:
+        fragments.append("evaluations.stage_b_verdict IS NOT NULL")
+    return fragments, params
+
+
+def _jobs_view_counts_sql(shared_where: str) -> str:
+    """Render the one-query per-tab COUNT(*) FILTER aggregate.
+
+    Args:
+        shared_where: WHERE clause of shared request filters ('TRUE' if none).
+
+    Returns:
+        SQL returning one row with a count column per tab. Aliases are quoted
+        because 'all' is a reserved word.
+    """
+    selects = ", ".join(
+        f'COUNT(*) FILTER (WHERE {_JOBS_VIEW_TAB_PREDICATES[tab]}) AS "{tab}"'
+        for tab in VALID_TABS
+    )
+    return f"SELECT {selects} {_JOBS_VIEW_FROM} WHERE {shared_where}"
+
+
+def _jobs_view_row_from_record(r: asyncpg.Record) -> JobsViewRow:
+    """Build a JobsViewRow from a jobs+evaluations+job_status record.
+
+    Args:
+        r: Joined record carrying jobs.*, the status alias, and the
+            evaluation summary columns.
+
+    Returns:
+        View row. The Stage B fit score is lifted from stage_b_fit_json's
+        'score_0_100' key — the same key get_evaluation hydrates FitAnalysis
+        from.
+    """
+    return JobsViewRow(
+        job=_job_from_record(r),
+        company_norm=r["company_norm"],
+        title_norm=r["title_norm"],
+        status=r["status"],
+        verdict=r["stage_b_verdict"],
+        stage_a_score=r["stage_a_score"],
+        stage_b_fit_score=r["stage_b_fit_score"],
+        stage_b_status=r["stage_b_status"],
     )
 
 
@@ -2726,6 +2853,47 @@ class PostgresStore:
                 limit,
             )
         return [_evaluation_from_record(r) for r in rows]
+
+    async def query_jobs_view(self, query: JobsViewQuery) -> JobsViewPage:
+        """Run the filtered, paginated Phase 8 jobs view query.
+
+        One SELECT over jobs LEFT JOIN evaluations LEFT JOIN job_status for
+        the active tab's rows (newest discovered_at first, id breaking ties,
+        bounded by limit/offset), plus the active tab's total and a one-row
+        per-tab count aggregate. All request filters apply to the rows, the
+        total, and every tab_counts bucket alike, so tab_counts[t] equals the
+        total of re-running the same request with tab=t.
+
+        Args:
+            query: Tab, filters, and pagination window.
+
+        Returns:
+            Bounded jobs view page.
+        """
+        shared, params = _jobs_view_filters(query)
+        where = " AND ".join([_JOBS_VIEW_TAB_PREDICATES[query.tab], *shared])
+        shared_where = " AND ".join(shared) if shared else "TRUE"
+        rows_sql = (
+            f"SELECT {_JOBS_VIEW_COLUMNS} {_JOBS_VIEW_FROM} WHERE {where}"
+            " ORDER BY jobs.discovered_at DESC, jobs.id DESC"
+            f" LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(rows_sql, *params, query.limit, query.offset)
+            total = await self._count(
+                conn,
+                f"SELECT COUNT(*) {_JOBS_VIEW_FROM} WHERE {where}",
+                *params,
+            )
+            counts_row = await conn.fetchrow(
+                _jobs_view_counts_sql(shared_where), *params
+            )
+        return JobsViewPage(
+            rows=[_jobs_view_row_from_record(r) for r in rows],
+            total=total,
+            tab_counts={tab: int(counts_row[tab]) for tab in VALID_TABS},
+        )
 
     async def save_ml_gate_result(self, job_id: str, result: MLGateResult) -> None:
         """Persist ML gate decision and features.
