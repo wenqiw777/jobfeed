@@ -65,6 +65,17 @@ def test_services_do_not_import_infrastructure_modules() -> None:
     assert not violations, format_violations(violations)
 
 
+def test_web_does_not_import_adapters() -> None:
+    """Web modules compose via jobfeed.cli.create_app, never adapters directly."""
+    violations = [
+        reference
+        for reference in imports_under(SOURCE_ROOT / "web")
+        if reference.module.startswith(ADAPTER_IMPORT_PREFIX)
+    ]
+
+    assert not violations, format_violations(violations)
+
+
 # Browser automation is forbidden outside the LinkedIn SessionSource surface
 # (CLAUDE.md Phase 4 amendment). Only this file may import Playwright, and only
 # lazily (via importlib) so non-LinkedIn scans never hard-depend on the browser.

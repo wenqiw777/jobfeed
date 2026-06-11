@@ -223,6 +223,7 @@ from jobfeed.cli.maintenance import mark_stale_closed  # noqa: E402
 from jobfeed.cli.migrate import migrate  # noqa: E402
 from jobfeed.cli.ml_gate import ml_gate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
+from jobfeed.cli.serve import serve  # noqa: E402
 from jobfeed.cli.snapshots import snapshots  # noqa: E402
 from jobfeed.cli.status import archive, followup, mark, note  # noqa: E402
 from jobfeed.cli.status_query import list_cmd, stats  # noqa: E402
@@ -248,6 +249,7 @@ cli.add_command(enrich_linkedin_guest)
 cli.add_command(interview)
 cli.add_command(companies)
 cli.add_command(bootstrap_companies)
+cli.add_command(serve)
 
 
 __all__ = [

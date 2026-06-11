@@ -12,6 +12,9 @@ dependencies = [
     "asyncpg >= 0.30",
     "beautifulsoup4 >= 4.12",
     "click",
+    # Web API (Phase 8): FastAPI thin shell served by uvicorn from `jobfeed
+    # serve`; python-multipart backs the multipart apply-upload route.
+    "fastapi",
     # ML gate (Phase 5): numpy (feature vectorizer), xgboost (model load), and
     # the fastembed ONNX embedder are all core — exercised by `make quality`
     # unit tests and lazy-imported in the gate. fastembed runs `all-MiniLM-L6-v2`
@@ -38,7 +41,9 @@ dependencies = [
     # country_indeed / linkedin_fetch_description kwargs _jobspy.scrape passes,
     # which would otherwise raise (contained as JobSpyError -> silent 0 jobs).
     "python-jobspy >= 1.1.82",
+    "python-multipart",
     "structlog",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]
