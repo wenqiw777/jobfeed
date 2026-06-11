@@ -81,6 +81,20 @@ class JobsViewRow:
     stage_b_status: str | None
 
 
+@dataclass(frozen=True, kw_only=True)
+class TwinStatusRow:
+    """One twin posting of a detail job: identity, platform, link, status.
+
+    Twins share the persisted non-blank ``(company_norm, title_norm)`` soft
+    key with the detail job; the job itself is never one of its own twins.
+    """
+
+    job_id: str
+    platform: str
+    url: str
+    status: str
+
+
 @dataclass(kw_only=True)
 class JobsViewPage:
     """A bounded jobs-view result page.
@@ -102,4 +116,5 @@ __all__ = [
     "JobsViewPage",
     "JobsViewQuery",
     "JobsViewRow",
+    "TwinStatusRow",
 ]

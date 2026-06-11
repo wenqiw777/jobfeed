@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from jobfeed.domain.models_views import JobsViewPage, JobsViewQuery
+from jobfeed.domain.models_views import JobsViewPage, JobsViewQuery, TwinStatusRow
 
 
 @runtime_checkable
@@ -28,5 +28,20 @@ class StoreViewsMixin(Protocol):
             hard-filter post-query (triage tabs, plan D10) must request the
             full corpus (large limit) and paginate post-fold, or the fold
             corpus is silently truncated.
+        """
+        ...
+
+    async def list_twin_statuses(self, job_id: str) -> list[TwinStatusRow]:
+        """List a job's twins (same persisted company_norm + title_norm).
+
+        The job itself is excluded. A job whose ``company_norm`` OR
+        ``title_norm`` is blank/NULL has no twins (mirroring
+        ``expand_twin_ids``: blank-norm rows never cluster).
+
+        Args:
+            job_id: Store-assigned identity of the detail job.
+
+        Returns:
+            Twin rows (platform, url, current status), ordered by job id.
         """
         ...

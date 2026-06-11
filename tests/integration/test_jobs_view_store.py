@@ -252,3 +252,30 @@ async def test_pagination_is_bounded_with_true_total(store: PostgresStore) -> No
     assert [row.job.canonical_id for row in page.rows] == ["pg-2", "pg-3"]
     assert page.total == _MATRIX_TOTAL
     assert page.tab_counts["all"] == _MATRIX_TOTAL
+
+
+async def test_list_twin_statuses_excludes_self_and_blank_norms(
+    store: PostgresStore,
+) -> None:
+    """Twins share non-blank norms, exclude the job itself, and carry status."""
+    main_id = await _insert(store, "tw-main", company="Stripe", title="Engineer")
+    twin_id = await _insert(
+        store,
+        "tw-twin",
+        platform="greenhouse",
+        company="Stripe",
+        title="Engineer",
+        status="shortlisted",
+    )
+    await _insert(store, "tw-other", company="Datadog", title="Engineer")
+    blank_id = await _insert(store, "tw-blank-1", company="??", title="Engineer")
+    await _insert(store, "tw-blank-2", company="!!", title="Engineer")
+
+    twins = await store.list_twin_statuses(main_id)
+    blank_twins = await store.list_twin_statuses(blank_id)
+
+    assert [(t.job_id, t.platform, t.status) for t in twins] == [
+        (twin_id, "greenhouse", "shortlisted")
+    ]
+    assert twins[0].url == "https://example.com/tw-twin"
+    assert blank_twins == []

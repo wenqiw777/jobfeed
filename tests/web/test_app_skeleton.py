@@ -15,6 +15,7 @@ from click.testing import CliRunner
 from fastapi import FastAPI
 
 from jobfeed.cli import AppContext, cli
+from jobfeed.config import Settings
 from jobfeed.domain.models import JobPosting
 from jobfeed.web.app import build_web_app, create_web_app
 
@@ -78,9 +79,10 @@ def fake_context(store: FakeStore | None = None) -> AppContext:
         store: Fake store to wire in; a fresh one when omitted.
 
     Returns:
-        Context carrying only the keys the web skeleton touches.
+        Context carrying only the keys the web factory touches at build
+        time (store + settings for the jobs view service wiring).
     """
-    return cast(AppContext, {"store": store or FakeStore()})
+    return cast(AppContext, {"store": store or FakeStore(), "settings": Settings()})
 
 
 @asynccontextmanager

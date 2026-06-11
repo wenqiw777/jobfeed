@@ -67,6 +67,7 @@ from jobfeed.domain.models_views import (
     JobsViewPage,
     JobsViewQuery,
     JobsViewRow,
+    TwinStatusRow,
 )
 from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.domain.scoring import MAX_STAGE_RETRIES
@@ -2894,6 +2895,45 @@ class PostgresStore:
             total=total,
             tab_counts={tab: int(counts_row[tab]) for tab in VALID_TABS},
         )
+
+    async def list_twin_statuses(self, job_id: str) -> list[TwinStatusRow]:
+        """List a job's twins (same persisted company_norm + title_norm).
+
+        The job itself is excluded. Blank/NULL norms never cluster (the
+        ``<> ''`` guards are NULL-safe: NULL comparisons are not true), so a
+        blank-norm job has no twins — mirroring ``expand_twin_ids``.
+
+        Args:
+            job_id: Store-assigned identity of the detail job.
+
+        Returns:
+            Twin rows (platform, url, current status), ordered by job id.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT twin.id, twin.platform, twin.url, job_status.status
+                   FROM jobs
+                   JOIN jobs twin
+                     ON twin.company_norm = jobs.company_norm
+                    AND twin.title_norm = jobs.title_norm
+                    AND twin.id <> jobs.id
+                   LEFT JOIN job_status ON job_status.job_id = twin.id
+                   WHERE jobs.id = $1
+                     AND jobs.company_norm <> ''
+                     AND jobs.title_norm <> ''
+                   ORDER BY twin.id""",
+                int(job_id),
+            )
+        return [
+            TwinStatusRow(
+                job_id=str(r["id"]),
+                platform=r["platform"],
+                url=r["url"],
+                status=r["status"],
+            )
+            for r in rows
+        ]
 
     async def save_ml_gate_result(self, job_id: str, result: MLGateResult) -> None:
         """Persist ML gate decision and features.

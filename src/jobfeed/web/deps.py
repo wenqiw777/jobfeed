@@ -8,6 +8,7 @@ from fastapi import Request
 
 from jobfeed.cli import AppContext
 from jobfeed.ports.store import JobStore
+from jobfeed.services.jobs_view import JobsViewService
 
 
 def get_context(request: Request) -> AppContext:
@@ -37,4 +38,16 @@ def get_store(request: Request) -> JobStore:
     return get_context(request)["store"]
 
 
-__all__ = ["get_context", "get_store"]
+def get_jobs_view_service(request: Request) -> JobsViewService:
+    """Return the per-process jobs view service built by the app factory.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        Shared jobs view service.
+    """
+    return cast(JobsViewService, request.app.state.jobs_view_service)
+
+
+__all__ = ["get_context", "get_jobs_view_service", "get_store"]
