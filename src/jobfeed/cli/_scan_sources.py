@@ -23,9 +23,8 @@ from jobfeed.adapters.sources.linkedin_guest import (
     GuestSourceSettings,
     LinkedInGuestSource,
 )
-from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
-from jobfeed.cli import AppContext
+from jobfeed.cli import AppContext, require_enabled
 from jobfeed.domain.models import CompanyRecord
 from jobfeed.ports.source import ClosedJobLookup, EnrichmentLookup
 from jobfeed.ports.store_ops import StoreOpsMixin
@@ -36,7 +35,6 @@ _REAL_SOURCES = (
     "ats",
     "speedyapply",
     "indeed",
-    "linkedin-jobspy",
     "linkedin-guest",
     "linkedin",
 )
@@ -119,7 +117,7 @@ async def _build_ats(
 ) -> None:
     """Build ATSSource + its httpx client; append to sources, own the client."""
     ats_config = app["settings"].sources.ats
-    _require_enabled(ats_config.enabled, "ats")
+    require_enabled(ats_config.enabled, "ats")
     store_ops = cast(StoreOpsMixin, app["store"])
     await seed_ats_companies(store_ops, ats_config.seed_companies)
     client = _register_client(stack, create_http_client(ats_config.scan_timeout_s))
@@ -144,7 +142,7 @@ async def _build_speedyapply(
 ) -> None:
     """Build SpeedyApplySource + its httpx client; own the client on the stack."""
     config = app["settings"].sources.speedyapply
-    _require_enabled(config.enabled, "speedyapply")
+    require_enabled(config.enabled, "speedyapply")
     client = _register_client(stack, create_http_client(config.fetch_timeout_s))
     # The PostgresStore implements ClosedJobLookup; passing it lets the source
     # skip re-fetching JDs for postings already stamped closed_at (dead links).
@@ -170,28 +168,11 @@ async def _build_indeed(
 ) -> None:
     """Build the Indeed JobSpy source (no httpx client; scrape subprocess-owned)."""
     config = app["settings"].sources.indeed
-    _require_enabled(config.enabled, "indeed")
+    require_enabled(config.enabled, "indeed")
     sources.append(
         (
             "indeed",
             IndeedSource(config=config, logger=app["logger"]),
-            {},
-        )
-    )
-
-
-async def _build_linkedin_jobspy(
-    app: AppContext,
-    sources: list[SourceSpec],
-    stack: contextlib.AsyncExitStack,  # noqa: ARG001 - no client to own
-) -> None:
-    """Build the LinkedIn JobSpy source (no httpx client; scrape subprocess-owned)."""
-    config = app["settings"].sources.linkedin_jobspy
-    _require_enabled(config.enabled, "linkedin-jobspy")
-    sources.append(
-        (
-            "linkedin_jobspy",
-            LinkedInJobSpySource(config=config, logger=app["logger"]),
             {},
         )
     )
@@ -204,7 +185,7 @@ async def _build_linkedin_guest(
 ) -> None:
     """Build the anonymous guest-endpoint source (it owns its own client)."""
     config = app["settings"].sources.linkedin_guest
-    _require_enabled(config.enabled, "linkedin-guest")
+    require_enabled(config.enabled, "linkedin-guest")
     sources.append(
         (
             "linkedin_guest",
@@ -229,7 +210,7 @@ async def _build_linkedin(
     stack: contextlib.AsyncExitStack,  # noqa: ARG001 - Playwright context is source-owned
 ) -> None:
     config = app["settings"].sources.linkedin
-    _require_enabled(config.enabled, "linkedin")
+    require_enabled(config.enabled, "linkedin")
     # The PostgresStore implements EnrichmentLookup; passing it lets the session
     # skip re-enriching postings whose JD is already fresh in the store.
     freshness = cast(EnrichmentLookup, app["store"])
@@ -250,15 +231,6 @@ async def _noop_builder(
     """Builder for tokens with no extra source to construct (e.g. ``mock``)."""
 
 
-def _require_enabled(enabled: bool, source_name: str) -> None:
-    """Raise a ClickException when an explicitly requested source is disabled.
-
-    Mirrors ``_build_ats``'s original disabled-source behavior for every source.
-    """
-    if not enabled:
-        raise click.ClickException(f"{source_name} source is disabled in config")
-
-
 def _register_client(
     stack: contextlib.AsyncExitStack,
     client: httpx.AsyncClient,
@@ -275,7 +247,6 @@ _BUILDERS = {
     "ats": _build_ats,
     "speedyapply": _build_speedyapply,
     "indeed": _build_indeed,
-    "linkedin-jobspy": _build_linkedin_jobspy,
     "linkedin-guest": _build_linkedin_guest,
     "linkedin": _build_linkedin,
 }
@@ -286,7 +257,6 @@ _CONFIG_FIELDS = {
     "ats": "ats",
     "speedyapply": "speedyapply",
     "indeed": "indeed",
-    "linkedin-jobspy": "linkedin_jobspy",
     "linkedin-guest": "linkedin_guest",
     "linkedin": "linkedin",
 }

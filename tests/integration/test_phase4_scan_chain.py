@@ -37,13 +37,11 @@ from jobfeed.adapters.sources._http import create_http_client
 from jobfeed.adapters.sources._speedyapply_markdown import canonical_id_for
 from jobfeed.adapters.sources.ats import ATSSource
 from jobfeed.adapters.sources.indeed_jobspy import IndeedSource
-from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import (
     SourcesATSConfig,
     SourcesIndeedConfig,
-    SourcesLinkedInJobSpyConfig,
     SourcesSpeedyApplyConfig,
 )
 from jobfeed.domain.dedupe import cluster_twins
@@ -317,15 +315,49 @@ async def test_cross_source_twin_quality_differential(store: PostgresStore) -> N
     assert cluster.representative.jd_quality == QualityBand.FULL
 
 
+class _StaticGuestSource:
+    """SimpleSource stub returning pre-built ``linkedin_guest`` postings.
+
+    The guest source's own discovery/parsing is covered by its unit tests;
+    this scenario only needs guest-tagged rows to land via the real
+    ``ScanService`` -> store chain so the dedupe tiebreak runs on real rows.
+    """
+
+    def __init__(self, postings: list[JobPosting]) -> None:
+        self._postings = postings
+
+    async def fetch_jobs(self, config: dict[str, object]) -> list[JobPosting]:  # noqa: ARG002
+        return list(self._postings)
+
+
+def _guest_posting(*, title: str, company: str) -> JobPosting:
+    """Build one FULL-JD linkedin_guest posting for the twin scenario."""
+    now = datetime.now(UTC)
+    return JobPosting(
+        platform="linkedin_guest",
+        canonical_id="4009200",
+        url="https://www.linkedin.com/jobs/view/4009200",
+        title=title,
+        company=company,
+        location="New York, NY",
+        discovered_at=now,
+        jd_text=_FULL_JD,
+        jd_quality=QualityBand.FULL,
+        enriched_at=now,
+        enrich_source="linkedin_guest",
+        posted_at=datetime(2026, 5, 27, tzinfo=UTC),
+    )
+
+
 @respx.mock
 async def test_cross_source_twin_source_priority_tiebreak(
-    store: PostgresStore, monkeypatch: pytest.MonkeyPatch
+    store: PostgresStore,
 ) -> None:
     """Two EQUAL-quality (FULL) twins on different platforms.
 
-    Greenhouse and LinkedIn JobSpy both produce a FULL-JD row for the same
-    company+title. Quality ties, so rule 2 (source priority) decides: the
-    greenhouse row (ATS-family rank 0) wins over linkedin_jobspy (rank 3).
+    Greenhouse and the LinkedIn guest source both produce a FULL-JD row for the
+    same company+title. Quality ties, so rule 2 (source priority) decides: the
+    greenhouse row (ATS-family rank 0) wins over linkedin_guest (rank 3).
     """
     await _seed_gh_company(store, "datadogats")
     respx.get(GH_JOBS_URL.format(slug="datadogats")).respond(
@@ -342,23 +374,9 @@ async def test_cross_source_twin_source_priority_tiebreak(
             ]
         },
     )
-    # LinkedIn JobSpy twin: same company+title, FULL inline JD.
-    li_frame = pd.DataFrame(
-        [
-            {
-                "id": "li-9200",
-                "title": "Platform Engineer",
-                "company": "Datadog",
-                "location": "New York, NY",
-                "job_url": "https://www.linkedin.com/jobs/view/9200",
-                "description": _FULL_JD,
-                "date_posted": "2026-05-27",
-            }
-        ]
-    )
-    _install_fake_scrape(monkeypatch, li_frame)
-    li_config = SourcesLinkedInJobSpyConfig(
-        enabled=True, search_urls=["https://linkedin/q"]
+    # LinkedIn guest twin: same company+title, FULL JD.
+    guest_source = _StaticGuestSource(
+        [_guest_posting(title="Platform Engineer", company="Datadog")]
     )
 
     async with create_http_client() as client:
@@ -366,17 +384,13 @@ async def test_cross_source_twin_source_priority_tiebreak(
         await service.run(
             [
                 ("ats", _ats_source(client, store), {}),
-                (
-                    "linkedin_jobspy",
-                    LinkedInJobSpySource(config=li_config, logger=_logger()),
-                    {},
-                ),
+                ("linkedin_guest", guest_source, {}),
             ]
         )
 
     jobs = await store.list_jobs()
     assert len(jobs) == _TWO_ROWS
-    assert {j.platform for j in jobs} == {"greenhouse", "linkedin_jobspy"}
+    assert {j.platform for j in jobs} == {"greenhouse", "linkedin_guest"}
 
     clusters = cluster_twins(jobs)
     assert len(clusters) == _ONE_CLUSTER

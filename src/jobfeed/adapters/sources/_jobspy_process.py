@@ -2,9 +2,9 @@
 
 This module owns the machinery that runs ``_jobspy.scrape`` *safely at scale*:
 
-* ``scrape_urls`` — the shared async fan-out both JobSpy sources
-  (``indeed_jobspy``, ``linkedin_jobspy``) reuse: each URL is scraped off the
-  event loop, with per-URL errors contained so one bad URL never aborts the rest.
+* ``scrape_urls`` — the async fan-out the JobSpy source (``indeed_jobspy``)
+  uses: each URL is scraped off the event loop, with per-URL errors contained
+  so one bad URL never aborts the rest.
 * the ``spawn`` child-process harness — each synchronous ``scrape`` runs in a
   fresh child so a configured timeout can stop a hung JobSpy call, with the
   result drained from the queue BEFORE joining the child (see
@@ -72,11 +72,10 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
 ) -> list[JobPosting]:
     """Scrape every search URL off the event loop, containing per-URL errors.
 
-    Shared by both JobSpy sources (Indeed + LinkedIn). Each URL's synchronous
-    ``scrape`` runs in a child process while the parent waits from a bounded
-    worker thread, so the event loop is never blocked and a hung JobSpy scrape
-    can be terminated. A failure on one URL is logged and skipped so the
-    remaining URLs still contribute their postings.
+    Each URL's synchronous ``scrape`` runs in a child process while the parent
+    waits from a bounded worker thread, so the event loop is never blocked and
+    a hung JobSpy scrape can be terminated. A failure on one URL is logged and
+    skipped so the remaining URLs still contribute their postings.
 
     Args:
         site_name: JobSpy site passed through to ``scrape``.

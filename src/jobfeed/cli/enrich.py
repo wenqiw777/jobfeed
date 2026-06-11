@@ -14,8 +14,7 @@ from jobfeed.adapters.sources._linkedin_guest_http import (
     fetch,
 )
 from jobfeed.adapters.sources.linkedin_guest import LinkedInGuestEnricher
-from jobfeed.cli import AppContext, require_app, run_with_store
-from jobfeed.cli._scan_sources import _require_enabled
+from jobfeed.cli import AppContext, require_app, require_enabled, run_with_store
 from jobfeed.config_sources import SourcesLinkedInGuestConfig
 from jobfeed.domain.quality import assess_quality
 from jobfeed.ports.store_ops import StoreOpsMixin
@@ -133,7 +132,7 @@ def enrich_linkedin_guest(ctx: click.Context) -> None:
     """
     app = require_app(ctx)
     config = app["settings"].sources.linkedin_guest
-    _require_enabled(config.enabled, "linkedin-guest")
+    require_enabled(config.enabled, "linkedin-guest")
     summary = asyncio.run(_run_enrich_linkedin_guest(app, config))
     click.echo(_format_enrich_summary(summary))
 

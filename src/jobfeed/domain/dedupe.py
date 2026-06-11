@@ -17,7 +17,7 @@ Representative decision ladder (first decisive key wins)::
         │
         ├─ 1. highest JD quality        (quality_rank: FULL=5 … ABANDONED=0, None=-1)
         ├─ 2. source priority           (ATS family {greenhouse,ashby,lever} >
-        │                                speedyapply > linkedin > linkedin_jobspy >
+        │                                speedyapply > linkedin > linkedin_guest >
         │                                indeed > unknown-last)
         ├─ 3. most recent posted_at      (NULLS-LAST; NOT discovered_at)
         └─ 4. stable (platform, canonical_id)
@@ -44,7 +44,7 @@ _PLATFORM_RANK: dict[str, int] = {
     "lever": _ATS_FAMILY_RANK,
     "speedyapply": 1,
     "linkedin": 2,
-    "linkedin_jobspy": 3,
+    "linkedin_guest": 3,
     "indeed": 4,
 }
 _UNKNOWN_PLATFORM_RANK = 99

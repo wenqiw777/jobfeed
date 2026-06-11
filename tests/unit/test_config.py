@@ -17,7 +17,6 @@ from jobfeed.config import (
     SourcesIndeedConfig,
     SourcesLinkedInConfig,
     SourcesLinkedInGuestConfig,
-    SourcesLinkedInJobSpyConfig,
     SourcesLinkedInSearchConfig,
     SourcesSpeedyApplyConfig,
     load_settings,
@@ -411,20 +410,18 @@ def test_sources_ats_config_rejects_nonpositive_scan_timeout() -> None:
         SourcesATSConfig(scan_timeout_s=0.0)
 
 
-# --- Phase 4a source config tests (speedyapply / indeed / linkedin_jobspy) ---
+# --- Phase 4a source config tests (speedyapply / indeed) ---
 
 
 def test_settings_exposes_phase4a_source_defaults() -> None:
-    """Settings.sources should expose the three Phase 4a sources, all disabled."""
+    """Settings.sources should expose the Phase 4a sources, all disabled."""
     sources = load_settings().sources
 
     assert isinstance(sources.speedyapply, SourcesSpeedyApplyConfig)
     assert isinstance(sources.indeed, SourcesIndeedConfig)
-    assert isinstance(sources.linkedin_jobspy, SourcesLinkedInJobSpyConfig)
 
     assert sources.speedyapply.enabled is False
     assert sources.indeed.enabled is False
-    assert sources.linkedin_jobspy.enabled is False
 
     assert sources.speedyapply.search_urls == []
     assert sources.speedyapply.max_concurrent == SPEEDYAPPLY_DEFAULT_MAX_CONCURRENT
@@ -437,13 +434,6 @@ def test_settings_exposes_phase4a_source_defaults() -> None:
     assert sources.indeed.timeout_s == JOBSPY_DEFAULT_TIMEOUT_S
     assert sources.indeed.country_indeed == JOBSPY_DEFAULT_COUNTRY_INDEED
     assert sources.indeed.repeat == JOBSPY_DEFAULT_REPEAT
-
-    assert sources.linkedin_jobspy.search_urls == []
-    assert sources.linkedin_jobspy.max_jobs == JOBSPY_DEFAULT_MAX_JOBS
-    assert sources.linkedin_jobspy.hours_old is None
-    assert sources.linkedin_jobspy.max_concurrent == JOBSPY_DEFAULT_MAX_CONCURRENT
-    assert sources.linkedin_jobspy.timeout_s == JOBSPY_DEFAULT_TIMEOUT_S
-    assert sources.linkedin_jobspy.repeat == JOBSPY_DEFAULT_REPEAT
 
 
 def test_settings_exposes_phase4b_linkedin_defaults() -> None:
@@ -512,10 +502,7 @@ def test_load_settings_parses_phase4a_source_sections(tmp_path: Path) -> None:
         'search_urls = ["https://example.test/indeed"]\n'
         f"max_jobs = {INDEED_TOML_MAX_JOBS}\n"
         f"hours_old = {INDEED_TOML_HOURS_OLD}\n"
-        'country_indeed = "canada"\n'
-        "[sources.linkedin_jobspy]\n"
-        "enabled = true\n"
-        'search_urls = ["https://example.test/li"]\n',
+        'country_indeed = "canada"\n',
         encoding="utf-8",
     )
 
@@ -528,8 +515,6 @@ def test_load_settings_parses_phase4a_source_sections(tmp_path: Path) -> None:
     assert sources.indeed.max_jobs == INDEED_TOML_MAX_JOBS
     assert sources.indeed.hours_old == INDEED_TOML_HOURS_OLD
     assert sources.indeed.country_indeed == "canada"
-    assert sources.linkedin_jobspy.enabled is True
-    assert sources.linkedin_jobspy.search_urls == ["https://example.test/li"]
 
 
 def test_sources_speedyapply_config_rejects_unknown_key() -> None:
@@ -550,12 +535,6 @@ def test_sources_indeed_config_rejects_unknown_key() -> None:
         SourcesIndeedConfig(unknown_key="value")  # type: ignore[call-arg]
 
 
-def test_sources_linkedin_jobspy_config_rejects_unknown_key() -> None:
-    """An unknown key in [sources.linkedin_jobspy] should fail (extra='forbid')."""
-    with pytest.raises(ValidationError):
-        SourcesLinkedInJobSpyConfig(unknown_key="value")  # type: ignore[call-arg]
-
-
 def test_sources_linkedin_config_rejects_unknown_key() -> None:
     """An unknown key in [sources.linkedin] should fail (extra='forbid')."""
     with pytest.raises(ValidationError):
@@ -568,16 +547,10 @@ def test_indeed_config_rejects_enabled_without_search_urls() -> None:
         SourcesIndeedConfig(enabled=True)
 
 
-def test_linkedin_jobspy_config_rejects_enabled_without_search_urls() -> None:
-    """Enabled LinkedIn JobSpy with no search_urls fails (no default search)."""
-    with pytest.raises(ValidationError):
-        SourcesLinkedInJobSpyConfig(enabled=True)
-
-
 def test_jobspy_config_allows_disabled_without_search_urls() -> None:
-    """Disabled JobSpy sources need no search_urls — the default resting state."""
+    """A disabled JobSpy source needs no search_urls — the default resting state."""
     assert SourcesIndeedConfig(enabled=False).search_urls == []
-    assert SourcesLinkedInJobSpyConfig().enabled is False
+    assert SourcesIndeedConfig().enabled is False
 
 
 def test_jobspy_config_allows_enabled_with_search_urls() -> None:
@@ -642,7 +615,7 @@ def test_jobspy_config_rejects_nonpositive_timeout_or_concurrency() -> None:
     with pytest.raises(ValidationError):
         SourcesIndeedConfig(timeout_s=0)
     with pytest.raises(ValidationError):
-        SourcesLinkedInJobSpyConfig(max_concurrent=0)
+        SourcesIndeedConfig(max_concurrent=0)
 
 
 def test_indeed_config_rejects_blank_country() -> None:
@@ -703,16 +676,6 @@ def test_settings_exposes_linkedin_guest_defaults() -> None:
     assert guest.enrich_batch_limit == LINKEDIN_GUEST_DEFAULT_ENRICH_BATCH_LIMIT
     assert guest.proxies is None
     assert guest.timeout_s == LINKEDIN_GUEST_DEFAULT_TIMEOUT_S
-
-
-def test_sources_config_keeps_linkedin_jobspy_alongside_guest() -> None:
-    """linkedin_guest joins linkedin_jobspy; the JobSpy field stays until its
-    dedicated excision commit removes it."""
-    sources = SourcesConfig()
-
-    assert isinstance(sources.linkedin_guest, SourcesLinkedInGuestConfig)
-    assert isinstance(sources.linkedin_jobspy, SourcesLinkedInJobSpyConfig)
-    assert sources.linkedin_jobspy.enabled is False
 
 
 def test_sources_linkedin_guest_config_rejects_unknown_key() -> None:

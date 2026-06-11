@@ -85,6 +85,24 @@ def require_app(ctx: click.Context) -> AppContext:
     return cast(AppContext, ctx.obj)
 
 
+def require_enabled(enabled: bool, source_name: str) -> None:
+    """Raise a ClickException when a requested source is disabled in config.
+
+    Shared guard for every command that targets a specific source — the scan
+    builders and the enrich commands alike — so an explicitly requested but
+    disabled source always fails the same way.
+
+    Args:
+        enabled: The source config's ``enabled`` flag.
+        source_name: CLI token used in the error message.
+
+    Raises:
+        click.ClickException: If the source is disabled.
+    """
+    if not enabled:
+        raise click.ClickException(f"{source_name} source is disabled in config")
+
+
 async def run_with_store(
     app: AppContext,
     action: Callable[[], Awaitable[T]],
@@ -237,5 +255,6 @@ __all__ = [
     "cli",
     "create_app",
     "require_app",
+    "require_enabled",
     "run_with_store",
 ]

@@ -121,14 +121,6 @@ enabled = false
 # repeat = 1                # re-run each URL N times, union by canonical_id;
 #                           # raise (e.g. 4) for Indeed's non-deterministic backend
 
-[sources.linkedin_jobspy]
-enabled = false
-# search_urls = []
-# max_jobs = 100
-# max_concurrent = 2
-# timeout_s = 60.0
-# hours_old =               # unset; when set, overrides each URL's fromage window
-
 # LinkedIn guest scraper — hits LinkedIn's anonymous guest endpoints directly
 # (no login, no browser). Paste regular LinkedIn jobs search URLs; query params
 # like f_TPR pass through verbatim (e.g. f_TPR=r86400 = posted in the last 24h).
@@ -143,8 +135,9 @@ enabled = false
 # proxies =                  # unset = direct; e.g. "http://user:pass@host:port"
 # timeout_s = 15.0           # per-request read timeout
 
-# LinkedIn JobSpy and LinkedIn Playwright are alternative LinkedIn paths; pick
-# at most one for routine scans to avoid duplicate LinkedIn traffic.
+# LinkedIn guest (anonymous, above) and LinkedIn Playwright (authenticated,
+# below) are alternative LinkedIn paths; pick at most one for routine scans to
+# avoid doubled LinkedIn traffic.
 [sources.linkedin]
 enabled = false
 # search_urls = [

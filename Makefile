@@ -15,7 +15,7 @@ quality:
 	make lint && make test
 
 # Manual full-stack e2e smoke (ephemeral PG + real scan). Not a CI gate.
-# Override the source with: make e2e SOURCE=all   (or speedyapply | linkedin-jobspy | indeed)
+# Override the source with: make e2e SOURCE=all   (or speedyapply | indeed)
 e2e:
 	./scripts/e2e_smoke.sh $(SOURCE)
 

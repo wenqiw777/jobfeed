@@ -2,8 +2,8 @@
 
 ``jobspy.scrape_jobs`` or the process runner is always monkeypatched — NO real
 network. Tests build real ``pandas.DataFrame``s and assert the boundary converts
-them to ``JobPosting``s, parses search URLs site-aware, contains scrape
-failures, runs off the event loop, and imports lazily.
+them to ``JobPosting``s, parses search URLs, contains scrape failures, runs off
+the event loop, and imports lazily.
 """
 
 from __future__ import annotations
@@ -22,8 +22,7 @@ import pytest
 
 from jobfeed.adapters.sources import _jobspy, _jobspy_process
 from jobfeed.adapters.sources.indeed_jobspy import IndeedSource
-from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
-from jobfeed.config import SourcesIndeedConfig, SourcesLinkedInJobSpyConfig
+from jobfeed.config import SourcesIndeedConfig
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.observability import get_logger
 from jobfeed.ports.source import SimpleSource
@@ -32,17 +31,12 @@ _DISCOVERED_AT = datetime(2026, 5, 29, 12, 0, tzinfo=UTC)
 # Long enough that assess_quality returns a non-MISSING band.
 _LONG_JD = "Engineering internship. " * 30
 
-# Expected JobSpy kwargs parsed from the crafted Indeed/LinkedIn URLs below.
+# Expected JobSpy kwargs parsed from the crafted Indeed URLs below.
 _EXPECTED_INDEED_HOURS = 72  # fromage=3 days * 24
 _EXPECTED_INDEED_RADIUS = 25
 _EXPECTED_MAX_JOBS = 42
 _EXPECTED_OVERRIDE_HOURS = 12
-_EXPECTED_LI_DISTANCE = 10
-_EXPECTED_LI_HOURS = 24  # f_TPR=r86400 seconds // 3600
-_EXPECTED_LI_HOURS_NO_PREFIX = 2  # f_TPR=7200 seconds // 3600
-_EXPECTED_LI_MAX_JOBS = 7
 _DEFAULT_JOBSPY_TIMEOUT_S = 60.0
-_DEFAULT_JOBSPY_MAX_CONCURRENT = 2
 _JOBSPY_TIMEOUT_S = 0.01
 _JOBSPY_MAX_CONCURRENT = 2
 _CUSTOM_JOBSPY_TIMEOUT_S = 12.5
@@ -303,41 +297,12 @@ def test_scrape_tags_platform_distinct_from_site(patched_scrape_jobs) -> None:
     """``platform`` is stamped from the arg, independent of ``site_name``."""
     patched_scrape_jobs.frame = _frame([_good_row()])
     postings = _jobspy.scrape(
-        site_name="linkedin",
-        platform="linkedin_jobspy",
-        search_url="https://www.linkedin.com/jobs/search/?keywords=swe",
-        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
-    )
-    assert postings[0].platform == "linkedin_jobspy"
-
-
-def test_linkedin_scrape_requests_descriptions(patched_scrape_jobs) -> None:
-    """LinkedIn scrapes set linkedin_fetch_description=True.
-
-    JobSpy omits the LinkedIn `description` column by default, so without this
-    flag every LinkedIn row persists with jd_text=None despite the inline-JD
-    contract. Regression guard for the Codex P1 review finding.
-    """
-    patched_scrape_jobs.frame = _frame([_good_row()])
-    _jobspy.scrape(
-        site_name="linkedin",
-        platform="linkedin_jobspy",
-        search_url="https://www.linkedin.com/jobs/search/?keywords=swe",
-        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
-    )
-    assert patched_scrape_jobs.calls[-1]["linkedin_fetch_description"] is True
-
-
-def test_indeed_scrape_omits_linkedin_description_flag(patched_scrape_jobs) -> None:
-    """The linkedin_fetch_description flag is LinkedIn-only (not sent for Indeed)."""
-    patched_scrape_jobs.frame = _frame([_good_row()])
-    _jobspy.scrape(
         site_name="indeed",
-        platform="indeed",
+        platform="custom_platform_tag",
         search_url="https://www.indeed.com/jobs?q=swe",
         config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
     )
-    assert "linkedin_fetch_description" not in patched_scrape_jobs.calls[-1]
+    assert postings[0].platform == "custom_platform_tag"
 
 
 def test_scrape_row_without_description_is_unenriched(patched_scrape_jobs) -> None:
@@ -410,58 +375,6 @@ def test_indeed_url_parse_drops_blank_and_bad_params(patched_scrape_jobs) -> Non
     assert "search_term" not in kwargs
     assert "hours_old" not in kwargs
     assert "distance" not in kwargs
-
-
-# ---------------------------------------------------------------------------
-# LinkedIn URL parsing (branches on site_name; different keys)
-# ---------------------------------------------------------------------------
-
-
-def test_linkedin_url_parse_uses_linkedin_keys(patched_scrape_jobs) -> None:
-    """keywords/location/distance/f_TPR=r<seconds> -> JobSpy kwargs."""
-    url = (
-        "https://www.linkedin.com/jobs/search/?keywords=backend+intern"
-        "&location=New+York&distance=10&f_TPR=r86400"
-    )
-    _jobspy.scrape(
-        site_name="linkedin",
-        platform="linkedin_jobspy",
-        search_url=url,
-        config=_jobspy.ScrapeConfig(max_jobs=20, hours_old=None),
-    )
-    kwargs = patched_scrape_jobs.calls[-1]
-    assert kwargs["search_term"] == "backend intern"
-    assert kwargs["location"] == "New York"
-    assert kwargs["distance"] == _EXPECTED_LI_DISTANCE
-    assert kwargs["hours_old"] == _EXPECTED_LI_HOURS
-    assert kwargs["site_name"] == "linkedin"
-
-
-def test_linkedin_ignores_indeed_keys(patched_scrape_jobs) -> None:
-    """Indeed's q/l/fromage are NOT honored for a LinkedIn URL (site-aware)."""
-    url = "https://www.linkedin.com/jobs/search/?q=swe&l=SF&fromage=3"
-    _jobspy.scrape(
-        site_name="linkedin",
-        platform="linkedin_jobspy",
-        search_url=url,
-        config=_jobspy.ScrapeConfig(max_jobs=20, hours_old=None),
-    )
-    kwargs = patched_scrape_jobs.calls[-1]
-    assert "search_term" not in kwargs
-    assert "location" not in kwargs
-    assert "hours_old" not in kwargs
-
-
-def test_linkedin_f_tpr_without_r_prefix(patched_scrape_jobs) -> None:
-    """f_TPR seconds without the leading 'r' still convert to hours."""
-    url = "https://www.linkedin.com/jobs/search/?keywords=swe&f_TPR=7200"
-    _jobspy.scrape(
-        site_name="linkedin",
-        platform="linkedin_jobspy",
-        search_url=url,
-        config=_jobspy.ScrapeConfig(max_jobs=20, hours_old=None),
-    )
-    assert patched_scrape_jobs.calls[-1]["hours_old"] == _EXPECTED_LI_HOURS_NO_PREFIX
 
 
 # ---------------------------------------------------------------------------
@@ -686,26 +599,6 @@ def test_scrape_applies_indeed_date_patch_in_process(
         discovered_at=_DISCOVERED_AT,
     )
     assert patches == ["indeed"]
-
-
-@pytest.mark.usefixtures("patched_scrape_jobs")
-def test_scrape_skips_indeed_patch_for_linkedin(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """scrape() does NOT apply the indeed-only date patch for LinkedIn searches."""
-    patches: list[str] = []
-    monkeypatch.setattr(
-        _jobspy, "apply_indeed_date_patch", lambda: patches.append("indeed")
-    )
-
-    _jobspy.scrape(
-        site_name="linkedin",
-        platform="linkedin_jobspy",
-        search_url="https://www.linkedin.com/jobs/search?keywords=swe",
-        config=_jobspy.ScrapeConfig(max_jobs=10, hours_old=None),
-        discovered_at=_DISCOVERED_AT,
-    )
-    assert patches == []
 
 
 async def test_scrape_urls_times_out_one_hanging_url(
@@ -985,119 +878,3 @@ async def test_indeed_fetch_jobs_runs_scrape_off_event_loop(
     _, postings = await asyncio.gather(_flip_flag(), source.fetch_jobs({}))
     assert flag["flipped"] is True
     assert postings == []
-
-
-# ---------------------------------------------------------------------------
-# LinkedInJobSpySource: thin shell over the SHARED scrape_urls (no date patch)
-# ---------------------------------------------------------------------------
-
-
-def _li_jobspy_source(**overrides: object) -> LinkedInJobSpySource:
-    fields: dict[str, object] = {
-        "enabled": True,
-        "search_urls": ["https://www.linkedin.com/jobs/search/?keywords=swe"],
-    }
-    fields.update(overrides)
-    cfg = SourcesLinkedInJobSpyConfig(**fields)  # type: ignore[arg-type]
-    return LinkedInJobSpySource(config=cfg, logger=get_logger())
-
-
-def test_linkedin_jobspy_source_satisfies_simple_source_protocol() -> None:
-    """LinkedInJobSpySource is a runtime SimpleSource."""
-    assert isinstance(_li_jobspy_source(), SimpleSource)
-
-
-async def test_linkedin_jobspy_fetch_jobs_returns_inline_postings(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """fetch_jobs returns postings tagged linkedin_jobspy with inline JD."""
-    captured: list[object] = []
-
-    def _fake_run_scrape_process(request: object, timeout_s: float) -> object:
-        assert timeout_s == _DEFAULT_JOBSPY_TIMEOUT_S
-        captured.append(request)
-        return _scrape_outcome(
-            [_posting_for_url(request.search_url, platform=request.platform)]
-        )
-
-    monkeypatch.setattr(
-        _jobspy_process, "_run_scrape_process", _fake_run_scrape_process
-    )
-    postings = await _li_jobspy_source().fetch_jobs({})
-    assert len(postings) == 1
-    assert postings[0].platform == "linkedin_jobspy"
-    assert postings[0].enrich_source == "jobspy_inline"
-    assert postings[0].jd_text is not None
-    # The shared boundary scraped the linkedin site (not indeed).
-    assert captured[-1].site_name == "linkedin"
-
-
-async def test_linkedin_jobspy_fetch_jobs_delegates_to_shared_scrape_urls(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """fetch_jobs reuses _jobspy_process.scrape_urls with the LinkedIn site/platform.
-
-    Spying on the shared loop proves the source duplicates NO DataFrame /
-    process-runner / containment logic — it forwards every config field verbatim.
-    """
-    captured: dict[str, object] = {}
-
-    async def _spy_scrape_urls(**kwargs: object) -> list[JobPosting]:
-        captured.update(kwargs)
-        return []
-
-    monkeypatch.setattr(_jobspy_process, "scrape_urls", _spy_scrape_urls)
-    source = _li_jobspy_source(search_urls=["https://li/a", "https://li/b"], max_jobs=7)
-    assert await source.fetch_jobs({}) == []
-    assert captured["site_name"] == "linkedin"
-    assert captured["platform"] == "linkedin_jobspy"
-    assert captured["search_urls"] == ["https://li/a", "https://li/b"]
-    assert captured["max_jobs"] == _EXPECTED_LI_MAX_JOBS
-    assert captured["timeout_s"] == _DEFAULT_JOBSPY_TIMEOUT_S
-    assert captured["max_concurrent"] == _DEFAULT_JOBSPY_MAX_CONCURRENT
-    assert isinstance(captured["discovered_at"], datetime)
-
-
-async def test_linkedin_jobspy_fetch_jobs_forwards_repeat(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """LinkedInJobSpySource forwards its configured repeat to the shared loop.
-
-    LinkedIn's JobSpy backend is non-deterministic too, so the shared ``repeat``
-    knob must reach ``scrape_urls`` rather than being silently ignored.
-    """
-    captured: dict[str, object] = {}
-
-    async def _spy_scrape_urls(**kwargs: object) -> list[JobPosting]:
-        captured.update(kwargs)
-        return []
-
-    monkeypatch.setattr(_jobspy_process, "scrape_urls", _spy_scrape_urls)
-    source = _li_jobspy_source(repeat=_CUSTOM_INDEED_REPEAT)
-
-    assert await source.fetch_jobs({}) == []
-    assert captured["repeat"] == _CUSTOM_INDEED_REPEAT
-
-
-async def test_linkedin_jobspy_does_not_apply_indeed_date_patch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The Indeed-only date patch is NEVER invoked by the LinkedIn source.
-
-    Spy on ``apply_indeed_date_patch`` at its definition module; if the LinkedIn
-    source (incorrectly) imported and called it, the spy would record a call.
-    """
-    patches: list[str] = []
-    monkeypatch.setattr(
-        "jobfeed.adapters.sources._jobspy_patches.apply_indeed_date_patch",
-        lambda: patches.append("patched"),
-    )
-    monkeypatch.setattr(
-        _jobspy_process,
-        "_run_scrape_process",
-        lambda request, _timeout_s: _scrape_outcome(
-            [_posting_for_url(request.search_url, platform=request.platform)]
-        ),
-    )
-    await _li_jobspy_source().fetch_jobs({})
-    assert patches == []  # LinkedIn must not touch the Indeed date patch

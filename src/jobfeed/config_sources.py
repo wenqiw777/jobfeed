@@ -95,10 +95,6 @@ class SourcesIndeedConfig(_JobSpySourceConfig):
         return stripped
 
 
-class SourcesLinkedInJobSpyConfig(_JobSpySourceConfig):
-    """Runtime limits and tuning knobs for the LinkedIn (JobSpy) source."""
-
-
 class SourcesLinkedInGuestConfig(BaseModel):
     """Runtime limits and pacing knobs for the LinkedIn guest source.
 
@@ -198,9 +194,6 @@ class SourcesConfig(BaseModel):
         default_factory=SourcesSpeedyApplyConfig
     )
     indeed: SourcesIndeedConfig = Field(default_factory=SourcesIndeedConfig)
-    linkedin_jobspy: SourcesLinkedInJobSpyConfig = Field(
-        default_factory=SourcesLinkedInJobSpyConfig
-    )
     linkedin_guest: SourcesLinkedInGuestConfig = Field(
         default_factory=SourcesLinkedInGuestConfig
     )
@@ -219,7 +212,6 @@ __all__ = [
     "SourcesIndeedConfig",
     "SourcesLinkedInConfig",
     "SourcesLinkedInGuestConfig",
-    "SourcesLinkedInJobSpyConfig",
     "SourcesLinkedInSearchConfig",
     "SourcesSpeedyApplyConfig",
 ]

@@ -19,8 +19,8 @@ usable JD, a rate-limit block (429/999), a definitively gone posting
 the enricher.
 
 The platform tag is ``linkedin_guest`` (distinct from the authenticated
-Playwright source's ``linkedin`` and the JobSpy path's ``linkedin_jobspy``)
-so guest rows never collide with either lineage.
+Playwright source's ``linkedin``) so guest rows never collide with that
+lineage.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ class LinkedInGuestSource:
 
         Args:
             config: Protocol-satisfying no-op parameter (same convention as
-                ``ATSSource``/``LinkedInJobSpySource``; pass ``{}``).
+                ``ATSSource``/``IndeedSource``; pass ``{}``).
 
         Returns:
             Deduped job postings tagged ``platform="linkedin_guest"`` with
