@@ -206,6 +206,7 @@ for bandwidth + complete JD, **not** for speed.
 | `src/jobfeed/adapters/sources/_linkedin_guest_parse.py` | Pure parsing: search cards → fields; detail fragment → JD text + posted-at. No network. |
 | `src/jobfeed/adapters/sources/_linkedin_guest_http.py` | Async httpx client (browser UA, proxy hook), endpoint URL builders + search-URL param extraction, transient-retry GET returning `(status, text)`. |
 | `src/jobfeed/adapters/sources/linkedin_guest.py` | `LinkedInGuestSource` (SimpleSource, discover) + `LinkedInGuestEnricher` (JobEnricher). |
+| `src/jobfeed/adapters/sources/_linkedin_guest_discover.py` | Private discover-run internals (_GuestRun pagination state, card→JobPosting mapping). |
 | `src/jobfeed/ports/enrich.py` | `JobEnricher` Protocol + `EnrichOutcome` (wraps `EnrichResult` + blocked/gone signals). |
 | `src/jobfeed/services/enrich.py` | `EnrichService`: select un-enriched rows → paced enrich + adaptive backoff → `record_enrichment`. |
 | `src/jobfeed/config_sources.py` | `SourcesLinkedInGuestConfig` added (Task 7); `SourcesLinkedInJobSpyConfig` removed (Task 9). |
