@@ -10,6 +10,7 @@ from jobfeed.domain.models import (
     CompanyRecord,
     CostEntry,
     DigestStats,
+    UnenrichedJob,
 )
 from jobfeed.domain.models_llm import LLMUsage
 
@@ -93,6 +94,7 @@ class StoreOpsMixin(Protocol):
         enriched_at: datetime,
         enrich_source: str,
         jd_lang: str | None = None,
+        posted_at: datetime | None = None,
     ) -> None:
         """Stamp a job as enriched with JD body and quality.
 
@@ -103,6 +105,46 @@ class StoreOpsMixin(Protocol):
             enriched_at: Enrichment timestamp.
             enrich_source: Source label.
             jd_lang: Optional detected language.
+            posted_at: Optional JD-derived posting date. Fills the column
+                only when it is NULL — an exact card-derived date already
+                stored is never overwritten by this approximate value.
+        """
+        ...
+
+    async def list_unenriched_jobs(
+        self,
+        *,
+        platform: str,
+        limit: int,
+    ) -> list[UnenrichedJob]:
+        """List open jobs on a platform that still have no JD text.
+
+        Args:
+            platform: Source platform to scope the listing to.
+            limit: Maximum rows to return.
+
+        Returns:
+            Rows with jd_text IS NULL and closed_at IS NULL, newest
+            discovered_at first (id breaks ties). Empty when none match.
+        """
+        ...
+
+    async def mark_job_closed(
+        self,
+        *,
+        job_id: str,
+        closed_at: datetime,
+        reason: str | None = None,
+    ) -> None:
+        """Stamp a single job as closed (posting confirmed gone).
+
+        Args:
+            job_id: Store-assigned job identity.
+            closed_at: Closure timestamp to set.
+            reason: Optional marker recording WHY the row was closed, stamped
+                into enrich_error for ops triage (house convention, e.g.
+                'gone:{status}:{vendor}', 'backfill:stale-no-jd'). None
+                leaves enrich_error untouched.
         """
         ...
 

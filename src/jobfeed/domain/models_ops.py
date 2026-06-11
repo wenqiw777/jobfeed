@@ -42,6 +42,15 @@ class DigestStats:
     total_cost_today_usd: float
 
 
+@dataclass(frozen=True, kw_only=True)
+class UnenrichedJob:
+    """Identity snapshot of a job row still awaiting JD enrichment."""
+
+    job_id: str
+    canonical_id: str
+    url: str
+
+
 @dataclass(kw_only=True)
 class AttentionItem:
     """Single pipeline health concern."""
@@ -70,4 +79,5 @@ __all__ = [
     "CompanyRecord",
     "CostEntry",
     "DigestStats",
+    "UnenrichedJob",
 ]

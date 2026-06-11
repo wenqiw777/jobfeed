@@ -56,6 +56,7 @@ from jobfeed.domain.models import (
     StatusFilter,
     StatusInfo,
     TransitionRequest,
+    UnenrichedJob,
     Verdict,
     WorkflowAttention,
     WorkflowAttentionItem,
@@ -4427,6 +4428,7 @@ class PostgresStore:
         enriched_at: datetime,
         enrich_source: str,
         jd_lang: str | None = None,
+        posted_at: datetime | None = None,
     ) -> None:
         """Stamp a job as enriched with JD body and quality.
 
@@ -4437,6 +4439,11 @@ class PostgresStore:
             enriched_at: Enrichment timestamp.
             enrich_source: Source label.
             jd_lang: Optional detected language.
+            posted_at: Optional JD-derived posting date. Fills the column
+                only when it is NULL (COALESCE keeps the stored value) — an
+                exact card-derived date is never overwritten by this
+                approximate relative-text date. None leaves the column
+                untouched.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -4445,6 +4452,7 @@ class PostgresStore:
                        jd_text = $1, jd_quality = $2, enriched_at = $3,
                        enrich_source = $4, jd_lang = $5, enrich_error = NULL,
                        closed_at = NULL,
+                       posted_at = COALESCE(posted_at, $7),
                        -- An enrichment replaces the JD with new content, so the
                        -- ml_gate_* verdict (computed against the OLD JD) is
                        -- stale: a stale 'fail' is excluded from the funnel
@@ -4463,6 +4471,74 @@ class PostgresStore:
                 enrich_source,
                 jd_lang,
                 int(job_id),
+                posted_at,
+            )
+
+    async def list_unenriched_jobs(
+        self,
+        *,
+        platform: str,
+        limit: int,
+    ) -> list[UnenrichedJob]:
+        """List open jobs on a platform that still have no JD text.
+
+        Args:
+            platform: Source platform to scope the listing to.
+            limit: Maximum rows to return.
+
+        Returns:
+            Rows with jd_text IS NULL and closed_at IS NULL, newest
+            discovered_at first (id breaks ties). Empty when none match.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT id, canonical_id, url FROM jobs
+                   WHERE platform = $1
+                     AND jd_text IS NULL
+                     AND closed_at IS NULL
+                   ORDER BY discovered_at DESC, id DESC
+                   LIMIT $2""",
+                platform,
+                limit,
+            )
+        return [
+            UnenrichedJob(
+                job_id=str(row["id"]),
+                canonical_id=row["canonical_id"],
+                url=row["url"],
+            )
+            for row in rows
+        ]
+
+    async def mark_job_closed(
+        self,
+        *,
+        job_id: str,
+        closed_at: datetime,
+        reason: str | None = None,
+    ) -> None:
+        """Stamp a single job as closed (posting confirmed gone).
+
+        Args:
+            job_id: Store-assigned job identity.
+            closed_at: Closure timestamp to set.
+            reason: Optional marker recording WHY the row was closed, stamped
+                into enrich_error for ops triage (house convention, e.g.
+                'gone:{status}:{vendor}', 'backfill:stale-no-jd'). None
+                leaves enrich_error untouched (COALESCE keeps the stored
+                value).
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE jobs
+                   SET closed_at = $1,
+                       enrich_error = COALESCE($3, enrich_error)
+                   WHERE id = $2""",
+                closed_at,
+                int(job_id),
+                reason,
             )
 
     async def enrich_paste(
