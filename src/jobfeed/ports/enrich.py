@@ -17,12 +17,31 @@ class EnrichOutcome:
     before the next request), ``is_gone`` on a definitive 404/410 (the
     posting is removed; mark it closed), or ``error`` for everything else
     (skip the row and retry on a future pass).
+
+    Construction enforces the contract: EnrichService dispatches on these
+    signals in priority order, so a multi-signal outcome from a misbehaving
+    enricher would silently take the wrong branch. Fail loudly here instead.
     """
 
     result: EnrichResult | None = None
     is_blocked: bool = False
     is_gone: bool = False
     error: str | None = None
+
+    def __post_init__(self) -> None:
+        """Reject outcomes that do not set exactly one signal."""
+        signals = (
+            self.result is not None,
+            self.is_blocked,
+            self.is_gone,
+            self.error is not None,
+        )
+        if sum(signals) != 1:
+            msg = (
+                "EnrichOutcome must set exactly one signal "
+                f"(result/is_blocked/is_gone/error), got {sum(signals)}"
+            )
+            raise ValueError(msg)
 
 
 @runtime_checkable

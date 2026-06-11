@@ -330,13 +330,15 @@ class _StaticGuestSource:
         return list(self._postings)
 
 
-def _guest_posting(*, title: str, company: str) -> JobPosting:
+def _guest_posting(
+    *, title: str, company: str, canonical_id: str = "4009200"
+) -> JobPosting:
     """Build one FULL-JD linkedin_guest posting for the twin scenario."""
     now = datetime.now(UTC)
     return JobPosting(
         platform="linkedin_guest",
-        canonical_id="4009200",
-        url="https://www.linkedin.com/jobs/view/4009200",
+        canonical_id=canonical_id,
+        url=f"https://www.linkedin.com/jobs/view/{canonical_id}",
         title=title,
         company=company,
         location="New York, NY",
