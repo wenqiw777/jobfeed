@@ -351,7 +351,7 @@ Add `async def list_unenriched_jobs(self, *, platform: str, limit: int) -> list[
 **Files:**
 - Modify: `src/jobfeed/config_sources.py`
 - Modify: `src/jobfeed/config.py` (only if source configs are re-exported/wired there)
-- Test: `tests/unit/test_config_sources.py`
+- Test: `tests/unit/test_config.py` (all source-config tests live here; see Deviation 2)
 
 **What to build:**
 Add `SourcesLinkedInGuestConfig` (Pydantic): `enabled: bool = False`, `search_urls: list[str] = []`, `max_jobs: int = 1000 (ge=1)`, `pacing_s: float = 1.0 (gt=0)` (between list pages and between enrich requests), `enrich_batch_limit: int = 500 (ge=1)`, `proxies: str | None = None`, `timeout_s: float = 15.0 (gt=0)`. A validator: when `enabled` is True, `search_urls` must be non-empty with no blank entries (mirror the existing `_JobSpySourceConfig` validator). Add the `linkedin_guest: SourcesLinkedInGuestConfig` field **alongside** the existing `linkedin_jobspy` field. Do NOT remove `SourcesLinkedInJobSpyConfig` here — `cli/_scan_sources.py` still references `settings.sources.linkedin_jobspy` until Task 9, and deleting the field now would break the build mid-plan. All `linkedin_jobspy` removal happens in Task 9's single excision commit.
@@ -372,6 +372,7 @@ Add `SourcesLinkedInGuestConfig` (Pydantic): `enabled: bool = False`, `search_ur
 - Modify: `src/jobfeed/cli/scan.py` (add `linkedin-guest` to the `--source` choices tuple + help text)
 - Modify: `src/jobfeed/cli/enrich.py`
 - Modify: `src/jobfeed/cli/__init__.py` (register the new command; further DI wiring only if needed)
+- Modify: `config.example.toml` (add a documented `[sources.linkedin_guest]` section beside the other sources)
 - Test: extend `tests/unit/test_cli_enrich.py` and `tests/e2e/test_cli_scan_sources.py` (the existing source-registration coverage lives in the e2e file; there is no `tests/unit/test_scan_sources.py` today)
 
 **What to build:**
@@ -407,7 +408,7 @@ In `_scan_sources.py`: add a `_build_linkedin_guest` builder that constructs `Li
   - `tests/e2e/test_cli_scan_sources.py` (`test_scan_linkedin_jobspy_runs_source`, config writing, skip assertions — retarget to `linkedin-guest`)
   - `tests/integration/test_phase4_scan_chain.py` (imports `LinkedInJobSpySource`; the greenhouse-vs-`linkedin_jobspy` dedupe assertion retargets to `linkedin_guest`)
   - `tests/live/test_phase4_live_smoke.py` (drop `test_linkedin_jobspy_live`)
-- Modify: any docs referencing `linkedin_jobspy` as a source.
+- Modify: any docs referencing `linkedin_jobspy` as a source (incl. the `config.example.toml` JobSpy section + its "alternative LinkedIn paths" comment, the Makefile e2e comment, and `scripts/e2e_smoke.sh` if it names the source).
 
 **What to build:**
 Excise the LinkedIn-via-JobSpy path in one commit. The shared `_jobspy.py` / `_jobspy_process.py` stay (Indeed depends on them); `_jobspy_url.py` keeps only its Indeed mapping. The dedupe platform rank that `linkedin_jobspy` held (3 — between the authenticated `linkedin` and `indeed`) transfers to `linkedin_guest`; without this, the new platform falls to `_UNKNOWN_PLATFORM_RANK = 99` and loses every cross-source tie-break, even against `indeed`. Indeed JobSpy behavior must be unchanged.
@@ -436,3 +437,23 @@ A `@pytest.mark.live` test (excluded from default `addopts`, like the existing l
 - [ ] When run with `pytest -m live`, discover returns > 137 unique ids (or skips clearly if the IP is rate-limited).
 - [ ] Enrich of one id returns `EnrichResult` with non-empty `jd_text`.
 - [ ] Committed.
+
+---
+
+## Plan Deviations
+
+### Deviation 1 — 2026-06-11 enricher could not fit in linkedin_guest.py
+**Discovered while:** Task 3 quality review measured the facade at 221/300 lines before Task 4 added the enricher.
+**Plan said:** Task 4 extends `linkedin_guest.py` with `LinkedInGuestEnricher` (single file holds source + enricher).
+**Reality:** The 300-line gate is blocking for `adapters/sources/`; source + enricher + house-style docstrings cannot fit in one file.
+**Type:** [x] Review-deficit  [ ] Essential
+**Why this type:** Line-count arithmetic over the planned content was knowable at plan time; no execution needed.
+**Resolution:** `_GuestRun` + card→posting mapping extracted to `_linkedin_guest_discover.py` (byte-identical move, Task 4 step 0); File Structure table updated.
+
+### Deviation 2 — 2026-06-11 Task 7 named a test file that never existed
+**Discovered while:** Task 7 implementation looked for `tests/unit/test_config_sources.py`.
+**Plan said:** Test file `tests/unit/test_config_sources.py`.
+**Reality:** All source-config tests live in `tests/unit/test_config.py`; the planned path never existed.
+**Type:** [x] Review-deficit  [ ] Essential
+**Why this type:** A plan-time `ls tests/unit/` would have shown it; the round-2 review verified many file references but not this one.
+**Resolution:** Extended `tests/unit/test_config.py` per repo convention; Task 7 file list corrected.

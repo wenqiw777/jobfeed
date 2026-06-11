@@ -16,6 +16,7 @@ from jobfeed.config import (
     SourcesConfig,
     SourcesIndeedConfig,
     SourcesLinkedInConfig,
+    SourcesLinkedInGuestConfig,
     SourcesLinkedInJobSpyConfig,
     SourcesLinkedInSearchConfig,
     SourcesSpeedyApplyConfig,
@@ -59,6 +60,16 @@ LINKEDIN_DEFAULT_TIER2_CAP = 30
 LINKEDIN_TOML_MAX_JOBS = 40
 LINKEDIN_TOML_GROUP_MAX_JOBS = 12
 LINKEDIN_TOML_TIER2_CAP = 5
+
+# LinkedIn guest source defaults (mirror SourcesLinkedInGuestConfig)
+LINKEDIN_GUEST_DEFAULT_MAX_JOBS = 1000
+LINKEDIN_GUEST_DEFAULT_PACING_S = 1.0
+LINKEDIN_GUEST_DEFAULT_ENRICH_BATCH_LIMIT = 500
+LINKEDIN_GUEST_DEFAULT_TIMEOUT_S = 15.0
+LINKEDIN_GUEST_TOML_MAX_JOBS = 250
+LINKEDIN_GUEST_TOML_PACING_S = 2.5
+LINKEDIN_GUEST_TOML_ENRICH_BATCH_LIMIT = 100
+LINKEDIN_GUEST_TOML_TIMEOUT_S = 20.0
 
 
 def test_load_settings_returns_defaults_without_config_file() -> None:
@@ -675,6 +686,123 @@ def test_load_settings_env_enable_speedyapply_without_urls_fails(
 
     with pytest.raises(ValidationError):
         load_settings()
+
+
+# --- LinkedIn guest source config tests (sources.linkedin_guest) ---
+
+
+def test_settings_exposes_linkedin_guest_defaults() -> None:
+    """Settings.sources should expose the guest LinkedIn source disabled."""
+    guest = load_settings().sources.linkedin_guest
+
+    assert isinstance(guest, SourcesLinkedInGuestConfig)
+    assert guest.enabled is False
+    assert guest.search_urls == []
+    assert guest.max_jobs == LINKEDIN_GUEST_DEFAULT_MAX_JOBS
+    assert guest.pacing_s == LINKEDIN_GUEST_DEFAULT_PACING_S
+    assert guest.enrich_batch_limit == LINKEDIN_GUEST_DEFAULT_ENRICH_BATCH_LIMIT
+    assert guest.proxies is None
+    assert guest.timeout_s == LINKEDIN_GUEST_DEFAULT_TIMEOUT_S
+
+
+def test_sources_config_keeps_linkedin_jobspy_alongside_guest() -> None:
+    """linkedin_guest joins linkedin_jobspy; the JobSpy field stays until its
+    dedicated excision commit removes it."""
+    sources = SourcesConfig()
+
+    assert isinstance(sources.linkedin_guest, SourcesLinkedInGuestConfig)
+    assert isinstance(sources.linkedin_jobspy, SourcesLinkedInJobSpyConfig)
+    assert sources.linkedin_jobspy.enabled is False
+
+
+def test_sources_linkedin_guest_config_rejects_unknown_key() -> None:
+    """An unknown key in [sources.linkedin_guest] should fail (extra='forbid')."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInGuestConfig(unknown_key="value")  # type: ignore[call-arg]
+
+
+def test_linkedin_guest_config_rejects_enabled_without_search_urls() -> None:
+    """Enabled guest LinkedIn with no search_urls fails loud."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInGuestConfig(enabled=True)
+
+
+def test_linkedin_guest_config_rejects_blank_search_urls() -> None:
+    """Enabled guest LinkedIn with ANY blank/whitespace search_url is rejected."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInGuestConfig(enabled=True, search_urls=["", "   "])
+    # A mixed list with one real URL and one blank entry is still rejected.
+    with pytest.raises(ValidationError):
+        SourcesLinkedInGuestConfig(
+            enabled=True, search_urls=["   ", "https://valid.test/q"]
+        )
+
+
+def test_linkedin_guest_config_allows_enabled_with_search_urls() -> None:
+    """An enabled guest source with at least one search_url validates."""
+    cfg = SourcesLinkedInGuestConfig(
+        enabled=True,
+        search_urls=["https://linkedin.test/jobs/search?keywords=intern"],
+    )
+
+    assert cfg.enabled is True
+    assert cfg.search_urls == ["https://linkedin.test/jobs/search?keywords=intern"]
+
+
+def test_linkedin_guest_config_allows_disabled_without_search_urls() -> None:
+    """A disabled guest source needs no search_urls — the default resting state."""
+    assert SourcesLinkedInGuestConfig().search_urls == []
+    assert SourcesLinkedInGuestConfig(enabled=False).enabled is False
+
+
+def test_sources_linkedin_guest_config_rejects_nonpositive_limits() -> None:
+    """Guest source numeric knobs should enforce their lower bounds."""
+    with pytest.raises(ValidationError):
+        SourcesLinkedInGuestConfig(max_jobs=0)
+    with pytest.raises(ValidationError):
+        SourcesLinkedInGuestConfig(pacing_s=0)
+    with pytest.raises(ValidationError):
+        SourcesLinkedInGuestConfig(enrich_batch_limit=0)
+    with pytest.raises(ValidationError):
+        SourcesLinkedInGuestConfig(timeout_s=0)
+
+
+def test_linkedin_guest_config_normalizes_blank_proxies_to_none() -> None:
+    """A blank proxies string means "no proxy"; real values are stripped/kept."""
+    assert SourcesLinkedInGuestConfig(proxies="  ").proxies is None
+    assert SourcesLinkedInGuestConfig(proxies="http://u:p@h:1").proxies == (
+        "http://u:p@h:1"
+    )
+
+
+def test_load_settings_parses_linkedin_guest_section(tmp_path: Path) -> None:
+    """load_settings should populate [sources.linkedin_guest] from TOML.
+
+    Args:
+        tmp_path: Temporary directory for a synthetic config file.
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[sources.linkedin_guest]\n"
+        "enabled = true\n"
+        'search_urls = ["https://linkedin.test/jobs/search?keywords=intern"]\n'
+        f"max_jobs = {LINKEDIN_GUEST_TOML_MAX_JOBS}\n"
+        f"pacing_s = {LINKEDIN_GUEST_TOML_PACING_S}\n"
+        f"enrich_batch_limit = {LINKEDIN_GUEST_TOML_ENRICH_BATCH_LIMIT}\n"
+        'proxies = "http://proxy.test:8080"\n'
+        f"timeout_s = {LINKEDIN_GUEST_TOML_TIMEOUT_S}\n",
+        encoding="utf-8",
+    )
+
+    guest = load_settings(config_path).sources.linkedin_guest
+
+    assert guest.enabled is True
+    assert guest.search_urls == ["https://linkedin.test/jobs/search?keywords=intern"]
+    assert guest.max_jobs == LINKEDIN_GUEST_TOML_MAX_JOBS
+    assert guest.pacing_s == LINKEDIN_GUEST_TOML_PACING_S
+    assert guest.enrich_batch_limit == LINKEDIN_GUEST_TOML_ENRICH_BATCH_LIMIT
+    assert guest.proxies == "http://proxy.test:8080"
+    assert guest.timeout_s == LINKEDIN_GUEST_TOML_TIMEOUT_S
 
 
 # --- Phase 5 MLGateSettings tests ---

@@ -99,6 +99,48 @@ class SourcesLinkedInJobSpyConfig(_JobSpySourceConfig):
     """Runtime limits and tuning knobs for the LinkedIn (JobSpy) source."""
 
 
+class SourcesLinkedInGuestConfig(BaseModel):
+    """Runtime limits and pacing knobs for the LinkedIn guest source.
+
+    The guest source scrapes LinkedIn's anonymous guest endpoints (no login,
+    no browser). ``pacing_s`` spaces both list-page fetches and JD enrich
+    requests; ``enrich_batch_limit`` caps how many unenriched jobs one
+    enrich pass attempts.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    search_urls: list[str] = Field(default_factory=list)
+    max_jobs: int = Field(default=1000, ge=1)
+    pacing_s: float = Field(default=1.0, gt=0)
+    enrich_batch_limit: int = Field(default=500, ge=1)
+    proxies: str | None = None
+    timeout_s: float = Field(default=15.0, gt=0)
+
+    @field_validator("proxies")
+    @classmethod
+    def _normalize_blank_proxies(cls, value: str | None) -> str | None:
+        """Strip proxies and treat a blank string as "no proxy" (None)."""
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @model_validator(mode="after")
+    def _require_urls_when_enabled(self) -> SourcesLinkedInGuestConfig:
+        """Fail loud if enabled with no usable guest search URL."""
+        if self.enabled and (
+            not self.search_urls or any(not url.strip() for url in self.search_urls)
+        ):
+            raise ValueError(
+                "LinkedIn guest source is enabled but search_urls is empty or "
+                "has a blank entry; set at least one search URL or set "
+                "enabled = false."
+            )
+        return self
+
+
 class SourcesLinkedInSearchConfig(BaseModel):
     """One LinkedIn Playwright search URL with optional local budgets."""
 
@@ -159,6 +201,9 @@ class SourcesConfig(BaseModel):
     linkedin_jobspy: SourcesLinkedInJobSpyConfig = Field(
         default_factory=SourcesLinkedInJobSpyConfig
     )
+    linkedin_guest: SourcesLinkedInGuestConfig = Field(
+        default_factory=SourcesLinkedInGuestConfig
+    )
     linkedin: SourcesLinkedInConfig = Field(default_factory=SourcesLinkedInConfig)
 
 
@@ -173,6 +218,7 @@ __all__ = [
     "SourcesConfig",
     "SourcesIndeedConfig",
     "SourcesLinkedInConfig",
+    "SourcesLinkedInGuestConfig",
     "SourcesLinkedInJobSpyConfig",
     "SourcesLinkedInSearchConfig",
     "SourcesSpeedyApplyConfig",
