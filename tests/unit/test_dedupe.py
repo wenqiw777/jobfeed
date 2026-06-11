@@ -215,6 +215,22 @@ def test_source_priority_linkedin_guest_beats_indeed() -> None:
     assert clusters[0].representative.platform == "linkedin_guest"
 
 
+def test_source_priority_historical_linkedin_jobspy_beats_indeed() -> None:
+    """A historical linkedin_jobspy twin keeps its tier-3 rank over indeed.
+
+    The linkedin_jobspy SOURCE is removed, but rows persisted before the
+    removal must not fall to the unknown-platform rank.
+    """
+    indeed = _job(canonical_id="i3", platform="indeed", jd_quality=QualityBand.FULL)
+    li_jobspy = _job(
+        canonical_id="lj", platform="linkedin_jobspy", jd_quality=QualityBand.FULL
+    )
+
+    clusters = cluster_twins([indeed, li_jobspy])
+
+    assert clusters[0].representative.platform == "linkedin_jobspy"
+
+
 def test_unknown_platform_sorts_last() -> None:
     """An unknown platform loses the source-priority key to a known one."""
     unknown = _job(canonical_id="u", platform="mystery", jd_quality=QualityBand.FULL)

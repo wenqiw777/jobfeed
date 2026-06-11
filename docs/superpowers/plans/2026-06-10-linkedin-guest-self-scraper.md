@@ -269,7 +269,7 @@ An async helper module owning all HTTP concerns. `create_client(proxies: str | N
 - Test: `tests/unit/test_linkedin_guest_source.py`
 
 **What to build:**
-`LinkedInGuestSource` implements `SimpleSource` (`ports/source.py`). `fetch_jobs(config)` iterates every configured search URL; for each it extracts `keywords`/`location`/`f_TPR` via `parse_search_params` (Task 2) — a configured URL with no `keywords` is skipped with a logged warning, never fatal — and paginates the list endpoint with **correct** pagination: `start` begins at 0 and advances by the number of cards returned on the page (`start += len(cards)`), looping while cards are non-empty, `start < 1000`, and total unique < `max_jobs`. Dedupe by bare `job_id` across pages. A 429/empty/non-2xx page ends that URL's pagination (return what was collected so far — never abort the whole scan). Each `ParsedCard` becomes a `JobPosting` with `platform="linkedin_guest"`, `jd_text=None`, `enriched_at=None`, `enrich_source=None`, `posted_at` from the card, `discovered_at=now`. The HTTP fetcher is injected (constructor takes a fetch callable) so tests run without network. A per-page sleep (`pacing_s`, default ~1.0) is applied between page fetches via an injected async-sleep so the list endpoint is not hammered (the list endpoint shares the per-IP token bucket). Structure note: do NOT inline the per-URL loop and the per-page pagination loop together in `fetch_jobs` — extract pagination into a named helper (e.g. `_paginate_url`, O(pages), ≤100 pages per URL given the `start < 1000` guard) per the nested-loop rule in `docs/engineering-standards.md`.
+`LinkedInGuestSource` implements `SimpleSource` (`ports/source.py`). `fetch_jobs(config)` iterates every configured search URL; for each it extracts `keywords`/`location`/`f_TPR` via `parse_search_params` (Task 2) — a configured URL with no `keywords` is skipped with a logged warning, never fatal — and paginates the list endpoint with **correct** pagination: `start` begins at 0 and advances by the RAW card count of the page (`count_search_cards`, parse-skipped cards included — LinkedIn's offset is positional over its raw result set; parsed-skip-safe, fixed in codex round 1), looping while raw cards are non-empty, `start < 1000`, and total unique < `max_jobs`. Dedupe by bare `job_id` across pages. A 429/empty/non-2xx page ends that URL's pagination (return what was collected so far — never abort the whole scan). Each `ParsedCard` becomes a `JobPosting` with `platform="linkedin_guest"`, `jd_text=None`, `enriched_at=None`, `enrich_source=None`, `posted_at` from the card, `discovered_at=now`. The HTTP fetcher is injected (constructor takes a fetch callable) so tests run without network. A per-page sleep (`pacing_s`, default ~1.0) is applied between page fetches via an injected async-sleep so the list endpoint is not hammered (the list endpoint shares the per-IP token bucket). Structure note: do NOT inline the per-URL loop and the per-page pagination loop together in `fetch_jobs` — extract pagination into a named helper (e.g. `_paginate_url`, O(pages), ≤100 pages per URL given the `start < 1000` guard) per the nested-loop rule in `docs/engineering-standards.md`.
 
 **Acceptance criteria:**
 - [ ] Given a fake fetcher returning 3 pages of 10 distinct cards then an empty page, `fetch_jobs` returns 30 `JobPosting`s, all `platform="linkedin_guest"`, `jd_text=None`.
@@ -414,7 +414,7 @@ In `_scan_sources.py`: add a `_build_linkedin_guest` builder that constructs `Li
 Excise the LinkedIn-via-JobSpy path in one commit. The shared `_jobspy.py` / `_jobspy_process.py` stay (Indeed depends on them); `_jobspy_url.py` keeps only its Indeed mapping. The dedupe platform rank that `linkedin_jobspy` held (3 — between the authenticated `linkedin` and `indeed`) transfers to `linkedin_guest`; without this, the new platform falls to `_UNKNOWN_PLATFORM_RANK = 99` and loses every cross-source tie-break, even against `indeed`. Indeed JobSpy behavior must be unchanged.
 
 **Acceptance criteria:**
-- [ ] `linkedin_jobspy.py` and `SourcesLinkedInJobSpyConfig` are gone; no remaining references to either (grep clean).
+- [ ] `linkedin_jobspy.py` and `SourcesLinkedInJobSpyConfig` are gone; no remaining references to either (grep clean). (amended in codex round 2: a deliberate dedupe-rank tombstone for historical rows is the one allowed reference)
 - [ ] `linkedin-jobspy` is no longer a valid `--source` token: gone from `cli/scan.py` choices/help and from `_REAL_SOURCES`/`_BUILDERS`/`_CONFIG_FIELDS` in `_scan_sources.py`.
 - [ ] `_jobspy.py` no longer sets `linkedin_fetch_description`; `_jobspy_url.py` has no LinkedIn branch/helpers left; Indeed scrape path and its tests are untouched and still pass.
 - [ ] `domain/dedupe.py` ranks `linkedin_guest` at 3 (between `linkedin` and `indeed`); a dedupe test shows a same-quality `linkedin_guest`-vs-`indeed` twin resolving to `linkedin_guest`.
@@ -457,3 +457,21 @@ A `@pytest.mark.live` test (excluded from default `addopts`, like the existing l
 **Type:** [x] Review-deficit  [ ] Essential
 **Why this type:** A plan-time `ls tests/unit/` would have shown it; the round-2 review verified many file references but not this one.
 **Resolution:** Extended `tests/unit/test_config.py` per repo convention; Task 7 file list corrected.
+
+---
+
+## Codex Review Rounds
+
+### Round 1 — 2026-06-11
+- [P2] pagination advanced by parsed-card count; all-skipped page ended the URL early → fixed: raw-count advance via count_search_cards, all-skipped pages continue with a warning. GATE: PASS (no P1).
+
+### Round 2 — 2026-06-11
+- [P2] historical linkedin_jobspy rows fell to unknown dedupe rank → fixed: tombstone rank entry at 3 (shared with linkedin_guest), historical rows keep their tiebreak priority.
+- [P2] enrich-paste rejected platform linkedin_guest → fixed: guest platform added to the paste choices.
+GATE: PASS (no P1).
+
+### Round 3 — 2026-06-11
+- [P2] config.example.toml guided users to the host-native `jobfeed enrich-linkedin-guest` instead of the canonical Docker CLI → fixed: comment now points to `./bin/jobfeed enrich-linkedin-guest`. GATE: PASS (no P1).
+
+### Round 4 — 2026-06-11
+- Clean: no discrete, actionable correctness regressions found (codex ran make quality itself: lint, formatting, mypy, default suite all passing). GATE: PASS. Four-round codex review complete.

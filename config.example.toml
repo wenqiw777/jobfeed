@@ -124,8 +124,9 @@ enabled = false
 # LinkedIn guest scraper — hits LinkedIn's anonymous guest endpoints directly
 # (no login, no browser). Paste regular LinkedIn jobs search URLs; query params
 # like f_TPR pass through verbatim (e.g. f_TPR=r86400 = posted in the last 24h).
-# Discovery stores list-card data only; run `jobfeed enrich-linkedin-guest`
-# afterwards for the paced JD-fetch pass over the same per-IP budget.
+# Discovery stores list-card data only; run `./bin/jobfeed enrich-linkedin-guest`
+# (the canonical Docker CLI) afterwards for the paced JD-fetch pass over the
+# same per-IP budget.
 [sources.linkedin_guest]
 enabled = false
 # search_urls = ["https://www.linkedin.com/jobs/search/?keywords=software%20engineer%20intern&location=United%20States&f_TPR=r86400"]

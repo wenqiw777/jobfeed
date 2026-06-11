@@ -18,6 +18,7 @@ from jobfeed.adapters.sources._linkedin_guest_http import (
 )
 from jobfeed.adapters.sources._linkedin_guest_parse import (
     ParsedCard,
+    count_search_cards,
     parse_search_cards,
 )
 from jobfeed.domain.models import JobPosting
@@ -78,11 +79,12 @@ class _GuestRun:
     async def _paginate_url(self, params: SearchParams) -> None:
         """Walk one URL's guest list pages, absorbing cards into the run.
 
-        ``start`` begins at 0 and advances by the number of cards the page
-        returned (duplicates included — the offset is the endpoint's, not
-        ours), looping while pages stay non-empty, ``start < 1000``, and the
-        unique total is below ``max_jobs``. A non-200/empty page ends this
-        URL only; everything collected so far stays.
+        ``start`` begins at 0 and advances by the page's RAW card count
+        (duplicates and parse-skipped cards included — the offset is
+        positional over the endpoint's result set, not over what we kept),
+        looping while pages stay non-empty, ``start < 1000``, and the unique
+        total is below ``max_jobs``. A non-200 or truly card-less page ends
+        this URL only; everything collected so far stays.
 
         Time complexity: O(pages) fetches per URL — the ``start < 1000``
         guard bounds it (~100 pages at the endpoint's 10-card page size) —
@@ -90,19 +92,25 @@ class _GuestRun:
         """
         start = 0
         while start < _MAX_START and len(self._unique) < self._settings.max_jobs:
-            cards = await self._fetch_page(params, start)
-            if not cards:
+            raw, cards = await self._fetch_page(params, start)
+            if raw == 0:
                 return
             self._absorb(cards)
-            start += len(cards)
+            start += raw
 
-    async def _fetch_page(self, params: SearchParams, start: int) -> list[ParsedCard]:
+    async def _fetch_page(
+        self, params: SearchParams, start: int
+    ) -> tuple[int, list[ParsedCard]]:
         """Fetch and parse one list page after pacing.
 
         Returns:
-            Parsed cards, or ``[]`` to signal end-of-URL — an empty page or
-            any non-200 status (429 / 999 / 4xx / the retry-exhausted 0
-            sentinel), the latter logged at warning level.
+            ``(raw_count, cards)`` — the page's raw ``base-search-card``
+            count and the cards that parsed validly. ``raw_count == 0``
+            signals end-of-URL: a truly empty page or any non-200 status
+            (429 / 999 / 4xx / the retry-exhausted 0 sentinel), the latter
+            logged at warning level. A page whose cards ALL fail parsing
+            returns ``(raw_count, [])`` with a warning so pagination can
+            still advance past it.
         """
         await self._pace()
         page_url = search_url(params.keywords, params.location, params.f_tpr, start)
@@ -114,8 +122,14 @@ class _GuestRun:
                 start=start,
                 keywords=params.keywords,
             )
-            return []
-        return parse_search_cards(response.text)
+            return 0, []
+        raw = count_search_cards(response.text)
+        cards = parse_search_cards(response.text)
+        if raw > 0 and not cards:
+            self._log.warning(
+                "guest_search_page_all_cards_skipped", start=start, raw=raw
+            )
+        return raw, cards
 
     async def _pace(self) -> None:
         """Sleep ``pacing_s`` before every fetch except the run's first."""

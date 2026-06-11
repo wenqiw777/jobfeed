@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from jobfeed.adapters.sources._linkedin_guest_parse import (
     ParsedCard,
+    count_search_cards,
     parse_jd,
     parse_posting_posted_at,
     parse_search_cards,
@@ -167,6 +168,22 @@ def test_posted_at_missing_or_blank_time_is_none() -> None:
     )
     cards = parse_search_cards(missing + blank + garbage)
     assert [c.posted_at for c in cards] == [None, None, None]
+
+
+def test_count_search_cards_counts_raw_cards_including_invalid() -> None:
+    """count_search_cards counts every card div, even parse-skipped ones."""
+    valid = _card("https://www.linkedin.com/jobs/view/good-role-4333333333")
+    non_numeric = _card("https://www.linkedin.com/jobs/view/senior-engineer-at-acme")
+    no_link = '<div class="base-search-card"><h3>Orphan</h3></div>'
+    html = valid + non_numeric + no_link
+    assert count_search_cards(html) == _THREE_CARDS
+    assert len(parse_search_cards(html)) == 1
+
+
+def test_count_search_cards_without_cards_is_zero() -> None:
+    """An empty or card-less fragment counts zero raw cards."""
+    assert count_search_cards("") == 0
+    assert count_search_cards("<div><p>nothing here</p></div>") == 0
 
 
 def test_no_location_yields_none() -> None:

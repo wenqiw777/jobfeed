@@ -101,8 +101,22 @@ class TestEnrichPaste:
         assert result.exit_code == 0, result.output
         assert store.enrich_paste.await_args.kwargs["platform"] == "indeed"
 
+    def test_platform_linkedin_guest_passes_through(self) -> None:
+        """--platform linkedin_guest is forwarded to the store."""
+        store = _make_store()
+
+        result = CliRunner().invoke(
+            enrich_paste,
+            ["xyz", "--platform", "linkedin_guest"],
+            input=_JD_TEXT,
+            obj=_make_app(store),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert store.enrich_paste.await_args.kwargs["platform"] == "linkedin_guest"
+
     def test_unsupported_platform_rejected(self) -> None:
-        """--platform only accepts linkedin and indeed."""
+        """--platform only accepts linkedin, linkedin_guest, and indeed."""
         store = _make_store()
 
         result = CliRunner().invoke(

@@ -2,7 +2,8 @@
 
 Discovery hits the same anonymous ``jobs-guest`` list endpoint JobSpy uses,
 but owned in-repo: pagination is correct (``start`` advances by the page's
-card count, never the accumulated unique total — the JobSpy bug this
+RAW card count — parse-skipped cards included, never the accumulated unique
+total, the JobSpy bug this
 replaces), failures are contained per search URL (a 429/999/empty page ends
 that URL and keeps what was already collected), and the HTTP fetcher plus the
 pacing sleep are injected so tests never touch the network. The per-run

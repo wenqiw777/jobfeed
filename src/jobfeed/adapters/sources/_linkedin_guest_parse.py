@@ -61,6 +61,24 @@ def parse_search_cards(html: str) -> list[ParsedCard]:
     return cards
 
 
+def count_search_cards(html: str) -> int:
+    """Count raw ``div.base-search-card`` elements, before validity filtering.
+
+    LinkedIn's ``start`` offset is positional over its RAW result set, so
+    pagination must advance by this count — not by how many cards survived
+    ``parse_search_cards``'s id/title/company filtering (promoted, malformed,
+    or layout-drifted cards are skipped there but still occupy offsets).
+
+    Args:
+        html: Raw HTML fragment from the guest search endpoint.
+
+    Returns:
+        Number of card divs in the fragment, valid or not.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    return len(soup.select("div.base-search-card"))
+
+
 def parse_jd(html: str) -> str:
     """Extract the JD body text from a guest posting HTML fragment.
 
@@ -182,6 +200,7 @@ def _text_of(element: Tag | None) -> str:
 __all__ = [
     "VIEW_URL",
     "ParsedCard",
+    "count_search_cards",
     "parse_jd",
     "parse_posting_posted_at",
     "parse_search_cards",

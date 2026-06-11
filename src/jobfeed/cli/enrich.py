@@ -20,7 +20,7 @@ from jobfeed.domain.quality import assess_quality
 from jobfeed.ports.store_ops import StoreOpsMixin
 from jobfeed.services.enrich import EnrichPacing, EnrichService, EnrichSummary
 
-_PLATFORM_CHOICES = ("linkedin", "indeed")
+_PLATFORM_CHOICES = ("linkedin", "linkedin_guest", "indeed")
 
 
 @click.command(name="enrich-paste", help="Paste a JD manually for a stub job.")

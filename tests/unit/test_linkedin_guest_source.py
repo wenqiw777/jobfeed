@@ -1,7 +1,8 @@
 """Unit tests for the LinkedIn guest discovery source (SimpleSource).
 
-Covers correct pagination (``start`` advances by the page's card count, NOT
-the JobSpy accumulated-total bug), dedupe by bare job id across pages and
+Covers correct pagination (``start`` advances by the page's RAW card count —
+parse-skipped cards included, NOT the JobSpy accumulated-total bug, and an
+all-skipped non-empty page keeps paginating), dedupe by bare job id across pages and
 URLs, the ``max_jobs`` / ``start < 1000`` guards, graceful 429-and-sentinel
 termination, keyword-less URL skips, and the injected between-page pacing
 sleep, and the fetcher-less production path (real client + ``fetch`` closure)
@@ -48,6 +49,17 @@ def _card(job_id: str, *, location: str | None = "SF, CA") -> str:
         "<h3>Engineer</h3></a><h4>Acme</h4>"
         f"{location_html}"
         '<time datetime="2026-06-09"></time>'
+        "</div>"
+    )
+
+
+def _invalid_card() -> str:
+    """Build a card whose href has no numeric id, so parsing skips it."""
+    return (
+        '<div class="base-search-card">'
+        '<a class="base-card__full-link" '
+        'href="https://www.linkedin.com/jobs/view/promoted-role-at-acme">'
+        "<h3>Engineer</h3></a><h4>Acme</h4>"
         "</div>"
     )
 
@@ -206,6 +218,42 @@ async def test_start_advances_by_cards_returned_per_page() -> None:
     fetcher = _three_pages_then_empty()
     await _source(fetcher).fetch_jobs({})
     assert _starts(fetcher.urls) == [0, _PAGE_SIZE, 2 * _PAGE_SIZE, 3 * _PAGE_SIZE]
+
+
+async def test_start_advances_by_raw_count_when_some_cards_are_skipped() -> None:
+    """A 10-raw/5-valid page advances start by 10 (raw), not 5 (parsed)."""
+    half = _PAGE_SIZE // 2
+    mixed = _page(_ids(0, half)) + _invalid_card() * half
+    fetcher = ScriptedFetcher(
+        [
+            GuestResponse(status=200, text=mixed),
+            GuestResponse(status=200, text=""),
+        ]
+    )
+    postings = await _source(fetcher).fetch_jobs({})
+
+    assert len(postings) == half
+    assert _starts(fetcher.urls) == [0, _PAGE_SIZE]
+
+
+async def test_all_skipped_page_warns_and_keeps_paginating() -> None:
+    """A non-empty page whose cards all parse-skip does NOT end the URL."""
+    fetcher = ScriptedFetcher(
+        [
+            GuestResponse(status=200, text=_invalid_card() * _PAGE_SIZE),
+            GuestResponse(status=200, text=_page(_ids(0, _PAGE_SIZE))),
+            GuestResponse(status=200, text=""),
+        ]
+    )
+    logger = RecordingLogger()
+    postings = await _source(fetcher, logger=logger).fetch_jobs({})
+
+    assert len(postings) == _PAGE_SIZE
+    assert _starts(fetcher.urls) == [0, _PAGE_SIZE, 2 * _PAGE_SIZE]
+    [(event, attrs)] = logger.warnings
+    assert event == "guest_search_page_all_cards_skipped"
+    assert attrs["start"] == 0
+    assert attrs["raw"] == _PAGE_SIZE
 
 
 async def test_duplicate_ids_across_pages_collapse() -> None:
