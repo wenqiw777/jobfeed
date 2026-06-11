@@ -16,13 +16,16 @@ from jobfeed.domain.models import PipelineRun
 # never folded into "all" — otherwise every real scan would persist synthetic
 # mock jobs. The hyphenated "linkedin-jobspy" token maps to the
 # ``linkedin_jobspy`` config field and the ``LinkedInJobSpySource`` platform tag.
-# The plain "linkedin" token is the authenticated Playwright SessionSource.
+# "linkedin-guest" is the anonymous guest-endpoint scraper (config field
+# ``linkedin_guest``, platform tag ``linkedin_guest``); the plain "linkedin"
+# token is the authenticated Playwright SessionSource.
 SOURCE_CHOICES = [
     "mock",
     "ats",
     "speedyapply",
     "indeed",
     "linkedin-jobspy",
+    "linkedin-guest",
     "linkedin",
     "all",
 ]
@@ -36,8 +39,8 @@ SOURCE_CHOICES = [
     show_default=True,
     type=click.Choice(SOURCE_CHOICES),
     help="Source adapter to scan: mock, ats, speedyapply, indeed, "
-    "linkedin-jobspy, linkedin, or all (default: all enabled real sources; "
-    "mock is explicit-only).",
+    "linkedin-jobspy, linkedin-guest, linkedin, or all (default: all enabled "
+    "real sources; mock is explicit-only).",
 )
 @click.pass_context
 def scan(ctx: click.Context, source_name: str) -> None:

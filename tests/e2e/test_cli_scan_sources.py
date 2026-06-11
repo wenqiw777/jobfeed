@@ -22,6 +22,7 @@ from click.testing import CliRunner, Result
 
 from jobfeed.adapters.sources import _jobspy_process
 from jobfeed.adapters.sources.ats import ATSSource
+from jobfeed.adapters.sources.linkedin_guest import LinkedInGuestSource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.cli import _resolve_config_path, cli
 from jobfeed.domain.models import JobPosting, SaveJobResult
@@ -34,8 +35,9 @@ from jobfeed.ports.source import DiscoverResult, EnrichResult
 scan_module = sys.modules["jobfeed.cli.scan"]
 sources_module = sys.modules["jobfeed.cli._scan_sources"]
 
-# ``--source all`` here disables ats + linkedin-jobspy + linkedin -> skips.
-_EXPECTED_SKIPS = 3
+# ``--source all`` here disables ats + linkedin-jobspy + linkedin-guest +
+# linkedin -> skips.
+_EXPECTED_SKIPS = 4
 # ats + speedyapply both own an httpx client -> two clients created.
 _EXPECTED_CLIENTS = 2
 
@@ -166,6 +168,9 @@ def _write_config(tmp_path: Path, enabled: dict[str, bool]) -> Path:
         "[sources.linkedin_jobspy]",
         f"enabled = {str(enabled.get('linkedin_jobspy', False)).lower()}",
         "",
+        "[sources.linkedin_guest]",
+        f"enabled = {str(enabled.get('linkedin_guest', False)).lower()}",
+        "",
         "[sources.linkedin]",
         f"enabled = {str(enabled.get('linkedin', False)).lower()}",
         "",
@@ -267,6 +272,25 @@ def test_scan_linkedin_jobspy_runs_source(
     assert fake_store.jobs[0].platform == "linkedin_jobspy"
 
 
+def test_scan_linkedin_guest_runs_source(
+    tmp_path: Path, fake_store: FakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--source linkedin-guest`` builds + runs LinkedInGuestSource (mocked)."""
+    monkeypatch.setattr(
+        LinkedInGuestSource,
+        "fetch_jobs",
+        _fetch_returning(_posting("linkedin_guest", "1")),
+    )
+    config_path = _write_config(tmp_path, {"linkedin_guest": True})
+    _enable_linkedin_guest_url(config_path)
+
+    result = _invoke(CliRunner(), config_path, "scan", "--source", "linkedin-guest")
+
+    assert result.exit_code == 0, result.output
+    assert "Discovered 1 jobs, inserted 1, updated 0" in result.output
+    assert fake_store.jobs[0].platform == "linkedin_guest"
+
+
 def test_scan_linkedin_runs_session_source(
     tmp_path: Path, fake_store: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -338,11 +362,14 @@ def test_scan_all_runs_enabled_and_logs_skips(
     # folded in (it is explicit-only via --source mock).
     assert {"speedyapply", "indeed"} <= platforms
     assert "mock" not in platforms
-    # ats + linkedin_jobspy were disabled -> structured skip events, no run.
+    # ats + linkedin_jobspy + linkedin_guest were disabled -> structured skip
+    # events, no run.
     assert "linkedin_jobspy" not in platforms
+    assert "linkedin_guest" not in platforms
     assert "linkedin" not in platforms
     assert '"source": "ats"' in result.output
     assert '"source": "linkedin-jobspy"' in result.output
+    assert '"source": "linkedin-guest"' in result.output
     assert '"source": "linkedin"' in result.output
     assert result.output.count("scan_source_skipped") == _EXPECTED_SKIPS
 
@@ -384,6 +411,18 @@ def test_scan_linkedin_disabled_is_click_error(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "linkedin source is disabled in config" in result.output
+
+
+@pytest.mark.usefixtures("fake_store")
+def test_scan_linkedin_guest_disabled_is_click_error(tmp_path: Path) -> None:
+    """Explicit ``--source linkedin-guest`` while disabled fails the same way."""
+    config_path = _write_config(tmp_path, {"linkedin_guest": False})
+
+    result = _invoke(CliRunner(), config_path, "scan", "--source", "linkedin-guest")
+
+    assert result.exit_code == 1
+    assert "linkedin-guest source is disabled in config" in result.output
+    assert "Traceback" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +492,7 @@ def test_scan_help_lists_new_choices() -> None:
         "speedyapply",
         "indeed",
         "linkedin-jobspy",
+        "linkedin-guest",
         "linkedin",
         "all",
     ):
@@ -480,6 +520,17 @@ def _enable_linkedin_url(config_path: Path) -> None:
     text = text.replace(
         "[sources.linkedin_jobspy]\nenabled = true",
         '[sources.linkedin_jobspy]\nenabled = true\nsearch_urls = ["https://linkedin.com/jobs/search?keywords=swe"]',
+    )
+    config_path.write_text(text, encoding="utf-8")
+
+
+def _enable_linkedin_guest_url(config_path: Path) -> None:
+    """Add one guest search URL so the enabled-config validator passes."""
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "[sources.linkedin_guest]\nenabled = true",
+        "[sources.linkedin_guest]\nenabled = true\n"
+        'search_urls = ["https://www.linkedin.com/jobs/search/?keywords=swe"]',
     )
     config_path.write_text(text, encoding="utf-8")
 

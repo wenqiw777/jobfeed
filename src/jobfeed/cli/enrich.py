@@ -1,4 +1,4 @@
-"""Click command for the manual JD paste fallback: enrich-paste."""
+"""Click commands for JD enrichment: enrich-paste and enrich-linkedin-guest."""
 
 from __future__ import annotations
 
@@ -8,9 +8,18 @@ from typing import cast
 
 import click
 
+from jobfeed.adapters.sources._linkedin_guest_http import (
+    GuestResponse,
+    create_client,
+    fetch,
+)
+from jobfeed.adapters.sources.linkedin_guest import LinkedInGuestEnricher
 from jobfeed.cli import AppContext, require_app, run_with_store
+from jobfeed.cli._scan_sources import _require_enabled
+from jobfeed.config_sources import SourcesLinkedInGuestConfig
 from jobfeed.domain.quality import assess_quality
 from jobfeed.ports.store_ops import StoreOpsMixin
+from jobfeed.services.enrich import EnrichPacing, EnrichService, EnrichSummary
 
 _PLATFORM_CHOICES = ("linkedin", "indeed")
 
@@ -108,4 +117,67 @@ async def _run_enrich_paste(
     await run_with_store(app, action)
 
 
-__all__ = ["enrich_paste"]
+@click.command(
+    name="enrich-linkedin-guest",
+    help="Fetch JDs for unenriched LinkedIn guest jobs (one paced pass).",
+)
+@click.pass_context
+def enrich_linkedin_guest(ctx: click.Context) -> None:
+    """Run one paced JD-enrichment pass over ``linkedin_guest`` rows.
+
+    Args:
+        ctx: Click invocation context.
+
+    Raises:
+        click.ClickException: If the linkedin_guest source is disabled.
+    """
+    app = require_app(ctx)
+    config = app["settings"].sources.linkedin_guest
+    _require_enabled(config.enabled, "linkedin-guest")
+    summary = asyncio.run(_run_enrich_linkedin_guest(app, config))
+    click.echo(_format_enrich_summary(summary))
+
+
+async def _run_enrich_linkedin_guest(
+    app: AppContext,
+    config: SourcesLinkedInGuestConfig,
+) -> EnrichSummary:
+    """Build the guest enricher + service and run one enrichment pass.
+
+    The httpx client is opened here (proxy/timeout from config) and closed by
+    the ``async with`` on every path, including service errors.
+    """
+
+    async def action() -> EnrichSummary:
+        client = create_client(config.proxies, config.timeout_s)
+        async with client:
+
+            async def fetch_url(url: str) -> GuestResponse:
+                return await fetch(client, url)
+
+            service = EnrichService(
+                enricher=LinkedInGuestEnricher(fetcher=fetch_url, logger=app["logger"]),
+                store=cast(StoreOpsMixin, app["store"]),
+                logger=app["logger"],
+                pacing=EnrichPacing(min_interval_s=config.pacing_s),
+            )
+            return await service.run(
+                platform="linkedin_guest",
+                batch_limit=config.enrich_batch_limit,
+            )
+
+    return await run_with_store(app, action)
+
+
+def _format_enrich_summary(summary: EnrichSummary) -> str:
+    """Render the pass counters; ``blocked`` counts block events."""
+    line = (
+        f"Enriched {summary.enriched}, closed {summary.closed}, "
+        f"blocked {summary.blocked} (block events), skipped {summary.skipped}"
+    )
+    if summary.stopped_early:
+        line += " — stopped early (rate-limited; re-run later)"
+    return line
+
+
+__all__ = ["enrich_linkedin_guest", "enrich_paste"]

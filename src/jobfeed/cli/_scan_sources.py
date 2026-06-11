@@ -19,6 +19,10 @@ from jobfeed.adapters.sources._http import create_http_client
 from jobfeed.adapters.sources.ats import ATSSource
 from jobfeed.adapters.sources.indeed_jobspy import IndeedSource
 from jobfeed.adapters.sources.linkedin import LinkedInSource
+from jobfeed.adapters.sources.linkedin_guest import (
+    GuestSourceSettings,
+    LinkedInGuestSource,
+)
 from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.cli import AppContext
@@ -28,7 +32,14 @@ from jobfeed.ports.store_ops import StoreOpsMixin
 from jobfeed.services.scan import SourceSpec
 
 # Real (non-mock) sources eligible for ``--source all`` fan-out, in scan order.
-_REAL_SOURCES = ("ats", "speedyapply", "indeed", "linkedin-jobspy", "linkedin")
+_REAL_SOURCES = (
+    "ats",
+    "speedyapply",
+    "indeed",
+    "linkedin-jobspy",
+    "linkedin-guest",
+    "linkedin",
+)
 
 
 async def seed_ats_companies(
@@ -186,6 +197,32 @@ async def _build_linkedin_jobspy(
     )
 
 
+async def _build_linkedin_guest(
+    app: AppContext,
+    sources: list[SourceSpec],
+    stack: contextlib.AsyncExitStack,  # noqa: ARG001 - client is source-owned
+) -> None:
+    """Build the anonymous guest-endpoint source (it owns its own client)."""
+    config = app["settings"].sources.linkedin_guest
+    _require_enabled(config.enabled, "linkedin-guest")
+    sources.append(
+        (
+            "linkedin_guest",
+            LinkedInGuestSource(
+                settings=GuestSourceSettings(
+                    search_urls=config.search_urls,
+                    max_jobs=config.max_jobs,
+                    pacing_s=config.pacing_s,
+                    proxies=config.proxies,
+                    timeout_s=config.timeout_s,
+                ),
+                logger=app["logger"],
+            ),
+            {},
+        )
+    )
+
+
 async def _build_linkedin(
     app: AppContext,
     sources: list[SourceSpec],
@@ -239,6 +276,7 @@ _BUILDERS = {
     "speedyapply": _build_speedyapply,
     "indeed": _build_indeed,
     "linkedin-jobspy": _build_linkedin_jobspy,
+    "linkedin-guest": _build_linkedin_guest,
     "linkedin": _build_linkedin,
 }
 
@@ -249,6 +287,7 @@ _CONFIG_FIELDS = {
     "speedyapply": "speedyapply",
     "indeed": "indeed",
     "linkedin-jobspy": "linkedin_jobspy",
+    "linkedin-guest": "linkedin_guest",
     "linkedin": "linkedin",
 }
 
