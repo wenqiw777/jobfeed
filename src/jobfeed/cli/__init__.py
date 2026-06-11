@@ -85,6 +85,24 @@ def require_app(ctx: click.Context) -> AppContext:
     return cast(AppContext, ctx.obj)
 
 
+def require_enabled(enabled: bool, source_name: str) -> None:
+    """Raise a ClickException when a requested source is disabled in config.
+
+    Shared guard for every command that targets a specific source — the scan
+    builders and the enrich commands alike — so an explicitly requested but
+    disabled source always fails the same way.
+
+    Args:
+        enabled: The source config's ``enabled`` flag.
+        source_name: CLI token used in the error message.
+
+    Raises:
+        click.ClickException: If the source is disabled.
+    """
+    if not enabled:
+        raise click.ClickException(f"{source_name} source is disabled in config")
+
+
 async def run_with_store(
     app: AppContext,
     action: Callable[[], Awaitable[T]],
@@ -197,7 +215,7 @@ from jobfeed.cli.apply import apply_cmd, apply_history  # noqa: E402
 from jobfeed.cli.bootstrap import bootstrap_companies  # noqa: E402
 from jobfeed.cli.companies import companies  # noqa: E402
 from jobfeed.cli.digest import digest  # noqa: E402
-from jobfeed.cli.enrich import enrich_paste  # noqa: E402
+from jobfeed.cli.enrich import enrich_linkedin_guest, enrich_paste  # noqa: E402
 from jobfeed.cli.evaluate import evaluate  # noqa: E402
 from jobfeed.cli.interview import interview  # noqa: E402
 from jobfeed.cli.login import login  # noqa: E402
@@ -226,6 +244,7 @@ cli.add_command(apply_cmd)
 cli.add_command(apply_history)
 cli.add_command(snapshots)
 cli.add_command(enrich_paste)
+cli.add_command(enrich_linkedin_guest)
 cli.add_command(interview)
 cli.add_command(companies)
 cli.add_command(bootstrap_companies)
@@ -236,5 +255,6 @@ __all__ = [
     "cli",
     "create_app",
     "require_app",
+    "require_enabled",
     "run_with_store",
 ]

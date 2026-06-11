@@ -17,8 +17,9 @@ Representative decision ladder (first decisive key wins)::
         │
         ├─ 1. highest JD quality        (quality_rank: FULL=5 … ABANDONED=0, None=-1)
         ├─ 2. source priority           (ATS family {greenhouse,ashby,lever} >
-        │                                speedyapply > linkedin > linkedin_jobspy >
-        │                                indeed > unknown-last)
+        │                                speedyapply > linkedin >
+        │                                {linkedin_guest, linkedin_jobspy
+        │                                (historical)} > indeed > unknown-last)
         ├─ 3. most recent posted_at      (NULLS-LAST; NOT discovered_at)
         └─ 4. stable (platform, canonical_id)
                 │
@@ -44,6 +45,11 @@ _PLATFORM_RANK: dict[str, int] = {
     "lever": _ATS_FAMILY_RANK,
     "speedyapply": 1,
     "linkedin": 2,
+    "linkedin_guest": 3,
+    # Tombstone: the linkedin_jobspy SOURCE is removed, but rows persisted
+    # before the removal keep their historical priority (shared tier with
+    # linkedin_guest, like the ATS family shares rank 0). Do not delete this
+    # entry while such rows can exist in a database.
     "linkedin_jobspy": 3,
     "indeed": 4,
 }

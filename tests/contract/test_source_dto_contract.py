@@ -2,9 +2,9 @@
 
 Each new source parses a committed fixture to EXACT ``JobPosting`` field values
 under a FIXED reference time, so any drift in a source's field mapping fails the
-test deliberately. Coverage: SpeedyApply (markdown + greenhouse routing),
-Indeed JobSpy, and LinkedIn JobSpy (DataFrame built from JSON fixtures with
-the JobSpy process runner monkeypatched).
+test deliberately. Coverage: SpeedyApply (markdown + greenhouse routing) and
+Indeed JobSpy (DataFrame built from a JSON fixture with the JobSpy process
+runner monkeypatched).
 
 This file must NOT require PostgreSQL — it is pure parse + mock and runs inside
 ``make quality``. All network is mocked (respx for HTTP, monkeypatched JobSpy
@@ -28,11 +28,9 @@ from jobfeed.adapters.sources._ats_greenhouse import JOB_URL as GH_JOB_URL
 from jobfeed.adapters.sources._http import create_http_client
 from jobfeed.adapters.sources._speedyapply_markdown import canonical_id_for
 from jobfeed.adapters.sources.indeed_jobspy import IndeedSource
-from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.config import (
     SourcesIndeedConfig,
-    SourcesLinkedInJobSpyConfig,
     SourcesSpeedyApplyConfig,
 )
 from jobfeed.domain.models import JobPosting, QualityBand
@@ -50,7 +48,6 @@ _FIXED_NOW = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
 
 _SPEEDYAPPLY_FIXTURE = "speedyapply_readme.md"
 _INDEED_FIXTURE = "jobspy_indeed_rows.json"
-_LINKEDIN_FIXTURE = "jobspy_linkedin_rows.json"
 
 # Expected postable-row counts per fixture (🔒 + continuation rows excluded).
 _SPEEDYAPPLY_ROW_COUNT = 3
@@ -197,7 +194,7 @@ class TestSpeedyApplyDTOContract:
 
 
 # ===========================================================================
-# JobSpy contract (Indeed + LinkedIn)
+# JobSpy contract (Indeed)
 # ===========================================================================
 
 
@@ -239,12 +236,6 @@ def _indeed_frame() -> pd.DataFrame:
         for r in rows
     ]
     return pd.DataFrame(frame_rows)
-
-
-def _linkedin_frame() -> pd.DataFrame:
-    """Build a JobSpy LinkedIn DataFrame from the fixture."""
-    rows = _load_rows(_LINKEDIN_FIXTURE)
-    return pd.DataFrame(rows)
 
 
 class TestIndeedJobSpyDTOContract:
@@ -292,51 +283,3 @@ class TestIndeedJobSpyDTOContract:
         assert stark.jd_quality == QualityBand.GOOD
         assert stark.enrich_source == "jobspy_inline"
         assert stark.posted_at == datetime(2026, 5, 27, tzinfo=UTC)
-
-
-class TestLinkedInJobSpyDTOContract:
-    """Frozen LinkedIn rows → exact fields (platform='linkedin_jobspy')."""
-
-    async def _fetch(self, monkeypatch: pytest.MonkeyPatch) -> list[JobPosting]:
-        _install_fake_scrape(monkeypatch, _linkedin_frame())
-        config = SourcesLinkedInJobSpyConfig(
-            enabled=True, search_urls=["https://linkedin/q"]
-        )
-        source = LinkedInJobSpySource(config=config, logger=get_logger())
-        return await source.fetch_jobs({})
-
-    async def test_two_postings(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Both fixture rows convert to postings."""
-        postings = await self._fetch(monkeypatch)
-        assert len(postings) == _JOBSPY_ROW_COUNT
-
-    async def test_first_row_exact_fields(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The Stripe row maps to exact fields with platform='linkedin_jobspy'."""
-        postings = await self._fetch(monkeypatch)
-        stripe = _by_canonical(postings, "li-zzz999")
-        assert stripe.platform == "linkedin_jobspy"
-        assert stripe.canonical_id == "li-zzz999"
-        assert stripe.title == "Backend Engineer"
-        assert stripe.company == "Stripe"
-        assert stripe.location == "Remote - US"
-        assert stripe.url == "https://www.linkedin.com/jobs/view/zzz999"
-        assert stripe.jd_quality == QualityBand.FULL
-        assert stripe.enrich_source == "jobspy_inline"
-        assert stripe.posted_at == datetime(2026, 5, 26, tzinfo=UTC)
-
-    async def test_second_row_exact_fields(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The Datadog row maps to exact fields."""
-        postings = await self._fetch(monkeypatch)
-        datadog = _by_canonical(postings, "li-yyy888")
-        assert datadog.platform == "linkedin_jobspy"
-        assert datadog.title == "Site Reliability Engineer"
-        assert datadog.company == "Datadog"
-        assert datadog.location == "New York, NY"
-        assert datadog.url == "https://www.linkedin.com/jobs/view/yyy888"
-        assert datadog.jd_quality == QualityBand.GOOD
-        assert datadog.enrich_source == "jobspy_inline"
-        assert datadog.posted_at == datetime(2026, 5, 25, tzinfo=UTC)

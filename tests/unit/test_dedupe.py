@@ -188,19 +188,47 @@ def test_source_priority_greenhouse_beats_linkedin_at_equal_quality() -> None:
 
 
 def test_source_priority_full_ladder_order() -> None:
-    """speedyapply > linkedin > linkedin_jobspy > indeed at equal quality."""
+    """speedyapply > linkedin > linkedin_guest > indeed at equal quality."""
     indeed = _job(canonical_id="i", platform="indeed", jd_quality=QualityBand.FULL)
-    li_jobspy = _job(
-        canonical_id="lj", platform="linkedin_jobspy", jd_quality=QualityBand.FULL
+    li_guest = _job(
+        canonical_id="lg", platform="linkedin_guest", jd_quality=QualityBand.FULL
     )
     linkedin = _job(canonical_id="li", platform="linkedin", jd_quality=QualityBand.FULL)
     speedy = _job(
         canonical_id="sa", platform="speedyapply", jd_quality=QualityBand.FULL
     )
 
-    clusters = cluster_twins([indeed, li_jobspy, linkedin, speedy])
+    clusters = cluster_twins([indeed, li_guest, linkedin, speedy])
 
     assert clusters[0].representative.platform == "speedyapply"
+
+
+def test_source_priority_linkedin_guest_beats_indeed() -> None:
+    """A same-quality linkedin_guest twin outranks its indeed twin (rank 3 < 4)."""
+    indeed = _job(canonical_id="i2", platform="indeed", jd_quality=QualityBand.FULL)
+    li_guest = _job(
+        canonical_id="lg2", platform="linkedin_guest", jd_quality=QualityBand.FULL
+    )
+
+    clusters = cluster_twins([indeed, li_guest])
+
+    assert clusters[0].representative.platform == "linkedin_guest"
+
+
+def test_source_priority_historical_linkedin_jobspy_beats_indeed() -> None:
+    """A historical linkedin_jobspy twin keeps its tier-3 rank over indeed.
+
+    The linkedin_jobspy SOURCE is removed, but rows persisted before the
+    removal must not fall to the unknown-platform rank.
+    """
+    indeed = _job(canonical_id="i3", platform="indeed", jd_quality=QualityBand.FULL)
+    li_jobspy = _job(
+        canonical_id="lj", platform="linkedin_jobspy", jd_quality=QualityBand.FULL
+    )
+
+    clusters = cluster_twins([indeed, li_jobspy])
+
+    assert clusters[0].representative.platform == "linkedin_jobspy"
 
 
 def test_unknown_platform_sorts_last() -> None:

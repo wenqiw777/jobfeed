@@ -15,7 +15,7 @@ from jobfeed.config_sources import (
     SourcesConfig,
     SourcesIndeedConfig,
     SourcesLinkedInConfig,
-    SourcesLinkedInJobSpyConfig,
+    SourcesLinkedInGuestConfig,
     SourcesLinkedInSearchConfig,
     SourcesSpeedyApplyConfig,
 )
@@ -283,7 +283,7 @@ __all__ = [
     "SourcesConfig",
     "SourcesIndeedConfig",
     "SourcesLinkedInConfig",
-    "SourcesLinkedInJobSpyConfig",
+    "SourcesLinkedInGuestConfig",
     "SourcesLinkedInSearchConfig",
     "SourcesSpeedyApplyConfig",
     "load_settings",

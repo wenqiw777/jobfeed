@@ -121,16 +121,24 @@ enabled = false
 # repeat = 1                # re-run each URL N times, union by canonical_id;
 #                           # raise (e.g. 4) for Indeed's non-deterministic backend
 
-[sources.linkedin_jobspy]
+# LinkedIn guest scraper — hits LinkedIn's anonymous guest endpoints directly
+# (no login, no browser). Paste regular LinkedIn jobs search URLs; query params
+# like f_TPR pass through verbatim (e.g. f_TPR=r86400 = posted in the last 24h).
+# Discovery stores list-card data only; run `./bin/jobfeed enrich-linkedin-guest`
+# (the canonical Docker CLI) afterwards for the paced JD-fetch pass over the
+# same per-IP budget.
+[sources.linkedin_guest]
 enabled = false
-# search_urls = []
-# max_jobs = 100
-# max_concurrent = 2
-# timeout_s = 60.0
-# hours_old =               # unset; when set, overrides each URL's fromage window
+# search_urls = ["https://www.linkedin.com/jobs/search/?keywords=software%20engineer%20intern&location=United%20States&f_TPR=r86400"]
+# max_jobs = 1000            # cap on postings collected per scan
+# pacing_s = 1.0             # sleep between guest requests (list pages + JD fetches)
+# enrich_batch_limit = 500   # max rows one enrich-linkedin-guest pass attempts
+# proxies =                  # unset = direct; e.g. "http://user:pass@host:port"
+# timeout_s = 15.0           # per-request read timeout
 
-# LinkedIn JobSpy and LinkedIn Playwright are alternative LinkedIn paths; pick
-# at most one for routine scans to avoid duplicate LinkedIn traffic.
+# LinkedIn guest (anonymous, above) and LinkedIn Playwright (authenticated,
+# below) are alternative LinkedIn paths; pick at most one for routine scans to
+# avoid doubled LinkedIn traffic.
 [sources.linkedin]
 enabled = false
 # search_urls = [

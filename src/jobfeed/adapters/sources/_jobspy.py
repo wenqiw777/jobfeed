@@ -1,21 +1,21 @@
-"""JobSpy isolation boundary: site-aware URL parse + DataFrame -> JobPosting.
+"""JobSpy isolation boundary: search-URL parse + DataFrame -> JobPosting.
 
 This module is the ONLY place pandas / jobspy / tls-client types are allowed to
-exist. Callers (``indeed_jobspy``, ``linkedin_jobspy``) see only
-``list[JobPosting]`` and ``JobSpyError``; nothing pandas-shaped escapes.
+exist. The caller (``indeed_jobspy``) sees only ``list[JobPosting]`` and
+``JobSpyError``; nothing pandas-shaped escapes.
 
 Pipeline (ASCII)::
 
     search_url ──parse──▶ JobSpy kwargs ──scrape_jobs()──▶ pandas.DataFrame
-                (site-aware)                                     │
+                                                                 │
                                                                  ▼
     list[JobPosting]  ◀──row->posting (NaN->None, date->UTC)── DataFrame rows
 
 ``scrape`` runs ONE synchronous ``jobspy.scrape_jobs`` call (jobspy/pandas are
 lazy-imported inside it, so importing this module is cheap and does not require
 jobspy installed). The pure-stdlib URL -> kwargs parsing lives in
-``_jobspy_url.py``; the subprocess isolation + async fan-out both JobSpy sources
-reuse (``scrape_urls``) lives in ``_jobspy_process.py`` (it contains no pandas
+``_jobspy_url.py``; the subprocess isolation + async fan-out
+(``scrape_urls``) lives in ``_jobspy_process.py`` (it contains no pandas
 and just orchestrates this module's ``scrape``). Both were split out to keep
 each file under the 300-line gate and the pandas-touching code confined here.
 """
@@ -79,11 +79,11 @@ def scrape(
     import-cheap and importable without jobspy present.
 
     Args:
-        site_name: JobSpy site (``"indeed"`` or ``"linkedin"``); drives URL
+        site_name: JobSpy site (only ``"indeed"`` remains); drives URL
             parsing and the ``scrape_jobs`` call.
-        platform: Platform tag stamped on each ``JobPosting`` (kept distinct
-            from ``site_name`` so ``linkedin_jobspy`` tags differ from the
-            scraped site, per Decision 5).
+        platform: Platform tag stamped on each ``JobPosting`` — what rows
+            are persisted as, kept distinct from ``site_name`` (JobSpy's
+            scrape input).
         search_url: A user-pasted search URL; query params become kwargs.
         config: Scrape behaviour knobs (max_jobs, hours_old, country_indeed).
         discovered_at: Scan-start timestamp; defaults to ``now`` if omitted.
@@ -97,15 +97,9 @@ def scrape(
     import jobspy  # noqa: PLC0415 — lazy: jobspy pulls pandas + tls-client (heavy)
 
     stamp = discovered_at or datetime.now(UTC)
-    kwargs = parse_search_url(site_name, search_url)
+    kwargs = parse_search_url(search_url)
     if config.hours_old is not None:
         kwargs["hours_old"] = config.hours_old
-    if site_name == "linkedin":
-        # JobSpy populates the LinkedIn `description` column ONLY when asked; the
-        # default omits it, so without this every LinkedIn row would persist with
-        # jd_text=None despite our enrich_source="jobspy_inline" contract. Costs
-        # one extra detail fetch per job (the price of an inline JD via JobSpy).
-        kwargs["linkedin_fetch_description"] = True
     if site_name == "indeed":
         # Apply the dateOnIndeed patch HERE, where jobspy actually runs, not only
         # in IndeedSource.fetch_jobs(): scrape() executes inside a `spawn` child

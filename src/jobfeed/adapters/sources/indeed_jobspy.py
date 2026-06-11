@@ -9,8 +9,8 @@ This source is a thin shell: it applies the Indeed ``dateOnIndeed`` date patch
 once (a parent-side early-fail-loud check; the patch that actually affects the
 scrape is re-applied inside the spawn child by ``_jobspy.scrape``), then
 delegates the entire per-URL scrape loop to the shared
-``_jobspy_process.scrape_urls`` (the SAME loop LinkedIn JobSpy reuses — the
-child-process timeout + per-URL error containment lives there, never here).
+``_jobspy_process.scrape_urls`` (the child-process timeout + per-URL error
+containment lives there, never here).
 JobSpy returns each posting fully populated with an inline JD, so ``fetch_jobs``
 returns ready-to-save postings and no later enrich step is needed.
 """

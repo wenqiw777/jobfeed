@@ -237,6 +237,7 @@ from jobfeed.domain.models_ops import (  # noqa: E402
     CompanyRecord,
     CostEntry,
     DigestStats,
+    UnenrichedJob,
 )
 from jobfeed.domain.models_status import (  # noqa: E402
     AutoDecayResult,
@@ -286,6 +287,7 @@ __all__ = [
     "StatusInfo",
     "StatusTransition",
     "TransitionRequest",
+    "UnenrichedJob",
     "Verdict",
     "WorkflowAttention",
     "WorkflowAttentionItem",
