@@ -9,6 +9,7 @@ from fastapi import Request
 from jobfeed.cli import AppContext
 from jobfeed.ports.store import JobStore
 from jobfeed.services.application import ApplicationService
+from jobfeed.services.insights import InsightsService
 from jobfeed.services.jobs_view import JobsViewService
 from jobfeed.services.workflow import WorkflowService
 
@@ -76,9 +77,22 @@ def get_application_service(request: Request) -> ApplicationService:
     return cast(ApplicationService, request.app.state.application_service)
 
 
+def get_insights_service(request: Request) -> InsightsService:
+    """Return the per-process insights service built by the app factory.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        Shared insights service.
+    """
+    return cast(InsightsService, request.app.state.insights_service)
+
+
 __all__ = [
     "get_application_service",
     "get_context",
+    "get_insights_service",
     "get_jobs_view_service",
     "get_store",
     "get_workflow_service",

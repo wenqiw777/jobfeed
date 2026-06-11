@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 try:
@@ -64,6 +64,8 @@ from jobfeed.domain.models import (
 from jobfeed.domain.models_llm import LLMUsage
 from jobfeed.domain.models_views import (
     VALID_TABS,
+    InsightsDay,
+    InsightsOverview,
     JobsViewPage,
     JobsViewQuery,
     JobsViewRow,
@@ -481,6 +483,96 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         errors=r["errors"],
         finished_at=r["finished_at"],
     )
+
+
+# Insights aggregates (Phase 8). Totals and distributions are all-time;
+# only the daily series is windowed. The verdict CASE mirrors the triage
+# grouping: an explicit verdict wins; verdict-less threshold-skipped rows
+# form the derived below_threshold bucket.
+# ml_gate_passed counts gate survivors (ml_gate_result = 'pass') — the
+# funnel-stage semantic — not gate failures; jobs never gated (NULL) count
+# toward neither.
+_INSIGHTS_TOTALS_SQL = """SELECT
+    (SELECT COUNT(*) FROM jobs) AS total_jobs,
+    (SELECT COUNT(*) FROM jobs WHERE ml_gate_result = 'pass')
+        AS ml_gate_passed_jobs,
+    (SELECT COUNT(*) FROM evaluations WHERE stage_a_at IS NOT NULL)
+        AS evaluated_jobs,
+    (SELECT COUNT(*) FROM applied) AS applied_jobs"""
+
+_INSIGHTS_VERDICTS_SQL = """SELECT
+        CASE WHEN stage_b_verdict IS NOT NULL THEN stage_b_verdict
+             ELSE 'below_threshold' END AS bucket,
+        COUNT(*) AS n
+    FROM evaluations
+    WHERE stage_b_verdict IS NOT NULL
+       OR stage_b_status = 'skipped_below_threshold'
+    GROUP BY bucket"""
+
+_INSIGHTS_STATUSES_SQL = """SELECT status AS bucket, COUNT(*) AS n
+    FROM job_status GROUP BY status"""
+
+
+def _insights_day_sql(table: str, column: str) -> str:
+    """Build the per-day count query for one insights measure.
+
+    ``AT TIME ZONE 'UTC'`` pins the day buckets to UTC regardless of the
+    session timezone; rows with a NULL timestamp never match the window.
+    The window is closed on both ends (``[now - N days, now]``), so a
+    future-dated timestamp never emits a future bucket.
+
+    Args:
+        table: Source table (in-repo literal, never user input).
+        column: Timestamptz column to bucket (in-repo literal).
+
+    Returns:
+        SQL with one ``$1`` parameter: the window size in days.
+    """
+    return (
+        f"SELECT ({column} AT TIME ZONE 'UTC')::date AS day, COUNT(*) AS n"
+        f" FROM {table}"
+        f" WHERE {column} >= now() - make_interval(days => $1)"
+        f" AND {column} <= now()"
+        " GROUP BY day"
+    )
+
+
+def _merge_insights_days(
+    discovered: list[asyncpg.Record],
+    evaluated: list[asyncpg.Record],
+    applied: list[asyncpg.Record],
+) -> list[InsightsDay]:
+    """Merge the three per-day count queries into one ascending series.
+
+    Only days appearing in at least one measure are emitted (consumers
+    zero-fill gaps). Time complexity: O(n log n) — linear over the rows plus
+    the final sort by day.
+
+    Args:
+        discovered: (day, n) rows bucketed on ``jobs.discovered_at``.
+        evaluated: (day, n) rows bucketed on ``evaluations.stage_a_at``.
+        applied: (day, n) rows bucketed on ``applied.applied_at``.
+
+    Returns:
+        Per-day funnel counts, ascending by day.
+    """
+    by_day: dict[date, dict[str, int]] = {}
+    for measure, rows in (
+        ("discovered", discovered),
+        ("evaluated", evaluated),
+        ("applied", applied),
+    ):
+        for r in rows:
+            by_day.setdefault(r["day"], {})[measure] = int(r["n"])
+    return [
+        InsightsDay(
+            day=day,
+            discovered=counts.get("discovered", 0),
+            evaluated=counts.get("evaluated", 0),
+            applied=counts.get("applied", 0),
+        )
+        for day, counts in sorted(by_day.items())
+    ]
 
 
 def _status_info_from_record(r: asyncpg.Record) -> StatusInfo:
@@ -3025,6 +3117,72 @@ class PostgresStore:
                 run_id,
             )
         return _pipeline_run_from_record(row) if row is not None else None
+
+    async def list_pipeline_runs(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[PipelineRun], int]:
+        """List pipeline runs, newest first, with the all-time total.
+
+        Args:
+            limit: Maximum runs returned.
+            offset: Runs to skip before the returned window.
+
+        Returns:
+            Tuple of (runs ordered by started_at DESC with run_id DESC as a
+            deterministic tiebreak, total run count ignoring the window).
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM pipeline_runs
+                   ORDER BY started_at DESC, run_id DESC
+                   LIMIT $1 OFFSET $2""",
+                limit,
+                offset,
+            )
+            total = await self._count(conn, "SELECT COUNT(*) FROM pipeline_runs")
+        return [_pipeline_run_from_record(r) for r in rows], total
+
+    async def insights_overview(self, *, window_days: int) -> InsightsOverview:
+        """Aggregate the insights overview.
+
+        Totals and the verdict/status distributions are all-time; only the
+        daily series is windowed (UTC day buckets over
+        ``[now - window_days, now]``, emitting only days having data).
+
+        Args:
+            window_days: Daily-series window in days (caller-validated).
+
+        Returns:
+            Insights overview aggregate.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            totals = await conn.fetchrow(_INSIGHTS_TOTALS_SQL)
+            verdict_rows = await conn.fetch(_INSIGHTS_VERDICTS_SQL)
+            status_rows = await conn.fetch(_INSIGHTS_STATUSES_SQL)
+            discovered = await conn.fetch(
+                _insights_day_sql("jobs", "discovered_at"), window_days
+            )
+            evaluated = await conn.fetch(
+                _insights_day_sql("evaluations", "stage_a_at"), window_days
+            )
+            applied = await conn.fetch(
+                _insights_day_sql("applied", "applied_at"), window_days
+            )
+        return InsightsOverview(
+            window_days=window_days,
+            total_jobs=int(totals["total_jobs"]),
+            ml_gate_passed_jobs=int(totals["ml_gate_passed_jobs"]),
+            evaluated_jobs=int(totals["evaluated_jobs"]),
+            applied_jobs=int(totals["applied_jobs"]),
+            verdict_distribution={r["bucket"]: int(r["n"]) for r in verdict_rows},
+            status_distribution={r["bucket"]: int(r["n"]) for r in status_rows},
+            daily=_merge_insights_days(discovered, evaluated, applied),
+        )
 
     # ------------------------------------------------------------------
     # Status management

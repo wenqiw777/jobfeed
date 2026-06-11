@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from jobfeed.domain.models_views import JobsViewPage, JobsViewQuery, TwinStatusRow
+from jobfeed.domain.models import PipelineRun
+from jobfeed.domain.models_views import (
+    InsightsOverview,
+    JobsViewPage,
+    JobsViewQuery,
+    TwinStatusRow,
+)
 
 
 @runtime_checkable
@@ -43,5 +49,40 @@ class StoreViewsMixin(Protocol):
 
         Returns:
             Twin rows (platform, url, current status), ordered by job id.
+        """
+        ...
+
+    async def list_pipeline_runs(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[PipelineRun], int]:
+        """List pipeline runs, newest first, with the all-time total.
+
+        Ordered by ``started_at`` descending with ``run_id`` descending as a
+        deterministic tiebreak.
+
+        Args:
+            limit: Maximum runs returned.
+            offset: Runs to skip before the returned window.
+
+        Returns:
+            Tuple of (runs window, total run count ignoring the window).
+        """
+        ...
+
+    async def insights_overview(self, *, window_days: int) -> InsightsOverview:
+        """Aggregate the insights overview.
+
+        Totals and the verdict/status distributions are all-time; only the
+        daily series is windowed (UTC day buckets over
+        ``[now - window_days, now]``, emitting only days having data).
+
+        Args:
+            window_days: Daily-series window in days (caller-validated).
+
+        Returns:
+            Insights overview aggregate.
         """
         ...

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from jobfeed.domain.models import JobPosting
 
@@ -111,8 +112,61 @@ class JobsViewPage:
     tab_counts: dict[str, int]
 
 
+@dataclass(frozen=True, kw_only=True)
+class InsightsDay:
+    """One UTC day of the insights series: per-day funnel counts.
+
+    Attributes:
+        day: UTC calendar day of the bucket.
+        discovered: Jobs first discovered that day (``jobs.discovered_at``).
+        evaluated: Jobs whose Stage A completed that day
+            (``evaluations.stage_a_at``).
+        applied: Applications recorded that day (``applied.applied_at``).
+    """
+
+    day: date
+    discovered: int
+    evaluated: int
+    applied: int
+
+
+@dataclass(kw_only=True)
+class InsightsOverview:
+    """Insights aggregate: all-time totals/distributions + a windowed series.
+
+    Attributes:
+        window_days: Daily-series window in days ([now - N days, now], UTC).
+        total_jobs: All-time job count.
+        ml_gate_passed_jobs: All-time gate survivors
+            (``ml_gate_result = 'pass'``) — the funnel-stage semantic, not
+            gate failures. Jobs never gated count toward neither.
+        evaluated_jobs: All-time jobs with a completed Stage A
+            (``stage_a_at`` set).
+        applied_jobs: All-time recorded applications.
+        verdict_distribution: All-time ``stage_b_verdict`` counts plus the
+            derived ``below_threshold`` bucket (verdict-less rows with
+            ``stage_b_status = 'skipped_below_threshold'`` — the same
+            grouping the triage view uses). Only nonzero buckets appear.
+        status_distribution: All-time ``job_status.status`` counts. Only
+            nonzero buckets appear.
+        daily: Ascending per-day funnel counts over the window; only days
+            having data appear (consumers zero-fill gaps).
+    """
+
+    window_days: int
+    total_jobs: int
+    ml_gate_passed_jobs: int
+    evaluated_jobs: int
+    applied_jobs: int
+    verdict_distribution: dict[str, int]
+    status_distribution: dict[str, int]
+    daily: list[InsightsDay]
+
+
 __all__ = [
     "VALID_TABS",
+    "InsightsDay",
+    "InsightsOverview",
     "JobsViewPage",
     "JobsViewQuery",
     "JobsViewRow",

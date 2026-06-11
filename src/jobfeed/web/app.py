@@ -12,12 +12,15 @@ from fastapi import FastAPI
 from jobfeed.cli import AppContext, create_app
 from jobfeed.observability import get_logger
 from jobfeed.services.application import ApplicationService, ApplicationStore
+from jobfeed.services.insights import InsightsService, InsightsStore
 from jobfeed.services.jobs_view import JobsViewService, JobsViewStore
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
 from jobfeed.web.errors import install_error_handling
 from jobfeed.web.routes.applications import router as applications_router
 from jobfeed.web.routes.health import router as health_router
+from jobfeed.web.routes.insights import router as insights_router
 from jobfeed.web.routes.jobs import router as jobs_router
+from jobfeed.web.routes.runs import router as runs_router
 from jobfeed.web.routes.workflow import router as workflow_router
 
 
@@ -70,14 +73,20 @@ def build_web_app(context: AppContext) -> FastAPI:
     app.state.workflow_service = WorkflowService(
         cast(WorkflowStore, context["store"]), logger
     )
-    app.state.application_service = ApplicationService(
+    application_service = ApplicationService(
         cast(ApplicationStore, context["store"]), logger
+    )
+    app.state.application_service = application_service
+    app.state.insights_service = InsightsService(
+        cast(InsightsStore, context["store"]), application_service
     )
     install_error_handling(app)
     app.include_router(health_router, prefix="/api")
     app.include_router(jobs_router, prefix="/api")
     app.include_router(workflow_router, prefix="/api")
     app.include_router(applications_router, prefix="/api")
+    app.include_router(insights_router, prefix="/api")
+    app.include_router(runs_router, prefix="/api")
     return app
 
 
