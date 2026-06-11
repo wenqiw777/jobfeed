@@ -81,7 +81,8 @@ stage_a_threshold = 60
 # Digest file output — when output_dir is set, `jobfeed digest` also writes
 # today.md plus a dated YYYY-MM-DD.md there (both overwritten each run), and
 # `digest --quiet` writes silently. Keep this under ~/.cache/jobfeed/ —
-# ~/.jobfeed/ is read-only.
+# ~/.jobfeed/ is read-only. The canonical Docker wrapper (./bin/jobfeed)
+# mounts ~/.cache/jobfeed, so this example path lands on the host either way.
 [digest]
 # output_dir = "~/.cache/jobfeed/digests"
 
