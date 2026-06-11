@@ -391,6 +391,19 @@ class TestBootstrapCompaniesCli:
         assert "stale" not in result.output
         assert "ancient" not in result.output
 
+    def test_max_age_days_rejects_negative(self) -> None:
+        """A negative --max-age-days fails fast via Click's IntRange check."""
+        store = _make_store()
+
+        result = CliRunner().invoke(
+            bootstrap_companies, ["--max-age-days", "-1"], obj=_make_app(store)
+        )
+
+        assert result.exit_code != 0
+        assert "--max-age-days" in result.output
+        assert "range" in result.output
+        store.list_companies.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # Registration

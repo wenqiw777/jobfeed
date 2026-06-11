@@ -23,10 +23,12 @@ from jobfeed.domain.models import (
     WorkflowAttention,
     WorkflowAttentionItem,
 )
+from jobfeed.services import digest as digest_service
 from jobfeed.services.digest import LAST_RENDERED_KEY, DigestService
 from tests.support.factories import make_job
 
 APPLY_SCORE = 91
+USAGE_ERROR_EXIT_CODE = 2  # click.UsageError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -320,11 +322,18 @@ class TestDigestServiceFiles:
         assert (target / f"{today}.md").read_text(encoding="utf-8") == digest
         store.set_state.assert_awaited_once()
 
-    def test_no_output_dir_writes_nothing(self, tmp_path: pathlib.Path) -> None:
-        """Without output_dir no files appear."""
-        store = _make_store()
-        asyncio.run(_svc(store).run())
-        assert list(tmp_path.iterdir()) == []
+    def test_no_output_dir_writes_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without output_dir the file writer is never invoked."""
+        calls: list[object] = []
+        monkeypatch.setattr(
+            digest_service,
+            "_write_digest_files",
+            lambda *args: calls.append(args),
+        )
+        asyncio.run(_svc(_make_store()).run())
+        assert calls == []
 
 
 class TestDigestServiceFooter:
@@ -373,3 +382,16 @@ class TestDigestCli:
             result = runner.invoke(cli, ["digest", "--top", "0"])
         assert result.exit_code != 0
         assert "--top" in result.output
+
+    def test_output_dir_under_jobfeed_home_is_usage_error(self) -> None:
+        """A configured output_dir under read-only ~/.jobfeed fails fast."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            pathlib.Path("config.toml").write_text(
+                '[digest]\noutput_dir = "~/.jobfeed/digests"\n',
+                encoding="utf-8",
+            )
+            result = runner.invoke(cli, ["digest"])
+        assert result.exit_code == USAGE_ERROR_EXIT_CODE
+        assert "~/.jobfeed" in result.output
+        assert "read-only" in result.output

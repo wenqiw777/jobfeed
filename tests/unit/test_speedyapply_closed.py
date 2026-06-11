@@ -9,7 +9,7 @@ All HTTP is mocked — no real network.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import respx
@@ -47,14 +47,18 @@ def _make_html(*, available: bool) -> str:
     )
 
 
-def _source(*, closed_lookup: ClosedJobLookup | None = None) -> SpeedyApplySource:
+def _source(
+    *,
+    closed_lookup: ClosedJobLookup | None = None,
+    logger: MagicMock | None = None,
+) -> SpeedyApplySource:
     return SpeedyApplySource(
         client=create_http_client(),
         config=SourcesSpeedyApplyConfig(
             search_urls=["https://lists.example.test/speedyapply.md"],
             enabled=True,
         ),
-        logger=get_logger(),
+        logger=logger if logger is not None else get_logger(),
         closed_lookup=closed_lookup,
     )
 
@@ -69,6 +73,13 @@ class _FakeClosedLookup:
     async def get_closed_canonical_ids(self, *, platform: str) -> set[str]:
         self.platforms.append(platform)
         return set(self._ids)
+
+
+class _RaisingClosedLookup:
+    """ClosedJobLookup stub whose query raises a transient store error."""
+
+    async def get_closed_canonical_ids(self, *, platform: str) -> set[str]:
+        raise RuntimeError(f"connection refused ({platform})")
 
 
 def _two_row_md(url_a: str, url_b: str) -> str:
@@ -579,3 +590,35 @@ async def test_fetch_jobs_routes_all_when_closed_set_empty() -> None:
         canonical_id_for(url_b),
     }
     assert lookup.platforms == ["speedyapply"]
+
+
+async def test_fetch_jobs_survives_closed_lookup_failure() -> None:
+    """A transient closed-lookup error fails open: warn and route every row."""
+    url_a = "https://job-boards.greenhouse.io/eee/jobs/1"
+    url_b = "https://job-boards.greenhouse.io/fff/jobs/2"
+    md = _two_row_md(url_a, url_b)
+    routed: list[str] = []
+    logger = MagicMock()
+
+    with (
+        patch(
+            "jobfeed.adapters.sources.speedyapply.fetch_text",
+            new=AsyncMock(return_value=md),
+        ),
+        patch(
+            "jobfeed.adapters.sources.speedyapply.routing.route_and_fetch",
+            new=_recording_route(routed),
+        ),
+    ):
+        source = _source(closed_lookup=_RaisingClosedLookup(), logger=logger)
+        postings = await source.fetch_jobs({})
+
+    assert set(routed) == {url_a, url_b}
+    assert {p.canonical_id for p in postings} == {
+        canonical_id_for(url_a),
+        canonical_id_for(url_b),
+    }
+    logger.warning.assert_called_once_with(
+        "speedyapply_closed_lookup_failed",
+        error="connection refused (speedyapply)",
+    )

@@ -63,10 +63,23 @@ def digest(
 
 
 def _resolve_output_dir(app: AppContext) -> Path | None:
+    """Resolve the configured digest output directory, if any.
+
+    Raises:
+        click.UsageError: If the configured path falls under read-only
+            ``~/.jobfeed`` (the user's legacy production data).
+    """
     raw = app["settings"].digest.output_dir
     if raw is None:
         return None
-    return Path(raw).expanduser()
+    path = Path(raw).expanduser()
+    jobfeed_home = Path("~/.jobfeed").expanduser().resolve()
+    if path.resolve().is_relative_to(jobfeed_home):
+        raise click.UsageError(
+            "digest output_dir must not be under ~/.jobfeed (read-only); "
+            "use ~/.cache/jobfeed/... instead"
+        )
+    return path
 
 
 async def _run_digest(

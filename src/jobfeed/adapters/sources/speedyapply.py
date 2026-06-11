@@ -84,10 +84,19 @@ class SpeedyApplySource:
         Skips the JD fetch for definitively-gone postings (404/410/unavailable)
         so dead links are not re-hit (and re-warned) on every scan. Live rows
         are still re-fetched, so newly-closed postings are detected as before.
+
+        The filter is only an optimization: a transient lookup error fails
+        open (warn + return rows unfiltered) rather than abort the scan round.
         """
         if self._closed_lookup is None:
             return rows
-        closed = await self._closed_lookup.get_closed_canonical_ids(platform=_VENDOR)
+        try:
+            closed = await self._closed_lookup.get_closed_canonical_ids(
+                platform=_VENDOR
+            )
+        except Exception as exc:
+            self._log.warning("speedyapply_closed_lookup_failed", error=str(exc))
+            return rows
         if not closed:
             return rows
         kept = [row for row in rows if row.canonical_id not in closed]

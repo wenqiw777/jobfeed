@@ -31,7 +31,11 @@ _FETCH_TIMEOUT_S = 15.0
 @click.command(name="bootstrap-companies", help="Seed companies from README lists.")
 @click.option("--source", type=_SOURCE_CHOICES, default="all", help="Source name.")
 @click.option("--apply", "apply_changes", is_flag=True, help="Write new companies.")
-@click.option("--max-age-days", type=int, help="Skip rows older than N days.")
+@click.option(
+    "--max-age-days",
+    type=click.IntRange(min=0),
+    help="Skip rows older than N days.",
+)
 @click.pass_context
 def bootstrap_companies(
     ctx: click.Context,
