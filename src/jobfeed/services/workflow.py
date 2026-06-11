@@ -22,10 +22,8 @@ from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store_ext import StoreInterviewMixin
 from jobfeed.ports.store_status import StoreStatusMixin
 
-_APPLIED = "applied"
-_INTERVIEWING = "interviewing"
-_GHOSTED = "ghosted"
-_ARCHIVED = "archived"
+_APPLIED, _INTERVIEWING = "applied", "interviewing"
+_GHOSTED, _ARCHIVED = "ghosted", "archived"
 _RESTORABLE = (_GHOSTED, _ARCHIVED)
 
 
@@ -155,15 +153,20 @@ class WorkflowService:
         )
         return result
 
-    async def note(self, job_id: str, text: str) -> None:
+    async def note(self, job_id: str, text: str) -> bool:
         """Append a note to a job and reset its ghost clock.
 
         Args:
             job_id: Store-assigned job identity.
             text: Note content.
+
+        Returns:
+            True if appended, False when the job has no status row.
         """
-        await self._store.append_note(job_id=job_id, text=text)
-        self._logger.info("workflow_note_appended", job_id=job_id)
+        was_appended = await self._store.append_note(job_id=job_id, text=text)
+        if was_appended:
+            self._logger.info("workflow_note_appended", job_id=job_id)
+        return was_appended
 
     async def set_followup(self, *, job_id: str, at: datetime) -> bool:
         """Set the next follow-up time for a job.
@@ -199,9 +202,8 @@ class WorkflowService:
         """
         status_info = await self._store.get_status(job_id)
         if status_info is not None and getattr(status_info, "status", None) == _APPLIED:
-            await self._store.transition_status(
-                TransitionRequest(job_id=job_id, new_status=_INTERVIEWING)
-            )
+            auto_request = TransitionRequest(job_id=job_id, new_status=_INTERVIEWING)
+            await self._store.transition_status(auto_request)
             self._logger.info(
                 "workflow_auto_transition",
                 job_id=job_id,

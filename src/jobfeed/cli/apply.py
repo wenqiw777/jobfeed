@@ -6,7 +6,6 @@ The resume-snapshot subcommands live in ``cli/snapshots.py``.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import cast
 
@@ -105,7 +104,8 @@ async def _run_apply(app: AppContext, opts: dict[str, object]) -> None:
         master_resume = _read_file(Path(settings.llm.master_resume_path))
         tailored = _read_file(tailored_path) if tailored_path else None
         cover_letter = _read_file(cover_letter_path) if cover_letter_path else None
-        verdict_snap, fit_snap, hooks_snap = await _stage_b_snapshots(app, job_id)
+        svc = _build_application_svc(app)
+        verdict_snap, fit_snap, hooks_snap = await svc.stage_b_snapshots(job_id)
 
         req = ApplyRequest(
             job_id=job_id,
@@ -119,7 +119,6 @@ async def _run_apply(app: AppContext, opts: dict[str, object]) -> None:
             fit_snapshot=fit_snap,
             hooks_snapshot=hooks_snap,
         )
-        svc = _build_application_svc(app)
         is_new = await svc.apply(req)
         if not is_new:
             click.echo(f"Already applied to {job_id}")
@@ -130,30 +129,6 @@ async def _run_apply(app: AppContext, opts: dict[str, object]) -> None:
             click.echo(notice)
 
     await run_with_store(app, action)
-
-
-async def _stage_b_snapshots(
-    app: AppContext,
-    job_id: str,
-) -> tuple[str | None, str | None, str | None]:
-    """Capture Stage B verdict/fit/hooks JSON snapshots when available.
-
-    Args:
-        app: Initialized application context.
-        job_id: Store-assigned job identity.
-
-    Returns:
-        (verdict, fit_analysis, resume_hooks) JSON strings or Nones.
-    """
-    evaluation = await app["store"].get_evaluation(job_id)
-    if evaluation is None or evaluation.stage_b is None:
-        return (None, None, None)
-    blocks = evaluation.stage_b.raw_blocks or {}
-
-    def _dump(key: str) -> str | None:
-        return json.dumps(blocks[key], sort_keys=True) if key in blocks else None
-
-    return (_dump("verdict"), _dump("fit_analysis"), _dump("resume_hooks"))
 
 
 # ── apply-history ─────────────────────────────────────────────────────

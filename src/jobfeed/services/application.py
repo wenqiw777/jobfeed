@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import difflib
-import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
@@ -11,11 +10,17 @@ from typing import Protocol, runtime_checkable
 from jobfeed.domain.models import (
     ApplicationRecord,
     ApplicationStats,
+    JobEvaluation,
     ResumeSnapshot,
     ResumeSnapshotSummary,
 )
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store_application import StoreApplicationMixin
+from jobfeed.services._application_snapshots import (
+    build_snapshots,
+    content_hash,
+    stage_b_dumps,
+)
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -55,6 +60,17 @@ class ApplicationStore(StoreApplicationMixin, Protocol):
         """
         ...
 
+    async def get_evaluation(self, job_id: str) -> JobEvaluation | None:
+        """Load a job's evaluation (Stage A/B optional).
+
+        Args:
+            job_id: Store-assigned identity.
+
+        Returns:
+            Evaluation if the job exists, else None.
+        """
+        ...
+
 
 class ApplicationService:
     """Orchestrates application audit recording and resume snapshot queries.
@@ -87,12 +103,18 @@ class ApplicationService:
             True if new application, False if already applied.
         """
         now = datetime.now(UTC)
-        master_hash = _content_hash(req.master_resume)
+        master_hash = content_hash(req.master_resume)
         tailored_hash = (
-            _content_hash(req.tailored_resume) if req.tailored_resume else None
+            content_hash(req.tailored_resume) if req.tailored_resume else None
         )
 
-        snapshots = _build_snapshots(req, now, master_hash, tailored_hash)
+        snapshots = build_snapshots(
+            master_resume=req.master_resume,
+            tailored_resume=req.tailored_resume,
+            now=now,
+            master_hash=master_hash,
+            tailored_hash=tailored_hash,
+        )
 
         record = ApplicationRecord(
             job_id=req.job_id,
@@ -120,6 +142,25 @@ class ApplicationService:
             has_tailored=req.tailored_resume is not None,
         )
         return is_new
+
+    async def stage_b_snapshots(
+        self, job_id: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Capture Stage B verdict/fit/hooks JSON snapshots when available.
+
+        Shared by the CLI apply command and the web apply route so the
+        evaluation-derived snapshot fields stay identical across boundaries.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            (verdict, fit_analysis, resume_hooks) JSON strings or Nones.
+        """
+        evaluation = await self._store.get_evaluation(job_id)
+        if evaluation is None or evaluation.stage_b is None:
+            return (None, None, None)
+        return stage_b_dumps(evaluation.stage_b.raw_blocks or {})
 
     async def get_application(self, job_id: str) -> ApplicationRecord | None:
         """Load a single application record by job_id.
@@ -250,38 +291,6 @@ class ApplicationService:
             tofile=snap_b.resume_hash,
         )
         return "".join(lines)
-
-
-def _content_hash(text: str) -> str:
-    """SHA-256 hex digest of text content."""
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
-def _build_snapshots(
-    req: ApplyRequest,
-    now: datetime,
-    master_hash: str,
-    tailored_hash: str | None,
-) -> list[ResumeSnapshot]:
-    """Build resume snapshot list from an apply request."""
-    snapshots = [
-        ResumeSnapshot(
-            resume_hash=master_hash,
-            captured_at=now,
-            source="master",
-            content=req.master_resume,
-        ),
-    ]
-    if req.tailored_resume is not None and tailored_hash is not None:
-        snapshots.append(
-            ResumeSnapshot(
-                resume_hash=tailored_hash,
-                captured_at=now,
-                source="tailored",
-                content=req.tailored_resume,
-            ),
-        )
-    return snapshots
 
 
 __all__ = ["ApplicationService", "ApplicationStore", "ApplyRequest"]

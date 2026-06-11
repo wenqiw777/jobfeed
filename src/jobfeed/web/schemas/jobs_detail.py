@@ -6,6 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models import StageBResult
 from jobfeed.services.jobs_view import JobDetail
 
@@ -104,6 +105,26 @@ class InterviewRoundDetail(BaseModel):
     notes: str | None
 
 
+def interview_round_response(round_: InterviewRound) -> InterviewRoundDetail:
+    """Render a domain interview round as its DTO.
+
+    Shared by the detail response below and the workflow interview routes.
+
+    Args:
+        round_: Interview round from the store/workflow service.
+
+    Returns:
+        Wire-shape interview round.
+    """
+    return InterviewRoundDetail(
+        round_index=round_.round_index,
+        label=round_.label,
+        scheduled_at=round_.scheduled_at,
+        completed_at=round_.completed_at,
+        notes=round_.notes,
+    )
+
+
 class ApplicationDetail(BaseModel):
     """Application audit refs: snapshot hashes only, never contents."""
 
@@ -160,16 +181,7 @@ def job_detail_response(detail: JobDetail) -> JobDetailResponse:
             )
             for twin in detail.twins
         ],
-        interviews=[
-            InterviewRoundDetail(
-                round_index=round_.round_index,
-                label=round_.label,
-                scheduled_at=round_.scheduled_at,
-                completed_at=round_.completed_at,
-                notes=round_.notes,
-            )
-            for round_ in detail.interviews
-        ],
+        interviews=[interview_round_response(round_) for round_ in detail.interviews],
         application=_application_detail(detail),
     )
 
@@ -268,4 +280,4 @@ def _string_list(value: object) -> list[str]:
     return [str(item) for item in value]
 
 
-__all__ = ["JobDetailResponse", "job_detail_response"]
+__all__ = ["JobDetailResponse", "interview_round_response", "job_detail_response"]

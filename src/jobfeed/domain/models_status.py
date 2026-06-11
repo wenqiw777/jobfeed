@@ -81,6 +81,7 @@ class BulkResult:
     succeeded: int = 0
     failed: list[tuple[str, str]] = field(default_factory=list)  # (job_id, error)
     skipped: int = 0  # terminal jobs in cluster
+    cascaded: int = 0  # twin-cascade transitions (subset of succeeded)
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -91,12 +91,15 @@ class StoreStatusMixin(Protocol):
         """
         ...
 
-    async def append_note(self, *, job_id: str, text: str) -> None:
+    async def append_note(self, *, job_id: str, text: str) -> bool:
         """Append timestamped note, reset ghost clock.
 
         Args:
             job_id: Store-assigned job identity.
             text: Note text to append.
+
+        Returns:
+            True if a job_status row was updated, False if none exists.
         """
         ...
 

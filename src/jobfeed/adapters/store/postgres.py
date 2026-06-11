@@ -3344,18 +3344,21 @@ class PostgresStore:
 
         return [_status_info_from_record(r) for r in rows]
 
-    async def append_note(self, *, job_id: str, text: str) -> None:
+    async def append_note(self, *, job_id: str, text: str) -> bool:
         """Append timestamped note, reset ghost clock.
 
         Args:
             job_id: Store-assigned job identity.
             text: Note text to append.
+
+        Returns:
+            True if a job_status row was updated, False if none exists.
         """
         prefix = datetime.now(UTC).strftime("[%Y-%m-%d %H:%M] ")
         line = prefix + text + "\n"
         pool = self._get_pool()
         async with pool.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 """UPDATE job_status
                    SET notes = COALESCE(notes, '') || $1,
                        last_status_change_at = now()
@@ -3363,6 +3366,8 @@ class PostgresStore:
                 line,
                 int(job_id),
             )
+        # asyncpg returns "UPDATE N" where N is the row count
+        return not result.endswith(" 0")
 
     async def set_followup(self, *, job_id: str, at: datetime) -> bool:
         """Set the next follow-up time for a job.
@@ -3625,6 +3630,7 @@ class PostgresStore:
             try:
                 cluster_ok = 0
                 cluster_skipped = 0
+                cluster_cascaded = 0
                 async with pool.acquire() as conn:
                     async with conn.transaction():
                         await self._transition_status_in_tx(
@@ -3661,8 +3667,10 @@ class PostgresStore:
                                 ),
                             )
                             cluster_ok += 1
+                            cluster_cascaded += 1
                 result.succeeded += cluster_ok
                 result.skipped += cluster_skipped
+                result.cascaded += cluster_cascaded
                 processed_ids.update(cluster)
             except Exception as exc:
                 result.failed.append((job_id, str(exc)))

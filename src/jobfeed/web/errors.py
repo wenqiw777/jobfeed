@@ -25,6 +25,27 @@ _HTTP_INTERNAL_ERROR = 500
 _CODES_BY_STATUS = {404: "not_found", 422: "validation_error"}
 
 
+class ApiError(Exception):
+    """Route-level error carrying the wire status code and error code.
+
+    Routes raise this instead of hand-building error dicts; the registered
+    handler renders it in the shared ``{"error": {...}}`` shape.
+    """
+
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        """Create an API error.
+
+        Args:
+            status_code: HTTP status code of the response.
+            code: Machine-readable error code (e.g. ``illegal_transition``).
+            message: Human-readable error message.
+        """
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+
 def install_error_handling(app: FastAPI) -> None:
     """Attach the request-id middleware and the JSON error handlers.
 
@@ -34,6 +55,7 @@ def install_error_handling(app: FastAPI) -> None:
     app.middleware("http")(_assign_request_id)
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
+    app.add_exception_handler(ApiError, _handle_api_error)
 
 
 async def _assign_request_id(
@@ -98,6 +120,26 @@ async def _handle_http_exception(request: Request, exc: Exception) -> JSONRespon
     )
 
 
+async def _handle_api_error(request: Request, exc: Exception) -> JSONResponse:
+    """Render a route-raised ApiError in the shared error shape.
+
+    Args:
+        request: Request carrying the middleware-assigned request id.
+        exc: Always an ApiError per handler registration.
+
+    Returns:
+        JSON error response with the shared shape.
+
+    Raises:
+        Exception: Re-raises any non-ApiError (defensive; not expected).
+    """
+    if not isinstance(exc, ApiError):
+        raise exc
+    return _error_response(
+        exc.status_code, exc.code, exc.message, _request_id_of(request)
+    )
+
+
 async def _handle_validation_error(request: Request, exc: Exception) -> JSONResponse:
     """Convert request validation failures into a JSON 422 error.
 
@@ -152,4 +194,4 @@ def _error_response(
     )
 
 
-__all__ = ["install_error_handling"]
+__all__ = ["ApiError", "install_error_handling"]
