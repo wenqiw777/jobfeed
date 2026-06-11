@@ -36,6 +36,9 @@ class StatusInfo:
     resume_variant: str | None = None
     notes: str | None = None
     last_status_change_at: datetime
+    # Joined from jobs; Optional so non-store constructors keep working.
+    company: str | None = None
+    title: str | None = None
 
 
 @dataclass(kw_only=True)
@@ -106,10 +109,15 @@ class BulkTransitionRequest:
 
 @dataclass(frozen=True, kw_only=True)
 class StatusFilter:
-    """Filter parameters for list_statuses queries."""
+    """Filter parameters for list_statuses queries.
+
+    ``since`` is an exact aware-UTC cutoff (last_status_change_at >= since);
+    ``days`` is the coarser now()-relative window kept for other callers.
+    """
 
     statuses: frozenset[str] | None = None
     days: int | None = None
+    since: datetime | None = None
     no_response_days: int | None = None
     needs_followup: bool = False
     notes_contain: str | None = None

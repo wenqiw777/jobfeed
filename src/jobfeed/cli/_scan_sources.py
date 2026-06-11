@@ -23,7 +23,7 @@ from jobfeed.adapters.sources.linkedin_jobspy import LinkedInJobSpySource
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.cli import AppContext
 from jobfeed.domain.models import CompanyRecord
-from jobfeed.ports.source import EnrichmentLookup
+from jobfeed.ports.source import ClosedJobLookup, EnrichmentLookup
 from jobfeed.ports.store_ops import StoreOpsMixin
 from jobfeed.services.scan import SourceSpec
 
@@ -135,10 +135,18 @@ async def _build_speedyapply(
     config = app["settings"].sources.speedyapply
     _require_enabled(config.enabled, "speedyapply")
     client = _register_client(stack, create_http_client(config.fetch_timeout_s))
+    # The PostgresStore implements ClosedJobLookup; passing it lets the source
+    # skip re-fetching JDs for postings already stamped closed_at (dead links).
+    closed_lookup = cast(ClosedJobLookup, app["store"])
     sources.append(
         (
             "speedyapply",
-            SpeedyApplySource(client=client, config=config, logger=app["logger"]),
+            SpeedyApplySource(
+                client=client,
+                config=config,
+                logger=app["logger"],
+                closed_lookup=closed_lookup,
+            ),
             {},
         )
     )

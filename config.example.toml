@@ -78,6 +78,14 @@ master_resume_path = "resume.example.md"
 [scoring]
 stage_a_threshold = 60
 
+# Digest file output — when output_dir is set, `jobfeed digest` also writes
+# today.md plus a dated YYYY-MM-DD.md there (both overwritten each run), and
+# `digest --quiet` writes silently. Keep this under ~/.cache/jobfeed/ —
+# ~/.jobfeed/ is read-only. The canonical Docker wrapper (./bin/jobfeed)
+# mounts ~/.cache/jobfeed, so this example path lands on the host either way.
+[digest]
+# output_dir = "~/.cache/jobfeed/digests"
+
 [execution]
 default_runner = "in_process"
 
@@ -110,6 +118,8 @@ enabled = false
 # timeout_s = 60.0
 # country_indeed = "usa"
 # hours_old =               # unset; when set, overrides each URL's fromage window
+# repeat = 1                # re-run each URL N times, union by canonical_id;
+#                           # raise (e.g. 4) for Indeed's non-deterministic backend
 
 [sources.linkedin_jobspy]
 enabled = false

@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from jobfeed.domain.models import GapItem, JobEvaluation, MatchItem, Verdict
+from jobfeed.domain.models import (
+    AttentionItem,
+    AttentionReport,
+    GapItem,
+    JobEvaluation,
+    MatchItem,
+    Verdict,
+    WorkflowAttention,
+    WorkflowAttentionItem,
+)
 
 STAT_KEYS = [
     "total_jobs",
@@ -19,6 +28,7 @@ def render_digest(
     evaluations: list[JobEvaluation],
     stats: dict[str, object],
     cutoff_at: datetime | None = None,
+    top: int | None = None,
 ) -> str:
     """Render evaluated jobs into a daily Markdown digest.
 
@@ -27,29 +37,45 @@ def render_digest(
         stats: Summary counters to include at the end of the digest.
         cutoff_at: Optional boundary for splitting apply-tier jobs into new and
             previously seen groups.
+        top: Optional per-group row cap; group headers show ``(shown/total)``.
 
     Returns:
         Markdown digest ready for CLI or notification output.
 
     Raises:
-        ValueError: If cutoff_at is timezone-naive.
+        ValueError: If cutoff_at is timezone-naive or top is below 1.
     """
     _validate_cutoff(cutoff_at)
+    if top is not None and top < 1:
+        raise ValueError("top must be >= 1")
     apply_jobs, consider_jobs, skip_jobs = _group_evaluations(evaluations)
     lines = [
         "# Daily Digest",
         "",
         f"Date: {_digest_date()}",
         "",
-        "## Apply",
+        _group_header("Apply", len(apply_jobs), top),
     ]
-    lines.extend(_render_apply_section(apply_jobs, cutoff_at))
-    lines.extend(["", "## Consider"])
-    lines.extend(_render_consider_section(consider_jobs))
+    lines.extend(_render_apply_section(_cap(apply_jobs, top), cutoff_at))
+    lines.extend(["", _group_header("Consider", len(consider_jobs), top)])
+    lines.extend(_render_consider_section(_cap(consider_jobs, top)))
     lines.extend(["", "## Skip", f"({len(skip_jobs)} jobs skipped)"])
     lines.extend(["", "## Stats"])
     lines.extend(_render_stats(stats))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _group_header(name: str, total: int, top: int | None) -> str:
+    if top is None:
+        return f"## {name}"
+    return f"## {name} ({min(top, total)}/{total})"
+
+
+def _cap(
+    evaluations: list[JobEvaluation],
+    top: int | None,
+) -> list[JobEvaluation]:
+    return evaluations if top is None else evaluations[:top]
 
 
 def _group_evaluations(
@@ -164,4 +190,51 @@ def _digest_date() -> str:
     return datetime.now(UTC).date().isoformat()
 
 
-__all__ = ["render_digest"]
+def render_attention_footer(
+    attention: WorkflowAttention,
+    report: AttentionReport,
+) -> str:
+    """Render workflow and pipeline attention buckets as a digest footer.
+
+    Args:
+        attention: Three-bucket workflow attention report.
+        report: Pipeline health attention report.
+
+    Returns:
+        Markdown footer section, or an empty string when every bucket is empty.
+    """
+    sections: list[str] = []
+    _add_bucket(sections, "Follow-up due", _workflow_lines(attention.follow_up_today))
+    _add_bucket(sections, "Interview prep", _workflow_lines(attention.interview_prep))
+    _add_bucket(sections, "Going ghosted", _workflow_lines(attention.going_ghosted))
+    _add_bucket(sections, "Enrich errors", _report_lines(report.enrich_errors))
+    _add_bucket(
+        sections, "Low quality scored", _report_lines(report.low_quality_scored)
+    )
+    _add_bucket(sections, "Stuck scoring", _report_lines(report.stuck_scoring))
+    if not sections:
+        return ""
+    return "\n".join(["## Attention", *sections]).rstrip() + "\n"
+
+
+def _add_bucket(sections: list[str], title: str, lines: list[str]) -> None:
+    if not lines:
+        return
+    sections.extend(["", f"### {title} ({len(lines)})", *lines])
+
+
+def _workflow_lines(items: list[WorkflowAttentionItem]) -> list[str]:
+    return [
+        f"- [{item.job_id}] {item.title} @ {item.company}: {item.reason}"
+        for item in items
+    ]
+
+
+def _report_lines(items: list[AttentionItem]) -> list[str]:
+    return [
+        f"- [{item.job_id}] {item.title} @ {item.company}: {item.detail}"
+        for item in items
+    ]
+
+
+__all__ = ["render_attention_footer", "render_digest"]

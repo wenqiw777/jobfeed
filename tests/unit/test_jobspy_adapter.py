@@ -49,6 +49,8 @@ _CUSTOM_JOBSPY_TIMEOUT_S = 12.5
 _CUSTOM_JOBSPY_MAX_CONCURRENT = 3
 _CUSTOM_INDEED_COUNTRY = "canada"
 _CONCURRENCY_SLEEP_S = 0.02
+_REPEAT_COUNT = 3
+_CUSTOM_INDEED_REPEAT = 4
 
 
 def _frame(rows: list[dict[str, object]]) -> pd.DataFrame:
@@ -75,6 +77,17 @@ def _posting_for_url(search_url: str, *, platform: str) -> JobPosting:
     """Build a real posting whose id reflects the URL suffix."""
     posting = _jobspy._row_to_posting(
         _good_row(id=f"in-{search_url[-1]}"),
+        platform=platform,
+        discovered_at=_DISCOVERED_AT,
+    )
+    assert posting is not None
+    return posting
+
+
+def _posting_with_id(canonical_id: str, *, platform: str) -> JobPosting:
+    """Build a real posting carrying an explicit canonical_id."""
+    posting = _jobspy._row_to_posting(
+        _good_row(id=canonical_id),
         platform=platform,
         discovered_at=_DISCOVERED_AT,
     )
@@ -770,6 +783,48 @@ async def test_scrape_urls_honors_max_concurrent(
     assert {p.canonical_id for p in postings} == {"in-1", "in-2", "in-3"}
 
 
+async def test_scrape_urls_repeats_each_url_and_unions_by_canonical_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """repeat=N scrapes each URL N times and unions postings by canonical_id.
+
+    Indeed's GraphQL backend returns a non-deterministic subset per call, so one
+    pass misses postings. ``repeat`` issues multiple draws per URL; a canonical_id
+    that recurs across draws collapses to a single posting (the union).
+    """
+    # Three draws of the one URL: in-a1 appears twice (proves dedup), in-a2 once.
+    draws = [["in-a1"], ["in-a2"], ["in-a1"]]
+    counter = {"n": 0}
+
+    def _fake_run_scrape_process(request: object, timeout_s: float) -> object:
+        assert timeout_s == _DEFAULT_JOBSPY_TIMEOUT_S
+        ids = draws[counter["n"]]
+        counter["n"] += 1
+        return _scrape_outcome(
+            [_posting_with_id(cid, platform=request.platform) for cid in ids]
+        )
+
+    monkeypatch.setattr(
+        _jobspy_process, "_run_scrape_process", _fake_run_scrape_process
+    )
+    postings = await _jobspy_process.scrape_urls(
+        site_name="indeed",
+        platform="indeed",
+        search_urls=["https://indeed.com/jobs?q=a"],
+        max_jobs=10,
+        hours_old=None,
+        timeout_s=_DEFAULT_JOBSPY_TIMEOUT_S,
+        max_concurrent=1,
+        logger=get_logger(),
+        discovered_at=_DISCOVERED_AT,
+        repeat=_REPEAT_COUNT,
+    )
+
+    assert counter["n"] == _REPEAT_COUNT  # the URL was scraped repeat times
+    # Union by canonical_id: in-a1 (drawn twice) collapses to one posting.
+    assert sorted(p.canonical_id for p in postings) == ["in-a1", "in-a2"]
+
+
 async def test_single_url_scrape_raises_on_challenge(
     patched_scrape_jobs,
 ) -> None:
@@ -860,6 +915,31 @@ async def test_indeed_fetch_jobs_forwards_runtime_bounds(
     assert captured["timeout_s"] == _CUSTOM_JOBSPY_TIMEOUT_S
     assert captured["max_concurrent"] == _CUSTOM_JOBSPY_MAX_CONCURRENT
     assert captured["country_indeed"] == _CUSTOM_INDEED_COUNTRY
+
+
+async def test_indeed_fetch_jobs_forwards_repeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """IndeedSource forwards its configured repeat count to the JobSpy loop.
+
+    Indeed's backend is non-deterministic, so the source re-runs each URL
+    ``repeat`` times and unions the draws; the knob must reach ``scrape_urls``.
+    """
+    captured: dict[str, object] = {}
+
+    async def _spy_scrape_urls(**kwargs: object) -> list[JobPosting]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        "jobfeed.adapters.sources.indeed_jobspy.apply_indeed_date_patch",
+        lambda: None,
+    )
+    monkeypatch.setattr(_jobspy_process, "scrape_urls", _spy_scrape_urls)
+    source = _indeed_source(repeat=_CUSTOM_INDEED_REPEAT)
+
+    assert await source.fetch_jobs({}) == []
+    assert captured["repeat"] == _CUSTOM_INDEED_REPEAT
 
 
 async def test_indeed_fetch_jobs_runs_scrape_off_event_loop(
@@ -976,6 +1056,27 @@ async def test_linkedin_jobspy_fetch_jobs_delegates_to_shared_scrape_urls(
     assert captured["timeout_s"] == _DEFAULT_JOBSPY_TIMEOUT_S
     assert captured["max_concurrent"] == _DEFAULT_JOBSPY_MAX_CONCURRENT
     assert isinstance(captured["discovered_at"], datetime)
+
+
+async def test_linkedin_jobspy_fetch_jobs_forwards_repeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LinkedInJobSpySource forwards its configured repeat to the shared loop.
+
+    LinkedIn's JobSpy backend is non-deterministic too, so the shared ``repeat``
+    knob must reach ``scrape_urls`` rather than being silently ignored.
+    """
+    captured: dict[str, object] = {}
+
+    async def _spy_scrape_urls(**kwargs: object) -> list[JobPosting]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(_jobspy_process, "scrape_urls", _spy_scrape_urls)
+    source = _li_jobspy_source(repeat=_CUSTOM_INDEED_REPEAT)
+
+    assert await source.fetch_jobs({}) == []
+    assert captured["repeat"] == _CUSTOM_INDEED_REPEAT
 
 
 async def test_linkedin_jobspy_does_not_apply_indeed_date_patch(

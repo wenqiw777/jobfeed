@@ -26,6 +26,7 @@ from jobfeed.config import SourcesSpeedyApplyConfig
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger
+from jobfeed.ports.source import ClosedJobLookup
 
 _VENDOR = "speedyapply"
 _DEAD_STATUSES = frozenset({404, 410})
@@ -40,10 +41,12 @@ class SpeedyApplySource:
         client: httpx.AsyncClient,
         config: SourcesSpeedyApplyConfig,
         logger: JobfeedLogger,
+        closed_lookup: ClosedJobLookup | None = None,
     ) -> None:
         self._client = client
         self._config = config
         self._log = logger
+        self._closed_lookup = closed_lookup
 
     async def fetch_jobs(self, config: dict[str, object]) -> list[JobPosting]:  # noqa: ARG002
         """Fetch and JD-enrich every configured speedyapply row.
@@ -56,6 +59,7 @@ class SpeedyApplySource:
         """
         discovered_at = datetime.now(UTC)
         rows = await self._collect_rows(discovered_at)
+        rows = await self._drop_closed(rows)
         slug_cache: routing.SlugCache = {}
         sem = asyncio.Semaphore(self._config.max_concurrent)
         tasks = [
@@ -71,6 +75,35 @@ class SpeedyApplySource:
         rows = _dedupe_rows(parsed)
         self._log.info("speedyapply_rows_parsed", count=len(rows))
         return rows
+
+    async def _drop_closed(
+        self, rows: list[markdown.SpeedyRow]
+    ) -> list[markdown.SpeedyRow]:
+        """Drop rows whose canonical_id the store already stamped closed.
+
+        Skips the JD fetch for definitively-gone postings (404/410/unavailable)
+        so dead links are not re-hit (and re-warned) on every scan. Live rows
+        are still re-fetched, so newly-closed postings are detected as before.
+
+        The filter is only an optimization: a transient lookup error fails
+        open (warn + return rows unfiltered) rather than abort the scan round.
+        """
+        if self._closed_lookup is None:
+            return rows
+        try:
+            closed = await self._closed_lookup.get_closed_canonical_ids(
+                platform=_VENDOR
+            )
+        except Exception as exc:
+            self._log.warning("speedyapply_closed_lookup_failed", error=str(exc))
+            return rows
+        if not closed:
+            return rows
+        kept = [row for row in rows if row.canonical_id not in closed]
+        skipped = len(rows) - len(kept)
+        if skipped:
+            self._log.info("speedyapply_dead_skipped", count=skipped)
+        return kept
 
     async def _parse_url(self, url: str, now: datetime) -> list[markdown.SpeedyRow]:
         """Fetch one markdown list and parse it; contain per-URL fetch errors."""

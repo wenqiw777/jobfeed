@@ -26,6 +26,7 @@ from jobfeed.adapters.store.legacy_import import (
     StateRow,
     StatusHistoryRow,
 )
+from jobfeed.domain.errors import SnapshotAmbiguousError, SnapshotNotFoundError
 from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models import (
     ApplicationRecord,
@@ -47,6 +48,7 @@ from jobfeed.domain.models import (
     PipelineRun,
     QualityBand,
     ResumeSnapshot,
+    ResumeSnapshotSummary,
     ResumeVariantStats,
     SaveJobResult,
     StageAResult,
@@ -78,6 +80,19 @@ from jobfeed.ports.store_claims import GateCandidate
 # ---------------------------------------------------------------------------
 # Row mapping helpers
 # ---------------------------------------------------------------------------
+
+
+def _escape_like_prefix(prefix: str) -> str:
+    """Backslash-escape LIKE wildcards so a user prefix matches literally.
+
+    Args:
+        prefix: Raw user-supplied prefix.
+
+    Returns:
+        Prefix safe for ``LIKE ... ESCAPE '\\'`` (no wildcard expansion).
+    """
+    # Escape the escape char first, or the % / _ escapes below get double-escaped.
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _job_from_record(r: asyncpg.Record) -> JobPosting:
@@ -356,6 +371,8 @@ def _status_info_from_record(r: asyncpg.Record) -> StatusInfo:
         notes=r["notes"],
         last_status_change_at=r["last_status_change_at"]
         or datetime(1970, 1, 1, tzinfo=UTC),
+        company=r["company"],
+        title=r["title"],
     )
 
 
@@ -538,6 +555,12 @@ def _derived_resume_hooks_block(result: StageBResult) -> dict[str, object]:
         "supporting": hooks[1:],
         "avoid_mentioning": [],
     }
+
+
+# Marker mark_stale_closed stamps on heuristically-closed no-JD rows. Shared
+# with get_closed_canonical_ids, which excludes these rows; both sites must use
+# this constant so the stamp and the exclusion cannot drift apart.
+_STALE_BACKFILL_MARKER = "backfill:stale-no-jd"
 
 
 # ---------------------------------------------------------------------------
@@ -1959,6 +1982,34 @@ class PostgresStore:
             enrich_source=row["enrich_source"],
         )
 
+    async def get_closed_canonical_ids(self, *, platform: str) -> set[str]:
+        """Return canonical ids of definitively closed jobs (ClosedJobLookup).
+
+        Heuristic ``mark-stale-closed`` backfill closures are excluded: they
+        are guesses, not proven-gone postings, and the save-path self-heal can
+        only clear their ``closed_at`` if a later JD fetch succeeds — which
+        requires the source to keep re-fetching them.
+
+        Args:
+            platform: Source platform to scope the lookup to.
+
+        Returns:
+            The set of ``canonical_id`` values whose row has ``closed_at`` set
+            and is not a heuristic stale-backfill closure.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            # Heuristic backfill closures stay re-fetchable: the save-path
+            # self-heal needs a successful fetch to recover a live posting.
+            rows = await conn.fetch(
+                """SELECT canonical_id FROM jobs
+                   WHERE platform = $1 AND closed_at IS NOT NULL
+                     AND enrich_error IS DISTINCT FROM $2""",
+                platform,
+                _STALE_BACKFILL_MARKER,
+            )
+        return {row["canonical_id"] for row in rows}
+
     async def save_stage_a(self, job_id: str, result: StageAResult) -> None:
         """Persist a successful Stage A result.
 
@@ -2880,7 +2931,8 @@ class PostgresStore:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """SELECT s.job_id, s.status, s.next_followup_at,
-                          s.resume_variant, s.notes, s.last_status_change_at
+                          s.resume_variant, s.notes, s.last_status_change_at,
+                          j.company, j.title
                    FROM job_status s
                    JOIN jobs j ON j.id = s.job_id
                    WHERE s.job_id = $1""",
@@ -3015,6 +3067,7 @@ class PostgresStore:
         _f = filters or StatusFilter()
         statuses = _f.statuses
         days = _f.days
+        since = _f.since
         no_response_days = _f.no_response_days
         needs_followup = _f.needs_followup
         notes_contain = _f.notes_contain
@@ -3040,6 +3093,11 @@ class PostgresStore:
             )
             params.append(str(days))
 
+        if since is not None:
+            param_idx += 1
+            clauses.append(f"s.last_status_change_at >= ${param_idx}")
+            params.append(since)
+
         if no_response_days is not None:
             clauses.append("s.status IN ('applied', 'interviewing')")
             param_idx += 1
@@ -3054,12 +3112,13 @@ class PostgresStore:
 
         if notes_contain:
             param_idx += 1
-            clauses.append(f"s.notes LIKE '%' || ${param_idx} || '%'")
+            clauses.append(f"s.notes ILIKE '%' || ${param_idx} || '%'")
             params.append(notes_contain)
 
         where = " AND ".join(clauses) if clauses else "1=1"
         sql = f"""SELECT s.job_id, s.status, s.next_followup_at,
-                         s.resume_variant, s.notes, s.last_status_change_at
+                         s.resume_variant, s.notes, s.last_status_change_at,
+                         j.company, j.title
                   FROM job_status s
                   JOIN jobs j ON j.id = s.job_id
                   WHERE {where}
@@ -3095,6 +3154,26 @@ class PostgresStore:
                 line,
                 int(job_id),
             )
+
+    async def set_followup(self, *, job_id: str, at: datetime) -> bool:
+        """Set the next follow-up time for a job.
+
+        Args:
+            job_id: Store-assigned job identity.
+            at: When the next follow-up is due.
+
+        Returns:
+            True if a job_status row was updated, False if none exists.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE job_status SET next_followup_at = $1 WHERE job_id = $2",
+                at,
+                int(job_id),
+            )
+        # asyncpg returns "UPDATE N" where N is the row count
+        return not result.endswith(" 0")
 
     async def workflow_attention(
         self,
@@ -3691,28 +3770,40 @@ class PostgresStore:
         self,
         *,
         limit: int = 100,
+        resume_hash_prefix: str | None = None,
     ) -> list[ApplicationRecord]:
         """List application records by recency.
 
         Args:
             limit: Max records.
+            resume_hash_prefix: Optional literal hash prefix; keeps only
+                records whose master OR tailored resume hash starts with it.
 
         Returns:
             Application records.
         """
+        pattern = (
+            None
+            if resume_hash_prefix is None
+            else _escape_like_prefix(resume_hash_prefix) + "%"
+        )
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT a.job_id, a.applied_at,
+                r"""SELECT a.job_id, a.applied_at,
                           a.master_resume_hash, a.tailored_resume_hash,
                           a.cover_letter, a.application_method,
                           a.verdict_snapshot, a.fit_snapshot,
                           a.hooks_snapshot, a.notes
                    FROM applied a
                    JOIN jobs j ON a.job_id = j.id
+                   WHERE $2::text IS NULL
+                      OR a.master_resume_hash LIKE $2 ESCAPE '\'
+                      OR a.tailored_resume_hash LIKE $2 ESCAPE '\'
                    ORDER BY a.applied_at DESC
                    LIMIT $1""",
                 limit,
+                pattern,
             )
 
         return [
@@ -3915,6 +4006,84 @@ class PostgresStore:
             content=row["content"],
             notes=row["notes"],
         )
+
+    async def get_resume_snapshot_by_prefix(self, prefix: str) -> ResumeSnapshot:
+        """Resolve a resume snapshot by a unique hash prefix.
+
+        Args:
+            prefix: Literal hash prefix (LIKE wildcards are escaped).
+
+        Returns:
+            The single matching snapshot.
+
+        Raises:
+            SnapshotNotFoundError: If no snapshot matches the prefix.
+            SnapshotAmbiguousError: If two or more snapshots match.
+        """
+        pattern = _escape_like_prefix(prefix) + "%"
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                r"""SELECT resume_hash, captured_at, source, content, notes
+                   FROM resume_snapshots
+                   WHERE resume_hash LIKE $1 ESCAPE '\'
+                   LIMIT 2""",
+                pattern,
+            )
+        if not rows:
+            raise SnapshotNotFoundError(f"no resume snapshot matches prefix {prefix!r}")
+        if len(rows) > 1:
+            raise SnapshotAmbiguousError(
+                f"resume hash prefix {prefix!r} matches multiple snapshots"
+            )
+        row = rows[0]
+        return ResumeSnapshot(
+            resume_hash=row["resume_hash"],
+            captured_at=row["captured_at"],
+            source=row["source"],
+            content=row["content"],
+            notes=row["notes"],
+        )
+
+    async def list_resume_snapshots(
+        self,
+        source: str | None = None,
+    ) -> list[ResumeSnapshotSummary]:
+        """List every resume snapshot with its applied-row usage count.
+
+        Usage count is the number of ``applied`` rows referencing the hash
+        as master OR tailored resume (LEFT JOIN, so orphans count 0 and
+        still appear).
+
+        Args:
+            source: Optional filter on the stored source column.
+
+        Returns:
+            Snapshot summaries (without content), newest first.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT s.resume_hash, s.captured_at, s.source,
+                          COUNT(a.job_id)::int AS usage_count
+                   FROM resume_snapshots s
+                   LEFT JOIN applied a
+                     ON a.master_resume_hash = s.resume_hash
+                     OR a.tailored_resume_hash = s.resume_hash
+                   WHERE $1::text IS NULL OR s.source = $1
+                   GROUP BY s.resume_hash, s.captured_at, s.source
+                   ORDER BY s.captured_at DESC, s.resume_hash""",
+                source,
+            )
+        return [
+            ResumeSnapshotSummary(
+                resume_hash=r["resume_hash"],
+                captured_at=r["captured_at"],
+                source=r["source"],
+                usage_count=r["usage_count"],
+            )
+            for r in rows
+        ]
 
     async def register_resume_variant(
         self,
@@ -4200,7 +4369,7 @@ class PostgresStore:
             slug: Company slug.
 
         Returns:
-            True if matched.
+            True if a tracked, not-already-removed company was matched.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -4208,7 +4377,8 @@ class PostgresStore:
                 """UPDATE companies SET
                        ats_vendor = 'removed', ats_override = 0,
                        last_verified_at = NULL
-                   WHERE slug = $1""",
+                   WHERE slug = $1
+                     AND ats_vendor IS DISTINCT FROM 'removed'""",
                 slug,
             )
         # asyncpg returns "UPDATE N" where N is the row count
@@ -4605,9 +4775,10 @@ class PostgresStore:
             result = await conn.execute(
                 f"""UPDATE jobs
                     SET closed_at = now(),
-                        enrich_error = 'backfill:stale-no-jd'
+                        enrich_error = $2
                     WHERE {_STALE_WHERE}""",
                 older_than_days,
+                _STALE_BACKFILL_MARKER,
             )
         # asyncpg returns "UPDATE N"
         return int(result.split()[-1])

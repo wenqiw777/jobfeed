@@ -1,4 +1,8 @@
-"""Extended store port: batch evaluation, stage-B preview, application audit."""
+"""Extended store port: batch evaluation, stage-B preview, interviews.
+
+The application-audit capability lives in ``store_application.py``
+(split out to keep both modules under the 300-line gate).
+"""
 
 from __future__ import annotations
 
@@ -6,12 +10,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.interview import InterviewRound
-from jobfeed.domain.models import (
-    ApplicationRecord,
-    ApplicationStats,
-    JobPosting,
-    ResumeSnapshot,
-)
+from jobfeed.domain.models import JobPosting
 
 
 @runtime_checkable
@@ -93,131 +92,6 @@ class StoreStageBPreviewMixin(Protocol):
         Returns:
             Jobs a real Stage B run would consider after threshold sync,
             without mutating evaluation status.
-        """
-        ...
-
-
-@runtime_checkable
-class StoreApplicationMixin(Protocol):
-    """Application audit trail and resume snapshot methods."""
-
-    async def record_application(self, record: ApplicationRecord) -> bool:
-        """Record application with atomic status transition.
-
-        Args:
-            record: Application audit record.
-
-        Returns:
-            True if new, False if already applied.
-        """
-        ...
-
-    async def record_application_with_snapshots(
-        self,
-        record: ApplicationRecord,
-        *,
-        snapshots: list[ResumeSnapshot] | None = None,
-        resume_variant: str | None = None,
-    ) -> bool:
-        """Record application with resume snapshots in one atomic transaction.
-
-        Upserts snapshots, inserts the applied row, checks idempotency,
-        guards terminal status, transitions to applied, and optionally
-        auto-registers the resume variant -- all inside a single transaction.
-
-        Args:
-            record: Application audit record.
-            snapshots: Optional resume snapshots to persist atomically.
-            resume_variant: Optional variant name to set on the job status;
-                auto-registered if not already known.
-
-        Returns:
-            True if new, False if already applied.
-
-        Raises:
-            ValueError: If the job is in a terminal status.
-        """
-        ...
-
-    async def get_application(self, job_id: str) -> ApplicationRecord | None:
-        """Load a single application record by job_id.
-
-        Args:
-            job_id: Store-assigned job identity.
-
-        Returns:
-            Application record if found, else None.
-        """
-        ...
-
-    async def list_applications(
-        self,
-        *,
-        limit: int = 100,
-    ) -> list[ApplicationRecord]:
-        """List application records by recency.
-
-        Args:
-            limit: Max records.
-
-        Returns:
-            Application records.
-        """
-        ...
-
-    async def application_stats(
-        self,
-        *,
-        since_days_ago: int = 30,
-        by_resume: bool = False,
-    ) -> ApplicationStats:
-        """Aggregate application statistics.
-
-        Args:
-            since_days_ago: Time window.
-            by_resume: Include per-variant breakdown.
-
-        Returns:
-            Application statistics.
-        """
-        ...
-
-    async def save_resume_snapshot(self, snapshot: ResumeSnapshot) -> None:
-        """Content-addressed resume insert (no-op if exists).
-
-        Args:
-            snapshot: Resume snapshot to persist.
-        """
-        ...
-
-    async def get_resume_snapshot(
-        self,
-        resume_hash: str,
-    ) -> ResumeSnapshot | None:
-        """Load resume snapshot by hash.
-
-        Args:
-            resume_hash: Content-addressed hash.
-
-        Returns:
-            Snapshot if found, else None.
-        """
-        ...
-
-    async def register_resume_variant(
-        self,
-        *,
-        name: str,
-        description: str | None = None,
-    ) -> bool:
-        """Register a named resume variant.
-
-        Args:
-            name: Variant name.
-            description: Optional description.
-
-        Returns:
-            True if new, False if existed.
         """
         ...
 

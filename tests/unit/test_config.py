@@ -49,6 +49,7 @@ JOBSPY_DEFAULT_MAX_JOBS = 100
 JOBSPY_DEFAULT_MAX_CONCURRENT = 2
 JOBSPY_DEFAULT_TIMEOUT_S = 60.0
 JOBSPY_DEFAULT_COUNTRY_INDEED = "usa"
+JOBSPY_DEFAULT_REPEAT = 1
 INDEED_ENV_MAX_JOBS = 50
 INDEED_TOML_MAX_JOBS = 25
 INDEED_TOML_HOURS_OLD = 48
@@ -424,12 +425,14 @@ def test_settings_exposes_phase4a_source_defaults() -> None:
     assert sources.indeed.max_concurrent == JOBSPY_DEFAULT_MAX_CONCURRENT
     assert sources.indeed.timeout_s == JOBSPY_DEFAULT_TIMEOUT_S
     assert sources.indeed.country_indeed == JOBSPY_DEFAULT_COUNTRY_INDEED
+    assert sources.indeed.repeat == JOBSPY_DEFAULT_REPEAT
 
     assert sources.linkedin_jobspy.search_urls == []
     assert sources.linkedin_jobspy.max_jobs == JOBSPY_DEFAULT_MAX_JOBS
     assert sources.linkedin_jobspy.hours_old is None
     assert sources.linkedin_jobspy.max_concurrent == JOBSPY_DEFAULT_MAX_CONCURRENT
     assert sources.linkedin_jobspy.timeout_s == JOBSPY_DEFAULT_TIMEOUT_S
+    assert sources.linkedin_jobspy.repeat == JOBSPY_DEFAULT_REPEAT
 
 
 def test_settings_exposes_phase4b_linkedin_defaults() -> None:

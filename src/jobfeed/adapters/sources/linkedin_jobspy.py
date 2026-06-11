@@ -64,6 +64,7 @@ class LinkedInJobSpySource:
             max_concurrent=self._config.max_concurrent,
             logger=self._log,
             discovered_at=datetime.now(UTC),
+            repeat=self._config.repeat,
         )
 
 

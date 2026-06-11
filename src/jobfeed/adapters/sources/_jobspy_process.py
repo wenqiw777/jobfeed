@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import multiprocessing as mp
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from multiprocessing.queues import Queue
@@ -67,6 +68,7 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
     logger: JobfeedLogger,
     discovered_at: datetime,
     country_indeed: str | None = None,
+    repeat: int = 1,
 ) -> list[JobPosting]:
     """Scrape every search URL off the event loop, containing per-URL errors.
 
@@ -87,9 +89,12 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
         logger: Structured logger for contained per-URL failures.
         discovered_at: Scan-start timestamp stamped on every posting.
         country_indeed: JobSpy country selector for Indeed searches.
+        repeat: Times to re-run each URL; draws are unioned by canonical_id to
+            recover postings the non-deterministic backend drops on a single pass.
 
     Returns:
-        Aggregated postings across all URLs that did not fail.
+        Aggregated postings across all URLs that did not fail, deduped by
+        canonical_id (so repeated draws of the same posting collapse to one).
     """
     sem = asyncio.Semaphore(max_concurrent)
     batches = await asyncio.gather(
@@ -107,9 +112,28 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
                 country_indeed=country_indeed,
             )
             for url in search_urls
+            for _ in range(repeat)
         ]
     )
-    return [posting for batch in batches for posting in batch]
+    return _dedupe_by_canonical_id(posting for batch in batches for posting in batch)
+
+
+def _dedupe_by_canonical_id(postings: Iterable[JobPosting]) -> list[JobPosting]:
+    """Union postings by (platform, canonical_id), keeping the first occurrence.
+
+    ``repeat`` issues several non-deterministic draws per URL, so the same
+    posting can recur across draws; collapsing duplicates here yields the union a
+    single pass would miss. O(n) over the combined draws (one set membership test
+    per posting).
+    """
+    seen: set[tuple[str, str]] = set()
+    unique: list[JobPosting] = []
+    for posting in postings:
+        key = (posting.platform, posting.canonical_id)
+        if key not in seen:
+            seen.add(key)
+            unique.append(posting)
+    return unique
 
 
 def _run_scrape_process(

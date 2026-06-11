@@ -1,4 +1,7 @@
-"""Click commands for application recording and resume snapshots."""
+"""Click commands for application recording and history.
+
+The resume-snapshot subcommands live in ``cli/snapshots.py``.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +13,14 @@ from typing import cast
 import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
+from jobfeed.domain.models import ApplicationRecord
 from jobfeed.services.application import (
     ApplicationService,
     ApplicationStore,
     ApplyRequest,
 )
+
+_METHOD_CHOICES = ("web", "referral", "email")
 
 
 def _build_application_svc(app: AppContext) -> ApplicationService:
@@ -61,14 +67,21 @@ def _read_file(path: Path) -> str:
     help="Path to a cover letter file.",
 )
 @click.option("--variant", default=None, help="Resume variant name for A/B tracking.")
+@click.option(
+    "--method",
+    "application_method",
+    type=click.Choice(_METHOD_CHOICES),
+    default="web",
+    show_default=True,
+    help="How the application was submitted.",
+)
+@click.option(
+    "--notes",
+    default=None,
+    help="Free-form note stored on the application record.",
+)
 @click.pass_context
-def apply_cmd(
-    ctx: click.Context,
-    job_id: str,
-    tailored_path: Path | None,
-    cover_letter_path: Path | None,
-    variant: str | None,
-) -> None:
+def apply_cmd(ctx: click.Context, /, **kwargs: object) -> None:
     """Record an application for a job.
 
     Reads the master resume from the configured path, plus optional
@@ -76,71 +89,71 @@ def apply_cmd(
 
     Args:
         ctx: Click invocation context.
-        job_id: Store-assigned job identity.
-        tailored_path: Optional tailored resume file.
-        cover_letter_path: Optional cover letter file.
-        variant: Optional resume variant name.
+        kwargs: Click option values keyed by option name.
     """
     app = require_app(ctx)
-    asyncio.run(
-        _run_apply(
-            app,
-            job_id=job_id,
-            tailored_path=tailored_path,
-            cover_letter_path=cover_letter_path,
-            variant=variant,
-        )
-    )
+    asyncio.run(_run_apply(app, kwargs))
 
 
-async def _run_apply(
-    app: AppContext,
-    *,
-    job_id: str,
-    tailored_path: Path | None,
-    cover_letter_path: Path | None,
-    variant: str | None,
-) -> None:
+async def _run_apply(app: AppContext, opts: dict[str, object]) -> None:
+    job_id = cast(str, opts["job_id"])
+    tailored_path = cast(Path | None, opts["tailored_path"])
+    cover_letter_path = cast(Path | None, opts["cover_letter_path"])
+
     async def action() -> None:
         settings = app["settings"]
-        master_path = Path(settings.llm.master_resume_path)
-        master_resume = _read_file(master_path)
+        master_resume = _read_file(Path(settings.llm.master_resume_path))
         tailored = _read_file(tailored_path) if tailored_path else None
         cover_letter = _read_file(cover_letter_path) if cover_letter_path else None
-
-        # Capture Stage B evaluation snapshots if available.
-        verdict_snap: str | None = None
-        fit_snap: str | None = None
-        hooks_snap: str | None = None
-        store = app["store"]
-        evaluation = await store.get_evaluation(job_id)
-        if evaluation is not None and evaluation.stage_b is not None:
-            blocks = evaluation.stage_b.raw_blocks or {}
-            if "verdict" in blocks:
-                verdict_snap = json.dumps(blocks["verdict"], sort_keys=True)
-            if "fit_analysis" in blocks:
-                fit_snap = json.dumps(blocks["fit_analysis"], sort_keys=True)
-            if "resume_hooks" in blocks:
-                hooks_snap = json.dumps(blocks["resume_hooks"], sort_keys=True)
+        verdict_snap, fit_snap, hooks_snap = await _stage_b_snapshots(app, job_id)
 
         req = ApplyRequest(
             job_id=job_id,
             master_resume=master_resume,
             tailored_resume=tailored,
             cover_letter=cover_letter,
-            variant=variant,
+            variant=cast(str | None, opts["variant"]),
+            application_method=cast(str, opts["application_method"]),
+            notes=cast(str | None, opts["notes"]),
             verdict_snapshot=verdict_snap,
             fit_snapshot=fit_snap,
             hooks_snapshot=hooks_snap,
         )
         svc = _build_application_svc(app)
         is_new = await svc.apply(req)
-        if is_new:
-            click.echo(f"Application recorded for {job_id}")
-        else:
+        if not is_new:
             click.echo(f"Already applied to {job_id}")
+            return
+        click.echo(f"Application recorded for {job_id}")
+        notice = await svc.reapply_notice(job_id)
+        if notice is not None:
+            click.echo(notice)
 
     await run_with_store(app, action)
+
+
+async def _stage_b_snapshots(
+    app: AppContext,
+    job_id: str,
+) -> tuple[str | None, str | None, str | None]:
+    """Capture Stage B verdict/fit/hooks JSON snapshots when available.
+
+    Args:
+        app: Initialized application context.
+        job_id: Store-assigned job identity.
+
+    Returns:
+        (verdict, fit_analysis, resume_hooks) JSON strings or Nones.
+    """
+    evaluation = await app["store"].get_evaluation(job_id)
+    if evaluation is None or evaluation.stage_b is None:
+        return (None, None, None)
+    blocks = evaluation.stage_b.raw_blocks or {}
+
+    def _dump(key: str) -> str | None:
+        return json.dumps(blocks[key], sort_keys=True) if key in blocks else None
+
+    return (_dump("verdict"), _dump("fit_analysis"), _dump("resume_hooks"))
 
 
 # ── apply-history ─────────────────────────────────────────────────────
@@ -154,126 +167,58 @@ async def _run_apply(
     type=click.IntRange(min=1),
     help="Maximum records to show.",
 )
+@click.option(
+    "--resume",
+    "resume_hash_prefix",
+    default=None,
+    help="Only applications whose resume hash starts with this prefix.",
+)
 @click.pass_context
-def apply_history(ctx: click.Context, limit: int) -> None:
+def apply_history(
+    ctx: click.Context,
+    limit: int,
+    resume_hash_prefix: str | None,
+) -> None:
     """List recent applications.
 
     Args:
         ctx: Click invocation context.
         limit: Maximum number of records.
+        resume_hash_prefix: Optional resume-hash prefix filter.
     """
     app = require_app(ctx)
-    asyncio.run(_run_history(app, limit=limit))
+    asyncio.run(_run_history(app, limit=limit, resume_hash_prefix=resume_hash_prefix))
 
 
-async def _run_history(app: AppContext, *, limit: int) -> None:
+async def _run_history(
+    app: AppContext,
+    *,
+    limit: int,
+    resume_hash_prefix: str | None,
+) -> None:
     async def action() -> None:
         svc = _build_application_svc(app)
-        records = await svc.apply_history(limit=limit)
+        records = await svc.apply_history(
+            limit=limit,
+            resume_hash_prefix=resume_hash_prefix,
+        )
         if not records:
             click.echo("No applications found.")
             return
         for rec in records:
-            ts = rec.applied_at.strftime("%Y-%m-%d %H:%M")
-            click.echo(f"{rec.job_id}  {ts}")
+            click.echo(_history_line(rec))
 
     await run_with_store(app, action)
 
 
-# ── snapshots ─────────────────────────────────────────────────────────
+def _history_line(rec: ApplicationRecord) -> str:
+    """Format one apply-history row: id, timestamp, method, notes."""
+    parts = [rec.job_id, rec.applied_at.strftime("%Y-%m-%d %H:%M")]
+    if rec.application_method:
+        parts.append(rec.application_method)
+    if rec.notes:
+        parts.append(rec.notes)
+    return "  ".join(parts)
 
 
-@click.group(name="snapshots", help="Resume snapshot commands.")
-def snapshots() -> None:
-    """Resume snapshot subcommands."""
-
-
-@snapshots.command(name="show", help="Show a resume snapshot by hash.")
-@click.argument("resume_hash")
-@click.pass_context
-def snapshots_show(ctx: click.Context, resume_hash: str) -> None:
-    """Print a stored resume snapshot.
-
-    Args:
-        ctx: Click invocation context.
-        resume_hash: SHA-256 content hash.
-    """
-    app = require_app(ctx)
-    asyncio.run(_run_snapshot_show(app, resume_hash=resume_hash))
-
-
-async def _run_snapshot_show(app: AppContext, *, resume_hash: str) -> None:
-    async def action() -> None:
-        svc = _build_application_svc(app)
-        snap = await svc.get_snapshot(resume_hash)
-        if snap is None:
-            raise click.ClickException(f"snapshot not found: {resume_hash}")
-        click.echo(snap.content)
-
-    await run_with_store(app, action)
-
-
-@snapshots.command(name="list", help="List resume snapshot hashes for a job.")
-@click.argument("job_id")
-@click.pass_context
-def snapshots_list(ctx: click.Context, job_id: str) -> None:
-    """Show resume snapshot hashes associated with a job's application.
-
-    Args:
-        ctx: Click invocation context.
-        job_id: Store-assigned job identity.
-    """
-    app = require_app(ctx)
-    asyncio.run(_run_snapshot_list(app, job_id=job_id))
-
-
-async def _run_snapshot_list(app: AppContext, *, job_id: str) -> None:
-    async def action() -> None:
-        svc = _build_application_svc(app)
-        rec = await svc.get_application(job_id)
-        if rec is None:
-            raise click.ClickException(f"no application found for job {job_id}")
-        ts = rec.applied_at.strftime("%Y-%m-%d %H:%M")
-        click.echo(f"applied: {ts}")
-        if rec.master_resume_hash:
-            click.echo(f"  master:   {rec.master_resume_hash}")
-        if rec.tailored_resume_hash:
-            click.echo(f"  tailored: {rec.tailored_resume_hash}")
-
-    await run_with_store(app, action)
-
-
-@snapshots.command(name="diff", help="Diff two resume snapshots.")
-@click.argument("hash_a")
-@click.argument("hash_b")
-@click.pass_context
-def snapshots_diff(ctx: click.Context, hash_a: str, hash_b: str) -> None:
-    """Show unified diff between two snapshots.
-
-    Args:
-        ctx: Click invocation context.
-        hash_a: First snapshot hash.
-        hash_b: Second snapshot hash.
-    """
-    app = require_app(ctx)
-    asyncio.run(_run_snapshot_diff(app, hash_a=hash_a, hash_b=hash_b))
-
-
-async def _run_snapshot_diff(
-    app: AppContext,
-    *,
-    hash_a: str,
-    hash_b: str,
-) -> None:
-    async def action() -> None:
-        svc = _build_application_svc(app)
-        diff_text = await svc.diff_snapshots(hash_a, hash_b)
-        if diff_text:
-            click.echo(diff_text)
-        else:
-            click.echo("Snapshots are identical.")
-
-    await run_with_store(app, action)
-
-
-__all__ = ["apply_cmd", "apply_history", "snapshots"]
+__all__ = ["apply_cmd", "apply_history"]

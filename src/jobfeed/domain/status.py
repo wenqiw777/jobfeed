@@ -55,6 +55,11 @@ RESPONSE_STATUSES: frozenset[str] = frozenset(
     {"interviewing", "offer", "rejected"},
 )
 
+# Default status set for `jobfeed list`, applied at the CLI layer (the store's
+# StatusFilter keeps None = no filter). Mirrors legacy's "actionable middle":
+# every live status except new and archived.
+LIST_DEFAULT_STATUSES: frozenset[str] = STATUS_VALUES - {"new", "archived"}
+
 # Status-decay / follow-up policy defaults. Single source of truth for the
 # store and service layers.
 DEFAULT_FOLLOWUP_GRACE_DAYS = 7
@@ -160,6 +165,7 @@ __all__ = [
     "DEFAULT_ARCHIVE_IGNORED_DAYS",
     "DEFAULT_FOLLOWUP_GRACE_DAYS",
     "DEFAULT_GHOST_DAYS",
+    "LIST_DEFAULT_STATUSES",
     "REASON_BULK_CASCADE",
     "REASON_BULK_SELECTED",
     "RESPONSE_STATUSES",

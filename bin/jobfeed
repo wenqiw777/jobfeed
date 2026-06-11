@@ -4,10 +4,17 @@ set -euo pipefail
 REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
 args=(docker compose run --rm)
+if [ ! -t 0 ]; then
+    args+=(-T)
+fi
 for file in config.toml resume.md preamble_personal.md; do
     if [ -f "$REPO_ROOT/$file" ]; then
         args+=(-v "$REPO_ROOT/$file:/app/$file:ro")
     fi
 done
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/jobfeed"
+mkdir -p "$CACHE_DIR"
+args+=(-v "$CACHE_DIR:/root/.cache/jobfeed")
 
 exec "${args[@]}" jobfeed-cli jobfeed "$@"

@@ -221,6 +221,7 @@ from jobfeed.domain.models_application import (  # noqa: E402
     ApplicationRecord,
     ApplicationStats,
     ResumeSnapshot,
+    ResumeSnapshotSummary,
     ResumeVariant,
     ResumeVariantStats,
 )
@@ -275,6 +276,7 @@ __all__ = [
     "PipelineRun",
     "QualityBand",
     "ResumeSnapshot",
+    "ResumeSnapshotSummary",
     "ResumeVariant",
     "ResumeVariantStats",
     "SaveJobResult",

@@ -420,6 +420,7 @@ def test_store_status_mixin_has_full_status_surface() -> None:
         "auto_decay",
         "list_statuses",
         "append_note",
+        "set_followup",
         "workflow_attention",
         "compute_reapply_notice",
     ]

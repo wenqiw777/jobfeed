@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from jobfeed.domain.errors import SnapshotAmbiguousError, SnapshotNotFoundError
 from jobfeed.domain.models import ApplicationRecord, ApplicationStats, ResumeSnapshot
 from jobfeed.domain.models_application import ResumeVariantStats
 from jobfeed.services.application import ApplicationService, ApplyRequest
@@ -142,6 +143,22 @@ class TestApply:
         assert record.cover_letter == "Dear Hiring Manager..."
         assert record.application_method == "website"
 
+    def test_apply_passes_notes(self) -> None:
+        """notes should appear on the persisted record."""
+        store = _make_store()
+        svc = _svc(store)
+        asyncio.run(svc.apply(_req(notes="via Sam")))
+        record = store.record_application_with_snapshots.call_args.args[0]
+        assert record.notes == "via Sam"
+
+    def test_apply_without_notes_defaults_none(self) -> None:
+        """notes should default to None on the record."""
+        store = _make_store()
+        svc = _svc(store)
+        asyncio.run(svc.apply(_req()))
+        record = store.record_application_with_snapshots.call_args.args[0]
+        assert record.notes is None
+
     def test_apply_passes_evaluation_snapshots(self) -> None:
         """verdict/fit/hooks snapshots should appear on the record."""
         store = _make_store()
@@ -174,14 +191,55 @@ class TestApplyHistory:
         store = _make_store()
         svc = _svc(store)
         asyncio.run(svc.apply_history(limit=50))
-        store.list_applications.assert_awaited_once_with(limit=50)
+        store.list_applications.assert_awaited_once_with(
+            limit=50,
+            resume_hash_prefix=None,
+        )
 
     def test_apply_history_default_limit(self) -> None:
         """apply_history without limit should use 100."""
         store = _make_store()
         svc = _svc(store)
         asyncio.run(svc.apply_history())
-        store.list_applications.assert_awaited_once_with(limit=100)
+        store.list_applications.assert_awaited_once_with(
+            limit=100,
+            resume_hash_prefix=None,
+        )
+
+    def test_apply_history_passes_resume_hash_prefix(self) -> None:
+        """apply_history should forward the resume hash prefix filter."""
+        store = _make_store()
+        svc = _svc(store)
+        asyncio.run(svc.apply_history(limit=10, resume_hash_prefix="abc1"))
+        store.list_applications.assert_awaited_once_with(
+            limit=10,
+            resume_hash_prefix="abc1",
+        )
+
+
+# ---------------------------------------------------------------------------
+# reapply_notice
+# ---------------------------------------------------------------------------
+
+
+class TestReapplyNotice:
+    """Tests for ApplicationService.reapply_notice."""
+
+    def test_reapply_notice_delegates_to_store(self) -> None:
+        """reapply_notice should forward job_id to compute_reapply_notice."""
+        store = _make_store()
+        store.compute_reapply_notice.return_value = "Active application at acme"
+        svc = _svc(store)
+        result = asyncio.run(svc.reapply_notice("42"))
+        assert result == "Active application at acme"
+        store.compute_reapply_notice.assert_awaited_once_with(job_id="42")
+
+    def test_reapply_notice_none_passthrough(self) -> None:
+        """A None store result should pass through unchanged."""
+        store = _make_store()
+        store.compute_reapply_notice.return_value = None
+        svc = _svc(store)
+        assert asyncio.run(svc.reapply_notice("42")) is None
 
 
 # ---------------------------------------------------------------------------
@@ -299,47 +357,43 @@ class TestDiffSnapshots:
 
         store = AsyncMock()
 
-        async def _get_snap(h: str) -> ResumeSnapshot | None:
-            if h == _MASTER_HASH:
+        async def _get_snap(prefix: str) -> ResumeSnapshot:
+            if _MASTER_HASH.startswith(prefix):
                 return snap_a
-            if h == _TAILORED_HASH:
+            if _TAILORED_HASH.startswith(prefix):
                 return snap_b
-            return None
+            raise SnapshotNotFoundError(f"no resume snapshot matches prefix {prefix!r}")
 
-        store.get_resume_snapshot.side_effect = _get_snap
+        store.get_resume_snapshot_by_prefix.side_effect = _get_snap
         svc = ApplicationService(store=store, logger=_make_logger())
-        result = asyncio.run(svc.diff_snapshots(_MASTER_HASH, _TAILORED_HASH))
+        result = asyncio.run(svc.diff_snapshots(_MASTER_HASH[:12], _TAILORED_HASH[:12]))
         assert "--- " in result
         assert "+++ " in result
+        # Labels carry the full resolved hashes, not the input prefixes.
+        assert _MASTER_HASH in result
+        assert _TAILORED_HASH in result
         assert "-line two" in result
         assert "+line three" in result
 
-    def test_diff_snapshots_missing_first_raises(self) -> None:
-        """diff_snapshots should raise ValueError if hash_a not found."""
+    def test_diff_snapshots_missing_prefix_propagates(self) -> None:
+        """diff_snapshots should propagate SnapshotNotFoundError."""
         store = _make_store()
+        store.get_resume_snapshot_by_prefix.side_effect = SnapshotNotFoundError(
+            "no resume snapshot matches prefix 'aaa'"
+        )
         svc = _svc(store)
-        with pytest.raises(ValueError, match="snapshot not found"):
+        with pytest.raises(SnapshotNotFoundError, match="matches prefix"):
             asyncio.run(svc.diff_snapshots("aaa", "bbb"))
 
-    def test_diff_snapshots_missing_second_raises(self) -> None:
-        """diff_snapshots should raise ValueError if hash_b not found."""
-        snap_a = ResumeSnapshot(
-            resume_hash=_MASTER_HASH,
-            captured_at=datetime.now(UTC),
-            source="master",
-            content="hello\n",
+    def test_diff_snapshots_ambiguous_prefix_propagates(self) -> None:
+        """diff_snapshots should propagate SnapshotAmbiguousError."""
+        store = _make_store()
+        store.get_resume_snapshot_by_prefix.side_effect = SnapshotAmbiguousError(
+            "resume hash prefix 'a' matches multiple snapshots"
         )
-        store = AsyncMock()
-
-        async def _get_snap(h: str) -> ResumeSnapshot | None:
-            if h == _MASTER_HASH:
-                return snap_a
-            return None
-
-        store.get_resume_snapshot.side_effect = _get_snap
-        svc = ApplicationService(store=store, logger=_make_logger())
-        with pytest.raises(ValueError, match="snapshot not found"):
-            asyncio.run(svc.diff_snapshots(_MASTER_HASH, "deadbeef" * 8))
+        svc = _svc(store)
+        with pytest.raises(SnapshotAmbiguousError, match="multiple snapshots"):
+            asyncio.run(svc.diff_snapshots("a", "b"))
 
 
 # ---------------------------------------------------------------------------

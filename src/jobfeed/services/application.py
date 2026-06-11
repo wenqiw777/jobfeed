@@ -8,9 +8,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
-from jobfeed.domain.models import ApplicationRecord, ApplicationStats, ResumeSnapshot
+from jobfeed.domain.models import (
+    ApplicationRecord,
+    ApplicationStats,
+    ResumeSnapshot,
+    ResumeSnapshotSummary,
+)
 from jobfeed.observability import JobfeedLogger
-from jobfeed.ports.store_ext import StoreApplicationMixin
+from jobfeed.ports.store_application import StoreApplicationMixin
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -23,6 +28,7 @@ class ApplyRequest:
     cover_letter: str | None = None
     variant: str | None = None
     application_method: str | None = None
+    notes: str | None = None
     verdict_snapshot: str | None = None
     fit_snapshot: str | None = None
     hooks_snapshot: str | None = None
@@ -31,6 +37,23 @@ class ApplyRequest:
 @runtime_checkable
 class ApplicationStore(StoreApplicationMixin, Protocol):
     """Combined store capability required by ApplicationService."""
+
+    async def compute_reapply_notice(
+        self,
+        *,
+        job_id: str,
+        lookback_days: int = 60,
+    ) -> str | None:
+        """Detect an active application at the same company.
+
+        Args:
+            job_id: Job to check (excluded from the search itself).
+            lookback_days: How far back to look.
+
+        Returns:
+            Notice string if detected, else None.
+        """
+        ...
 
 
 class ApplicationService:
@@ -78,6 +101,7 @@ class ApplicationService:
             tailored_resume_hash=tailored_hash,
             cover_letter=req.cover_letter,
             application_method=req.application_method,
+            notes=req.notes,
             verdict_snapshot=req.verdict_snapshot,
             fit_snapshot=req.fit_snapshot,
             hooks_snapshot=req.hooks_snapshot,
@@ -108,16 +132,39 @@ class ApplicationService:
         """
         return await self._store.get_application(job_id)
 
-    async def apply_history(self, *, limit: int = 100) -> list[ApplicationRecord]:
+    async def apply_history(
+        self,
+        *,
+        limit: int = 100,
+        resume_hash_prefix: str | None = None,
+    ) -> list[ApplicationRecord]:
         """List recent application records.
 
         Args:
             limit: Maximum number of records to return.
+            resume_hash_prefix: Optional literal resume-hash prefix filter.
 
         Returns:
             Application records ordered by recency.
         """
-        return await self._store.list_applications(limit=limit)
+        return await self._store.list_applications(
+            limit=limit,
+            resume_hash_prefix=resume_hash_prefix,
+        )
+
+    async def reapply_notice(self, job_id: str) -> str | None:
+        """Same-company active-application notice for a just-applied job.
+
+        The store method excludes *job_id* itself, so calling this right
+        after a successful apply is safe.
+
+        Args:
+            job_id: Store-assigned job identity.
+
+        Returns:
+            Human-readable notice, or None when no active sibling exists.
+        """
+        return await self._store.compute_reapply_notice(job_id=job_id)
 
     async def stats(
         self,
@@ -150,30 +197,57 @@ class ApplicationService:
         """
         return await self._store.get_resume_snapshot(resume_hash)
 
-    async def diff_snapshots(self, hash_a: str, hash_b: str) -> str:
-        """Produce a unified diff between two resume snapshots.
+    async def get_snapshot_by_prefix(self, prefix: str) -> ResumeSnapshot:
+        """Resolve a resume snapshot by a unique hash prefix.
 
         Args:
-            hash_a: SHA-256 hash of the first snapshot.
-            hash_b: SHA-256 hash of the second snapshot.
+            prefix: Hash prefix (a full hash is its own prefix).
 
         Returns:
-            Unified diff string.
+            The single matching snapshot.
 
         Raises:
-            ValueError: If either snapshot is not found.
+            SnapshotNotFoundError: If no snapshot matches the prefix.
+            SnapshotAmbiguousError: If two or more snapshots match.
         """
-        snap_a = await self._store.get_resume_snapshot(hash_a)
-        if snap_a is None:
-            raise ValueError(f"snapshot not found: {hash_a}")
-        snap_b = await self._store.get_resume_snapshot(hash_b)
-        if snap_b is None:
-            raise ValueError(f"snapshot not found: {hash_b}")
+        return await self._store.get_resume_snapshot_by_prefix(prefix)
+
+    async def list_snapshots(
+        self,
+        *,
+        source: str | None = None,
+    ) -> list[ResumeSnapshotSummary]:
+        """List every resume snapshot with its usage count.
+
+        Args:
+            source: Optional source filter ('master' or 'tailored').
+
+        Returns:
+            Snapshot summaries (without content), newest first.
+        """
+        return await self._store.list_resume_snapshots(source=source)
+
+    async def diff_snapshots(self, prefix_a: str, prefix_b: str) -> str:
+        """Produce a unified diff between two prefix-resolved snapshots.
+
+        Args:
+            prefix_a: Hash or unique prefix of the first snapshot.
+            prefix_b: Hash or unique prefix of the second snapshot.
+
+        Returns:
+            Unified diff string (labelled with the full resolved hashes).
+
+        Raises:
+            SnapshotNotFoundError: If either prefix matches nothing.
+            SnapshotAmbiguousError: If either prefix matches more than one.
+        """
+        snap_a = await self._store.get_resume_snapshot_by_prefix(prefix_a)
+        snap_b = await self._store.get_resume_snapshot_by_prefix(prefix_b)
         lines = difflib.unified_diff(
             snap_a.content.splitlines(keepends=True),
             snap_b.content.splitlines(keepends=True),
-            fromfile=hash_a,
-            tofile=hash_b,
+            fromfile=snap_a.resume_hash,
+            tofile=snap_b.resume_hash,
         )
         return "".join(lines)
 

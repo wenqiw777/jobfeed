@@ -1,13 +1,15 @@
-"""Click commands for status mutations: mark, archive, note."""
+"""Click commands for status mutations: mark, archive, note, followup."""
 
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import cast
 
 import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
+from jobfeed.cli._window import parse_window
 from jobfeed.domain.models_status import BulkResult, TransitionRequest
 from jobfeed.domain.status import STATUS_VALUES
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
@@ -188,4 +190,41 @@ async def _run_note(app: AppContext, *, job_id: str, text: str) -> None:
     await run_with_store(app, action)
 
 
-__all__ = ["archive", "mark", "note"]
+# ── followup ──────────────────────────────────────────────────────────
+
+
+@click.command(name="followup", help="Schedule the next follow-up for a job.")
+@click.argument("job_id")
+@click.option(
+    "--in",
+    "window",
+    default="7d",
+    show_default=True,
+    help="When to follow up: Nd (days), Nw (weeks), or YYYY-MM-DD.",
+)
+@click.pass_context
+def followup(ctx: click.Context, job_id: str, window: str) -> None:
+    """Set the next follow-up date for a job.
+
+    Args:
+        ctx: Click invocation context.
+        job_id: Store-assigned job identity.
+        window: Forward window or absolute date.
+    """
+    app = require_app(ctx)
+    at = parse_window(window)
+    asyncio.run(_run_followup(app, job_id=job_id, at=at))
+
+
+async def _run_followup(app: AppContext, *, job_id: str, at: datetime) -> None:
+    async def action() -> None:
+        svc = _build_workflow(app)
+        was_set = await svc.set_followup(job_id=job_id, at=at)
+        if not was_set:
+            raise click.ClickException(f"job not found: {job_id}")
+        click.echo(f"Follow-up for {job_id} set to {at.date().isoformat()}")
+
+    await run_with_store(app, action)
+
+
+__all__ = ["archive", "followup", "mark", "note"]
