@@ -28,6 +28,7 @@ export type TransitionStatus = components["schemas"]["TransitionBody"]["to"];
 export type RestoreResponse = components["schemas"]["RestoreResponse"];
 export type InterviewRound = components["schemas"]["InterviewRoundDetail"];
 export type InterviewsListResponse = components["schemas"]["InterviewsListResponse"];
+export type InsightsOverviewResponse = components["schemas"]["InsightsOverviewResponse"];
 
 /**
  * Structured query keys. Every jobs *list* key starts with "jobs" and
@@ -65,11 +66,14 @@ export function buildJobsParams(query: JobsQuery): URLSearchParams {
   return params;
 }
 
-/** One jobs-list page for the given typed params. */
-export function useJobsList(query: JobsQuery) {
+/** One jobs-list page for the given typed params. `keepPrevious` holds the
+ * last page on screen while a filter/page change refetches (Library) —
+ * off by default so the triage zones keep their loading semantics. */
+export function useJobsList(query: JobsQuery, options: { keepPrevious?: boolean } = {}) {
   return useQuery({
     queryKey: jobsKeys.list(query),
     queryFn: () => apiFetch<JobsListResponse>(`/api/jobs?${buildJobsParams(query)}`),
+    placeholderData: options.keepPrevious === true ? keepPreviousData : undefined,
   });
 }
 
@@ -244,6 +248,21 @@ export function useJobsTabCounts() {
     queryKey: ["jobs", "tab-counts"],
     queryFn: () =>
       apiFetch<JobsListResponse>(`/api/jobs?${buildJobsParams({ limit: 0 })}`),
+  });
+}
+
+/**
+ * Insights overview for one window. Totals and distributions are
+ * all-time; `daily` and `applications` cover the window (backend
+ * docstring). Window switches keep the previous charts up while the new
+ * window loads instead of flashing skeletons.
+ */
+export function useInsightsOverview(windowDays: number) {
+  return useQuery({
+    queryKey: ["insights", "overview", windowDays] as const,
+    queryFn: () =>
+      apiFetch<InsightsOverviewResponse>(`/api/insights/overview?window=${windowDays}`),
+    placeholderData: keepPreviousData,
   });
 }
 

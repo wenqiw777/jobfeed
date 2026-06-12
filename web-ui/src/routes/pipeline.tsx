@@ -1,20 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 
-import {
-  useAttention,
-  useJobsList,
-  useRestore,
-  type JobsQuery,
-  type JobSummary,
-} from "@/api/queries";
+import { useAttention, useJobsList, type JobsQuery, type JobSummary } from "@/api/queries";
 import { AttentionBar, type AttentionBucket } from "@/components/jobs/AttentionBar";
 import { DetailPane } from "@/components/jobs/DetailPane";
-import { SectionLabel } from "@/components/jobs/DetailSections";
 import { InterviewPanel } from "@/components/jobs/InterviewPanel";
+import { RestoreSection } from "@/components/jobs/RestoreSection";
 import { groupJobs, StatusGroups, type GroupKey } from "@/components/jobs/StatusGroups";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "@/components/ui/use-toast";
 import { useKeyboardMap } from "@/lib/keyboard";
 
 /** Pipeline corpora are 10^2-scale (plan D10) — one page covers the zone. */
@@ -157,36 +149,8 @@ function PipelineSections({ job }: { job: JobSummary }) {
   return (
     <>
       {job.status === "interviewing" && <InterviewPanel jobId={job.id} />}
-      {job.status === "ghosted" && <RestoreSection jobId={job.id} />}
+      {job.status === "ghosted" && <RestoreSection jobId={job.id} status={job.status} />}
     </>
-  );
-}
-
-function RestoreSection({ jobId }: { jobId: string }) {
-  const restore = useRestore();
-
-  const submit = () => {
-    restore.mutate(
-      { id: jobId },
-      {
-        onSuccess: (data) => toast({ title: `Restored to ${data.status}` }),
-        onError: (error) =>
-          toast({ variant: "destructive", title: "Restore failed", description: error.message }),
-      },
-    );
-  };
-
-  return (
-    <section className="border-b border-hairline px-4 py-3">
-      <SectionLabel>Ghosted</SectionLabel>
-      <p className="mb-1.5 text-body-sm text-mute">
-        No response in a while. Restore puts it back where it was (the server picks the
-        last non-terminal status from history).
-      </p>
-      <Button size="sm" disabled={restore.isPending} onClick={submit}>
-        Restore
-      </Button>
-    </section>
   );
 }
 
