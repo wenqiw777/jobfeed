@@ -17,6 +17,7 @@ from jobfeed.services.jobs_view import JobsViewService, JobsViewStore
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
 from jobfeed.web.errors import install_error_handling
 from jobfeed.web.routes.applications import router as applications_router
+from jobfeed.web.routes.companies import router as companies_router
 from jobfeed.web.routes.health import router as health_router
 from jobfeed.web.routes.insights import router as insights_router
 from jobfeed.web.routes.jobs import router as jobs_router
@@ -63,6 +64,8 @@ def build_web_app(context: AppContext) -> FastAPI:
 
     app = FastAPI(title="Jobfeed API", lifespan=lifespan)
     app.state.context = context
+    # .get() tolerates minimal fake contexts that never exercise the probe.
+    app.state.probe_company = context.get("probe_company")
     app.state.jobs_view_service = JobsViewService(
         store=cast(JobsViewStore, context["store"]),
         hard_filters=context["settings"].hard_filters.to_domain(),
@@ -87,6 +90,7 @@ def build_web_app(context: AppContext) -> FastAPI:
     app.include_router(applications_router, prefix="/api")
     app.include_router(insights_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
+    app.include_router(companies_router, prefix="/api")
     return app
 
 

@@ -7,6 +7,7 @@ from typing import cast
 from fastapi import Request
 
 from jobfeed.cli import AppContext
+from jobfeed.cli._probe import ProbeVendorFn
 from jobfeed.ports.store import JobStore
 from jobfeed.services.application import ApplicationService
 from jobfeed.services.insights import InsightsService
@@ -77,6 +78,32 @@ def get_application_service(request: Request) -> ApplicationService:
     return cast(ApplicationService, request.app.state.application_service)
 
 
+def get_probe_company(request: Request) -> ProbeVendorFn:
+    """Return the per-slug ATS vendor probe wired by the cli assembly.
+
+    The callable is adapter-backed but injected through the context, so web
+    modules never import ``jobfeed.adapters`` (architecture boundary).
+
+    Args:
+        request: Current request.
+
+    Returns:
+        Async probe mapping a slug to its vendor name (None on a miss).
+
+    Raises:
+        RuntimeError: If the app was assembled without a probe callable —
+            failing loudly here beats a "'NoneType' is not callable" deep
+            inside the probe route.
+    """
+    probe = getattr(request.app.state, "probe_company", None)
+    if probe is None:
+        raise RuntimeError(
+            "web app context missing probe_company; create_app assembles it, "
+            "and fake contexts that exercise probe routes must supply a stub"
+        )
+    return cast(ProbeVendorFn, probe)
+
+
 def get_insights_service(request: Request) -> InsightsService:
     """Return the per-process insights service built by the app factory.
 
@@ -90,10 +117,12 @@ def get_insights_service(request: Request) -> InsightsService:
 
 
 __all__ = [
+    "ProbeVendorFn",
     "get_application_service",
     "get_context",
     "get_insights_service",
     "get_jobs_view_service",
+    "get_probe_company",
     "get_store",
     "get_workflow_service",
 ]
