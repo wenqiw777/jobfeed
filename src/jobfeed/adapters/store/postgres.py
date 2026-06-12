@@ -286,6 +286,7 @@ def _evaluation_from_record(r: asyncpg.Record) -> JobEvaluation:
         job=_job_from_record(r),
         stage_a=_stage_a_from_record(r),
         stage_b=_stage_b_from_record(r),
+        stage_b_status=r.get("stage_b_status"),
     )
 
 

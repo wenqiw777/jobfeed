@@ -578,7 +578,7 @@
         "type": "object"
       },
       "EvaluationDetail": {
-        "description": "Evaluation section of the detail response (stages optional).",
+        "description": "Evaluation section of the detail response (stages optional).\n\n``stage_b_status`` is the raw pipeline status (the same store column the\nlist rows carry), set even when ``stage_b`` is None \u2014 below-threshold\nrows have no Stage B blocks but still need their derived display state.",
         "properties": {
           "stage_a": {
             "anyOf": [
@@ -599,11 +599,23 @@
                 "type": "null"
               }
             ]
+          },
+          "stage_b_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Status"
           }
         },
         "required": [
           "stage_a",
-          "stage_b"
+          "stage_b",
+          "stage_b_status"
         ],
         "title": "EvaluationDetail",
         "type": "object"

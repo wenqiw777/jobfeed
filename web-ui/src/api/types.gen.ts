@@ -885,10 +885,16 @@ export interface components {
         /**
          * EvaluationDetail
          * @description Evaluation section of the detail response (stages optional).
+         *
+         *     ``stage_b_status`` is the raw pipeline status (the same store column the
+         *     list rows carry), set even when ``stage_b`` is None — below-threshold
+         *     rows have no Stage B blocks but still need their derived display state.
          */
         EvaluationDetail: {
             stage_a: components["schemas"]["StageADetail"] | null;
             stage_b: components["schemas"]["StageBDetail"] | null;
+            /** Stage B Status */
+            stage_b_status: string | null;
         };
         /**
          * FollowupBody

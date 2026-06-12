@@ -6,13 +6,36 @@
  * buildJobsParams — never hand-concatenated query strings — so the
  * params stay typed against the generated OpenAPI types.
  */
-import { useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
-import { apiFetch } from "./client";
+import { apiFetch, apiPost, apiUpload } from "./client";
 import type { components, paths } from "./types.gen";
 
 export type JobsListResponse = components["schemas"]["JobsListResponse"];
 export type AttentionResponse = components["schemas"]["AttentionResponse"];
+export type JobSummary = components["schemas"]["JobSummary"];
+export type JobDetailResponse = components["schemas"]["JobDetailResponse"];
+export type TransitionResponse = components["schemas"]["TransitionResponse"];
+export type BulkTransitionResponse = components["schemas"]["BulkTransitionResponse"];
+export type JdPasteResponse = components["schemas"]["JdPasteResponse"];
+export type ApplyResponse = components["schemas"]["ApplyResponse"];
+export type TransitionStatus = components["schemas"]["TransitionBody"]["to"];
+
+/**
+ * Structured query keys. Every jobs *list* key starts with "jobs" and
+ * every *detail* key with "job", so decide mutations can invalidate the
+ * whole list family without touching unrelated caches.
+ */
+export const jobsKeys = {
+  lists: ["jobs"] as const,
+  list: (query: JobsQuery) => ["jobs", "list", query] as const,
+  detail: (id: string | null) => ["job", id] as const,
+};
 
 /** Query params of GET /api/jobs, typed off the generated snapshot types. */
 export type JobsQuery = NonNullable<paths["/api/jobs"]["get"]["parameters"]["query"]>;
@@ -31,6 +54,108 @@ export function buildJobsParams(query: JobsQuery): URLSearchParams {
     }
   }
   return params;
+}
+
+/** One jobs-list page for the given typed params. */
+export function useJobsList(query: JobsQuery) {
+  return useQuery({
+    queryKey: jobsKeys.list(query),
+    queryFn: () => apiFetch<JobsListResponse>(`/api/jobs?${buildJobsParams(query)}`),
+  });
+}
+
+/** Full detail aggregation for one job; disabled while nothing is selected. */
+export function useJobDetail(id: string | null) {
+  return useQuery({
+    queryKey: jobsKeys.detail(id),
+    queryFn: () => apiFetch<JobDetailResponse>(`/api/jobs/${id}`),
+    enabled: id !== null,
+    // j/k navigation keeps the previous row's pane visible while the next
+    // detail loads instead of flashing the skeleton.
+    placeholderData: keepPreviousData,
+  });
+}
+
+export interface TransitionVars {
+  id: string;
+  to: TransitionStatus;
+  note?: string;
+}
+
+/** Single-row status transition; refreshes lists and the row's detail.
+ * Named to avoid colliding with React's built-in useTransition. */
+export function useJobTransition() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, to, note }: TransitionVars) =>
+      apiPost<TransitionResponse>(`/api/jobs/${id}/transition`, { to, note: note ?? null }),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+    },
+  });
+}
+
+/** Bulk transition (twin cascade included); refreshes all jobs lists. */
+export function useBulkTransition() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (items: { id: string; to: TransitionStatus }[]) =>
+      apiPost<BulkTransitionResponse>("/api/jobs/bulk/transition", { items }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+    },
+  });
+}
+
+/** Append a note (detail-only data — lists don't render notes). */
+export function useNote() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, text }: { id: string; text: string }) =>
+      apiPost<unknown>(`/api/jobs/${id}/note`, { text }),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+    },
+  });
+}
+
+/** Set the follow-up time (`at` must be an offset-carrying ISO string). */
+export function useFollowup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, at }: { id: string; at: string }) =>
+      apiPost<unknown>(`/api/jobs/${id}/followup`, { at }),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+    },
+  });
+}
+
+/** Paste JD text; the row leaves pending_jd, so lists refresh too. */
+export function usePasteJd() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, text }: { id: string; text: string }) =>
+      apiPost<JdPasteResponse>(`/api/jobs/${id}/jd`, { text }),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+    },
+  });
+}
+
+/** Record an application (multipart upload, plan D8). */
+export function useApply() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, form }: { id: string; form: FormData }) =>
+      apiUpload<ApplyResponse>(`/api/jobs/${id}/apply`, form),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+    },
+  });
 }
 
 /**

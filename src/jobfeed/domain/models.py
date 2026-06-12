@@ -203,11 +203,16 @@ class PipelineRun:
 
 @dataclass(kw_only=True)
 class JobEvaluation:
-    """A job with optional Stage A and Stage B evaluation results."""
+    """A job with optional Stage A and Stage B evaluation results.
+
+    ``stage_b_status`` keeps the raw pipeline status (e.g.
+    ``skipped_below_threshold``) even when ``stage_b`` is None.
+    """
 
     job: JobPosting
     stage_a: StageAResult | None
     stage_b: StageBResult | None
+    stage_b_status: str | None = None
 
 
 def _validate_score(score: int) -> None:

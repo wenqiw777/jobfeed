@@ -100,6 +100,11 @@ export default {
           from: { transform: "translateX(0)" },
           to: { transform: "translateX(100%)" },
         },
+        // Decided triage rows collapse before selection auto-advances.
+        "row-collapse": {
+          from: { opacity: "1", transform: "scaleY(1)" },
+          to: { opacity: "0", transform: "scaleY(0)" },
+        },
       },
       // 150–250ms ease-out only; no bounce/elastic (DESIGN.md motion).
       animation: {
@@ -108,6 +113,7 @@ export default {
         "pop-in": "pop-in 180ms cubic-bezier(0.22, 1, 0.36, 1)",
         "slide-in-right": "slide-in-right 220ms cubic-bezier(0.22, 1, 0.36, 1)",
         "slide-out-right": "slide-out-right 180ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "row-collapse": "row-collapse 180ms cubic-bezier(0.22, 1, 0.36, 1) forwards",
       },
     },
   },

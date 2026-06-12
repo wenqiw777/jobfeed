@@ -12,8 +12,9 @@ import { Button } from "@/components/ui/button";
 import { zoneForPath } from "@/components/shell/zones";
 import { useDensity, type Density } from "@/lib/density";
 
-// Placeholder hints; Task 9 wires the real keyboard map.
-const KEYBOARD_HINTS = "j/k move · enter open · a apply";
+// The triage keyboard map's high-traffic keys (lib/keyboard.ts wiring
+// in routes/triage.tsx); the long tail (n/f/o) stays out of the bar.
+const KEYBOARD_HINTS = "j/k move · a apply · h shortlist · s skip";
 
 export function TopBar() {
   const location = useLocation();

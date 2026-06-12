@@ -514,6 +514,7 @@ async def test_detail_aggregates_evaluation_status_twins_interviews_snapshots(
         "score": _STAGE_A_SCORE,
         "one_line": "fits",
     }
+    assert payload["evaluation"]["stage_b_status"] == "completed"
     stage_b = payload["evaluation"]["stage_b"]
     assert stage_b["verdict"] == "apply"
     assert stage_b["jd_summary"] == "summary"
@@ -549,6 +550,30 @@ async def test_detail_aggregates_evaluation_status_twins_interviews_snapshots(
 def _sha256(text: str) -> str:
     """SHA-256 hex digest matching the application service's content hash."""
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+async def test_detail_below_threshold_carries_stage_b_status(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """A below-threshold row has no Stage B blocks but keeps the raw status.
+
+    The detail pill derives the below-threshold display state from
+    ``evaluation.stage_b_status`` exactly like the list rows do, so the
+    field must survive even though ``stage_b`` itself is None.
+    """
+    async with _seed_store(fresh_pg_dsn) as store:
+        job_id = await _insert(store, "dt-below")
+        await store.save_stage_a(job_id, _stage_a(score=45))
+        await store.mark_stage_b_skipped_batch([job_id])
+    app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == HTTP_OK, response.text
+    evaluation = response.json()["evaluation"]
+    assert evaluation["stage_b"] is None
+    assert evaluation["stage_b_status"] == "skipped_below_threshold"
 
 
 async def test_detail_unknown_id_returns_404_error_shape(

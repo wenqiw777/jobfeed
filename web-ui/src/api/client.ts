@@ -69,6 +69,24 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, "http_error", `HTTP ${response.status}`);
 }
 
+/** JSON POST: encodes the body and sets the content type. */
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return apiFetch<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Multipart POST (the apply endpoint). FormData must NOT be JSON-encoded
+ * and must not get an explicit Content-Type — the browser sets the
+ * multipart boundary itself.
+ */
+export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
+  return apiFetch<T>(path, { method: "POST", body: form });
+}
+
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {

@@ -70,10 +70,16 @@ class StageBDetail(BaseModel):
 
 
 class EvaluationDetail(BaseModel):
-    """Evaluation section of the detail response (stages optional)."""
+    """Evaluation section of the detail response (stages optional).
+
+    ``stage_b_status`` is the raw pipeline status (the same store column the
+    list rows carry), set even when ``stage_b`` is None — below-threshold
+    rows have no Stage B blocks but still need their derived display state.
+    """
 
     stage_a: StageADetail | None
     stage_b: StageBDetail | None
+    stage_b_status: str | None
 
 
 class StatusDetail(BaseModel):
@@ -198,6 +204,7 @@ def _evaluation_detail(detail: JobDetail) -> EvaluationDetail:
             else None
         ),
         stage_b=_stage_b_detail(stage_b) if stage_b is not None else None,
+        stage_b_status=evaluation.stage_b_status if evaluation is not None else None,
     )
 
 
