@@ -33,6 +33,11 @@ pip-wheel-metadata/
 # Local runtime state for the Phase 0 walking skeleton
 .jobfeed-dev/
 
+# Web UI (the bare dist/ pattern above also matches web-ui/dist, but keep
+# these explicit so scoping the Python patterns later can't expose them).
+web-ui/node_modules/
+web-ui/dist/
+
 # Local editor and OS metadata
 .DS_Store
 .idea/

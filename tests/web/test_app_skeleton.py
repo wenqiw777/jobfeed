@@ -171,8 +171,13 @@ async def test_unknown_api_path_returns_error_shape_and_logs_request_id() -> Non
 
 
 async def test_validation_error_uses_error_shape() -> None:
-    """A 422 from request validation should use the JSON error shape."""
-    app = build_web_app(fake_context())
+    """A 422 from request validation should use the JSON error shape.
+
+    static_dir is pinned to a missing path: this test registers a route
+    AFTER build, which the SPA catch-all would otherwise shadow whenever
+    a real web-ui/dist exists on the machine.
+    """
+    app = build_web_app(fake_context(), static_dir=Path("/nonexistent-dist"))
 
     @app.get("/api/echo")
     async def echo(n: int) -> dict[str, int]:
@@ -188,8 +193,12 @@ async def test_validation_error_uses_error_shape() -> None:
 
 
 async def test_unhandled_exception_returns_json_500_without_traceback() -> None:
-    """Unexpected route errors should become JSON 500s with no traceback."""
-    app = build_web_app(fake_context())
+    """Unexpected route errors should become JSON 500s with no traceback.
+
+    static_dir pinned to a missing path for the same post-build-route
+    reason as test_validation_error_uses_error_shape.
+    """
+    app = build_web_app(fake_context(), static_dir=Path("/nonexistent-dist"))
 
     @app.get("/api/boom")
     async def boom() -> dict[str, str]:

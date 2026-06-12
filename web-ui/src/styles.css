@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * DESIGN.md tokens — "Graphite & Cobalt", light theme (v1).
+ * Semantic CSS variables so a future dark theme is a second :root-level
+ * block, not a code change. Tailwind theme keys map onto these variables
+ * (tailwind.config.ts), so utilities like bg-surface/text-ink stay stable.
+ *
+ * Color tokens are bare RGB channel triplets ("R G B"), not hex, so
+ * Tailwind can inject opacity: `bg-ink/30` compiles to
+ * `rgb(var(--ink) / 0.3)`. With hex values, alpha modifiers silently
+ * generate nothing. Use `rgb(var(--token))` for any direct CSS usage.
+ */
+:root {
+  /* Neutral layers (chroma 0 — warm/cream backgrounds are banned). */
+  --bg: 247 247 248; /* #f7f7f8 */
+  --surface: 255 255 255; /* #ffffff */
+  --border: 230 230 234; /* #e6e6ea */
+  --border-strong: 216 216 222; /* #d8d8de */
+  --hairline: 240 240 242; /* #f0f0f2 */
+
+  /* Ink scale. faint is large-size/non-critical only, never body text. */
+  --ink: 20 20 23; /* #141417 */
+  --ink-2: 60 60 66; /* #3c3c42 */
+  --mute: 93 93 102; /* #5d5d66 */
+  --faint: 154 154 162; /* #9a9aa2 */
+
+  /* The single accent (cobalt): selection, primary buttons, current nav,
+   * focus. <=10% of any surface. */
+  --accent: 39 66 214; /* #2742d6 */
+  --accent-hover: 31 55 184; /* #1f37b8 */
+  --accent-bg: 237 240 253; /* #edf0fd */
+  --accent-border: 198 205 247; /* #c6cdf7 */
+
+  /* Verdict trio + danger — the only other color vocabulary. */
+  --apply: 19 106 56; /* #136a38 */
+  --apply-bg: 226 242 232; /* #e2f2e8 */
+  --consider: 124 85 0; /* #7c5500 */
+  --consider-bg: 247 238 214; /* #f7eed6 */
+  --skip: 92 92 100; /* #5c5c64 */
+  --skip-bg: 236 236 239; /* #ececef */
+  --danger: 180 35 24; /* #b42318 */
+  /* Hover = same darken step as accent -> accent-hover (~7% lightness). */
+  --danger-hover: 153 30 20; /* #991e14 */
+  --danger-bg: 253 235 233; /* #fdebe9 */
+
+  /* Density (DESIGN.md): compact 32px single-line, comfortable 46px. */
+  --row-compact: 32px;
+  --row-comfortable: 46px;
+
+  /* Single-layer shadow; large stacked shadows are banned. */
+  --shadow-1: 0 1px 3px rgb(var(--ink) / 0.07);
+}
+
+@layer base {
+  body {
+    @apply bg-bg font-sans text-body text-ink antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+
+  /* Mono territory (scores, dates, counts, ids, kbd hints) reads in
+   * columns; tabular figures keep them aligned. */
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: rgb(var(--accent-bg));
+  }
+}
+
+/* Motion only communicates state (150–250ms ease-out); under
+ * prefers-reduced-motion everything snaps. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
