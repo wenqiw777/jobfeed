@@ -2,6 +2,7 @@ import {
   dateInputToIso,
   dateTimeInputToIso,
   followupAtFromNow,
+  formatLocalDateTime,
   formatRelativeAge,
 } from "./dates";
 
@@ -30,6 +31,19 @@ describe("formatRelativeAge", () => {
 
   test("older than 30 days renders an absolute M/D/YY date", () => {
     expect(formatRelativeAge("2026-01-05T10:00:00", NOW)).toBe("1/5/26");
+  });
+});
+
+describe("formatLocalDateTime", () => {
+  test("renders local wall-clock YYYY-MM-DD HH:mm with zero padding", () => {
+    // A local-offset-free input keeps the expectation TZ-independent.
+    const local = new Date(2026, 5, 3, 8, 5, 0).toISOString();
+    expect(formatLocalDateTime(local)).toBe("2026-06-03 08:05");
+  });
+
+  test("null and unparseable render an em dash", () => {
+    expect(formatLocalDateTime(null)).toBe("—");
+    expect(formatLocalDateTime("not-a-date")).toBe("—");
   });
 });
 

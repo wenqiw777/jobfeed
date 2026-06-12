@@ -37,12 +37,18 @@ pip-wheel-metadata/
 # these explicit so scoping the Python patterns later can't expose them).
 web-ui/node_modules/
 web-ui/dist/
+web-ui/coverage/
+web-ui/.eslintcache
+web-ui/*.tsbuildinfo
+npm-debug.log*
+web-ui/node_modules/
 
 # Local editor and OS metadata
 .DS_Store
 .idea/
 .vscode/
 .claude/worktrees/
+.gstack/
 
 # Local/personal config (use config.example.toml as the template)
 /config.toml

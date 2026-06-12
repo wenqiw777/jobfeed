@@ -45,6 +45,23 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+const EMPTY_OVERVIEW = {
+  window_days: 30,
+  totals: { jobs: 0, ml_gate_passed: 0, evaluated: 0, applied: 0 },
+  verdict_distribution: {},
+  status_distribution: {},
+  daily: [],
+  applications: {
+    applied_count: 0,
+    response_count: 0,
+    interview_count: 0,
+    offer_count: 0,
+    rejection_count: 0,
+    median_days_to_response: null,
+    by_resume: {},
+  },
+};
+
 function mockApi(): void {
   vi.stubGlobal(
     "fetch",
@@ -55,6 +72,15 @@ function mockApi(): void {
       }
       if (url.startsWith("/api/attention")) {
         return jsonResponse(ATTENTION);
+      }
+      if (url.startsWith("/api/runs")) {
+        return jsonResponse({ runs: [], total: 0 });
+      }
+      if (url.startsWith("/api/companies")) {
+        return jsonResponse({ companies: [] });
+      }
+      if (url.startsWith("/api/insights/overview")) {
+        return jsonResponse(EMPTY_OVERVIEW);
       }
       throw new Error(`unexpected fetch in test: ${url}`);
     }),
@@ -121,6 +147,31 @@ test("top bar title follows the active zone", () => {
   renderShell("/runs");
 
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Runs");
+});
+
+test("top bar keyboard hints follow the active zone's keyboard map", () => {
+  const triage = renderShell("/triage");
+  expect(
+    screen.getByText("j/k move · a apply · h shortlist · s skip"),
+  ).toBeInTheDocument();
+  triage.unmount();
+
+  const pipeline = renderShell("/pipeline");
+  expect(screen.getByText("j/k move · enter detail · o open")).toBeInTheDocument();
+  pipeline.unmount();
+
+  // Library has no keyboard map — no hints at all.
+  renderShell("/library");
+  expect(screen.queryByText(/j\/k move/)).not.toBeInTheDocument();
+});
+
+test("lazy-loaded insights route renders after its chunk resolves", async () => {
+  renderShell("/insights");
+
+  // The route is React.lazy (recharts split out of the eager bundle) —
+  // its content can only appear after the dynamic import settles.
+  expect(await screen.findByRole("group", { name: "Window" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Insights");
 });
 
 test("view menu density toggle switches the content density attribute", async () => {

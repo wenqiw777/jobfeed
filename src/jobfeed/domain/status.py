@@ -70,6 +70,10 @@ DEFAULT_ARCHIVE_IGNORED_DAYS = 14
 REASON_BULK_SELECTED = "bulk"
 REASON_BULK_CASCADE = "bulk-cascade"
 
+# Reason for the automatic new → scored advance written by the store when a
+# Stage A evaluation is persisted. Naming follows "auto_decay".
+REASON_AUTO_SCORED = "auto_scored"
+
 
 def is_terminal(status: str) -> bool:
     """Check whether a status has no allowed outgoing transitions.
@@ -166,6 +170,7 @@ __all__ = [
     "DEFAULT_FOLLOWUP_GRACE_DAYS",
     "DEFAULT_GHOST_DAYS",
     "LIST_DEFAULT_STATUSES",
+    "REASON_AUTO_SCORED",
     "REASON_BULK_CASCADE",
     "REASON_BULK_SELECTED",
     "RESPONSE_STATUSES",

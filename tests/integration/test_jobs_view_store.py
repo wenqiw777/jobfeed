@@ -186,7 +186,7 @@ async def test_require_verdict_keeps_only_stage_b_rows(store: PostgresStore) -> 
     assert row.stage_a_score == _STAGE_A_SCORE
     assert row.stage_b_fit_score == _STAGE_B_FIT_SCORE
     assert row.stage_b_status == "completed"
-    assert row.status == "new"
+    assert row.status == "scored"
 
 
 async def test_rows_carry_normalized_company_and_title(store: PostgresStore) -> None:

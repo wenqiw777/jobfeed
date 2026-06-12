@@ -37,6 +37,20 @@ export function formatRelativeAge(iso: string | null, now: Date = new Date()): s
   return `${then.getMonth() + 1}/${then.getDate()}/${yy}`;
 }
 
+/** Local wall-clock "YYYY-MM-DD HH:mm" for the mono runs columns. */
+export function formatLocalDateTime(iso: string | null): string {
+  if (iso === null) {
+    return "—";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /** ISO timestamp `days` from now — the followup preset payload (D12). */
 export function followupAtFromNow(days: number, now: Date = new Date()): string {
   return new Date(now.getTime() + days * DAY_MS).toISOString();

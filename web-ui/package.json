@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "gen:api": "openapi-typescript ../src/jobfeed/web/openapi.json -o src/api/types.gen.ts",
     "check:types": "node scripts/check-types-gen.mjs",
+    "check:design": "node scripts/check-design-bans.mjs",
     "lint": "eslint .",
     "typecheck": "tsc",
     "test": "vitest run",

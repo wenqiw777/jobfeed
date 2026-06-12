@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 from jobfeed.adapters.store.postgres import PostgresStore
-from jobfeed.domain.models import TransitionRequest
+from jobfeed.domain.models import StageAResult, TransitionRequest
 from jobfeed.web.app import create_web_app
 from tests.support.factories import make_job
 from tests.web.test_app_skeleton import open_client, write_db_config
@@ -147,6 +147,34 @@ async def test_force_transition_bypasses_graph(
 
     assert response.status_code == HTTP_OK, response.text
     assert response.json()["status"] == "applied"
+
+
+async def test_evaluated_job_accepts_shortlist_transition(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """A Stage A-evaluated job is scored, so shortlisting needs no force."""
+    async with _seed_store(fresh_pg_dsn) as store:
+        job_id = await _insert(store, "wf-evaluated")
+        await store.save_stage_a(
+            job_id,
+            StageAResult(
+                score=80,
+                one_line="fits",
+                timing_eligible="yes",
+                model="mock/stage-a",
+                prompt_hash="prompt-a",
+                resume_hash="resume-a",
+            ),
+        )
+    app = create_web_app(write_db_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.post(
+            f"/api/jobs/{job_id}/transition", json={"to": "shortlisted"}
+        )
+
+    assert response.status_code == HTTP_OK, response.text
+    assert response.json() == {"job_id": job_id, "status": "shortlisted"}
 
 
 async def test_transition_missing_job_returns_404(

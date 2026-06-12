@@ -79,6 +79,7 @@ from jobfeed.domain.status import (
     DEFAULT_ARCHIVE_IGNORED_DAYS,
     DEFAULT_FOLLOWUP_GRACE_DAYS,
     DEFAULT_GHOST_DAYS,
+    REASON_AUTO_SCORED,
     RESPONSE_STATUSES,
     is_terminal,
     validate_transition,
@@ -2233,14 +2234,18 @@ class PostgresStore:
         return {row["canonical_id"] for row in rows}
 
     async def save_stage_a(self, job_id: str, result: StageAResult) -> None:
-        """Persist a successful Stage A result.
+        """Persist a successful Stage A result and advance status to scored.
+
+        The evaluation upsert and the ``new -> scored`` status advance commit
+        atomically. The advance only fires when the job is still ``new``, so
+        re-evaluation and jobs already moved along the workflow are untouched.
 
         Args:
             job_id: Store-assigned identity.
             result: Stage A result.
         """
         pool = self._get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             await conn.execute(
                 """INSERT INTO evaluations (
                        job_id, stage_a_score, stage_a_one_line,
@@ -2279,6 +2284,19 @@ class PostgresStore:
                 result.prompt_hash,
                 result.resume_hash,
             )
+            row = await conn.fetchrow(
+                "SELECT status FROM job_status WHERE job_id = $1 FOR UPDATE",
+                int(job_id),
+            )
+            if row is not None and row["status"] == "new":
+                await self._transition_status_in_tx(
+                    conn,
+                    TransitionRequest(
+                        job_id=job_id,
+                        new_status="scored",
+                        reason=REASON_AUTO_SCORED,
+                    ),
+                )
 
     async def save_stage_a_error(self, job_id: str, error: str) -> None:
         """Record a Stage A error (retryable).

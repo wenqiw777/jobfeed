@@ -259,7 +259,8 @@ async def test_overview_pins_totals_distributions_and_daily_series(
         "below_threshold": 1,
     }
     assert payload["status_distribution"] == {
-        "new": 2,
+        "new": 1,
+        "scored": 1,
         "applied": 1,
         "shortlisted": 1,
     }

@@ -87,6 +87,11 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+/** Bodyless DELETE with the standard error handling. */
+export async function apiDelete<T>(path: string): Promise<T> {
+  return apiFetch<T>(path, { method: "DELETE" });
+}
+
 /**
  * Multipart POST (the apply endpoint). FormData must NOT be JSON-encoded
  * and must not get an explicit Content-Type — the browser sets the

@@ -2,9 +2,11 @@
  * TanStack Query hooks + typed param builders.
  *
  * Only what the app shell needs lives here for now (sidebar badge
- * counts); zone tasks add their own hooks. Filters are always built via
- * buildJobsParams — never hand-concatenated query strings — so the
- * params stay typed against the generated OpenAPI types.
+ * counts); zone tasks add their own hooks. Query strings are always
+ * built via the shared `buildParams` encoder (directly, or through a
+ * typed per-endpoint wrapper like `buildJobsParams`) — never
+ * hand-concatenated — so the params stay typed against the generated
+ * OpenAPI types.
  */
 import {
   keepPreviousData,
@@ -13,7 +15,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { apiFetch, apiPatch, apiPost, apiUpload } from "./client";
+import { apiDelete, apiFetch, apiPatch, apiPost, apiUpload } from "./client";
 import type { components, paths } from "./types.gen";
 
 export type JobsListResponse = components["schemas"]["JobsListResponse"];
@@ -29,6 +31,14 @@ export type RestoreResponse = components["schemas"]["RestoreResponse"];
 export type InterviewRound = components["schemas"]["InterviewRoundDetail"];
 export type InterviewsListResponse = components["schemas"]["InterviewsListResponse"];
 export type InsightsOverviewResponse = components["schemas"]["InsightsOverviewResponse"];
+export type RunsListResponse = components["schemas"]["RunsListResponse"];
+export type RunSummary = components["schemas"]["RunSummary"];
+export type CompaniesListResponse = components["schemas"]["CompaniesListResponse"];
+export type CompanyOut = components["schemas"]["CompanyOut"];
+export type CompanyVendor = components["schemas"]["CompanyAddBody"]["vendor"];
+export type ProbeResponse = components["schemas"]["ProbeResponse"];
+export type ProbeEntryResult = components["schemas"]["ProbeEntryResult"];
+export type BulkInsertResponse = components["schemas"]["BulkInsertResponse"];
 
 /**
  * Structured query keys. Every jobs *list* key starts with "jobs" and
@@ -49,8 +59,16 @@ export const jobsKeys = {
 
 /** Query params of GET /api/jobs, typed off the generated snapshot types. */
 export type JobsQuery = NonNullable<paths["/api/jobs"]["get"]["parameters"]["query"]>;
+/** Query params of GET /api/runs. */
+export type RunsQuery = NonNullable<paths["/api/runs"]["get"]["parameters"]["query"]>;
+/** Query params of GET /api/companies. */
+export type CompaniesQuery = NonNullable<
+  paths["/api/companies"]["get"]["parameters"]["query"]
+>;
 
-export function buildJobsParams(query: JobsQuery): URLSearchParams {
+/** Shared encoder behind the typed per-endpoint builders below — callers
+ * never hand-concatenate query strings. */
+function buildParams(query: Record<string, unknown>): URLSearchParams {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value === null || value === undefined) {
@@ -64,6 +82,10 @@ export function buildJobsParams(query: JobsQuery): URLSearchParams {
     }
   }
   return params;
+}
+
+export function buildJobsParams(query: JobsQuery): URLSearchParams {
+  return buildParams(query);
 }
 
 /** One jobs-list page for the given typed params. `keepPrevious` holds the
@@ -286,4 +308,84 @@ export function workflowAttentionTotal(attention: AttentionResponse): number {
     attention.interview_prep.length +
     attention.going_ghosted.length
   );
+}
+
+/** Runs list keys — read-only zone, nothing ever invalidates these. */
+export const runsKeys = {
+  list: (query: RunsQuery) => ["runs", "list", query] as const,
+};
+
+/** One runs-list page, newest first (server order). keepPreviousData
+ * holds the current page while the next one loads (Library's pager
+ * semantics, including the placeholder Next-guard). */
+export function useRuns(query: RunsQuery) {
+  return useQuery({
+    queryKey: runsKeys.list(query),
+    queryFn: () => apiFetch<RunsListResponse>(`/api/runs?${buildParams(query)}`),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Companies keys: every mutation below invalidates the whole family. */
+export const companiesKeys = {
+  all: ["companies"] as const,
+  list: (query: CompaniesQuery) => ["companies", "list", query] as const,
+};
+
+/** Tracked ATS companies, slug-ascending (server order). */
+export function useCompanies(includeRemoved = false) {
+  // Omit the param at its server default so both spellings of "off"
+  // share one cache entry.
+  const query: CompaniesQuery = includeRemoved ? { include_removed: true } : {};
+  return useQuery({
+    queryKey: companiesKeys.list(query),
+    queryFn: () =>
+      apiFetch<CompaniesListResponse>(`/api/companies?${buildParams(query)}`),
+  });
+}
+
+/** Track one company with a pinned vendor (upsert; restores removed slugs). */
+export function useAddCompany() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, vendor }: { slug: string; vendor: CompanyVendor }) =>
+      apiPost<CompanyOut>("/api/companies", { slug, vendor }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companiesKeys.all });
+    },
+  });
+}
+
+/** Bulk upsert (the probe-flow confirm). The server skips slugs that are
+ * already active — `inserted` is the honest count to surface. */
+export function useBulkAddCompanies() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (rows: { slug: string; vendor: CompanyVendor }[]) =>
+      apiPost<BulkInsertResponse>("/api/companies/bulk", { rows }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companiesKeys.all });
+    },
+  });
+}
+
+/** Soft-remove a tracked company (destructive; gate behind the dialog). */
+export function useRemoveCompany() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug }: { slug: string }) =>
+      apiDelete<unknown>(`/api/companies/${encodeURIComponent(slug)}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: companiesKeys.all });
+    },
+  });
+}
+
+/** Resolve pasted entries to slug+vendor. Read-only on the server (no
+ * writes), so nothing is invalidated. */
+export function useProbeCompanies() {
+  return useMutation({
+    mutationFn: (entries: string[]) =>
+      apiPost<ProbeResponse>("/api/companies/probe", { entries }),
+  });
 }
