@@ -1,4 +1,4 @@
-.PHONY: test lint fmt quality e2e docker-build docker-quality update-prices
+.PHONY: test lint fmt quality e2e docker-build docker-quality update-prices web-schema
 
 SOURCE ?= indeed
 
@@ -28,3 +28,8 @@ docker-quality: docker-build
 update-prices:
 	curl -sL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
 	  | python3 scripts/update_prices.py
+
+# Regenerate the committed OpenAPI snapshot after changing web routes/DTOs;
+# tests/contract/test_web_openapi.py pins it.
+web-schema:
+	python scripts/dump_openapi.py
