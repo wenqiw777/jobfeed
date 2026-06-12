@@ -554,6 +554,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/{job_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Job
+         * @description Restore a ghosted/archived job to its last non-terminal status.
+         *
+         *     The restore target comes from the job's status history (domain
+         *     ``pick_restore_target``) — never recomputed client-side.
+         *
+         *     Args:
+         *         job_id: Store-assigned job identity.
+         *         service: Shared workflow service from the app state.
+         *         store: Shared job store from the app state.
+         *
+         *     Returns:
+         *         Job id and the status the job was restored to.
+         *
+         *     Raises:
+         *         ApiError: 404 when the job has no status row; 409 with code
+         *             ``not_restorable`` when the job is not ghosted or archived.
+         */
+        post: operations["restore_job_api_jobs__job_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}/transition": {
         parameters: {
             query?: never;
@@ -1217,6 +1252,16 @@ export interface components {
         ProbeResponse: {
             /** Results */
             results: components["schemas"]["ProbeEntryResult"][];
+        };
+        /**
+         * RestoreResponse
+         * @description ``POST /api/jobs/{id}/restore`` response: where the job landed.
+         */
+        RestoreResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Status */
+            status: string;
         };
         /**
          * ResumeHooksDetail
@@ -2038,6 +2083,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_job_api_jobs__job_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreResponse"];
                 };
             };
             /** @description Validation Error */

@@ -101,6 +101,13 @@ class OkResponse(BaseModel):
     ok: bool = True
 
 
+class RestoreResponse(BaseModel):
+    """``POST /api/jobs/{id}/restore`` response: where the job landed."""
+
+    job_id: str
+    status: str
+
+
 class JdPasteBody(BaseModel):
     """``POST /api/jobs/{id}/jd`` request body."""
 
@@ -170,6 +177,7 @@ __all__ = [
     "JdPasteResponse",
     "NoteBody",
     "OkResponse",
+    "RestoreResponse",
     "StatusName",
     "TransitionBody",
     "TransitionResponse",

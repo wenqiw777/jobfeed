@@ -13,7 +13,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { apiFetch, apiPost, apiUpload } from "./client";
+import { apiFetch, apiPatch, apiPost, apiUpload } from "./client";
 import type { components, paths } from "./types.gen";
 
 export type JobsListResponse = components["schemas"]["JobsListResponse"];
@@ -25,6 +25,9 @@ export type BulkTransitionResponse = components["schemas"]["BulkTransitionRespon
 export type JdPasteResponse = components["schemas"]["JdPasteResponse"];
 export type ApplyResponse = components["schemas"]["ApplyResponse"];
 export type TransitionStatus = components["schemas"]["TransitionBody"]["to"];
+export type RestoreResponse = components["schemas"]["RestoreResponse"];
+export type InterviewRound = components["schemas"]["InterviewRoundDetail"];
+export type InterviewsListResponse = components["schemas"]["InterviewsListResponse"];
 
 /**
  * Structured query keys. Every jobs *list* key starts with "jobs" and
@@ -35,6 +38,12 @@ export const jobsKeys = {
   lists: ["jobs"] as const,
   list: (query: JobsQuery) => ["jobs", "list", query] as const,
   detail: (id: string | null) => ["job", id] as const,
+  // Nested under detail(id), so invalidating the detail key refreshes
+  // the rounds too (TanStack prefix matching).
+  interviews: (id: string | null) => ["job", id, "interviews"] as const,
+  // Workflow attention buckets — feed the Pipeline chips + sidebar badge,
+  // so every workflow-state mutation invalidates this key.
+  attention: ["attention"] as const,
 };
 
 /** Query params of GET /api/jobs, typed off the generated snapshot types. */
@@ -82,7 +91,8 @@ export interface TransitionVars {
   note?: string;
 }
 
-/** Single-row status transition; refreshes lists and the row's detail.
+/** Single-row status transition; refreshes lists, the row's detail, and
+ * the attention buckets (status drives bucket eligibility).
  * Named to avoid colliding with React's built-in useTransition. */
 export function useJobTransition() {
   const queryClient = useQueryClient();
@@ -92,11 +102,13 @@ export function useJobTransition() {
     onSuccess: (_data, { id }) => {
       void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
       void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
     },
   });
 }
 
-/** Bulk transition (twin cascade included); refreshes all jobs lists. */
+/** Bulk transition (twin cascade included); refreshes all jobs lists and
+ * the attention buckets. */
 export function useBulkTransition() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -104,6 +116,7 @@ export function useBulkTransition() {
       apiPost<BulkTransitionResponse>("/api/jobs/bulk/transition", { items }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
     },
   });
 }
@@ -120,7 +133,8 @@ export function useNote() {
   });
 }
 
-/** Set the follow-up time (`at` must be an offset-carrying ISO string). */
+/** Set the follow-up time (`at` must be an offset-carrying ISO string).
+ * Attention refreshes too: next_followup_at drives the follow-up bucket. */
 export function useFollowup() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -128,6 +142,7 @@ export function useFollowup() {
       apiPost<unknown>(`/api/jobs/${id}/followup`, { at }),
     onSuccess: (_data, { id }) => {
       void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
     },
   });
 }
@@ -158,6 +173,63 @@ export function useApply() {
   });
 }
 
+/** Interview rounds of one job; disabled while nothing is selected. */
+export function useInterviews(id: string | null) {
+  return useQuery({
+    queryKey: jobsKeys.interviews(id),
+    queryFn: () => apiFetch<InterviewsListResponse>(`/api/jobs/${id}/interviews`),
+    enabled: id !== null,
+  });
+}
+
+/** Add an interview round. Refreshes lists too: adding to an applied job
+ * auto-transitions it to interviewing, which moves its pipeline group —
+ * and into interview-prep attention scope. */
+export function useAddInterview() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, label, scheduledAt }: { id: string; label: string; scheduledAt: string | null }) =>
+      apiPost<InterviewRound>(`/api/jobs/${id}/interviews`, {
+        label,
+        scheduled_at: scheduledAt,
+      }),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
+    },
+  });
+}
+
+/** Complete an interview round with optional notes. Detail-only for lists,
+ * but interview-prep attention keys off uncompleted rounds, so refresh it. */
+export function useCompleteInterview() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, roundIndex, notes }: { id: string; roundIndex: number; notes: string | null }) =>
+      apiPatch<InterviewRound>(`/api/jobs/${id}/interviews/${roundIndex}`, { notes }),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
+    },
+  });
+}
+
+/** Restore a ghosted/archived job to its last non-terminal status (the
+ * server derives the target from history — never recomputed here). */
+export function useRestore() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      apiPost<RestoreResponse>(`/api/jobs/${id}/restore`, {}),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
+    },
+  });
+}
+
 /**
  * Global tab counts for the sidebar.
  *
@@ -178,7 +250,7 @@ export function useJobsTabCounts() {
 /** Attention buckets (GET /api/attention) for the Pipeline badge + bar. */
 export function useAttention() {
   return useQuery({
-    queryKey: ["attention"],
+    queryKey: jobsKeys.attention,
     queryFn: () => apiFetch<AttentionResponse>("/api/attention"),
   });
 }

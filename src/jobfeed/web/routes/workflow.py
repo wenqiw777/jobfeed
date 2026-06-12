@@ -2,8 +2,9 @@
 
 Thin parse/format shell over ``WorkflowService`` and the store ops port.
 Service errors map to the shared error shape via ``ApiError``: ValueError
-from the transition graph -> 409 ``illegal_transition``; missing rows
-(KeyError, ``set_followup`` False, unknown interview round) -> 404.
+from the transition graph -> 409 ``illegal_transition``; ValueError from
+restore -> 409 ``not_restorable``; missing rows (KeyError, ``set_followup``
+False, unknown interview round) -> 404.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from fastapi import APIRouter, Depends
 from jobfeed.domain.models_status import TransitionRequest
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ops import StoreOpsMixin
+from jobfeed.ports.store_status import StoreStatusMixin
 from jobfeed.services.workflow import WorkflowService
 from jobfeed.web.deps import get_store, get_workflow_service
 from jobfeed.web.errors import ApiError
@@ -29,6 +31,7 @@ from jobfeed.web.schemas import (
     JdPasteResponse,
     NoteBody,
     OkResponse,
+    RestoreResponse,
     TransitionBody,
     TransitionResponse,
     bulk_transition_response,
@@ -109,6 +112,39 @@ async def transition_job(
     except ValueError as exc:
         raise ApiError(_HTTP_CONFLICT, "illegal_transition", str(exc)) from exc
     return TransitionResponse(job_id=str(job_id), status=status)
+
+
+@router.post("/jobs/{job_id}/restore")
+async def restore_job(
+    job_id: int, service: _Workflow, store: _Store
+) -> RestoreResponse:
+    """Restore a ghosted/archived job to its last non-terminal status.
+
+    The restore target comes from the job's status history (domain
+    ``pick_restore_target``) — never recomputed client-side.
+
+    Args:
+        job_id: Store-assigned job identity.
+        service: Shared workflow service from the app state.
+        store: Shared job store from the app state.
+
+    Returns:
+        Job id and the status the job was restored to.
+
+    Raises:
+        ApiError: 404 when the job has no status row; 409 with code
+            ``not_restorable`` when the job is not ghosted or archived.
+    """
+    status_info = await cast(StoreStatusMixin, store).get_status(str(job_id))
+    if status_info is None:
+        raise _not_found(f"no status row for job {job_id}")
+    try:
+        status = await service.restore(str(job_id))
+    except KeyError as exc:  # status row vanished between check and write
+        raise _not_found(_key_error_message(exc)) from exc
+    except ValueError as exc:
+        raise ApiError(_HTTP_CONFLICT, "not_restorable", str(exc)) from exc
+    return RestoreResponse(job_id=str(job_id), status=status)
 
 
 @router.post("/jobs/{job_id}/note")

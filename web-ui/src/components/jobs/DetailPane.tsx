@@ -14,9 +14,19 @@ interface DetailPaneProps {
   /** Capability flags, not zone names — Library reuses the pane (T11). */
   showJdPaste: boolean;
   showIgnore: boolean;
-  isDeciding: boolean;
-  onDecide: (to: DecideStatus) => void;
-  onOpenApply: () => void;
+  /** Triage decide actions (Apply/Shortlist/Skip). Pipeline turns them
+   * off: its rows are post-decision; status moves happen through
+   * interviews and restore instead. */
+  showDecide?: boolean;
+  isDeciding?: boolean;
+  onDecide?: (to: DecideStatus) => void;
+  onOpenApply?: () => void;
+  /** Zone-specific sections rendered after the header — the seam that
+   * keeps the pane zone-agnostic (Pipeline mounts InterviewPanel and the
+   * restore card here based on the selected row's status). */
+  extraSections?: React.ReactNode;
+  /** Nothing-selected message; defaults to the triage keyboard hint. */
+  emptyHint?: React.ReactNode;
 }
 
 /** Persistent right pane: detail aggregation for the active row. */
@@ -24,16 +34,17 @@ export function DetailPane({
   jobId,
   showJdPaste,
   showIgnore,
-  isDeciding,
+  showDecide = true,
+  isDeciding = false,
   onDecide,
   onOpenApply,
+  extraSections,
+  emptyHint = "Select a row — or move with j/k and decide with a/h/s.",
 }: DetailPaneProps) {
   const detail = useJobDetail(jobId);
 
   if (jobId === null) {
-    return (
-      <Empty>Select a row — or move with j/k and decide with a/h/s.</Empty>
-    );
+    return <Empty>{emptyHint}</Empty>;
   }
   if (detail.isPending) {
     return <PaneSkeleton />;
@@ -74,24 +85,27 @@ export function DetailPane({
             stageBStatus={evaluation.stage_b_status}
           />
         </div>
-        <div className="mt-2.5 flex items-center gap-1.5">
-          <Button variant="primary" size="sm" disabled={isDeciding} onClick={onOpenApply}>
-            Apply
-          </Button>
-          <Button size="sm" disabled={isDeciding} onClick={() => onDecide("shortlisted")}>
-            Shortlist
-          </Button>
-          <Button size="sm" disabled={isDeciding} onClick={() => onDecide("archived")}>
-            Skip
-          </Button>
-          {showIgnore && (
-            <Button size="sm" disabled={isDeciding} onClick={() => onDecide("ignored")}>
-              Ignore
+        {showDecide && (
+          <div className="mt-2.5 flex items-center gap-1.5">
+            <Button variant="primary" size="sm" disabled={isDeciding} onClick={onOpenApply}>
+              Apply
             </Button>
-          )}
-        </div>
+            <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("shortlisted")}>
+              Shortlist
+            </Button>
+            <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("archived")}>
+              Skip
+            </Button>
+            {showIgnore && (
+              <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("ignored")}>
+                Ignore
+              </Button>
+            )}
+          </div>
+        )}
       </header>
       {showJdPaste && <JdPasteCard jobId={job.id} url={job.url} />}
+      {extraSections}
       <EvaluationSections evaluation={evaluation} />
       <NotesSection jobId={job.id} notes={status.notes} />
       <FollowupSection jobId={job.id} current={status.next_followup_at} />

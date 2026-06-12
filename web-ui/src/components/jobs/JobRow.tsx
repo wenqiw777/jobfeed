@@ -12,8 +12,11 @@ interface JobRowProps {
   isChecked: boolean;
   /** Plays the decide collapse; the caller omits it under reduced motion. */
   isCollapsing: boolean;
+  /** Bulk-selection checkbox; zones without bulk actions (Pipeline) hide it. */
+  showCheckbox?: boolean;
   onOpen: (id: string) => void;
-  onToggle: (id: string) => void;
+  /** Required only when the checkbox shows; checkbox-less zones omit it. */
+  onToggle?: (id: string) => void;
 }
 
 /**
@@ -21,7 +24,15 @@ interface JobRowProps {
  * comfortable 46px two lines. Selection = bg tint + inset ring — side
  * stripes are banned.
  */
-export function JobRow({ job, isActive, isChecked, isCollapsing, onOpen, onToggle }: JobRowProps) {
+export function JobRow({
+  job,
+  isActive,
+  isChecked,
+  isCollapsing,
+  showCheckbox = true,
+  onOpen,
+  onToggle,
+}: JobRowProps) {
   const { density, rowHeightClass } = useDensity();
   const age = formatRelativeAge(job.discovered_at);
   const score = job.stage_b_fit_score ?? job.stage_a_score;
@@ -37,20 +48,23 @@ export function JobRow({ job, isActive, isChecked, isCollapsing, onOpen, onToggl
     >
       {/* The checkbox is a sibling of the open button (never nested inside
           a button role) overlaying its leading gutter. */}
-      <div className="absolute left-2.5 top-1/2 z-10 -translate-y-1/2">
-        <Checkbox
-          checked={isChecked}
-          onCheckedChange={() => onToggle(job.id)}
-          onClick={(event) => event.stopPropagation()}
-          aria-label={`Select ${job.company} ${job.title}`}
-        />
-      </div>
+      {showCheckbox && (
+        <div className="absolute left-2.5 top-1/2 z-10 -translate-y-1/2">
+          <Checkbox
+            checked={isChecked}
+            onCheckedChange={() => onToggle?.(job.id)}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={`Select ${job.company} ${job.title}`}
+          />
+        </div>
+      )}
       <button
         type="button"
         aria-label={`Open ${job.company} ${job.title}`}
         onClick={() => onOpen(job.id)}
         className={cn(
-          "flex w-full items-center gap-2 border-b border-hairline pl-9 pr-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+          "flex w-full items-center gap-2 border-b border-hairline pr-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+          showCheckbox ? "pl-9" : "pl-3",
           rowHeightClass,
           isActive
             ? "bg-accent-bg ring-1 ring-inset ring-accent-border"

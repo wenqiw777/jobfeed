@@ -1416,6 +1416,25 @@
         "title": "ProbeResponse",
         "type": "object"
       },
+      "RestoreResponse": {
+        "description": "``POST /api/jobs/{id}/restore`` response: where the job landed.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "RestoreResponse",
+        "type": "object"
+      },
       "ResumeHooksDetail": {
         "description": "The three resume-hook blocks of the Stage B output.",
         "properties": {
@@ -2884,6 +2903,46 @@
           }
         },
         "summary": "Add Note"
+      }
+    },
+    "/api/jobs/{job_id}/restore": {
+      "post": {
+        "description": "Restore a ghosted/archived job to its last non-terminal status.\n\nThe restore target comes from the job's status history (domain\n``pick_restore_target``) \u2014 never recomputed client-side.\n\nArgs:\n    job_id: Store-assigned job identity.\n    service: Shared workflow service from the app state.\n    store: Shared job store from the app state.\n\nReturns:\n    Job id and the status the job was restored to.\n\nRaises:\n    ApiError: 404 when the job has no status row; 409 with code\n        ``not_restorable`` when the job is not ghosted or archived.",
+        "operationId": "restore_job_api_jobs__job_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Job"
       }
     },
     "/api/jobs/{job_id}/transition": {

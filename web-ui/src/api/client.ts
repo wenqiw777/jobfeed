@@ -78,6 +78,15 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+/** JSON PATCH: encodes the body and sets the content type. */
+export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  return apiFetch<T>(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 /**
  * Multipart POST (the apply endpoint). FormData must NOT be JSON-encoded
  * and must not get an explicit Content-Type — the browser sets the

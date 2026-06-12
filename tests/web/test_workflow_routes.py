@@ -13,6 +13,8 @@ Pins the A4 workflow contract over real HTTP + PostgreSQL:
   assessed quality; blank text -> 422.
 * Interview rounds: add auto-transitions applied -> interviewing, list,
   complete with notes; unknown/completed index -> 404.
+* Restore: ghosted -> 200 with the history-derived status, visible in
+  detail; non-ghosted -> 409 ``not_restorable``; unknown job -> 404.
 """
 
 from __future__ import annotations
@@ -466,3 +468,59 @@ async def test_interview_complete_unknown_index_returns_404(
     error = response.json()["error"]
     assert error["code"] == "not_found"
     assert "no open interview round" in error["message"]
+
+
+# ---------------------------------------------------------------------------
+# Restore
+# ---------------------------------------------------------------------------
+
+
+async def test_restore_ghosted_returns_previous_status(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """Restoring a ghosted job lands on its last non-terminal status."""
+    async with _seed_store(fresh_pg_dsn) as store:
+        job_id = await _insert(store, "wf-restore", status="applied")
+        await store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="ghosted")
+        )
+    app = create_web_app(write_db_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.post(f"/api/jobs/{job_id}/restore")
+        detail = await client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == HTTP_OK, response.text
+    assert response.json() == {"job_id": job_id, "status": "applied"}
+    assert detail.json()["status"]["status"] == "applied"
+
+
+async def test_restore_non_ghosted_returns_409(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """Restore on a job that is not ghosted/archived -> 409 not_restorable."""
+    async with _seed_store(fresh_pg_dsn) as store:
+        job_id = await _insert(store, "wf-restore-409", status="applied")
+    app = create_web_app(write_db_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.post(f"/api/jobs/{job_id}/restore")
+
+    assert response.status_code == HTTP_CONFLICT, response.text
+    error = response.json()["error"]
+    assert error["code"] == "not_restorable"
+    assert "ghosted or archived" in error["message"]
+    assert len(error["request_id"]) == UUID4_HEX_LENGTH
+
+
+async def test_restore_missing_job_returns_404(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """Restore on an unknown job id yields the shared 404 error shape."""
+    app = create_web_app(write_db_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.post(f"/api/jobs/{_UNKNOWN_JOB_ID}/restore")
+
+    assert response.status_code == HTTP_NOT_FOUND, response.text
+    assert response.json()["error"]["code"] == "not_found"

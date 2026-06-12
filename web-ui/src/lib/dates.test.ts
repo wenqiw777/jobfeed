@@ -1,4 +1,9 @@
-import { dateInputToIso, followupAtFromNow, formatRelativeAge } from "./dates";
+import {
+  dateInputToIso,
+  dateTimeInputToIso,
+  followupAtFromNow,
+  formatRelativeAge,
+} from "./dates";
 
 const NOW = new Date("2026-06-11T12:00:00");
 
@@ -44,5 +49,17 @@ describe("dateInputToIso", () => {
   test("blank or malformed input returns null", () => {
     expect(dateInputToIso("")).toBeNull();
     expect(dateInputToIso("garbage")).toBeNull();
+  });
+});
+
+describe("dateTimeInputToIso", () => {
+  test("datetime-local value parses as local time and emits UTC ISO", () => {
+    const iso = dateTimeInputToIso("2026-07-01T14:30");
+    expect(iso).toBe(new Date(2026, 6, 1, 14, 30, 0).toISOString());
+  });
+
+  test("blank or malformed input returns null", () => {
+    expect(dateTimeInputToIso("")).toBeNull();
+    expect(dateTimeInputToIso("garbage")).toBeNull();
   });
 });
