@@ -39,8 +39,13 @@ class SourceBusyError(JobfeedError):
     """
 
 
+class RunConflictError(Exception):
+    """A pipeline run of the requested type is already active."""
+
+
 __all__ = [
     "JobfeedError",
+    "RunConflictError",
     "ScoringParseError",
     "SnapshotAmbiguousError",
     "SnapshotNotFoundError",

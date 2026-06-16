@@ -465,19 +465,18 @@ def test_build_ml_gate_not_called_for_stage_b_or_limit_zero(
     def _record(_settings: object) -> None:
         calls.append(True)
 
-    # build_ml_gate now lives in the evaluate composition root
-    # (jobfeed.cli._evaluate_build); import it explicitly (cached, so no real
-    # reimport) and patch it where the gated call site reads it. Avoids a
-    # KeyError if module import order ever changes.
-    build_module = importlib.import_module("jobfeed.cli._evaluate_build")
-    monkeypatch.setattr(build_module, "build_ml_gate", _record)
+    # build_ml_gate lives in jobfeed.cli.ml_gate; patch it there and use
+    # the gated pattern (needs_ml_gate -> build_ml_gate) that the evaluate
+    # factory relies on.
+    ml_gate_module = importlib.import_module("jobfeed.cli.ml_gate")
+    monkeypatch.setattr(ml_gate_module, "build_ml_gate", _record)
 
     skip = [("b", None), ("b", 5), ("a", 0), ("both", 0)]
     for stage, limit in skip:
         needs = needs_ml_gate(stage, limit, ml_gate_enabled=True)
-        _ = build_module.build_ml_gate(object()) if needs else None
+        _ = ml_gate_module.build_ml_gate(object()) if needs else None
     assert calls == []  # no build for any skip case
 
     needs = needs_ml_gate("both", None, ml_gate_enabled=True)
-    _ = build_module.build_ml_gate(object()) if needs else None
+    _ = ml_gate_module.build_ml_gate(object()) if needs else None
     assert calls == [True]  # built exactly once for the default run
