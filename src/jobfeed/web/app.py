@@ -13,10 +13,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from jobfeed.cli import AppContext, create_app
+from jobfeed.cli._evaluate_factory import EvalBuildParams, build_evaluate_service
 from jobfeed.observability import get_logger, init_otel, init_sentry
+from jobfeed.ports.store_perf import StorePerfMixin
 from jobfeed.services.application import ApplicationService, ApplicationStore
 from jobfeed.services.insights import InsightsService, InsightsStore
 from jobfeed.services.jobs_view import JobsViewService, JobsViewStore
+from jobfeed.services.performance import PerformanceService
+from jobfeed.services.run_manager import RunManager
+from jobfeed.services.scan import ScanService
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
 from jobfeed.web.errors import install_error_handling
 from jobfeed.web.routes.applications import router as applications_router
@@ -24,6 +29,7 @@ from jobfeed.web.routes.companies import router as companies_router
 from jobfeed.web.routes.health import router as health_router
 from jobfeed.web.routes.insights import router as insights_router
 from jobfeed.web.routes.jobs import router as jobs_router
+from jobfeed.web.routes.performance import router as performance_router
 from jobfeed.web.routes.runs import router as runs_router
 from jobfeed.web.routes.workflow import router as workflow_router
 
@@ -70,6 +76,11 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await context["store"].connect()
         try:
+            if hasattr(_app.state, "run_manager"):
+                await _app.state.run_manager.recover_stale_runs()
+        except Exception:
+            get_logger().warning("run_recovery_skipped")
+        try:
             yield
         finally:
             await context["store"].close()
@@ -81,13 +92,24 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.state.context = context
     # .get() tolerates minimal fake contexts that never exercise the probe.
     app.state.probe_company = context.get("probe_company")
+
+    logger = get_logger()
+    store = context["store"]
+    app.state.run_manager = RunManager(
+        store=store,
+        logger=logger,
+        scan_service_factory=lambda: ScanService(store, logger),
+        evaluate_service_factory=lambda **kw: build_evaluate_service(
+            context, EvalBuildParams(**kw)
+        ),
+    )
+
     app.state.jobs_view_service = JobsViewService(
         store=cast(JobsViewStore, context["store"]),
         hard_filters=context["settings"].hard_filters.to_domain(),
     )
     # get_logger() is the same instance create_app wires into the context;
     # using it directly keeps the factory's build-time context needs minimal.
-    logger = get_logger()
     app.state.workflow_service = WorkflowService(
         cast(WorkflowStore, context["store"]), logger
     )
@@ -98,6 +120,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.state.insights_service = InsightsService(
         cast(InsightsStore, context["store"]), application_service
     )
+    app.state.performance_service = PerformanceService(cast(StorePerfMixin, store))
     install_error_handling(app)
     app.include_router(health_router, prefix="/api")
     app.include_router(jobs_router, prefix="/api")
@@ -106,6 +129,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.include_router(insights_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
     app.include_router(companies_router, prefix="/api")
+    app.include_router(performance_router, prefix="/api")
     dist_dir = static_dir if static_dir is not None else _DEFAULT_DIST_DIR
     is_spa_mounted = _mount_spa(app, dist_dir)
     app.state.is_spa_mounted = is_spa_mounted

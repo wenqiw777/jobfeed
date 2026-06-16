@@ -63,7 +63,13 @@ from jobfeed.domain.models import (
     WorkflowAttentionItem,
 )
 from jobfeed.domain.models_llm import LLMUsage
-from jobfeed.domain.models_perf import StepTiming
+from jobfeed.domain.models_perf import (
+    FunnelStats,
+    LLMDailyStats,
+    PerformanceOverview,
+    StepTiming,
+    StepTimingSeries,
+)
 from jobfeed.domain.models_views import (
     VALID_TABS,
     InsightsDay,
@@ -106,6 +112,18 @@ def _escape_like_prefix(prefix: str) -> str:
     """
     # Escape the escape char first, or the % / _ escapes below get double-escaped.
     return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _opt_float(value: Any) -> float | None:
+    """Coerce an optional numeric database value to ``float | None``.
+
+    Args:
+        value: Possibly-None numeric from an asyncpg Record.
+
+    Returns:
+        Float when truthy, else None.
+    """
+    return float(value) if value is not None else None
 
 
 def _job_from_record(r: asyncpg.Record) -> JobPosting:
@@ -3426,6 +3444,208 @@ class PostgresStore:
                     for t in timings
                 ],
             )
+
+    # ------------------------------------------------------------------
+    # Performance queries
+    # ------------------------------------------------------------------
+
+    async def get_performance_overview(self, window_days: int) -> PerformanceOverview:
+        """Aggregate performance metrics with period-over-period deltas.
+
+        Uses two equal-sized windows (current and previous) to compute
+        deltas. Falls back to None when no previous-window data exists.
+
+        Args:
+            window_days: Number of days in the current window.
+
+        Returns:
+            Overview with averages, totals, and deltas.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """WITH bounds AS (
+                       SELECT now() - make_interval(days => $1) AS cur_start,
+                              now() - make_interval(days => $1 * 2) AS prev_start
+                   ),
+                   cur AS (
+                       SELECT
+                           COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
+                               FILTER (WHERE source ILIKE '%%scan%%'), 0) AS avg_scan,
+                           COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
+                               FILTER (WHERE source ILIKE '%%evaluat%%'), 0) AS avg_eval,
+                           COALESCE(SUM(total_llm_cost_usd), 0) AS cost,
+                           CASE WHEN COUNT(*) > 0
+                               THEN COUNT(*) FILTER (WHERE errors > 0)::float / COUNT(*)
+                               ELSE 0 END AS err_rate
+                       FROM pipeline_runs, bounds
+                       WHERE started_at >= bounds.cur_start
+                         AND finished_at IS NOT NULL
+                   ),
+                   prev AS (
+                       SELECT
+                           COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
+                               FILTER (WHERE source ILIKE '%%scan%%'), 0) AS avg_scan,
+                           COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
+                               FILTER (WHERE source ILIKE '%%evaluat%%'), 0) AS avg_eval,
+                           COALESCE(SUM(total_llm_cost_usd), 0) AS cost,
+                           CASE WHEN COUNT(*) > 0
+                               THEN COUNT(*) FILTER (WHERE errors > 0)::float / COUNT(*)
+                               ELSE 0 END AS err_rate,
+                           COUNT(*) AS cnt
+                       FROM pipeline_runs, bounds
+                       WHERE started_at >= bounds.prev_start
+                         AND started_at < bounds.cur_start
+                         AND finished_at IS NOT NULL
+                   )
+                   SELECT cur.avg_scan, cur.avg_eval, cur.cost, cur.err_rate,
+                          CASE WHEN prev.cnt > 0 AND prev.avg_scan > 0
+                              THEN (cur.avg_scan - prev.avg_scan) / prev.avg_scan
+                              ELSE NULL END AS scan_delta,
+                          CASE WHEN prev.cnt > 0 AND prev.avg_eval > 0
+                              THEN (cur.avg_eval - prev.avg_eval) / prev.avg_eval
+                              ELSE NULL END AS eval_delta,
+                          CASE WHEN prev.cnt > 0 AND prev.cost > 0
+                              THEN (cur.cost - prev.cost) / prev.cost
+                              ELSE NULL END AS cost_delta,
+                          CASE WHEN prev.cnt > 0 AND prev.err_rate > 0
+                              THEN (cur.err_rate - prev.err_rate) / prev.err_rate
+                              ELSE NULL END AS err_delta
+                   FROM cur, prev""",
+                window_days,
+            )
+        assert row is not None
+        return PerformanceOverview(
+            avg_scan_duration_ms=float(row["avg_scan"]),
+            avg_eval_duration_ms=float(row["avg_eval"]),
+            total_llm_cost_usd=float(row["cost"]),
+            error_rate=float(row["err_rate"]),
+            scan_duration_delta=_opt_float(row["scan_delta"]),
+            eval_duration_delta=_opt_float(row["eval_delta"]),
+            cost_delta=_opt_float(row["cost_delta"]),
+            error_rate_delta=_opt_float(row["err_delta"]),
+        )
+
+    async def get_step_timings(
+        self, window_days: int, step_type: str | None = None
+    ) -> list[StepTimingSeries]:
+        """Fetch step timing rows within the window.
+
+        Args:
+            window_days: Look-back window in days.
+            step_type: Optional filter on step_type.
+
+        Returns:
+            Step timings ordered by created_at ascending.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            if step_type is not None:
+                rows = await conn.fetch(
+                    """SELECT step_type, step_name, run_id,
+                              elapsed_ms, is_error, created_at
+                       FROM step_timings
+                       WHERE created_at >= now() - make_interval(days => $1)
+                         AND step_type = $2
+                       ORDER BY created_at""",
+                    window_days,
+                    step_type,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT step_type, step_name, run_id,
+                              elapsed_ms, is_error, created_at
+                       FROM step_timings
+                       WHERE created_at >= now() - make_interval(days => $1)
+                       ORDER BY created_at""",
+                    window_days,
+                )
+        return [
+            StepTimingSeries(
+                step_type=r["step_type"],
+                step_name=r["step_name"],
+                run_id=r["run_id"],
+                elapsed_ms=float(r["elapsed_ms"]),
+                is_error=r["is_error"],
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ]
+
+    async def get_llm_daily_stats(self, window_days: int) -> list[LLMDailyStats]:
+        """Daily LLM latency percentiles and token averages.
+
+        Args:
+            window_days: Look-back window in days.
+
+        Returns:
+            Daily stats ordered by day ascending.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT date(timestamp) AS day,
+                          percentile_cont(0.5) WITHIN GROUP
+                              (ORDER BY latency_ms) AS p50,
+                          percentile_cont(0.95) WITHIN GROUP
+                              (ORDER BY latency_ms) AS p95,
+                          avg(input_tokens) AS avg_in,
+                          avg(output_tokens) AS avg_out
+                   FROM llm_usage
+                   WHERE timestamp >= now() - make_interval(days => $1)
+                   GROUP BY 1
+                   ORDER BY 1""",
+                window_days,
+            )
+        return [
+            LLMDailyStats(
+                day=r["day"].isoformat(),
+                p50_latency_ms=float(r["p50"]),
+                p95_latency_ms=float(r["p95"]),
+                avg_input_tokens=float(r["avg_in"]),
+                avg_output_tokens=float(r["avg_out"]),
+            )
+            for r in rows
+        ]
+
+    async def get_funnel_stats(self, window_days: int) -> list[FunnelStats]:
+        """Evaluation funnel snapshots from pipeline runs.
+
+        ``total_candidates`` is the sum of filtered, gated, and scored jobs
+        for each run. ``after_filter`` removes the filtered count;
+        ``after_gate`` further removes the gated count; ``scored`` is the
+        final funnel count.
+
+        Args:
+            window_days: Look-back window in days.
+
+        Returns:
+            Funnel stats per run, newest first.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT run_id,
+                          jobs_filtered + jobs_ml_gated + jobs_scored
+                              AS total_candidates,
+                          jobs_ml_gated + jobs_scored AS after_filter,
+                          jobs_scored AS after_gate,
+                          jobs_scored AS scored
+                   FROM pipeline_runs
+                   WHERE started_at >= now() - make_interval(days => $1)
+                   ORDER BY started_at DESC""",
+                window_days,
+            )
+        return [
+            FunnelStats(
+                run_id=r["run_id"],
+                total_candidates=r["total_candidates"],
+                after_filter=r["after_filter"],
+                after_gate=r["after_gate"],
+                scored=r["scored"],
+            )
+            for r in rows
+        ]
 
     async def insights_overview(self, *, window_days: int) -> InsightsOverview:
         """Aggregate the insights overview.

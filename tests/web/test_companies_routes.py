@@ -318,6 +318,13 @@ class _NoWriteStore:
     async def close(self) -> None:
         """Accept the lifespan's close call."""
 
+    async def list_pipeline_runs(
+        self,
+        limit: int = 100,  # noqa: ARG002
+    ) -> tuple[list[object], int]:
+        """Accept the lifespan's stale-run recovery probe."""
+        return [], 0
+
     def __getattr__(self, name: str) -> object:
         """Record and reject any store capability lookup.
 
@@ -365,12 +372,15 @@ def _probe_context(probe: object, store: _NoWriteStore | None = None) -> AppCont
     Returns:
         Context carrying the keys the web factory consumes at build time.
     """
+    from jobfeed.adapters.sources.mock import MockSource  # noqa: PLC0415
+
     return cast(
         AppContext,
         {
             "store": store or _NoWriteStore(),
             "settings": Settings(),
             "probe_company": probe,
+            "sources": {"mock": MockSource()},
         },
     )
 

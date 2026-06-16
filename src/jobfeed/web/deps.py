@@ -12,6 +12,8 @@ from jobfeed.ports.store import JobStore
 from jobfeed.services.application import ApplicationService
 from jobfeed.services.insights import InsightsService
 from jobfeed.services.jobs_view import JobsViewService
+from jobfeed.services.performance import PerformanceService
+from jobfeed.services.run_manager import RunManager
 from jobfeed.services.workflow import WorkflowService
 
 
@@ -116,13 +118,39 @@ def get_insights_service(request: Request) -> InsightsService:
     return cast(InsightsService, request.app.state.insights_service)
 
 
+def get_run_manager(request: Request) -> RunManager:
+    """Return the per-process run manager built by the app factory.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        Shared run manager for trigger and progress operations.
+    """
+    return cast(RunManager, request.app.state.run_manager)
+
+
+def get_performance_service(request: Request) -> PerformanceService:
+    """Return the per-process performance service built by the app factory.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        Shared performance service.
+    """
+    return cast(PerformanceService, request.app.state.performance_service)
+
+
 __all__ = [
     "ProbeVendorFn",
     "get_application_service",
     "get_context",
     "get_insights_service",
     "get_jobs_view_service",
+    "get_performance_service",
     "get_probe_company",
+    "get_run_manager",
     "get_store",
     "get_workflow_service",
 ]

@@ -5,7 +5,13 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from jobfeed.domain.models_perf import StepTiming
+from jobfeed.domain.models_perf import (
+    FunnelStats,
+    LLMDailyStats,
+    PerformanceOverview,
+    StepTiming,
+    StepTimingSeries,
+)
 from jobfeed.observability import SpanWrapper
 from jobfeed.ports.store_perf import StorePerfMixin
 
@@ -74,6 +80,33 @@ class _NullPerfStore:
 
     async def record_step_timings(self, _timings: object) -> None:
         """Silently discard the timing records."""
+
+    async def get_performance_overview(self, _window_days: int) -> PerformanceOverview:
+        """Return an empty overview."""
+        return PerformanceOverview(
+            avg_scan_duration_ms=0.0,
+            avg_eval_duration_ms=0.0,
+            total_llm_cost_usd=0.0,
+            error_rate=0.0,
+            scan_duration_delta=None,
+            eval_duration_delta=None,
+            cost_delta=None,
+            error_rate_delta=None,
+        )
+
+    async def get_step_timings(
+        self, _window_days: int, _step_type: str | None = None
+    ) -> list[StepTimingSeries]:
+        """Return an empty list."""
+        return []
+
+    async def get_llm_daily_stats(self, _window_days: int) -> list[LLMDailyStats]:
+        """Return an empty list."""
+        return []
+
+    async def get_funnel_stats(self, _window_days: int) -> list[FunnelStats]:
+        """Return an empty list."""
+        return []
 
 
 def get_perf_store(store: object) -> StorePerfMixin:

@@ -8,7 +8,7 @@ recovery on startup.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -201,7 +201,7 @@ class RunManager:
         """
         return sorted(self._active.values(), key=lambda r: r.started_at)
 
-    async def subscribe(self, run_id: str) -> AsyncIterator[PipelineRun]:
+    async def subscribe(self, run_id: str) -> AsyncGenerator[PipelineRun, None]:
         """Subscribe to progress events for a run.
 
         Yields PipelineRun snapshots as the run progresses. The iterator
@@ -271,9 +271,11 @@ class RunManager:
         """
         now = datetime.now(UTC)
         store = self._store
-        if not hasattr(store, "list_pipeline_runs"):
+        try:
+            list_fn = store.list_pipeline_runs  # type: ignore[attr-defined]
+        except AttributeError:
             return 0
-        runs, _ = await store.list_pipeline_runs(limit=100)
+        runs, _ = await list_fn(limit=100)
         recovered = 0
         for run in runs:
             if run.status == "running":

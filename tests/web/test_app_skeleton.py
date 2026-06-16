@@ -14,6 +14,7 @@ import structlog
 from click.testing import CliRunner
 from fastapi import FastAPI
 
+from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.cli import AppContext, cli
 from jobfeed.config import Settings
 from jobfeed.domain.models import JobPosting
@@ -82,7 +83,14 @@ def fake_context(store: FakeStore | None = None) -> AppContext:
         Context carrying only the keys the web factory touches at build
         time (store + settings for the jobs view service wiring).
     """
-    return cast(AppContext, {"store": store or FakeStore(), "settings": Settings()})
+    return cast(
+        AppContext,
+        {
+            "store": store or FakeStore(),
+            "settings": Settings(),
+            "sources": {"mock": MockSource()},
+        },
+    )
 
 
 @asynccontextmanager
