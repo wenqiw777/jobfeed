@@ -39,7 +39,12 @@ from jobfeed.domain.models import PipelineRun
     "--limit",
     default=None,
     type=click.IntRange(min=0),
-    help="Maximum jobs to evaluate per stage.",
+    help="Maximum jobs to evaluate per stage (default: from config).",
+)
+@click.option(
+    "--full",
+    is_flag=True,
+    help="Evaluate all pending jobs (no per-stage limit). Conflicts with --limit.",
 )
 @click.option(
     "--max-days",
@@ -79,12 +84,27 @@ def evaluate(ctx: click.Context, /, **kwargs: object) -> None:
     )
 
 
+# Per-stage cap used by --full: far above any realistic pending count, so the
+# config default never truncates a "run everything" request. The funnel's own
+# ml_gate_max_candidates budget (default 5000) is the true per-run ceiling.
+_FULL_LIMIT = 1_000_000
+
+
 def _params_from_click(values: dict[str, object]) -> _EvalParams:
-    """Normalize Click's untyped option mapping into typed evaluate params."""
+    """Normalize Click's untyped option mapping into typed evaluate params.
+
+    Raises:
+        click.UsageError: If --full and --limit are combined (ambiguous cap).
+    """
+    limit = cast(int | None, values["limit"])
+    if cast(bool, values["full"]):
+        if limit is not None:
+            raise click.UsageError("--full conflicts with --limit; pass only one.")
+        limit = _FULL_LIMIT
     return _EvalParams(
         stage=cast(str, values["stage"]),
         corpus=cast(str, values["corpus"]),
-        limit=cast(int | None, values["limit"]),
+        limit=limit,
         max_days=cast(int | None, values["max_days"]),
         parallel=cast(int | None, values["parallel"]),
         threshold=cast(int | None, values["threshold"]),
