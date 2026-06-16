@@ -13,6 +13,9 @@ interface DetailPaneProps {
   jobId: string | null;
   /** Capability flags, not zone names — Library reuses the pane (T11). */
   showJdPaste: boolean;
+  /** Pending-JD dismiss-as-junk. Independent of the decide trio: an
+   * un-scored posting can't be meaningfully applied/shortlisted/skipped,
+   * so pending_jd shows ONLY paste-JD + Ignore. */
   showIgnore: boolean;
   /** Triage decide actions (Apply/Shortlist/Skip). Pipeline turns them
    * off: its rows are post-decision; status moves happen through
@@ -85,17 +88,21 @@ export function DetailPane({
             stageBStatus={evaluation.stage_b_status}
           />
         </div>
-        {showDecide && (
+        {(showDecide || showIgnore) && (
           <div className="mt-2.5 flex items-center gap-1.5">
-            <Button variant="primary" size="sm" disabled={isDeciding} onClick={onOpenApply}>
-              Apply
-            </Button>
-            <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("shortlisted")}>
-              Shortlist
-            </Button>
-            <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("archived")}>
-              Skip
-            </Button>
+            {showDecide && (
+              <>
+                <Button variant="primary" size="sm" disabled={isDeciding} onClick={onOpenApply}>
+                  Apply
+                </Button>
+                <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("shortlisted")}>
+                  Shortlist
+                </Button>
+                <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("archived")}>
+                  Skip
+                </Button>
+              </>
+            )}
             {showIgnore && (
               <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("ignored")}>
                 Ignore

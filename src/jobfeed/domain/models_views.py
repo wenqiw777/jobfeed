@@ -18,6 +18,19 @@ VALID_TABS: tuple[str, ...] = (
     "archived",
 )
 
+#: Jobs-view sort names (plan A4). The canonical vocabulary lives here so
+#: ``JobsViewQuery`` can validate it; the in-memory sort keys stay in
+#: ``services/_jobs_view_sort.py`` and the SQL ORDER BY map in the store.
+VALID_SORTS: tuple[str, ...] = (
+    "discovered_desc",
+    "posted_desc",
+    "score_desc",
+    "company_asc",
+)
+
+#: The default sort (newest discovered first).
+DEFAULT_SORT = "discovered_desc"
+
 _DEFAULT_LIMIT = 50
 
 
@@ -38,6 +51,8 @@ class JobsViewQuery:
             ``discovered_at`` (not ``posted_at``) per rewrite-spec §15 — a job
             posted long ago but newly scraped is fresh to the user's workflow.
         require_verdict: Keep only rows with a Stage B verdict.
+        sort: One of ``VALID_SORTS``. Orders the SQL rows so plain Library
+            requests paginate correctly in SQL beyond any corpus cap.
         limit: Maximum rows returned. With ``offset``, windows the SQL
             prefilter — BEFORE any in-memory hard filter or display fold.
             Callers that fold or hard-filter post-query (triage tabs, plan
@@ -51,12 +66,15 @@ class JobsViewQuery:
     search: str | None = None
     posted_within_days: int | None = None
     require_verdict: bool = False
+    sort: str = DEFAULT_SORT
     limit: int = _DEFAULT_LIMIT
     offset: int = 0
 
     def __post_init__(self) -> None:
         if self.tab not in VALID_TABS:
             raise ValueError(f"unknown jobs view tab: {self.tab!r}")
+        if self.sort not in VALID_SORTS:
+            raise ValueError(f"unknown jobs view sort: {self.sort!r}")
         if self.limit < 0:
             raise ValueError(f"negative jobs view limit: {self.limit}")
         if self.offset < 0:
@@ -164,6 +182,8 @@ class InsightsOverview:
 
 
 __all__ = [
+    "DEFAULT_SORT",
+    "VALID_SORTS",
     "VALID_TABS",
     "InsightsDay",
     "InsightsOverview",

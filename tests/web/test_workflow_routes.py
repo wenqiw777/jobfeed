@@ -12,7 +12,8 @@ Pins the A4 workflow contract over real HTTP + PostgreSQL:
 * JD paste removes the job from the pending_jd tab and returns the stored
   assessed quality; blank text -> 422.
 * Interview rounds: add auto-transitions applied -> interviewing, list,
-  complete with notes; unknown/completed index -> 404.
+  complete with notes; add on an unknown job -> 404 (never an FK 500);
+  unknown/completed index -> 404.
 * Restore: ghosted -> 200 with the history-derived status, visible in
   detail; non-ghosted -> 409 ``not_restorable``; unknown job -> 404.
 """
@@ -475,6 +476,24 @@ async def test_interview_complete_with_notes(tmp_path: Path, fresh_pg_dsn: str) 
     assert round_["round_index"] == 1
     assert round_["completed_at"] is not None
     assert round_["notes"] == "went well"
+
+
+async def test_interview_add_missing_job_returns_404(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """Adding a round to an unknown job yields a 404, not an FK-violation 500."""
+    app = create_web_app(write_db_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.post(
+            f"/api/jobs/{_UNKNOWN_JOB_ID}/interviews", json={"label": "Phone Screen"}
+        )
+
+    assert response.status_code == HTTP_NOT_FOUND, response.text
+    error = response.json()["error"]
+    assert error["code"] == "not_found"
+    assert error["message"]
+    assert len(error["request_id"]) == UUID4_HEX_LENGTH
 
 
 async def test_interview_complete_unknown_index_returns_404(

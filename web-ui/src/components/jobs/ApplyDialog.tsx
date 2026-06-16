@@ -23,20 +23,44 @@ interface ApplyDialogProps {
 
 /** Record-an-application form: optional file snapshots + audit fields. */
 export function ApplyDialog({ job, open, onOpenChange, onApplied }: ApplyDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Apply — {job === null ? "" : `${job.company} · ${job.title}`}
+          </DialogTitle>
+          <DialogDescription>
+            Records the application with resume snapshots; nothing is submitted anywhere.
+          </DialogDescription>
+        </DialogHeader>
+        {/* Keyed on the job: closing (job -> null) or retargeting remounts a
+            blank form, so cancelled fields and file inputs never ride into
+            another job's application audit. */}
+        <ApplyForm
+          key={job?.id ?? "closed"}
+          job={job}
+          onOpenChange={onOpenChange}
+          onApplied={onApplied}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface ApplyFormProps {
+  job: JobSummary | null;
+  onOpenChange: (open: boolean) => void;
+  onApplied: (id: string) => void;
+}
+
+function ApplyForm({ job, onOpenChange, onApplied }: ApplyFormProps) {
   const [tailored, setTailored] = useState<File | null>(null);
   const [coverLetter, setCoverLetter] = useState<File | null>(null);
   const [variant, setVariant] = useState("");
   const [method, setMethod] = useState("");
   const [notes, setNotes] = useState("");
   const apply = useApply();
-
-  const reset = () => {
-    setTailored(null);
-    setCoverLetter(null);
-    setVariant("");
-    setMethod("");
-    setNotes("");
-  };
 
   const submit = () => {
     if (job === null || apply.isPending) {
@@ -58,7 +82,6 @@ export function ApplyDialog({ job, open, onOpenChange, onApplied }: ApplyDialogP
             title: result.applied ? "Application recorded" : "Already applied — no changes",
             description: result.reapply_notice ?? undefined,
           });
-          reset();
           onOpenChange(false);
           onApplied(job.id);
         },
@@ -70,45 +93,35 @@ export function ApplyDialog({ job, open, onOpenChange, onApplied }: ApplyDialogP
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            Apply — {job === null ? "" : `${job.company} · ${job.title}`}
-          </DialogTitle>
-          <DialogDescription>
-            Records the application with resume snapshots; nothing is submitted anywhere.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="mt-3 flex flex-col gap-2.5">
-          <FileField label="Tailored resume" onFile={setTailored} />
-          <FileField label="Cover letter" onFile={setCoverLetter} />
-          <label className="flex flex-col gap-1 text-label text-ink-2">
-            Resume variant
-            <Input value={variant} onChange={(e) => setVariant(e.target.value)} placeholder="e.g. backend" />
-          </label>
-          <label className="flex flex-col gap-1 text-label text-ink-2">
-            Method
-            <Input value={method} onChange={(e) => setMethod(e.target.value)} placeholder="e.g. referral, portal" />
-          </label>
-          <label className="flex flex-col gap-1 text-label text-ink-2">
-            Notes
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              className="w-full resize-y rounded-control border border-border-strong bg-surface px-2.5 py-1.5 text-body-sm text-ink placeholder:text-mute focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            />
-          </label>
-        </div>
-        <DialogFooter>
-          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="primary" disabled={apply.isPending || job === null} onClick={submit}>
-            {apply.isPending ? "Recording…" : "Record application"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <>
+      <div className="mt-3 flex flex-col gap-2.5">
+        <FileField label="Tailored resume" onFile={setTailored} />
+        <FileField label="Cover letter" onFile={setCoverLetter} />
+        <label className="flex flex-col gap-1 text-label text-ink-2">
+          Resume variant
+          <Input value={variant} onChange={(e) => setVariant(e.target.value)} placeholder="e.g. backend" />
+        </label>
+        <label className="flex flex-col gap-1 text-label text-ink-2">
+          Method
+          <Input value={method} onChange={(e) => setMethod(e.target.value)} placeholder="e.g. referral, portal" />
+        </label>
+        <label className="flex flex-col gap-1 text-label text-ink-2">
+          Notes
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+            className="w-full resize-y rounded-control border border-border-strong bg-surface px-2.5 py-1.5 text-body-sm text-ink placeholder:text-mute focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          />
+        </label>
+      </div>
+      <DialogFooter>
+        <Button onClick={() => onOpenChange(false)}>Cancel</Button>
+        <Button variant="primary" disabled={apply.isPending || job === null} onClick={submit}>
+          {apply.isPending ? "Recording…" : "Record application"}
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
 

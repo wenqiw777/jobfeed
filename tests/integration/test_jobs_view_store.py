@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from jobfeed.adapters.store.postgres import PostgresStore
+from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.models import (
     FitAnalysis,
     QualityBand,
@@ -22,6 +23,7 @@ from jobfeed.domain.models import (
     Verdict,
 )
 from jobfeed.domain.models_views import VALID_TABS, JobsViewPage, JobsViewQuery
+from jobfeed.services.jobs_view import JobsViewService
 from tests.support.factories import make_job
 
 pytestmark = pytest.mark.postgres
@@ -279,3 +281,211 @@ async def test_list_twin_statuses_excludes_self_and_blank_norms(
     ]
     assert twins[0].url == "https://example.com/tw-twin"
     assert blank_twins == []
+
+
+# ---------------------------------------------------------------------------
+# SQL sort: Library non-default sorts order AND paginate in SQL (plan D10)
+# ---------------------------------------------------------------------------
+
+_SORT_TOTAL = 3
+_SORT_PAGE_LIMIT = 2
+# Stage A fallback score chosen BETWEEN the fit row's fit score (77) and its
+# Stage A score (80): only COALESCE(fit, stage_a) yields the asserted order.
+_FALLBACK_STAGE_A_SCORE = 79
+
+
+async def _seed_score_rows(store: PostgresStore) -> None:
+    """Seed rows whose discovered order opposes the score order.
+
+    Newest-discovered first would give sc-none, sc-stage-a, sc-fit; the
+    score key (Stage B fit with Stage A fallback, NULLS LAST) gives
+    sc-stage-a (79), sc-fit (77 — its own Stage A 80 must NOT win), then
+    the unscored sc-none last.
+    """
+    now = datetime.now(UTC)
+    await _insert(store, "sc-none", discovered_at=now)
+    stage_a_only = await _insert(
+        store, "sc-stage-a", discovered_at=now - timedelta(minutes=1)
+    )
+    await store.save_stage_a(stage_a_only, _stage_a(score=_FALLBACK_STAGE_A_SCORE))
+    fit_id = await _insert(store, "sc-fit", discovered_at=now - timedelta(minutes=2))
+    await store.save_stage_a(fit_id, _stage_a())
+    await store.save_stage_b(fit_id, _stage_b())
+
+
+async def test_sort_score_desc_orders_and_pages_in_sql(store: PostgresStore) -> None:
+    """score_desc: COALESCE(fit, stage_a) DESC NULLS LAST windows in SQL."""
+    await _seed_score_rows(store)
+
+    page = await store.query_jobs_view(
+        JobsViewQuery(tab="all", sort="score_desc", limit=_SORT_PAGE_LIMIT)
+    )
+
+    assert [row.job.canonical_id for row in page.rows] == ["sc-stage-a", "sc-fit"]
+    assert page.total == _SORT_TOTAL
+
+
+async def test_sort_posted_desc_orders_in_sql_nulls_last(store: PostgresStore) -> None:
+    """posted_desc: newest posted first, unposted last — discovered order
+    (the default) is the exact reverse, so only a SQL ORDER BY on posted_at
+    produces the asserted first page.
+    """
+    now = datetime.now(UTC)
+    await _insert(store, "ps-none", discovered_at=now)
+    await _insert(
+        store,
+        "ps-old",
+        discovered_at=now - timedelta(minutes=1),
+        posted_at=now - timedelta(days=2),
+    )
+    await _insert(
+        store,
+        "ps-new",
+        discovered_at=now - timedelta(minutes=2),
+        posted_at=now - timedelta(days=1),
+    )
+
+    page = await store.query_jobs_view(
+        JobsViewQuery(tab="all", sort="posted_desc", limit=_SORT_PAGE_LIMIT)
+    )
+
+    assert [row.job.canonical_id for row in page.rows] == ["ps-new", "ps-old"]
+    assert page.total == _SORT_TOTAL
+
+
+async def test_sort_company_asc_orders_in_sql(store: PostgresStore) -> None:
+    """company_asc: company_norm ascending against the discovered order."""
+    now = datetime.now(UTC)
+    await _insert(store, "co-zeta", company="Zeta", discovered_at=now)
+    await _insert(
+        store, "co-midway", company="Midway", discovered_at=now - timedelta(minutes=1)
+    )
+    await _insert(
+        store, "co-alpha", company="Alpha", discovered_at=now - timedelta(minutes=2)
+    )
+
+    page = await store.query_jobs_view(
+        JobsViewQuery(tab="all", sort="company_asc", limit=_SORT_PAGE_LIMIT)
+    )
+
+    assert [row.job.canonical_id for row in page.rows] == ["co-alpha", "co-midway"]
+    assert page.total == _SORT_TOTAL
+
+
+def _service(store: PostgresStore) -> JobsViewService:
+    """Build the jobs view service with no-op hard filters."""
+    return JobsViewService(store, HardFilters())
+
+
+async def test_plain_library_sort_paginates_in_sql_with_true_total(
+    store: PostgresStore,
+) -> None:
+    """A flag-less Library request honors any sort with SQL pagination."""
+    await _seed_score_rows(store)
+    service = _service(store)
+
+    page = await service.list_jobs(
+        JobsViewQuery(tab="all", limit=_SORT_PAGE_LIMIT), sort="score_desc"
+    )
+
+    assert [row.job.canonical_id for row in page.rows] == ["sc-stage-a", "sc-fit"]
+    assert page.total == _SORT_TOTAL
+
+
+# ---------------------------------------------------------------------------
+# Display fold over in-flight twins (plan D9: in-flight applications win)
+# ---------------------------------------------------------------------------
+
+_INFLIGHT_QUEUE_PREFILTER_COUNT = 3  # if-queue + both SoloCo twins
+
+
+async def test_list_twin_rows_by_status_matches_keys_and_statuses(
+    store: PostgresStore,
+) -> None:
+    """Rows match (norm key x status); blank keys and other statuses never do."""
+    await _insert(store, "twr-queue", company="Stripe", title="Engineer")
+    applied_id = await _insert(
+        store,
+        "twr-applied",
+        platform="greenhouse",
+        company="Stripe",
+        title="Engineer",
+        status="applied",
+    )
+    await _insert(
+        store,
+        "twr-rejected",
+        platform="lever",
+        company="Stripe",
+        title="Engineer",
+        status="rejected",
+    )
+    await _insert(
+        store, "twr-other", company="Datadog", title="Engineer", status="applied"
+    )
+    await _insert(store, "twr-blank", company="??", title="Engineer", status="applied")
+
+    rows = await store.list_twin_rows_by_status(
+        [("stripe", "engineer"), ("", "engineer")],
+        statuses=["applied", "interviewing", "offer"],
+        limit=10,
+    )
+    empty = await store.list_twin_rows_by_status([], statuses=["applied"], limit=10)
+
+    assert [(row.job.canonical_id, row.status) for row in rows] == [
+        ("twr-applied", "applied")
+    ]
+    assert rows[0].job.id == applied_id
+    assert empty == []
+
+
+async def test_dedupe_queue_suppresses_cluster_with_applied_twin(
+    store: PostgresStore,
+) -> None:
+    """A queue posting folds away when its twin is already in flight (D9).
+
+    The applied twin has the WORSE Decision 8 key (no JD, lower source
+    priority), so only its status class can win the cluster — and it lives
+    outside the queue corpus, so the fold must pull it in. A queue-only
+    cluster still folds to one kept representative.
+    """
+    await _insert(
+        store,
+        "if-applied",
+        platform="indeed",
+        company="TwinCo",
+        title="Platform Engineer",
+        status="applied",
+    )
+    await _insert(
+        store,
+        "if-queue",
+        platform="greenhouse",
+        company="TwinCo",
+        title="Platform Engineer",
+        jd_quality=QualityBand.FULL,
+    )
+    await _insert(
+        store,
+        "solo-good",
+        platform="greenhouse",
+        company="SoloCo",
+        title="Backend Engineer",
+        jd_quality=QualityBand.FULL,
+    )
+    await _insert(
+        store, "solo-dup", platform="indeed", company="SoloCo", title="Backend Engineer"
+    )
+    service = _service(store)
+
+    folded = await service.list_jobs(JobsViewQuery(tab="queue"), dedupe=True)
+    unfolded = await service.list_jobs(JobsViewQuery(tab="queue"))
+
+    # The in-flight twin won its cluster and is not a queue row, so the
+    # cluster is suppressed; SoloCo folds to its best representative.
+    assert _ids(folded) == {"solo-good"}
+    assert folded.total == 1
+    # tab_counts stay SQL-prefilter counts, never post-fold counts.
+    assert folded.tab_counts["queue"] == _INFLIGHT_QUEUE_PREFILTER_COUNT
+    # Without dedupe the same request still shows the queue twin.
+    assert "if-queue" in _ids(unfolded)

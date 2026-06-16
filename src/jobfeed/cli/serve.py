@@ -45,6 +45,12 @@ def serve(ctx: click.Context, host: str, port: int) -> None:
     from jobfeed.web.app import build_web_app  # noqa: PLC0415
 
     web_app = build_web_app(app)
+    if not web_app.state.is_spa_mounted:
+        click.echo(
+            "Web UI not built (web-ui/dist missing); serving the API only. "
+            "Run `make web-build` once to serve the UI.",
+            err=True,
+        )
     # Request lines come from the web layer's structlog middleware; uvicorn's
     # own access log would duplicate them.
     uvicorn.run(web_app, host=host, port=port, access_log=False)

@@ -15,7 +15,9 @@ make fmt              # ruff format . && ruff check --fix .
 pip install -e ".[dev]"  # local dev install (or: uv pip install --python .venv/bin/python -e ".[dev]")
 ```
 
-Run entry points (repo root): `./setup` (one-time: config + runtime + Postgres + migrations) then `./scan` (run a scan; `./scan --source mock` for an offline smoke). `./bin/jobfeed` is the canonical Docker CLI (`docker compose run --rm jobfeed-cli jobfeed ...`).
+Run entry points (repo root): `./setup` (one-time: config + runtime + Postgres + migrations) then `./scan` (run a scan; `./scan --source mock` for an offline smoke). `./bin/jobfeed` is the canonical Docker CLI (`docker compose run --rm jobfeed-cli jobfeed ...`) for one-shot pipeline commands (scan/evaluate/digest).
+
+Web UI: `make web-build` once (npm ci + vite build; produces the gitignored build artifact `web-ui/dist`), then `jobfeed serve` from the host venv. serve is host-native, not run via `./bin/jobfeed` — it is a long-running loopback-only server (127.0.0.1:7654, no auth, per Phase 8 D2) that the host browser hits directly, talking to the Docker Postgres on localhost:5432. Without `web-ui/dist` it serves the API only and says so at startup.
 
 Run a single test: `python -m pytest tests/unit/test_scoring.py::test_name -v`
 

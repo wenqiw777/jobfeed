@@ -125,8 +125,12 @@ export default function TriagePage() {
     if (id === null || transition.isPending) {
       return;
     }
+    // Pending-JD rows are unscored 'new' rows whose only legal move is
+    // new→scored, so the dismiss-as-junk Ignore must bypass the graph.
+    // Queue decides stay graph-checked (never forced).
+    const force = tab === "pending_jd" && to === "ignored";
     transition.mutate(
-      { id, to },
+      { id, to, force },
       {
         onSuccess: () => handleDecided(id),
         onError: (error) =>
@@ -154,6 +158,22 @@ export default function TriagePage() {
     document.querySelector<HTMLElement>(`[data-kbd-target="${name}"]`)?.focus();
   };
 
+  // Decide keys are per-tab: a/h/s only make sense for scored queue rows;
+  // a pending-JD row's sole decision is the (forced) Ignore on i. Movement,
+  // open, and the focus jumps stay shared.
+  const decideKeys: Record<string, () => void> =
+    tab === "queue"
+      ? {
+          a: () => {
+            if (selectedJob !== null) {
+              setApplyTarget(selectedJob);
+            }
+          },
+          h: () => decide("shortlisted"),
+          s: () => decide("archived"),
+        }
+      : { i: () => decide("ignored") };
+
   useKeyboardMap(
     {
       ArrowDown: () => moveSelection(1),
@@ -161,13 +181,6 @@ export default function TriagePage() {
       ArrowUp: () => moveSelection(-1),
       k: () => moveSelection(-1),
       Enter: () => detailRef.current?.focus(),
-      a: () => {
-        if (selectedJob !== null) {
-          setApplyTarget(selectedJob);
-        }
-      },
-      h: () => decide("shortlisted"),
-      s: () => decide("archived"),
       n: () => focusKbdTarget("note"),
       f: () => focusKbdTarget("followup"),
       o: () => {
@@ -175,6 +188,7 @@ export default function TriagePage() {
           window.open(selectedJob.url, "_blank", "noopener");
         }
       },
+      ...decideKeys,
     },
     { enabled: applyTarget === null },
   );
@@ -205,7 +219,8 @@ export default function TriagePage() {
         <BulkBar
           selectedIds={selection.selectedIds}
           total={list.data?.total ?? 0}
-          showIgnore={tab === "pending_jd"}
+          loadedCount={jobs.length}
+          ignoreOnly={tab === "pending_jd"}
           onSelectPage={() => selection.selectMany(jobs.map((job) => job.id))}
           onSelectAllMatching={() => selection.selectAll(jobs.map((job) => job.id))}
           onClear={selection.clear}
@@ -232,6 +247,7 @@ export default function TriagePage() {
           jobId={effectiveSelectedId}
           showJdPaste={tab === "pending_jd"}
           showIgnore={tab === "pending_jd"}
+          showDecide={tab !== "pending_jd"}
           isDeciding={transition.isPending}
           onDecide={decide}
           onOpenApply={() => {
@@ -239,6 +255,11 @@ export default function TriagePage() {
               setApplyTarget(selectedJob);
             }
           }}
+          emptyHint={
+            tab === "pending_jd"
+              ? "Select a row — move with j/k, paste a JD or ignore with i."
+              : undefined
+          }
         />
       </section>
       <ApplyDialog

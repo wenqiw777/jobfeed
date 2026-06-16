@@ -115,6 +115,16 @@ export interface TransitionVars {
   id: string;
   to: TransitionStatus;
   note?: string;
+  /** Bypass the transition graph. Only the pending-JD Ignore sets this:
+   * pending rows are unscored 'new' rows whose only legal move is
+   * new→scored, so dismiss-as-junk needs force (T4 contract). */
+  force?: boolean;
+}
+
+export interface BulkTransitionVars {
+  items: { id: string; to: TransitionStatus }[];
+  /** Same forced-Ignore escape hatch as TransitionVars.force. */
+  force?: boolean;
 }
 
 /** Single-row status transition; refreshes lists, the row's detail, and
@@ -123,8 +133,12 @@ export interface TransitionVars {
 export function useJobTransition() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, to, note }: TransitionVars) =>
-      apiPost<TransitionResponse>(`/api/jobs/${id}/transition`, { to, note: note ?? null }),
+    mutationFn: ({ id, to, note, force }: TransitionVars) =>
+      apiPost<TransitionResponse>(`/api/jobs/${id}/transition`, {
+        to,
+        note: note ?? null,
+        force: force ?? false,
+      }),
     onSuccess: (_data, { id }) => {
       void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
       void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
@@ -138,8 +152,11 @@ export function useJobTransition() {
 export function useBulkTransition() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (items: { id: string; to: TransitionStatus }[]) =>
-      apiPost<BulkTransitionResponse>("/api/jobs/bulk/transition", { items }),
+    mutationFn: ({ items, force }: BulkTransitionVars) =>
+      apiPost<BulkTransitionResponse>("/api/jobs/bulk/transition", {
+        items,
+        force: force ?? false,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
       void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });

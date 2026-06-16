@@ -305,3 +305,45 @@ def test_serve_accepts_localhost_alias(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert run_mock.call_args.kwargs["host"] == "localhost"
+
+
+def test_serve_hints_when_web_ui_not_built(tmp_path: Path) -> None:
+    """serve without a built dist should print the make web-build hint.
+
+    Args:
+        tmp_path: Temporary root used for the config file; the patched
+            dist path inside it never exists.
+    """
+    config_path = write_db_config(tmp_path)
+
+    with (
+        patch("jobfeed.web.app._DEFAULT_DIST_DIR", tmp_path / "missing-dist"),
+        patch("uvicorn.run") as run_mock,
+    ):
+        result = CliRunner().invoke(cli, ["--config", str(config_path), "serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "make web-build" in result.output
+    assert run_mock.call_count == 1
+
+
+def test_serve_skips_hint_when_web_ui_built(tmp_path: Path) -> None:
+    """serve with a built dist should start without the build hint.
+
+    Args:
+        tmp_path: Temporary root used for the config file + dist fixture.
+    """
+    config_path = write_db_config(tmp_path)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    with (
+        patch("jobfeed.web.app._DEFAULT_DIST_DIR", dist),
+        patch("uvicorn.run") as run_mock,
+    ):
+        result = CliRunner().invoke(cli, ["--config", str(config_path), "serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "make web-build" not in result.output
+    assert run_mock.call_count == 1

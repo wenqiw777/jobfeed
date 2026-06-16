@@ -9,18 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from jobfeed.domain.models_views import JobsViewRow
-
-#: Library sort names accepted by ``JobsViewService.list_jobs`` (plan A4).
-VALID_SORTS: tuple[str, ...] = (
-    "discovered_desc",
-    "posted_desc",
-    "score_desc",
-    "company_asc",
-)
-
-#: The Library default order (the store's own SQL order).
-DEFAULT_SORT = "discovered_desc"
+# Sort vocabulary is canonical in the domain (JobsViewQuery validates it);
+# re-exported here so service-layer callers keep one import site.
+from jobfeed.domain.models_views import DEFAULT_SORT, VALID_SORTS, JobsViewRow
 
 # Verdict-group ranks: apply -> consider -> skip -> derived below-threshold
 # ("below threshold" is NOT a Verdict value; it is derived from

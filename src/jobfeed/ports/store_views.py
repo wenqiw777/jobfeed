@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import PipelineRun
@@ -9,6 +10,7 @@ from jobfeed.domain.models_views import (
     InsightsOverview,
     JobsViewPage,
     JobsViewQuery,
+    JobsViewRow,
     TwinStatusRow,
 )
 
@@ -21,12 +23,12 @@ class StoreViewsMixin(Protocol):
         """Run the filtered, paginated jobs view query.
 
         Args:
-            query: Tab, filters, and pagination window.
+            query: Tab, filters, sort, and pagination window.
 
         Returns:
-            Bounded page: the active tab's rows (newest discovered first),
-            the active tab's full match count, and per-tab counts under the
-            same request filters.
+            Bounded page: the active tab's rows ordered per ``query.sort``
+            (default newest discovered first), the active tab's full match
+            count, and per-tab counts under the same request filters.
 
         Note:
             ``limit``/``offset`` window the SQL prefilter, before any
@@ -34,6 +36,30 @@ class StoreViewsMixin(Protocol):
             hard-filter post-query (triage tabs, plan D10) must request the
             full corpus (large limit) and paginate post-fold, or the fold
             corpus is silently truncated.
+        """
+        ...
+
+    async def list_twin_rows_by_status(
+        self,
+        keys: Sequence[tuple[str, str]],
+        *,
+        statuses: Sequence[str],
+        limit: int,
+    ) -> list[JobsViewRow]:
+        """List view rows in the given statuses for the given twin keys.
+
+        Feeds the display fold (plan D9): a tab-filtered corpus never
+        contains out-of-tab siblings, so the fold pulls them in explicitly
+        (e.g. the in-flight ``applied`` twin of a queue row).
+
+        Args:
+            keys: Non-blank ``(company_norm, title_norm)`` cluster keys.
+            statuses: Workflow statuses to keep.
+            limit: Maximum rows returned.
+
+        Returns:
+            Matching view rows, newest discovered first. Blank-norm rows
+            never match (mirroring ``list_twin_statuses``).
         """
         ...
 

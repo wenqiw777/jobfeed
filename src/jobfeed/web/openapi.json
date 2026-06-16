@@ -2698,7 +2698,7 @@
         "summary": "List Interviews"
       },
       "post": {
-        "description": "Add an interview round (auto-transitions applied -> interviewing).\n\nArgs:\n    job_id: Store-assigned job identity.\n    body: Round label and optional scheduled time.\n    service: Shared workflow service from the app state.\n\nReturns:\n    The newly created round.",
+        "description": "Add an interview round (auto-transitions applied -> interviewing).\n\nArgs:\n    job_id: Store-assigned job identity.\n    body: Round label and optional scheduled time.\n    service: Shared workflow service from the app state.\n    store: Shared job store from the app state.\n\nReturns:\n    The newly created round.\n\nRaises:\n    ApiError: 404 when the job has no status row.",
         "operationId": "add_interview_api_jobs__job_id__interviews_post",
         "parameters": [
           {

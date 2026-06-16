@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
+
 from jobfeed.web.app import _static_file_or_index, build_web_app
 from tests.web.test_app_skeleton import fake_context, open_client
 
@@ -211,6 +213,41 @@ async def test_no_dist_keeps_json_404_everywhere(tmp_path: Path) -> None:
     assert root.json()["error"]["code"] == "not_found"
     assert triage.status_code == HTTP_NOT_FOUND
     assert triage.json()["error"]["code"] == "not_found"
+
+
+def test_present_dist_marks_spa_mounted_and_logs(tmp_path: Path) -> None:
+    """A built dist should set is_spa_mounted and log web_ui_mounted.
+
+    Args:
+        tmp_path: Temporary directory holding the dist fixture.
+    """
+    dist = make_dist(tmp_path)
+
+    with structlog.testing.capture_logs() as logs:
+        app = build_web_app(fake_context(), static_dir=dist)
+
+    assert app.state.is_spa_mounted is True
+    mounted = [entry for entry in logs if entry["event"] == "web_ui_mounted"]
+    assert len(mounted) == 1
+    assert mounted[0]["dist_dir"] == str(dist)
+
+
+def test_missing_dist_marks_api_only_and_logs_hint(tmp_path: Path) -> None:
+    """A missing dist should clear is_spa_mounted and log web_ui_not_built.
+
+    The hint must name `make web-build` so a bare `jobfeed serve` without
+    a built bundle is explainable from the startup log alone.
+
+    Args:
+        tmp_path: Temporary directory; the dist path inside it never exists.
+    """
+    with structlog.testing.capture_logs() as logs:
+        app = build_web_app(fake_context(), static_dir=tmp_path / "missing-dist")
+
+    assert app.state.is_spa_mounted is False
+    not_built = [entry for entry in logs if entry["event"] == "web_ui_not_built"]
+    assert len(not_built) == 1
+    assert "make web-build" in str(not_built[0]["hint"])
 
 
 def test_path_escaping_dist_falls_back_to_index(tmp_path: Path) -> None:

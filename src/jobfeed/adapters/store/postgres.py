@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
@@ -177,6 +178,25 @@ _JOBS_VIEW_COLUMNS = (
     " (evaluations.stage_b_fit_json ->> 'score_0_100')::integer"
     " AS stage_b_fit_score"
 )
+
+# SQL ORDER BY per JobsViewQuery.sort, mirroring the in-memory keys in
+# services/_jobs_view_sort.py (score = Stage B fit with Stage A fallback,
+# NULLS LAST; every sort ends in the discovered_at DESC, id DESC tiebreak)
+# so plain Library requests paginate in SQL beyond the corpus cap (D10).
+_JOBS_VIEW_SORT_SQL: dict[str, str] = {
+    "discovered_desc": "jobs.discovered_at DESC, jobs.id DESC",
+    "posted_desc": (
+        "jobs.posted_at DESC NULLS LAST, jobs.discovered_at DESC, jobs.id DESC"
+    ),
+    "score_desc": (
+        "COALESCE((evaluations.stage_b_fit_json ->> 'score_0_100')::integer,"
+        " evaluations.stage_a_score) DESC NULLS LAST,"
+        " jobs.discovered_at DESC, jobs.id DESC"
+    ),
+    "company_asc": (
+        "jobs.company_norm ASC NULLS LAST, jobs.discovered_at DESC, jobs.id DESC"
+    ),
+}
 
 
 def _jobs_view_filters(query: JobsViewQuery) -> tuple[list[str], list[object]]:
@@ -2970,14 +2990,14 @@ class PostgresStore:
         """Run the filtered, paginated Phase 8 jobs view query.
 
         One SELECT over jobs LEFT JOIN evaluations LEFT JOIN job_status for
-        the active tab's rows (newest discovered_at first, id breaking ties,
-        bounded by limit/offset), plus the active tab's total and a one-row
-        per-tab count aggregate. All request filters apply to the rows, the
-        total, and every tab_counts bucket alike, so tab_counts[t] equals the
-        total of re-running the same request with tab=t.
+        the active tab's rows (ordered per ``query.sort``, bounded by
+        limit/offset), plus the active tab's total and a one-row per-tab
+        count aggregate. All request filters apply to the rows, the total,
+        and every tab_counts bucket alike, so tab_counts[t] equals the total
+        of re-running the same request with tab=t.
 
         Args:
-            query: Tab, filters, and pagination window.
+            query: Tab, filters, sort, and pagination window.
 
         Returns:
             Bounded jobs view page.
@@ -2987,7 +3007,7 @@ class PostgresStore:
         shared_where = " AND ".join(shared) if shared else "TRUE"
         rows_sql = (
             f"SELECT {_JOBS_VIEW_COLUMNS} {_JOBS_VIEW_FROM} WHERE {where}"
-            " ORDER BY jobs.discovered_at DESC, jobs.id DESC"
+            f" ORDER BY {_JOBS_VIEW_SORT_SQL[query.sort]}"
             f" LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
         )
         pool = self._get_pool()
@@ -3006,6 +3026,54 @@ class PostgresStore:
             total=total,
             tab_counts={tab: int(counts_row[tab]) for tab in VALID_TABS},
         )
+
+    async def list_twin_rows_by_status(
+        self,
+        keys: Sequence[tuple[str, str]],
+        *,
+        statuses: Sequence[str],
+        limit: int,
+    ) -> list[JobsViewRow]:
+        """List view rows in the given statuses for the given twin keys.
+
+        Feeds the display fold (plan D9): the tab-filtered jobs-view corpus
+        never contains out-of-tab siblings, so the fold pulls them in
+        explicitly (e.g. the in-flight ``applied`` twin of a queue row). The
+        ``<> ''`` guards are NULL-safe, so blank-norm rows never match —
+        mirroring ``list_twin_statuses``.
+
+        Args:
+            keys: Non-blank ``(company_norm, title_norm)`` cluster keys.
+            statuses: Workflow statuses to keep.
+            limit: Maximum rows returned.
+
+        Returns:
+            Matching view rows, newest discovered first.
+        """
+        if not keys or not statuses:
+            return []
+        sql = (
+            f"SELECT {_JOBS_VIEW_COLUMNS} {_JOBS_VIEW_FROM}"
+            " JOIN unnest($1::text[], $2::text[])"
+            "   AS twin_keys(company_norm, title_norm)"
+            "   ON jobs.company_norm = twin_keys.company_norm"
+            "  AND jobs.title_norm = twin_keys.title_norm"
+            " WHERE job_status.status = ANY($3::text[])"
+            "   AND jobs.company_norm <> ''"
+            "   AND jobs.title_norm <> ''"
+            " ORDER BY jobs.discovered_at DESC, jobs.id DESC"
+            " LIMIT $4"
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                sql,
+                [key[0] for key in keys],
+                [key[1] for key in keys],
+                list(statuses),
+                limit,
+            )
+        return [_jobs_view_row_from_record(r) for r in rows]
 
     async def list_twin_statuses(self, job_id: str) -> list[TwinStatusRow]:
         """List a job's twins (same persisted company_norm + title_norm).
@@ -3353,9 +3421,13 @@ class PostgresStore:
                     raise ValueError(f"job {job_id} is not archived (status={current})")
 
                 hist = await conn.fetchrow(
+                    # Order by the append-only id, not changed_at: the wall
+                    # clock can invert two transitions written close together
+                    # (see get_status_history), which would restore to the
+                    # wrong target.
                     """SELECT to_status FROM job_status_history
                        WHERE job_id = $1 AND to_status != 'archived'
-                       ORDER BY changed_at DESC, id DESC
+                       ORDER BY id DESC
                        LIMIT 1""",
                     int(job_id),
                 )
@@ -3719,6 +3791,14 @@ class PostgresStore:
     async def get_status_history(self, job_id: str) -> list[str]:
         """Return to_status values from job_status_history, newest-first.
 
+        Ordered by the append-only ``id`` (BIGSERIAL), not ``changed_at``:
+        ``changed_at`` defaults to ``now()`` (the wall clock at transaction
+        start), which is not monotonic under NTP steps or load, so two
+        transitions written milliseconds apart can invert. ``id`` is the
+        gap-free insertion order and stays correct for legacy-imported rows
+        too (their ids preserve original chronology, and the sequence is
+        bumped past them on import).
+
         Args:
             job_id: Store-assigned identity.
 
@@ -3729,7 +3809,7 @@ class PostgresStore:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT to_status FROM job_status_history"
-                " WHERE job_id = $1 ORDER BY changed_at DESC, id DESC",
+                " WHERE job_id = $1 ORDER BY id DESC",
                 int(job_id),
             )
         return [r["to_status"] for r in rows]

@@ -69,6 +69,8 @@ interface ServerState {
   bulkResponse: BulkTransitionResponse;
   /** When false, decide endpoints leave the list untouched (collapse tests). */
   removeOnWrite: boolean;
+  /** When set, the list response claims this total instead of the row count. */
+  totalOverride: number | null;
 }
 
 interface RecordedCall {
@@ -95,6 +97,7 @@ function defaultState(): ServerState {
     ],
     bulkResponse: { succeeded: 2, skipped: 1, failed: [{ id: "9", error: "boom" }], cascaded: 3 },
     removeOnWrite: true,
+    totalOverride: null,
   };
 }
 
@@ -121,7 +124,7 @@ function mockApi(state: ServerState): void {
         const rows = params.get("tab") === "pending_jd" ? state.pending : state.queue;
         return json({
           jobs: rows,
-          total: rows.length,
+          total: state.totalOverride ?? rows.length,
           tab_counts: { queue: state.queue.length, pending_jd: state.pending.length },
         });
       }
@@ -324,12 +327,25 @@ test("bulk action toasts all four counters and re-seeds selection after refetch"
   await waitFor(() => expect(activeRowId()).toBe("3"));
 });
 
-test("select-all-matching selects every row in the response", async () => {
+test("select-all says 'matching' when the page covers the total, and selects every row", async () => {
   renderTriage();
   await screen.findByTestId("job-row-1");
 
   fireEvent.click(screen.getByRole("checkbox", { name: "Select Co1 Title1" }));
   fireEvent.click(screen.getByRole("button", { name: "Select all 3 matching" }));
+  expect(screen.getByText("3 selected")).toBeInTheDocument();
+});
+
+test("select-all says 'loaded' when the total exceeds the page — never overstates", async () => {
+  state.totalOverride = 50;
+  renderTriage();
+  await screen.findByTestId("job-row-1");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Co1 Title1" }));
+  // The action can only reach the 3 loaded rows, so the label must not
+  // claim all 50 matching.
+  expect(screen.queryByRole("button", { name: /matching/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Select all 3 loaded" }));
   expect(screen.getByText("3 selected")).toBeInTheDocument();
 });
 
@@ -433,6 +449,46 @@ test("apply dialog stays pinned to its job when a refetch re-seeds selection", a
   expect(applyCalls.map((call) => call.url)).toEqual(["/api/jobs/1/apply"]);
 });
 
+test("cancelling the apply dialog discards the draft — reopening posts a clean form", async () => {
+  renderTriage();
+  await screen.findByTestId("job-row-1");
+  await waitFor(() => expect(activeRowId()).toBe("1"));
+
+  // Draft an application for job 1, then cancel out of the dialog.
+  press("a");
+  const firstDialog = await screen.findByRole("dialog");
+  expect(within(firstDialog).getByText(/Apply — Co1 · Title1/)).toBeInTheDocument();
+  fireEvent.change(within(firstDialog).getByLabelText(/Resume variant/), {
+    target: { value: "stale-variant" },
+  });
+  fireEvent.change(within(firstDialog).getByLabelText(/Notes/), {
+    target: { value: "stale note meant for job 1" },
+  });
+  fireEvent.click(within(firstDialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+  // Reopen for job 2 and submit without touching any field.
+  fireEvent.click(screen.getByRole("button", { name: "Open Co2 Title2" }));
+  press("a");
+  const secondDialog = await screen.findByRole("dialog");
+  expect(within(secondDialog).getByText(/Apply — Co2 · Title2/)).toBeInTheDocument();
+  expect(within(secondDialog).getByLabelText(/Resume variant/)).toHaveValue("");
+  expect(within(secondDialog).getByLabelText(/Notes/)).toHaveValue("");
+  fireEvent.click(within(secondDialog).getByRole("button", { name: "Record application" }));
+  // Toast text is asserted elsewhere (and lingers in module state across
+  // tests) — wait on the POST itself, which is what this test pins.
+  await waitFor(() => {
+    expect(calls.some((call) => /\/api\/jobs\/\w+\/apply$/.test(call.url))).toBe(true);
+  });
+
+  // The cancelled draft never rode into job 2's application audit: one
+  // POST, to job 2, with an empty multipart body.
+  const applyCalls = calls.filter((call) => /\/api\/jobs\/\w+\/apply$/.test(call.url));
+  expect(applyCalls.map((call) => call.url)).toEqual(["/api/jobs/2/apply"]);
+  const form = applyCalls[0]?.init?.body as FormData;
+  expect(Array.from(form.keys())).toEqual([]);
+});
+
 test("deciding the only row clears selection and shows the empty states", async () => {
   state.queue = [jobRow("1")];
   renderTriage();
@@ -457,4 +513,92 @@ test("o opens the selected posting in a new tab", async () => {
 
   press("o");
   expect(openSpy).toHaveBeenCalledWith("https://example.com/1", "_blank", "noopener");
+});
+
+function transitionBody(url: string): Record<string, unknown> {
+  return JSON.parse(
+    String(calls.find((call) => call.url === url)?.init?.body),
+  ) as Record<string, unknown>;
+}
+
+test("pending JD hides the decide trio; Ignore sends a forced transition", async () => {
+  renderTriage();
+  await screen.findByTestId("job-row-1");
+  await openPendingTab();
+
+  // An un-scored row can't be applied/shortlisted/skipped — the detail
+  // pane offers only the paste card and the dismiss-as-junk Ignore.
+  const ignore = await screen.findByRole("button", { name: "Ignore" });
+  expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Shortlist" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
+
+  // The queue decide keys are unbound here: nothing fires, no apply dialog.
+  press("h");
+  press("s");
+  press("a");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(calls.filter((call) => call.url.endsWith("/transition"))).toHaveLength(0);
+
+  fireEvent.click(ignore);
+  await waitFor(() => expect(screen.queryByTestId("job-row-p1")).toBeNull());
+  expect(transitionBody("/api/jobs/p1/transition")).toMatchObject({
+    to: "ignored",
+    force: true,
+  });
+});
+
+test("i ignores the selected pending row (forced); queue does not bind i", async () => {
+  renderTriage();
+  await screen.findByTestId("job-row-1");
+  await waitFor(() => expect(activeRowId()).toBe("1"));
+
+  press("i");
+  expect(calls.filter((call) => call.url.endsWith("/transition"))).toHaveLength(0);
+
+  await openPendingTab();
+  await waitFor(() => expect(activeRowId()).toBe("p1"));
+  press("i");
+  await waitFor(() => expect(screen.queryByTestId("job-row-p1")).toBeNull());
+  expect(transitionBody("/api/jobs/p1/transition")).toMatchObject({
+    to: "ignored",
+    force: true,
+  });
+  // Selection auto-advanced onto the surviving pending row.
+  await waitFor(() => expect(activeRowId()).toBe("p2"));
+});
+
+test("queue decides stay non-forced", async () => {
+  renderTriage();
+  await screen.findByTestId("job-row-1");
+  await waitFor(() => expect(activeRowId()).toBe("1"));
+
+  press("h");
+  await waitFor(() =>
+    expect(calls.some((call) => call.url === "/api/jobs/1/transition")).toBe(true),
+  );
+  expect(transitionBody("/api/jobs/1/transition")).toMatchObject({
+    to: "shortlisted",
+    force: false,
+  });
+});
+
+test("pending JD bulk bar offers only the forced Ignore", async () => {
+  renderTriage();
+  await screen.findByTestId("job-row-1");
+  await openPendingTab();
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Cop1 Titlep1" }));
+  const bulkBar = screen.getByRole("toolbar", { name: "Bulk actions" });
+  expect(within(bulkBar).queryByRole("button", { name: "Shortlist" })).toBeNull();
+  expect(within(bulkBar).queryByRole("button", { name: "Skip" })).toBeNull();
+
+  fireEvent.click(within(bulkBar).getByRole("button", { name: "Ignore" }));
+  await waitFor(() =>
+    expect(calls.some((call) => call.url === "/api/jobs/bulk/transition")).toBe(true),
+  );
+  expect(transitionBody("/api/jobs/bulk/transition")).toMatchObject({
+    items: [{ id: "p1", to: "ignored" }],
+    force: true,
+  });
 });

@@ -6,8 +6,12 @@ interface BulkBarProps {
   selectedIds: string[];
   /** True total matching the current filters (the API's `total`). */
   total: number;
-  /** Ignore is the pending-JD flavor of skip (§15) — queue hides it. */
-  showIgnore: boolean;
+  /** Rows actually loaded in the current response — select-all's real reach. */
+  loadedCount: number;
+  /** Pending-JD mode: ONLY the forced Ignore (dismiss-as-junk). Un-scored
+   * pending rows are status 'new' (sole legal move: new→scored), so the
+   * queue's Shortlist/Skip would 409 there — and Ignore must force (§15). */
+  ignoreOnly: boolean;
   onSelectPage: () => void;
   onSelectAllMatching: () => void;
   onClear: () => void;
@@ -15,16 +19,25 @@ interface BulkBarProps {
   onBulkCleared: () => void;
 }
 
-const QUEUE_ACTIONS: { label: string; to: TransitionStatus }[] = [
-  { label: "Shortlist", to: "shortlisted" },
-  { label: "Skip", to: "archived" },
+interface BulkAction {
+  label: string;
+  to: TransitionStatus;
+  force: boolean;
+}
+
+const QUEUE_ACTIONS: BulkAction[] = [
+  { label: "Shortlist", to: "shortlisted", force: false },
+  { label: "Skip", to: "archived", force: false },
 ];
+
+const PENDING_JD_ACTIONS: BulkAction[] = [{ label: "Ignore", to: "ignored", force: true }];
 
 /** Appears while rows are checkbox-selected; runs the bulk endpoint. */
 export function BulkBar({
   selectedIds,
   total,
-  showIgnore,
+  loadedCount,
+  ignoreOnly,
   onSelectPage,
   onSelectAllMatching,
   onClear,
@@ -36,13 +49,11 @@ export function BulkBar({
     return null;
   }
 
-  const actions = showIgnore
-    ? [...QUEUE_ACTIONS, { label: "Ignore", to: "ignored" as TransitionStatus }]
-    : QUEUE_ACTIONS;
+  const actions = ignoreOnly ? PENDING_JD_ACTIONS : QUEUE_ACTIONS;
 
-  const run = (to: TransitionStatus) => {
+  const run = ({ to, force }: BulkAction) => {
     bulk.mutate(
-      selectedIds.map((id) => ({ id, to })),
+      { items: selectedIds.map((id) => ({ id, to })), force },
       {
         onSuccess: (result) => {
           // All four counters, always — the cascade count is the twin story.
@@ -76,7 +87,7 @@ export function BulkBar({
           key={action.to}
           size="sm"
           disabled={bulk.isPending}
-          onClick={() => run(action.to)}
+          onClick={() => run(action)}
         >
           {action.label}
         </Button>
@@ -85,10 +96,13 @@ export function BulkBar({
       <Button variant="ghost" size="sm" disabled={bulk.isPending} onClick={onSelectPage}>
         Select page
       </Button>
-      {/* The current response IS the matching set at triage scale (one
-          page, plan D10); a dedicated all-matching fetch can come later. */}
+      {/* Select-all only reaches the loaded response. At triage scale that
+          IS the matching set (one page, plan D10) — but when the total
+          extends past the page, the label must not overstate. */}
       <Button variant="ghost" size="sm" disabled={bulk.isPending} onClick={onSelectAllMatching}>
-        Select all {total} matching
+        {total > loadedCount
+          ? `Select all ${loadedCount} loaded`
+          : `Select all ${total} matching`}
       </Button>
       <Button variant="ghost" size="sm" disabled={bulk.isPending} onClick={onClear}>
         Clear

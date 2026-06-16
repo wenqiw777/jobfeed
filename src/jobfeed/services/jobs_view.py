@@ -5,11 +5,17 @@ List composition order (plan D10): bounded SQL prefilter via
 -> sort -> in-memory pagination with true totals. Triage tabs (queue,
 pending_jd) and any post-processed request over-fetch the corpus from the
 store (``JOBS_VIEW_CORPUS_LIMIT``) because SQL pagination would window rows
-BEFORE the in-memory drop/fold steps; Library tabs with the default sort and
-no post-processing flags pass limit/offset straight to SQL. ``tab_counts``
-pass through from the store — SQL-prefilter counts, never post-fold counts.
+BEFORE the in-memory drop/fold steps; Library tabs with no post-processing
+flags pass sort/limit/offset straight to SQL (any sort — the store orders
+per ``query.sort``). ``tab_counts`` pass through from the store —
+SQL-prefilter counts, never post-fold counts.
 
-The pure sort keys live in ``services/_jobs_view_sort.py``.
+The display fold pulls in-flight (applied/interviewing/offer) twins of the
+corpus rows into the fold input even when the tab excludes them, so a
+posting applied on one platform suppresses its still-in-queue siblings (D9).
+
+The pure sort keys live in ``services/_jobs_view_sort.py``; the fold step
+lives in ``services/_jobs_view_fold.py``.
 """
 
 from __future__ import annotations
@@ -18,7 +24,6 @@ from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain import filtering
-from jobfeed.domain.dedupe import pick_display_representatives
 from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models import (
     ApplicationRecord,
@@ -33,6 +38,7 @@ from jobfeed.domain.models_views import (
     TwinStatusRow,
 )
 from jobfeed.ports.store_views import StoreViewsMixin
+from jobfeed.services._jobs_view_fold import fold_with_inflight_twins
 from jobfeed.services._jobs_view_sort import (
     DEFAULT_SORT,
     LIBRARY_SORT_KEYS,
@@ -160,7 +166,8 @@ class JobsViewService:
         Triage tabs always use the fixed verdict-group order (``sort`` is
         ignored there per plan A4); Library tabs honor ``sort``. Requests
         needing post-processing over-fetch and paginate in memory with the
-        true post-processing total; plain Library requests paginate in SQL.
+        true post-processing total; plain Library requests paginate in SQL
+        for ANY sort (the store orders per ``query.sort``).
 
         Args:
             query: Tab, filters, and the requested pagination window.
@@ -178,23 +185,26 @@ class JobsViewService:
             raise ValueError(f"unknown jobs view sort: {sort!r}")
         is_triage = query.tab in _TRIAGE_TABS
         effective_sort = DEFAULT_SORT if is_triage else sort
-        needs_post_processing = (
-            is_triage or apply_hard_filters or dedupe or effective_sort != DEFAULT_SORT
-        )
-        if not needs_post_processing:
-            return await self._store.query_jobs_view(query)
+        if not (is_triage or apply_hard_filters or dedupe):
+            return await self._store.query_jobs_view(
+                replace(query, sort=effective_sort)
+            )
+        # Over-fetch corpus in the effective SQL order so the cap keeps the
+        # best rows under the requested sort even on pathological databases.
         corpus = await self._store.query_jobs_view(
-            replace(query, limit=JOBS_VIEW_CORPUS_LIMIT, offset=0)
+            replace(query, limit=JOBS_VIEW_CORPUS_LIMIT, offset=0, sort=effective_sort)
         )
         rows = corpus.rows
         if apply_hard_filters:
             rows = self._drop_hard_filtered(rows)
         if dedupe:
-            rows = _fold_to_display_representatives(rows)
-        if is_triage:
-            rows = sorted(rows, key=verdict_group_sort_key)
-        else:
-            rows = sorted(rows, key=LIBRARY_SORT_KEYS[effective_sort])
+            rows = await fold_with_inflight_twins(
+                self._store, rows, twin_limit=JOBS_VIEW_CORPUS_LIMIT
+            )
+        sort_key = (
+            verdict_group_sort_key if is_triage else LIBRARY_SORT_KEYS[effective_sort]
+        )
+        rows = sorted(rows, key=sort_key)
         return JobsViewPage(
             rows=rows[query.offset : query.offset + query.limit],
             # Beyond the corpus cap, len(rows) (reachable rows) is deliberately
@@ -232,27 +242,6 @@ class JobsViewService:
             for row in rows
             if filtering.apply_hard_filters(row.job, self._hard_filters) is None
         ]
-
-
-def _fold_to_display_representatives(rows: list[JobsViewRow]) -> list[JobsViewRow]:
-    """Fold twin clusters to one status-aware display representative each.
-
-    Delegates clustering and selection to the pure domain fold (plan D9) over
-    the rows' jobs, then maps the winning jobs back to their rows via an
-    id-keyed dict. Time complexity: O(n) over the corpus.
-
-    Args:
-        rows: View rows to fold (store rows always carry a job id).
-
-    Returns:
-        One row per twin cluster, in cluster (first-seen) order.
-    """
-    row_by_id = {row.job.id: row for row in rows if row.job.id is not None}
-    representatives = pick_display_representatives(
-        [row.job for row in rows],
-        {job_id: row.status for job_id, row in row_by_id.items()},
-    )
-    return [row_by_id[job.id] for job in representatives if job.id is not None]
 
 
 __all__ = [

@@ -71,6 +71,15 @@ _STATUS_CLASS: dict[str, int] = {
     "awaiting_referral": _SHORTLIST_CLASS,
 }
 
+#: The in-flight application statuses — the top display-fold class. The
+#: jobs-view fold pulls twins in these statuses into a tab-filtered corpus
+#: so an applied posting suppresses its still-in-queue siblings (plan D9).
+INFLIGHT_STATUSES: frozenset[str] = frozenset(
+    status
+    for status, status_class in _STATUS_CLASS.items()
+    if status_class == _APPLICATION_CLASS
+)
+
 
 @dataclass(frozen=True)
 class TwinCluster:
@@ -263,6 +272,7 @@ def pick_display_representatives(
 
 
 __all__ = [
+    "INFLIGHT_STATUSES",
     "TwinCluster",
     "cluster_twins",
     "pick_display_representatives",

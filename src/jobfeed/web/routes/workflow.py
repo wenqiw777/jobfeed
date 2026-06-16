@@ -242,7 +242,7 @@ async def list_interviews(job_id: int, service: _Workflow) -> InterviewsListResp
 
 @router.post("/jobs/{job_id}/interviews")
 async def add_interview(
-    job_id: int, body: InterviewAddBody, service: _Workflow
+    job_id: int, body: InterviewAddBody, service: _Workflow, store: _Store
 ) -> InterviewRoundDetail:
     """Add an interview round (auto-transitions applied -> interviewing).
 
@@ -250,10 +250,17 @@ async def add_interview(
         job_id: Store-assigned job identity.
         body: Round label and optional scheduled time.
         service: Shared workflow service from the app state.
+        store: Shared job store from the app state.
 
     Returns:
         The newly created round.
+
+    Raises:
+        ApiError: 404 when the job has no status row.
     """
+    status_info = await cast(StoreStatusMixin, store).get_status(str(job_id))
+    if status_info is None:
+        raise _not_found(f"no status row for job {job_id}")
     round_ = await service.add_round(
         str(job_id), body.label, scheduled_at=body.scheduled_at
     )

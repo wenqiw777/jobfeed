@@ -62,7 +62,8 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
 
     Returns:
         Configured FastAPI app serving the ``/api`` routes, plus the SPA
-        when a built bundle is present.
+        when a built bundle is present; ``app.state.is_spa_mounted`` records
+        which of the two modes this process is in.
     """
 
     @asynccontextmanager
@@ -102,11 +103,21 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.include_router(insights_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
     app.include_router(companies_router, prefix="/api")
-    _mount_spa(app, static_dir if static_dir is not None else _DEFAULT_DIST_DIR)
+    dist_dir = static_dir if static_dir is not None else _DEFAULT_DIST_DIR
+    is_spa_mounted = _mount_spa(app, dist_dir)
+    app.state.is_spa_mounted = is_spa_mounted
+    if is_spa_mounted:
+        logger.info("web_ui_mounted", dist_dir=str(dist_dir))
+    else:
+        logger.info(
+            "web_ui_not_built",
+            dist_dir=str(dist_dir),
+            hint="serving API only; run `make web-build` to build the UI",
+        )
     return app
 
 
-def _mount_spa(app: FastAPI, dist_dir: Path) -> None:
+def _mount_spa(app: FastAPI, dist_dir: Path) -> bool:
     """Serve the built SPA from ``dist_dir`` with client-route fallback.
 
     No-op when no built bundle (``index.html``) exists, preserving the
@@ -119,12 +130,16 @@ def _mount_spa(app: FastAPI, dist_dir: Path) -> None:
     Args:
         app: FastAPI app with the ``/api`` routers already included.
         dist_dir: Directory holding the Vite build output.
+
+    Returns:
+        True when a built bundle was found and mounted; False when the
+        process stays API-only.
     """
     # Resolved so the no-cache check below also matches a direct
     # /index.html request, which _static_file_or_index resolves.
     index_file = (dist_dir / "index.html").resolve()
     if not index_file.is_file():
-        return
+        return False
     assets_dir = dist_dir / "assets"
     if assets_dir.is_dir():
         # StaticFiles gives hashed Vite assets correct content types and
@@ -162,6 +177,8 @@ def _mount_spa(app: FastAPI, dist_dir: Path) -> None:
         if target == index_file:
             return FileResponse(target, headers={"Cache-Control": "no-cache"})
         return FileResponse(target)
+
+    return True
 
 
 def _static_file_or_index(dist_dir: Path, index_file: Path, spa_path: str) -> Path:

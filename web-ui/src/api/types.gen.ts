@@ -446,9 +446,13 @@ export interface paths {
          *         job_id: Store-assigned job identity.
          *         body: Round label and optional scheduled time.
          *         service: Shared workflow service from the app state.
+         *         store: Shared job store from the app state.
          *
          *     Returns:
          *         The newly created round.
+         *
+         *     Raises:
+         *         ApiError: 404 when the job has no status row.
          */
         post: operations["add_interview_api_jobs__job_id__interviews_post"];
         delete?: never;

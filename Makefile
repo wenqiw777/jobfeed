@@ -1,4 +1,4 @@
-.PHONY: test lint fmt quality e2e docker-build docker-quality update-prices web-schema
+.PHONY: test lint fmt quality e2e docker-build docker-quality update-prices web-schema web-build
 
 SOURCE ?= indeed
 
@@ -32,4 +32,9 @@ update-prices:
 # Regenerate the committed OpenAPI snapshot after changing web routes/DTOs;
 # tests/contract/test_web_openapi.py pins it.
 web-schema:
-	python scripts/dump_openapi.py
+	python3 scripts/dump_openapi.py
+
+# Build the SPA bundle (web-ui/dist) that `jobfeed serve` mounts at /.
+# web-ui/dist is gitignored build output, so run this before serving the UI.
+web-build:
+	cd web-ui && npm ci && npm run build
