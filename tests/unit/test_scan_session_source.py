@@ -38,6 +38,9 @@ class RecordingStore:
         """Record the final pipeline run."""
         self.runs.append(run)
 
+    async def record_step_timing(self, _timing: object) -> None:
+        """Accept and discard step timings (scan path doesn't assert on them)."""
+
 
 class RecordingLogger:
     """Small in-memory logger for service assertions."""

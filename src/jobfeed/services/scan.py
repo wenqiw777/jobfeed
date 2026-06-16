@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
 
 from jobfeed.domain.errors import SourceBusyError
 from jobfeed.domain.models import JobPosting, PipelineRun
-from jobfeed.observability import JobfeedLogger, bind_run_id
+from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
 from jobfeed.ports.source import EnrichResult, ScanSession, SessionSource, SimpleSource
 from jobfeed.ports.store import JobStore
+from jobfeed.ports.store_perf import StorePerfMixin
+from jobfeed.services._timing import StepTimer
 from jobfeed.services.error_handler import ServiceErrorHandler
 from jobfeed.services.runs import start_pipeline_run
+
+ProgressCallback = Callable[[PipelineRun], None]
 
 SourcePort = SimpleSource | SessionSource
 SourceSpec = tuple[str, SourcePort, dict[str, object]]
@@ -33,17 +39,25 @@ class ScanService:
         self.logger = logger
         self.error_handler = ServiceErrorHandler(store=store, logger=logger)
 
-    async def run(self, sources: list[SourceSpec]) -> PipelineRun:
+    async def run(
+        self,
+        sources: list[SourceSpec],
+        on_progress: ProgressCallback | None = None,
+    ) -> PipelineRun:
         """Fetch jobs from sources and persist scan counters.
 
         Args:
             sources: Source name, source port, and source config tuples.
+            on_progress: Optional callback invoked after each source completes.
 
         Returns:
             Recorded pipeline run with discovery and upsert counters.
         """
         run = start_pipeline_run(_run_source_name(sources))
         bind_run_id(run.run_id)
+        self._tracer = get_tracer("jobfeed.scan")
+        self._perf_store = cast(StorePerfMixin, self.store)
+        self._on_progress = on_progress
         await asyncio.gather(
             *(
                 self._scan_one_source(run, name, source, config)
@@ -61,10 +75,19 @@ class ScanService:
         source: SourcePort,
         config: dict[str, object],
     ) -> None:
-        if isinstance(source, SessionSource):
-            await self._scan_session_source(run, name, source, config)
-            return
-        await self._scan_simple_source(run, name, source, config)
+        async with StepTimer(
+            self._perf_store,
+            run.run_id,
+            "source_fetch",
+            name,
+            self._tracer,
+        ):
+            if isinstance(source, SessionSource):
+                await self._scan_session_source(run, name, source, config)
+            else:
+                await self._scan_simple_source(run, name, source, config)
+        if self._on_progress is not None:
+            self._on_progress(run)
 
     async def _scan_simple_source(
         self,

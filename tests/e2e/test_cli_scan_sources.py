@@ -72,6 +72,9 @@ class FakeStore:
     async def record_pipeline_run(self, run: Any) -> None:
         self.runs.append(run)
 
+    async def record_step_timing(self, _timing: Any) -> None:
+        pass
+
     async def get_company(self, slug: str) -> Any:
         return self.companies.get(slug)
 

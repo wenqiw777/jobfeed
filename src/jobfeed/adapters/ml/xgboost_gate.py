@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -36,23 +36,27 @@ from jobfeed.adapters.ml._embedder import (
     DEFAULT_MODEL_NAME,
     EmbedderProtocol,
     FastEmbedEmbedder,
-    _canonical_model_name,
 )
-from jobfeed.adapters.ml._vectorize import EMBEDDING_DIM, featurize
+from jobfeed.adapters.ml._gate_validation import (
+    _META_THRESHOLD_KEY,
+    read_meta,
+    resolve_model_path,
+    validate_embedding_contract,
+)
+from jobfeed.adapters.ml._vectorize import featurize
 from jobfeed.domain.ml_features import (
     MLGateFeatures,
     extract_features,
     hard_fail_reason,
 )
 from jobfeed.domain.models import MLGateResult
+from jobfeed.observability import get_tracer
 from jobfeed.ports.ml_gate import GateInput
 
 DEFAULT_MODEL_DIR = "models/ml_gate"
 _BINARY_LOGISTIC = "binary:logistic"
 FAIL_SCORE = 0.0
-_META_EMBEDDING_MODEL_KEY = "embedding_model"
-_META_EMBEDDING_DIM_KEY = "embedding_dim"
-_META_THRESHOLD_KEY = "threshold"
+_tracer = get_tracer("jobfeed.ml_gate")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,8 +108,8 @@ class XGBoostGate:
         booster, version = _load_booster(Path(model_dir), model_version=model_version)
         self._booster: Any = booster
         self._version = version
-        meta = _read_meta(Path(model_dir), version)
-        _validate_embedding_contract(meta, model_name)
+        meta = read_meta(Path(model_dir), version)
+        validate_embedding_contract(meta, model_name)
         meta_threshold = float(meta[_META_THRESHOLD_KEY])
         self._threshold = (
             threshold_override if threshold_override is not None else meta_threshold
@@ -150,15 +154,22 @@ class XGBoostGate:
         if not survivors:
             return
         embedder = self._active_embedder
-        texts = [
-            embedder.format_input(row.job.title, row.job.jd_text) for row in survivors
-        ]
-        embeddings = embedder.embed_batch(texts)
-        matrix = np.stack(
-            [featurize(row.features, embeddings[i]) for i, row in enumerate(survivors)],
-            axis=0,
-        )
-        scores = self._predict(matrix)
+        with _tracer.start_as_current_span("extract_features"):
+            texts = [
+                embedder.format_input(row.job.title, row.job.jd_text)
+                for row in survivors
+            ]
+        with _tracer.start_as_current_span("embed"):
+            embeddings = embedder.embed_batch(texts)
+        with _tracer.start_as_current_span("predict"):
+            matrix = np.stack(
+                [
+                    featurize(row.features, embeddings[i])
+                    for i, row in enumerate(survivors)
+                ],
+                axis=0,
+            )
+            scores = self._predict(matrix)
         for row, score in zip(survivors, scores, strict=True):
             row.apply_model_score(float(score), self._threshold)
 
@@ -225,7 +236,7 @@ def _load_booster(model_dir: Path, *, model_version: str | None) -> tuple[Any, s
     # runtime in-process — no dual-load collision, no OMP pin needed here.
     import xgboost as xgb  # noqa: PLC0415
 
-    model_path = _resolve_model_path(model_dir, model_version)
+    model_path = resolve_model_path(model_dir, model_version)
 
     booster = xgb.Booster()
     booster.load_model(str(model_path))
@@ -237,64 +248,6 @@ def _load_booster(model_dir: Path, *, model_version: str | None) -> tuple[Any, s
             f"expected {_BINARY_LOGISTIC!r}"
         )
     return booster, model_path.stem
-
-
-def _resolve_model_path(model_dir: Path, model_version: str | None) -> Path:
-    if model_version is not None:
-        model_path = model_dir / f"{model_version}.json"
-        if model_path.exists():
-            return model_path
-        raise FileNotFoundError(
-            f"ML-gate model {model_version}.json not found in {model_dir}"
-        )
-    model_files = sorted(
-        path
-        for path in model_dir.glob("v*.json")
-        if not path.name.endswith(".meta.json")
-    )
-    if not model_files:
-        raise FileNotFoundError(f"No ML-gate model (v*.json) found in {model_dir}")
-    return model_files[-1]
-
-
-def _read_meta(model_dir: Path, version: str) -> dict[str, Any]:
-    """Read and validate required model metadata."""
-    meta_path = model_dir / f"{version}.meta.json"
-    if not meta_path.exists():
-        raise FileNotFoundError(f"ML-gate model meta not found: {meta_path}")
-    meta = cast(dict[str, Any], json.loads(meta_path.read_text()))
-    missing = [
-        key
-        for key in (
-            _META_THRESHOLD_KEY,
-            _META_EMBEDDING_MODEL_KEY,
-            _META_EMBEDDING_DIM_KEY,
-        )
-        if key not in meta
-    ]
-    if missing:
-        raise ValueError(
-            f"ML-gate model meta {meta_path.name} missing required keys: "
-            f"{', '.join(missing)}"
-        )
-    return meta
-
-
-def _validate_embedding_contract(meta: dict[str, Any], model_name: str) -> None:
-    """Fail fast when configured embedder does not match model metadata."""
-    expected_model = str(meta[_META_EMBEDDING_MODEL_KEY])
-    actual_model = _canonical_model_name(model_name)
-    if _canonical_model_name(expected_model) != actual_model:
-        raise ValueError(
-            "embedding_model mismatch: "
-            f"model expects {expected_model!r}, configured {model_name!r}"
-        )
-    expected_dim = int(meta[_META_EMBEDDING_DIM_KEY])
-    if expected_dim != EMBEDDING_DIM:
-        raise ValueError(
-            f"embedding_dim mismatch: model expects {expected_dim}, "
-            f"vectorizer expects {EMBEDDING_DIM}"
-        )
 
 
 __all__ = ["EmbedderConfig", "XGBoostGate"]

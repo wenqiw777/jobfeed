@@ -320,7 +320,7 @@ def test_xgboost_gate_forwards_embedding_model_to_default_embedder(
     )
     monkeypatch.setattr(
         xgboost_gate_module,
-        "_read_meta",
+        "read_meta",
         lambda _model_dir, _version: {
             **MODEL_META,
             "embedding_model": "custom/embed-model",
@@ -352,7 +352,7 @@ def test_xgboost_gate_default_embedding_model_falls_back(
     )
     monkeypatch.setattr(
         xgboost_gate_module,
-        "_read_meta",
+        "read_meta",
         lambda _model_dir, _version: MODEL_META,
     )
 
@@ -377,7 +377,7 @@ def test_xgboost_gate_injected_embedder_ignores_embedding_model(
     )
     monkeypatch.setattr(
         xgboost_gate_module,
-        "_read_meta",
+        "read_meta",
         lambda _model_dir, _version: {
             **MODEL_META,
             "embedding_model": "custom/embed-model",

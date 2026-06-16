@@ -9,7 +9,6 @@ claiming anything. Filter + dedupe are unconditional; gating is conditional on
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 
 from jobfeed.domain.dedupe import pick_representatives
@@ -17,13 +16,12 @@ from jobfeed.domain.filtering import HardFilters, apply_hard_filters
 from jobfeed.domain.models import (
     DryRunPreviewItem,
     JobPosting,
-    MLGateResult,
     PipelineRun,
 )
 from jobfeed.observability import JobfeedLogger
-from jobfeed.ports.ml_gate import GateInput, MLGate
 from jobfeed.ports.store_claims import GateCandidate
 from jobfeed.services._evaluate_claims import load_gate_candidates_for_run
+from jobfeed.services._evaluate_gate import gate_representatives
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 
 # Generous safety bound on candidate pages scanned per funnel run, so a long
@@ -71,7 +69,7 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
     representatives = await _load_representatives(
         deps, config, run, corpus, max_days, logger
     )
-    survivors = await _gate_representatives(deps, config, run, representatives, dry_run)
+    survivors = await gate_representatives(deps, config, run, representatives, dry_run)
     if dry_run:
         # Append (not assign) so a later Stage-B preview pass keeps this pass's
         # items; matches build_dry_run_preview's Stage-B ``.extend`` and is
@@ -164,86 +162,6 @@ def _representatives(candidates: list[GateCandidate]) -> list[GateCandidate]:
     by_id = {_job_id(c.job): c for c in candidates}
     reps = pick_representatives([c.job for c in candidates])
     return [by_id[_job_id(job)] for job in reps]
-
-
-async def _gate_representatives(
-    deps: EvaluateDependencies,
-    config: EvaluateRuntimeConfig,
-    run: PipelineRun,
-    representatives: list[GateCandidate],
-    dry_run: bool,
-) -> list[JobPosting]:
-    """Gate only NULL-gate reps and return the surviving job postings.
-
-    Already-'pass' representatives (e.g. a crash between gate-write and Stage-A
-    claim) become survivors directly WITHOUT re-gating or re-persisting, per plan
-    Decision 8 — re-gating them risks a swapped model / changed
-    ``threshold_override`` flipping a persisted 'pass' to 'fail' and silently
-    dropping the row from scoring. 'fail' reps are already excluded by the load
-    predicate when ``exclude_gate_failed`` (i.e. whenever the gate runs).
-
-    Args:
-        deps: Evaluate dependencies holding the optional ML gate + store.
-        config: Runtime config carrying the ml_gate flag.
-        run: Pipeline run whose ``jobs_ml_gated`` counter is incremented.
-        representatives: Deduped survivors (job + gate state) to consider.
-        dry_run: When True, skip persistence.
-
-    Returns:
-        Surviving job postings (all reps' jobs when the gate is off).
-    """
-    gate = deps.ml_gate
-    if not config.ml_gate_enabled or gate is None:
-        return [c.job for c in representatives]
-    already_pass = [c.job for c in representatives if c.ml_gate_result == "pass"]
-    to_gate = [c.job for c in representatives if c.ml_gate_result is None]
-    newly_passed = await _gate_unrated(deps, gate, run, to_gate, dry_run)
-    return already_pass + newly_passed
-
-
-async def _gate_unrated(
-    deps: EvaluateDependencies,
-    gate: MLGate,
-    run: PipelineRun,
-    to_gate: list[JobPosting],
-    dry_run: bool,
-) -> list[JobPosting]:
-    """Score NULL-gate reps, persist results, and return the 'pass' subset.
-
-    Increments ``run.jobs_ml_gated`` by the non-pass count; persists every fresh
-    result (no-op in dry-run).
-    """
-    if not to_gate:
-        return []
-    inputs = [
-        GateInput(job_id=_job_id(job), title=job.title, jd_text=job.jd_text or "")
-        for job in to_gate
-    ]
-    results = await gate.predict_batch(inputs)
-    await _persist_gate_results(deps, to_gate, results, dry_run)
-    run.jobs_ml_gated += sum(1 for result in results if result.result != "pass")
-    return [
-        job
-        for job, result in zip(to_gate, results, strict=True)
-        if result.result == "pass"
-    ]
-
-
-async def _persist_gate_results(
-    deps: EvaluateDependencies,
-    representatives: list[JobPosting],
-    results: list[MLGateResult],
-    dry_run: bool,
-) -> None:
-    """Persist each gate result concurrently, 1:1 with reps (no-op in dry-run)."""
-    if dry_run:
-        return
-    pairs = list(zip(representatives, results, strict=True))
-
-    async def _save(job: JobPosting, result: MLGateResult) -> None:
-        await deps.store.save_ml_gate_result(_job_id(job), result)
-
-    await asyncio.gather(*(_save(job, result) for job, result in pairs))
 
 
 def _limit_survivors(

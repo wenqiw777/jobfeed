@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from jobfeed.domain.errors import ScoringParseError
 from jobfeed.domain.models import JobPosting, LLMRequest, PipelineRun, StageAResult
 from jobfeed.domain.scoring_parse import parse_stage_a_response, parse_stage_b_response
-from jobfeed.observability import JobfeedLogger, bind_run_id
+from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.prompts import PromptBundle
 from jobfeed.services._evaluate_budget import EvaluateBudgetGate
@@ -31,6 +32,7 @@ from jobfeed.services._evaluate_helpers import (
     require_job_id,
 )
 from jobfeed.services._evaluate_sweep import sweep_stage_b
+from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 from jobfeed.services.runs import start_pipeline_run
 
@@ -49,8 +51,10 @@ class EvaluateService:
         self._config = config
         self._logger = logger
         self._budget = EvaluateBudgetGate(deps.store_ops, config.llm, logger)
+        self._perf = get_perf_store(deps.store)
+        self._tracer = get_tracer("jobfeed.evaluate")
 
-    async def run(
+    async def run(  # noqa: PLR0913 - on_progress callback is the only addition
         self,
         *,
         stage: str = "both",
@@ -58,11 +62,13 @@ class EvaluateService:
         limit: int | None = None,
         max_days: int | None = None,
         dry_run: bool = False,
+        on_progress: Callable[[PipelineRun], None] | None = None,
     ) -> PipelineRun:
         """Evaluate pending jobs, persist run counters.
 
         Args:
             stage: "both"/"a"/"b". corpus/limit/max_days/dry_run: filter knobs.
+            on_progress: Optional callback fired after each stage completes.
         Returns: Recorded pipeline run with counters.
         """
         validate_evaluate_stage(stage)
@@ -83,47 +89,57 @@ class EvaluateService:
         if dry_run:
             request = DryRunRequest(self._logger, stage, corpus, lim, max_days)
             await build_dry_run_preview(self._deps, self._config, run, request)
-        else:
-            if stage != "b":
-                await self._run_stage_a(run, corpus, lim, max_days)
-            if stage != "a":
+        if not dry_run and stage != "b":
+            await self._run_stage_a(run, corpus, lim, max_days)
+            if on_progress is not None:
+                on_progress(run)
+        if not dry_run and stage != "a":
+            async with self._st(run.run_id, "stage", "stage_b"):
                 await self._run_stage_b(run, lim, max_days)
+            if on_progress is not None:
+                on_progress(run)
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
         run.finished_at = datetime.now(UTC)
         if not dry_run:
             await self._deps.store.record_pipeline_run(run)
+        if on_progress is not None:
+            on_progress(run)
         return run
+
+    def _st(self, run_id: str, step_type: str, step_name: str) -> StepTimer:
+        return StepTimer(self._perf, run_id, step_type, step_name, self._tracer)
 
     async def _run_stage_a(
         self, run: PipelineRun, corpus: str, limit: int, max_days: int | None
     ) -> None:
         if limit <= 0:
             return  # "max jobs"=0 means do no funnel work (mirrors _run_stage_b)
-        # Budget check before funnel: exhausted budget wastes gate + load work.
         if not await self._budget.has_budget():
             return
-        survivors = await run_funnel(
-            self._deps,
-            self._config,
-            run,
-            corpus,
-            max_days,
-            logger=self._logger,
-            dry_run=False,
-        )
+        async with self._st(run.run_id, "stage", "funnel"):
+            survivors = await run_funnel(
+                self._deps,
+                self._config,
+                run,
+                corpus,
+                max_days,
+                logger=self._logger,
+                dry_run=False,
+            )
         if not survivors:
             return
-        jobs = await load_stage_a_for_run(
-            self._deps.store, corpus, limit, max_days, survivors
-        )
-        self._logger.info("stage_a_queued", count=len(jobs))
-        sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
+        async with self._st(run.run_id, "stage", "stage_a"):
+            jobs = await load_stage_a_for_run(
+                self._deps.store, corpus, limit, max_days, survivors
+            )
+            self._logger.info("stage_a_queued", count=len(jobs))
+            sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
 
-        async def _worker(job: JobPosting) -> None:
-            async with sem:
-                await self._score_stage_a(job, run)
+            async def _worker(job: JobPosting) -> None:
+                async with sem:
+                    await self._score_stage_a(job, run)
 
-        await asyncio.gather(*(_worker(j) for j in jobs))
+            await asyncio.gather(*(_worker(j) for j in jobs))
 
     async def _score_stage_a(self, job: JobPosting, run: PipelineRun) -> None:
         job_id = require_job_id(job)
