@@ -7,8 +7,8 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from jobfeed.domain.interview import InterviewRound
-from jobfeed.domain.models import StageBResult
 from jobfeed.services.jobs_view import JobDetail
+from jobfeed.web.schemas._jobs_detail_stage_b import StageBDetail, stage_b_section
 
 
 class JobDetailJob(BaseModel):
@@ -33,40 +33,6 @@ class StageADetail(BaseModel):
 
     score: int
     one_line: str
-
-
-class StrengthDetail(BaseModel):
-    """One matched requirement with its resume evidence."""
-
-    requirement: str
-    evidence: str
-
-
-class GapDetail(BaseModel):
-    """One missing/weak requirement with severity and mitigation."""
-
-    requirement: str
-    severity: str
-    mitigation: str
-
-
-class ResumeHooksDetail(BaseModel):
-    """The three resume-hook blocks of the Stage B output."""
-
-    lead_with: str
-    supporting: list[str]
-    avoid_mentioning: list[str]
-
-
-class StageBDetail(BaseModel):
-    """Stage B blocks: verdict, JD summary, fit analysis, resume hooks."""
-
-    verdict: str
-    jd_summary: str
-    fit_score: int
-    strengths: list[StrengthDetail]
-    gaps: list[GapDetail]
-    hooks: ResumeHooksDetail
 
 
 class EvaluationDetail(BaseModel):
@@ -196,14 +162,13 @@ def _evaluation_detail(detail: JobDetail) -> EvaluationDetail:
     """Map the optional Stage A / Stage B results to the evaluation section."""
     evaluation = detail.evaluation
     stage_a = evaluation.stage_a if evaluation is not None else None
-    stage_b = evaluation.stage_b if evaluation is not None else None
     return EvaluationDetail(
         stage_a=(
             StageADetail(score=stage_a.score, one_line=stage_a.one_line)
             if stage_a is not None
             else None
         ),
-        stage_b=_stage_b_detail(stage_b) if stage_b is not None else None,
+        stage_b=stage_b_section(evaluation),
         stage_b_status=evaluation.stage_b_status if evaluation is not None else None,
     )
 
@@ -231,60 +196,6 @@ def _application_detail(detail: JobDetail) -> ApplicationDetail | None:
         master_resume_hash=record.master_resume_hash,
         tailored_resume_hash=record.tailored_resume_hash,
     )
-
-
-def _stage_b_detail(stage_b: StageBResult) -> StageBDetail:
-    """Map a Stage B result to its DTO, lifting the three hook blocks."""
-    fit = stage_b.fit_analysis
-    return StageBDetail(
-        verdict=stage_b.verdict.value,
-        jd_summary=stage_b.jd_summary,
-        fit_score=fit.score,
-        strengths=[
-            StrengthDetail(requirement=item.requirement, evidence=item.evidence)
-            for item in fit.strengths
-        ],
-        gaps=[
-            GapDetail(
-                requirement=item.requirement,
-                severity=item.severity,
-                mitigation=item.mitigation,
-            )
-            for item in fit.gaps
-        ],
-        hooks=_resume_hooks_detail(stage_b),
-    )
-
-
-def _resume_hooks_detail(stage_b: StageBResult) -> ResumeHooksDetail:
-    """Read the lead_with/supporting/avoid_mentioning hook blocks.
-
-    Prefers the persisted ``raw_blocks['resume_hooks']`` object; when it is
-    absent or malformed, falls back to the normalized ``resume_hooks`` list
-    (first item leads, the rest support — mirroring the store's derived
-    block) with no avoid-mentioning entries.
-    """
-    blocks = stage_b.raw_blocks or {}
-    hooks_block = blocks.get("resume_hooks")
-    if isinstance(hooks_block, dict) and "lead_with" in hooks_block:
-        return ResumeHooksDetail(
-            lead_with=str(hooks_block.get("lead_with") or ""),
-            supporting=_string_list(hooks_block.get("supporting")),
-            avoid_mentioning=_string_list(hooks_block.get("avoid_mentioning")),
-        )
-    flat = stage_b.resume_hooks
-    return ResumeHooksDetail(
-        lead_with=flat[0] if flat else "",
-        supporting=list(flat[1:]),
-        avoid_mentioning=[],
-    )
-
-
-def _string_list(value: object) -> list[str]:
-    """Coerce a raw JSON value to a list of strings (non-lists -> empty)."""
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value]
 
 
 __all__ = ["JobDetailResponse", "interview_round_response", "job_detail_response"]

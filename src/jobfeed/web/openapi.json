@@ -1629,11 +1629,18 @@
         "type": "object"
       },
       "StageBDetail": {
-        "description": "Stage B blocks: verdict, JD summary, fit analysis, resume hooks.",
+        "description": "Stage B blocks: verdict, JD summary, fit analysis, resume hooks.\n\nDisplay DTO \u2014 it must never 500 on real-data nulls. Stage B rows in the\nlive corpus can carry a NULL/absent JD summary or fit score (the verdict-\nindependent fallback also fills here), so ``jd_summary`` and ``fit_score``\nare nullable and the list fields default to empty. ``verdict`` stays a\nplain string (\"\" when unscored, which the pill reads). ``hooks`` keeps a\nnon-optional empty default so both mapper paths and the frontend never\nhave to special-case its absence.",
         "properties": {
           "fit_score": {
-            "title": "Fit Score",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Score"
           },
           "gaps": {
             "items": {
@@ -1646,8 +1653,15 @@
             "$ref": "#/components/schemas/ResumeHooksDetail"
           },
           "jd_summary": {
-            "title": "Jd Summary",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jd Summary"
           },
           "strengths": {
             "items": {
@@ -1662,12 +1676,7 @@
           }
         },
         "required": [
-          "verdict",
-          "jd_summary",
-          "fit_score",
-          "strengths",
-          "gaps",
-          "hooks"
+          "verdict"
         ],
         "title": "StageBDetail",
         "type": "object"

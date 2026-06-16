@@ -77,6 +77,10 @@ master_resume_path = "resume.example.md"
 
 [scoring]
 stage_a_threshold = 60
+# ml_gate_enabled = false       # Phase 5 pre-Stage-A XGBoost filter (see [ml_gate] below)
+# Default per-stage cap for `jobfeed evaluate` when neither --limit nor --full
+# is passed. CLI flags still override this; --full ignores it entirely.
+default_eval_limit = 150
 
 # Digest file output — when output_dir is set, `jobfeed digest` also writes
 # today.md plus a dated YYYY-MM-DD.md there (both overwritten each run), and

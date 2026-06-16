@@ -51,17 +51,25 @@ export function EvaluationSections({ evaluation }: { evaluation: Evaluation }) {
 }
 
 function StageBBlocks({ stageB }: { stageB: NonNullable<Evaluation["stage_b"]> }) {
+  // Real-data rows can null/omit any of these blocks (the contract now makes
+  // jd_summary, strengths, gaps, and hooks optional). Render only the blocks
+  // that carry content so an unscored/partial row never shows empty sections.
+  const strengths = stageB.strengths ?? [];
+  const gaps = stageB.gaps ?? [];
+  const summary = stageB.jd_summary ?? "";
   return (
     <>
-      <section className="border-b border-hairline px-4 py-3">
-        <SectionLabel>JD summary</SectionLabel>
-        <p className="text-body-sm text-ink-2">{stageB.jd_summary}</p>
-      </section>
-      {stageB.strengths.length > 0 && (
+      {summary !== "" && (
+        <section className="border-b border-hairline px-4 py-3">
+          <SectionLabel>JD summary</SectionLabel>
+          <p className="text-body-sm text-ink-2">{summary}</p>
+        </section>
+      )}
+      {strengths.length > 0 && (
         <section className="border-b border-hairline px-4 py-3">
           <SectionLabel>Strengths</SectionLabel>
           <ul className="flex flex-col gap-1.5">
-            {stageB.strengths.map((item) => (
+            {strengths.map((item) => (
               <li key={item.requirement} className="text-body-sm">
                 <span className="font-medium text-ink">{item.requirement}</span>
                 <span className="text-mute"> — {item.evidence}</span>
@@ -70,11 +78,11 @@ function StageBBlocks({ stageB }: { stageB: NonNullable<Evaluation["stage_b"]> }
           </ul>
         </section>
       )}
-      {stageB.gaps.length > 0 && (
+      {gaps.length > 0 && (
         <section className="border-b border-hairline px-4 py-3">
           <SectionLabel>Gaps</SectionLabel>
           <ul className="flex flex-col gap-1.5">
-            {stageB.gaps.map((item) => (
+            {gaps.map((item) => (
               <li key={item.requirement} className="text-body-sm">
                 <span className="font-medium text-ink">{item.requirement}</span>
                 <span className="text-mute">
@@ -92,6 +100,11 @@ function StageBBlocks({ stageB }: { stageB: NonNullable<Evaluation["stage_b"]> }
 }
 
 function HooksBlock({ hooks }: { hooks: NonNullable<Evaluation["stage_b"]>["hooks"] }) {
+  // The lead hook carries the section; with no hooks at all (real-data rows
+  // can omit the block), render nothing rather than an empty Resume hooks box.
+  if (hooks === undefined || hooks.lead_with === "") {
+    return null;
+  }
   return (
     <section className="border-b border-hairline px-4 py-3">
       <SectionLabel>Resume hooks</SectionLabel>

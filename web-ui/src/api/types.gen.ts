@@ -1357,17 +1357,25 @@ export interface components {
         /**
          * StageBDetail
          * @description Stage B blocks: verdict, JD summary, fit analysis, resume hooks.
+         *
+         *     Display DTO — it must never 500 on real-data nulls. Stage B rows in the
+         *     live corpus can carry a NULL/absent JD summary or fit score (the verdict-
+         *     independent fallback also fills here), so ``jd_summary`` and ``fit_score``
+         *     are nullable and the list fields default to empty. ``verdict`` stays a
+         *     plain string ("" when unscored, which the pill reads). ``hooks`` keeps a
+         *     non-optional empty default so both mapper paths and the frontend never
+         *     have to special-case its absence.
          */
         StageBDetail: {
             /** Fit Score */
-            fit_score: number;
+            fit_score?: number | null;
             /** Gaps */
-            gaps: components["schemas"]["GapDetail"][];
-            hooks: components["schemas"]["ResumeHooksDetail"];
+            gaps?: components["schemas"]["GapDetail"][];
+            hooks?: components["schemas"]["ResumeHooksDetail"];
             /** Jd Summary */
-            jd_summary: string;
+            jd_summary?: string | null;
             /** Strengths */
-            strengths: components["schemas"]["StrengthDetail"][];
+            strengths?: components["schemas"]["StrengthDetail"][];
             /** Verdict */
             verdict: string;
         };

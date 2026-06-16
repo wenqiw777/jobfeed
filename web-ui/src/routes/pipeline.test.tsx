@@ -174,6 +174,15 @@ function mockApi(state: ServerState): void {
       if (interviewResponse !== null) {
         return interviewResponse;
       }
+      const transition = /^\/api\/jobs\/(\w+)\/transition$/.exec(url);
+      if (transition !== null && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as { to: string };
+        const row = state.rows.find((job) => job.id === transition[1]);
+        if (row !== undefined) {
+          row.status = body.to;
+        }
+        return json({ job_id: transition[1], status: body.to });
+      }
       const restore = /^\/api\/jobs\/(\w+)\/restore$/.exec(url);
       if (restore !== null && method === "POST") {
         const row = state.rows.find((job) => job.id === restore[1]);
@@ -400,6 +409,26 @@ test("a ghosted row exposes restore; POST /restore refreshes the groups", async 
   // The attention refetch picked up the server-side bucket change: the
   // restore write pushed g1 into follow_up_today, so the chip count bumps.
   expect(await screen.findByRole("button", { name: "Follow-up due 2" })).toBeInTheDocument();
+});
+
+test("an applied row exposes Archive; the action transitions to archived (non-forced)", async () => {
+  renderPipeline();
+  await screen.findByTestId("job-row-a1");
+  await openRow("a1");
+
+  fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+
+  expect(await screen.findByText("Archived")).toBeInTheDocument();
+  const post = calls.find((call) => call.method === "POST" && call.url.endsWith("/transition"));
+  expect(post?.url).toBe("/api/jobs/a1/transition");
+  expect(JSON.parse(String(post?.init?.body))).toEqual({
+    to: "archived",
+    note: null,
+    force: false,
+  });
+  // The invalidated list refetch moved a1 out of the active groups: Applied
+  // drops from 2 to 1.
+  expect(await screen.findByRole("button", { name: "Applied 1" })).toBeInTheDocument();
 });
 
 test("pipeline detail keeps the followup picker but hides decide actions", async () => {

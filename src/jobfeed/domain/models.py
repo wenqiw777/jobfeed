@@ -213,6 +213,7 @@ class JobEvaluation:
     stage_a: StageAResult | None
     stage_b: StageBResult | None
     stage_b_status: str | None = None
+    stage_b_blocks: dict[str, object] | None = None
 
 
 def _validate_score(score: int) -> None:

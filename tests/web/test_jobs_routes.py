@@ -576,6 +576,234 @@ async def test_detail_below_threshold_carries_stage_b_status(
     assert evaluation["stage_b_status"] == "skipped_below_threshold"
 
 
+async def _null_flat_verdict(store: PostgresStore, job_id: str) -> None:
+    """Force a 'completed' row's flat verdict (and flat jd_summary) to NULL.
+
+    Simulates the legacy/inconsistent row the symptom describes: Stage B
+    completed and ``stage_b_fit_json`` carries a score, but the flat
+    ``stage_b_verdict`` is NULL. Nulling the flat jd_summary too proves the
+    detail sources the summary from the JSON block, not the flat column.
+    """
+    pool = store._get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE evaluations
+               SET stage_b_verdict = NULL, stage_b_jd_summary = NULL
+               WHERE job_id = $1""",
+            int(job_id),
+        )
+
+
+async def test_detail_shows_fit_and_blocks_when_verdict_null(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """A completed row with a fit score but NULL flat verdict still renders.
+
+    Mirrors the list row, which sources FIT from stage_b_fit_json
+    independently of the verdict: the detail pane must show the fit number
+    (not null) and the available Stage B blocks (jd_summary / strengths /
+    gaps / hooks) even though the flat verdict is absent. The verdict stays
+    empty so the pill derives "unscored".
+    """
+    async with _seed_store(fresh_pg_dsn) as store:
+        job_id = await _insert(store, "dt-null-verdict")
+        await store.save_stage_a(job_id, _stage_a())
+        await store.save_stage_b(
+            job_id,
+            StageBResult(
+                verdict=Verdict.APPLY,
+                jd_summary="from json block",
+                fit_analysis=FitAnalysis(
+                    score=_STAGE_B_FIT_SCORE,
+                    strengths=[MatchItem(requirement="Python", evidence="built APIs")],
+                    gaps=[
+                        GapItem(
+                            requirement="Kubernetes",
+                            severity="major",
+                            mitigation="ramp",
+                        )
+                    ],
+                ),
+                resume_hooks=["Lead X", "Sup 1"],
+                model="mock/stage-b",
+                prompt_hash="prompt-b",
+                resume_hash="resume-b",
+                raw_blocks={"resume_hooks": _HOOKS_BLOCK},
+            ),
+        )
+        await _null_flat_verdict(store, job_id)
+    app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == HTTP_OK, response.text
+    evaluation = response.json()["evaluation"]
+    assert evaluation["stage_b_status"] == "completed"
+    stage_b = evaluation["stage_b"]
+    assert stage_b is not None
+    # The KEY fix: FIT shows the number even with no flat verdict.
+    assert stage_b["fit_score"] == _STAGE_B_FIT_SCORE
+    # Verdict empty -> the pill renders "unscored" (correct, unchanged).
+    assert stage_b["verdict"] == ""
+    # Blocks come from the JSON columns, independent of the flat verdict.
+    assert stage_b["jd_summary"] == "from json block"
+    assert stage_b["strengths"] == [{"requirement": "Python", "evidence": "built APIs"}]
+    assert stage_b["gaps"] == [
+        {"requirement": "Kubernetes", "severity": "major", "mitigation": "ramp"}
+    ]
+    assert stage_b["hooks"] == _HOOKS_BLOCK
+
+
+async def _seed_completed_stage_b(store: PostgresStore, canonical: str) -> str:
+    """Seed a job with a completed Stage A + Stage B, returning its id.
+
+    The Stage B carries a real fit score, strengths, gaps, and hooks; the
+    null-shape tests below then raw-SQL the JSON columns into the degenerate
+    shapes the live corpus actually contains (verified against the dev DB:
+    102 'completed' rows carry an empty ``{}`` fit JSON, and 1669 have a NULL
+    flat ``stage_b_jd_summary``). Real data was never crafted by save_stage_b,
+    so the columns must be mutated directly to reproduce it.
+    """
+    job_id = await _insert(store, canonical)
+    await store.save_stage_a(job_id, _stage_a())
+    await store.save_stage_b(
+        job_id,
+        StageBResult(
+            verdict=Verdict.APPLY,
+            jd_summary="flat summary",
+            fit_analysis=FitAnalysis(
+                score=_STAGE_B_FIT_SCORE,
+                strengths=[MatchItem(requirement="Python", evidence="built APIs")],
+                gaps=[
+                    GapItem(
+                        requirement="Kubernetes", severity="major", mitigation="ramp"
+                    )
+                ],
+            ),
+            resume_hooks=["Lead X", "Sup 1"],
+            model="mock/stage-b",
+            prompt_hash="prompt-b",
+            resume_hash="resume-b",
+            raw_blocks={"resume_hooks": _HOOKS_BLOCK},
+        ),
+    )
+    return job_id
+
+
+async def _exec(store: PostgresStore, sql: str, job_id: str) -> None:
+    """Run a single raw UPDATE against the evaluations row for ``job_id``."""
+    pool = store._get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(sql, int(job_id))
+
+
+async def test_detail_returns_200_when_jd_summary_and_summary_json_null(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """NULL flat jd_summary + empty summary_json -> 200 with an empty summary.
+
+    The dominant live shape (1669 rows): the flat ``stage_b_jd_summary`` is
+    NULL. With the JSON summary block also empty, the resolver yields "" and
+    the detail must still render (the display DTO no longer 500s on a null /
+    empty summary), keeping the rest of the Stage B blocks intact.
+    """
+    async with _seed_store(fresh_pg_dsn) as store:
+        job_id = await _seed_completed_stage_b(store, "dt-null-summary")
+        await _exec(
+            store,
+            """UPDATE evaluations
+               SET stage_b_jd_summary = NULL, stage_b_summary_json = '{}'::jsonb
+               WHERE job_id = $1""",
+            job_id,
+        )
+    app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == HTTP_OK, response.text
+    stage_b = response.json()["evaluation"]["stage_b"]
+    assert stage_b is not None
+    # No usable summary anywhere -> null/empty (both render as nothing). The
+    # verdict-bearing path surfaces the raw NULL flat column; the fallback
+    # path coalesces to "". Either way it must not 500 and must be falsy.
+    assert not stage_b["jd_summary"]
+    # Fit + remaining blocks survive the null summary.
+    assert stage_b["fit_score"] == _STAGE_B_FIT_SCORE
+    assert stage_b["strengths"] == [{"requirement": "Python", "evidence": "built APIs"}]
+
+
+async def test_detail_returns_200_when_fit_score_absent(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """An empty fit JSON (no score_0_100) -> 200 with a null fit score.
+
+    The exact live shape behind the 500s: 102 'completed' rows carry a verdict
+    but an empty ``{}`` fit JSON (no ``score_0_100``, no ``strong_match``, no
+    ``gaps``). The strict StageBResult path bails (no int score), and the
+    verdict-independent blocks path renders the row with a null fit instead of
+    crashing.
+    """
+    async with _seed_store(fresh_pg_dsn) as store:
+        job_id = await _seed_completed_stage_b(store, "dt-no-score")
+        await _exec(
+            store,
+            "UPDATE evaluations SET stage_b_fit_json = '{}'::jsonb WHERE job_id = $1",
+            job_id,
+        )
+    app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == HTTP_OK, response.text
+    evaluation = response.json()["evaluation"]
+    assert evaluation["stage_b_status"] == "completed"
+    stage_b = evaluation["stage_b"]
+    assert stage_b is not None
+    # Null fit -> frontend Score renders "—"; strengths/gaps coalesce to [].
+    assert stage_b["fit_score"] is None
+    assert stage_b["strengths"] == []
+    assert stage_b["gaps"] == []
+    # The flat summary still resolves through the blocks path.
+    assert stage_b["jd_summary"] == "flat summary"
+
+
+async def test_detail_returns_200_when_strong_match_and_gaps_null(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """A fit JSON with a score but NULL strong_match/gaps -> 200, empty lists.
+
+    Real fit JSON can carry a score yet omit (or NULL) the strong_match / gaps
+    arrays; the parsers must coalesce both to [] rather than subscripting a
+    null. The fit number still renders.
+    """
+    async with _seed_store(fresh_pg_dsn) as store:
+        job_id = await _seed_completed_stage_b(store, "dt-null-arrays")
+        await _exec(
+            store,
+            """UPDATE evaluations
+               SET stage_b_fit_json =
+                   jsonb_build_object('score_0_100', stage_b_fit_json -> 'score_0_100',
+                                      'strong_match', NULL, 'gaps', NULL)
+               WHERE job_id = $1""",
+            job_id,
+        )
+    app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == HTTP_OK, response.text
+    stage_b = response.json()["evaluation"]["stage_b"]
+    assert stage_b is not None
+    # Score survives; the null arrays coalesce to empty lists, not a crash.
+    assert stage_b["fit_score"] == _STAGE_B_FIT_SCORE
+    assert stage_b["strengths"] == []
+    assert stage_b["gaps"] == []
+
+
 async def test_detail_unknown_id_returns_404_error_shape(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:

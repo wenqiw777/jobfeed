@@ -308,6 +308,7 @@ def _evaluation_from_record(r: asyncpg.Record) -> JobEvaluation:
         stage_a=_stage_a_from_record(r),
         stage_b=_stage_b_from_record(r),
         stage_b_status=r.get("stage_b_status"),
+        stage_b_blocks=_stage_b_blocks_from_record(r),
     )
 
 
@@ -352,6 +353,54 @@ def _as_json_obj(value: object) -> Any:
     return value
 
 
+def _stage_b_strengths(fit_json: dict[str, Any]) -> list[MatchItem]:
+    """Parse the fit-analysis strong-match block into typed match items.
+
+    Real evaluation rows can carry a missing or NULL ``strong_match`` key, so
+    coalesce to an empty list rather than subscripting (which KeyErrors /
+    TypeErrors on missing/null) — the detail/display path must never crash.
+    """
+    strong_match = fit_json.get("strong_match")
+    if not isinstance(strong_match, list):
+        return []
+    return [
+        MatchItem(
+            requirement=m["requirement"],
+            evidence=m.get("evidence_from_resume", m.get("evidence", "")),
+        )
+        for m in strong_match
+    ]
+
+
+def _stage_b_gaps(fit_json: dict[str, Any]) -> list[GapItem]:
+    """Parse the fit-analysis gaps block into typed gap items.
+
+    Real evaluation rows can carry a missing or NULL ``gaps`` key, so coalesce
+    to an empty list rather than subscripting (which KeyErrors / TypeErrors on
+    missing/null) — the detail/display path must never crash.
+    """
+    gaps = fit_json.get("gaps")
+    if not isinstance(gaps, list):
+        return []
+    return [
+        GapItem(
+            requirement=g["requirement"],
+            severity=_map_legacy_severity(g["severity"]),
+            mitigation=g.get("mitigation") or "",
+        )
+        for g in gaps
+    ]
+
+
+def _stage_b_fit_analysis(fit_json: dict[str, Any]) -> FitAnalysis:
+    """Build the normalized fit analysis (score + strengths + gaps)."""
+    return FitAnalysis(
+        score=fit_json["score_0_100"],
+        strengths=_stage_b_strengths(fit_json),
+        gaps=_stage_b_gaps(fit_json),
+    )
+
+
 def _stage_b_from_record(r: asyncpg.Record) -> StageBResult | None:
     """Build a Stage B result when the record has completed Stage B data.
 
@@ -366,53 +415,132 @@ def _stage_b_from_record(r: asyncpg.Record) -> StageBResult | None:
     if r.get("stage_b_verdict") is None:
         # Defensive: legacy/inconsistent rows can be 'completed' without a
         # verdict. Treat as no usable Stage B result rather than crashing.
+        # The verdict-independent fit/blocks for the detail pane come from
+        # _stage_b_blocks_from_record instead.
         return None
 
-    verdict_json = _as_json_obj(r["stage_b_verdict_json"])
-    jd_summary_json = _as_json_obj(r["stage_b_summary_json"])
     fit_json = _as_json_obj(r["stage_b_fit_json"])
+    if not isinstance(fit_json, dict) or fit_json.get("score_0_100") is None:
+        # Defensive: real 'completed' rows can carry a verdict but a NULL/absent
+        # fit score (102 such rows in the live corpus). The strict domain
+        # FitAnalysis requires an int score, so we cannot build a StageBResult
+        # here without crashing. Fall through to None; the verdict-independent
+        # _stage_b_blocks_from_record feeds the detail display path instead.
+        return None
     hooks_json = _as_json_obj(r["stage_b_hooks_json"])
 
     raw_blocks: dict[str, object] = {
-        "verdict": verdict_json,
-        "jd_summary": jd_summary_json,
+        "verdict": _as_json_obj(r["stage_b_verdict_json"]),
+        "jd_summary": _as_json_obj(r["stage_b_summary_json"]),
         "fit_analysis": fit_json,
         "resume_hooks": hooks_json,
     }
 
-    strengths = [
-        MatchItem(
-            requirement=m["requirement"],
-            evidence=m.get("evidence_from_resume", m.get("evidence", "")),
-        )
-        for m in fit_json["strong_match"]
-    ]
-    gaps = [
-        GapItem(
-            requirement=g["requirement"],
-            severity=_map_legacy_severity(g["severity"]),
-            mitigation=g.get("mitigation") or "",
-        )
-        for g in fit_json["gaps"]
-    ]
-
-    resume_hooks = _read_legacy_hooks(hooks_json)
-
     return StageBResult(
         verdict=Verdict(r["stage_b_verdict"]),
         jd_summary=r["stage_b_jd_summary"],
-        fit_analysis=FitAnalysis(
-            score=fit_json["score_0_100"],
-            strengths=strengths,
-            gaps=gaps,
-        ),
-        resume_hooks=resume_hooks,
+        fit_analysis=_stage_b_fit_analysis(fit_json),
+        resume_hooks=_read_legacy_hooks(hooks_json),
         model=r["stage_b_model"],
         prompt_hash=r["stage_b_prompt_hash"],
         resume_hash=r["stage_b_resume_hash"],
         cost_usd=r["stage_b_cost_usd"],
         raw_blocks=raw_blocks,
     )
+
+
+def _stage_b_hooks_block(hooks_json: object) -> dict[str, object]:
+    """Normalize the resume-hooks block to the detail wire shape.
+
+    Prefers a structured ``lead_with``/``supporting``/``avoid_mentioning``
+    object; otherwise derives lead/supporting from the flat hook list.
+    """
+    if isinstance(hooks_json, dict) and "lead_with" in hooks_json:
+        supporting = hooks_json.get("supporting")
+        avoid = hooks_json.get("avoid_mentioning")
+        return {
+            "lead_with": str(hooks_json.get("lead_with") or ""),
+            "supporting": [str(s) for s in supporting]
+            if isinstance(supporting, list)
+            else [],
+            "avoid_mentioning": [str(a) for a in avoid]
+            if isinstance(avoid, list)
+            else [],
+        }
+    flat = _read_legacy_hooks(hooks_json) if isinstance(hooks_json, dict) else []
+    return {
+        "lead_with": flat[0] if flat else "",
+        "supporting": flat[1:],
+        "avoid_mentioning": [],
+    }
+
+
+def _stage_b_jd_summary(r: asyncpg.Record) -> str:
+    """Read the Stage B JD summary, flat column first then the JSON block.
+
+    The flat ``stage_b_jd_summary`` is co-written with the verdict; a
+    verdict-less legacy row may have nulled it while the JSON summary block
+    survives, so fall back to ``stage_b_summary_json``'s ``role_in_3_lines``.
+
+    Args:
+        r: Database record with evaluation columns.
+
+    Returns:
+        The JD summary text, or an empty string when neither source has it.
+    """
+    flat = r.get("stage_b_jd_summary")
+    if flat:
+        return str(flat)
+    summary_json = _as_json_obj(r.get("stage_b_summary_json"))
+    if isinstance(summary_json, dict):
+        return str(summary_json.get("role_in_3_lines") or "")
+    return ""
+
+
+def _stage_b_blocks_from_record(r: asyncpg.Record) -> dict[str, object] | None:
+    """Build the verdict-independent Stage B display blocks for the detail.
+
+    Returns the normalized display shape (jd_summary / fit_score / strengths
+    / gaps / hooks) for any ``completed`` row carrying a usable fit JSON
+    object — even one whose flat verdict is NULL, or whose ``score_0_100`` is
+    absent/NULL — so the detail pane renders the same Stage B content the list
+    row implies. The fit score is coalesced to None (rendered as "—") rather
+    than fed to the strict domain ``FitAnalysis`` (which requires an int and
+    would raise); strengths/gaps already coalesce missing blocks to []. The
+    display DTO ``StageBDetail`` tolerates the null score and null summary.
+    Returns None only when there is no completed fit JSON object at all.
+
+    Args:
+        r: Database record with evaluation columns.
+
+    Returns:
+        Normalized blocks dict, or None when no completed fit JSON exists.
+    """
+    if r.get("stage_b_status") != "completed":
+        return None
+    fit_json = _as_json_obj(r.get("stage_b_fit_json"))
+    if not isinstance(fit_json, dict):
+        return None
+    score = fit_json.get("score_0_100")
+    return {
+        "jd_summary": _stage_b_jd_summary(r),
+        "fit_score": score
+        if isinstance(score, int) and not isinstance(score, bool)
+        else None,
+        "strengths": [
+            {"requirement": s.requirement, "evidence": s.evidence}
+            for s in _stage_b_strengths(fit_json)
+        ],
+        "gaps": [
+            {
+                "requirement": g.requirement,
+                "severity": g.severity,
+                "mitigation": g.mitigation,
+            }
+            for g in _stage_b_gaps(fit_json)
+        ],
+        "hooks": _stage_b_hooks_block(_as_json_obj(r.get("stage_b_hooks_json"))),
+    }
 
 
 _LEGACY_SEVERITY_MAP: dict[str, str] = {

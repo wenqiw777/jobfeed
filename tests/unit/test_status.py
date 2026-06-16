@@ -106,11 +106,17 @@ def test_transition_graph_matches_design_spec() -> None:
         {"applied", "archived"},
     )
     assert ALLOWED_TRANSITIONS["applied"] == frozenset(
-        {"interviewing", "offer", "rejected", "ghosted"},
+        {"interviewing", "offer", "rejected", "ghosted", "archived"},
     )
     assert ALLOWED_TRANSITIONS["interviewing"] == frozenset(
-        {"offer", "rejected", "ghosted"},
+        {"offer", "rejected", "ghosted", "archived"},
     )
+
+
+def test_active_pipeline_can_archive_without_force() -> None:
+    """A stale applied/interviewing job can be abandoned to archived."""
+    assert validate_transition("applied", "archived") is None
+    assert validate_transition("interviewing", "archived") is None
 
 
 def test_awaiting_referral_cannot_reach_ghosted() -> None:

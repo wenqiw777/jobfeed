@@ -78,7 +78,7 @@ class EvaluateService:
                 )
         run = start_pipeline_run("evaluate")
         bind_run_id(run.run_id)
-        lim = 100 if limit is None else limit
+        lim = self._config.default_eval_limit if limit is None else limit
         if dry_run:
             request = DryRunRequest(self._logger, stage, corpus, lim, max_days)
             await build_dry_run_preview(self._deps, self._config, run, request)

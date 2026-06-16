@@ -82,17 +82,23 @@ def test_awaiting_referral_transitions() -> None:
 
 
 def test_applied_transitions() -> None:
-    """applied fans out to interviewing, offer, rejected, ghosted."""
+    """applied fans out to interviewing, offer, rejected, ghosted, archived."""
     assert ALLOWED_TRANSITIONS["applied"] == frozenset(
-        {"interviewing", "offer", "rejected", "ghosted"},
+        {"interviewing", "offer", "rejected", "ghosted", "archived"},
     )
 
 
 def test_interviewing_transitions() -> None:
-    """interviewing fans out to offer, rejected, ghosted."""
+    """interviewing fans out to offer, rejected, ghosted, archived."""
     assert ALLOWED_TRANSITIONS["interviewing"] == frozenset(
-        {"offer", "rejected", "ghosted"},
+        {"offer", "rejected", "ghosted", "archived"},
     )
+
+
+def test_active_pipeline_jobs_can_be_archived_without_force() -> None:
+    """applied/interviewing can be abandoned to archived without force."""
+    assert validate_transition("applied", "archived") is None
+    assert validate_transition("interviewing", "archived") is None
 
 
 def test_applied_to_oa_rejected_as_unknown() -> None:

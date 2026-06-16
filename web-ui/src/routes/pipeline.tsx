@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 
 import { useAttention, useJobsList, type JobsQuery, type JobSummary } from "@/api/queries";
+import { ArchiveSection } from "@/components/jobs/ArchiveSection";
 import { AttentionBar, type AttentionBucket } from "@/components/jobs/AttentionBar";
 import { DetailPane } from "@/components/jobs/DetailPane";
 import { InterviewPanel } from "@/components/jobs/InterviewPanel";
@@ -143,12 +144,16 @@ export default function PipelinePage() {
 }
 
 /** Status-keyed detail extras: interview rounds while interviewing, the
- * restore card once ghosted. Keyed off the LIST row's status so the seam
- * needs no second detail fetch. */
+ * archive (abandon) action while still active (applied/interviewing), and
+ * the restore card once ghosted. Keyed off the LIST row's status so the
+ * seam needs no second detail fetch. */
 function PipelineSections({ job }: { job: JobSummary }) {
   return (
     <>
       {job.status === "interviewing" && <InterviewPanel jobId={job.id} />}
+      {(job.status === "applied" || job.status === "interviewing") && (
+        <ArchiveSection jobId={job.id} status={job.status} />
+      )}
       {job.status === "ghosted" && <RestoreSection jobId={job.id} status={job.status} />}
     </>
   );
