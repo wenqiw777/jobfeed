@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import type { RunSummary } from "@/api/queries";
+import { Toaster } from "@/components/ui/toaster";
 import RunsPage from "@/routes/runs";
 
 function runRow(id: string, over: Partial<RunSummary> = {}): RunSummary {
@@ -10,6 +11,7 @@ function runRow(id: string, over: Partial<RunSummary> = {}): RunSummary {
     started_at: "2026-06-10T08:00:00Z",
     finished_at: "2026-06-10T08:05:00Z",
     source: "ats",
+    status: "finished",
     jobs_discovered: 0,
     jobs_inserted: 0,
     jobs_updated: 0,
@@ -26,31 +28,59 @@ function runRow(id: string, over: Partial<RunSummary> = {}): RunSummary {
 
 interface ServerState {
   runs: RunSummary[];
+  activeRuns: { run_id: string; source: string; started_at: string; counters: RunSummary }[];
 }
 
-const calls: string[] = [];
+interface RecordedCall {
+  url: string;
+  method: string;
+  body: unknown;
+}
 
-/** GET /api/runs mirroring the wire contract: newest-first array is the
- * server's order, limit/offset slice it, total is all-time. */
+const calls: RecordedCall[] = [];
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 function mockApi(state: ServerState): void {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      calls.push(url);
-      if (url.startsWith("/api/runs?")) {
+      const method = init?.method ?? "GET";
+      const body = init?.body === undefined ? null : JSON.parse(String(init.body));
+      calls.push({ url, method, body });
+
+      if (method === "GET" && url.startsWith("/api/runs?")) {
         const params = new URLSearchParams(url.slice(url.indexOf("?") + 1));
         const offset = Number(params.get("offset") ?? "0");
         const limit = Number(params.get("limit") ?? "25");
-        return new Response(
-          JSON.stringify({
-            runs: state.runs.slice(offset, offset + limit),
-            total: state.runs.length,
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
+        return json({
+          runs: state.runs.slice(offset, offset + limit),
+          total: state.runs.length,
+        });
       }
-      throw new Error(`unexpected fetch in test: ${url}`);
+      if (method === "GET" && url === "/api/runs/active") {
+        return json({ runs: state.activeRuns });
+      }
+      if (method === "POST" && url === "/api/runs/scan") {
+        const { source } = body as { source: string };
+        if (source === "conflict") {
+          return json(
+            { error: { code: "scan_already_running", message: "Scan already running", request_id: "req-1" } },
+            409,
+          );
+        }
+        return json({ run_id: "new-scan-1", status: "running" });
+      }
+      if (method === "POST" && url === "/api/runs/evaluate") {
+        return json({ run_id: "new-eval-1", status: "running" });
+      }
+      throw new Error(`unexpected fetch in test: ${method} ${url}`);
     }),
   );
 }
@@ -62,6 +92,7 @@ function renderRuns() {
   return render(
     <QueryClientProvider client={queryClient}>
       <RunsPage />
+      <Toaster />
     </QueryClientProvider>,
   );
 }
@@ -81,6 +112,7 @@ beforeEach(() => {
       }),
       runRow("r1", { started_at: "2026-06-09T07:00:00Z", errors: 2, finished_at: null }),
     ],
+    activeRuns: [],
   };
   mockApi(state);
 });
@@ -103,8 +135,8 @@ test("rows mirror the server's newest-first order with mono timestamps", async (
   expect(
     within(rows[0]!).getByRole("button", { name: /Run started \d{4}-\d{2}-\d{2} \d{2}:\d{2}/ }),
   ).toBeInTheDocument();
-  // The Phase 9 hint stays quiet text, not a banner or dead button.
-  expect(screen.getByText(/triggering scans from this page arrives with Phase 9/)).toBeInTheDocument();
+  // The read-only hint has been removed.
+  expect(screen.queryByText(/triggering scans from this page arrives with Phase 9/)).toBeNull();
 });
 
 test("rows show only non-zero counter chips; cost only when > 0", async () => {
@@ -152,7 +184,7 @@ test("pagination drives offset and the mono range label", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("26–30 of 30");
-  expect(calls.at(-1)).toContain("offset=25");
+  expect(calls.some((c) => c.url.includes("offset=25"))).toBe(true);
   expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
 
   fireEvent.click(screen.getByRole("button", { name: "Prev" }));
@@ -166,4 +198,78 @@ test("empty history teaches ./scan", async () => {
   expect(await screen.findByText("No runs yet")).toBeInTheDocument();
   expect(screen.getByText("./scan")).toBeInTheDocument();
   expect(screen.getByText("0 runs")).toBeInTheDocument();
+});
+
+// ---------------------------------------------------------------------------
+// Trigger buttons
+// ---------------------------------------------------------------------------
+
+test("trigger scan and evaluate buttons render in the header", async () => {
+  renderRuns();
+  await screen.findByTestId("run-row-r2");
+
+  // Both trigger buttons are present.
+  expect(screen.getByRole("button", { name: /Scan/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Evaluate/ })).toBeInTheDocument();
+
+  // The read-only hint is gone.
+  expect(screen.queryByText(/read-only/i)).toBeNull();
+  expect(screen.queryByText(/Phase 9/)).toBeNull();
+});
+
+test("trigger evaluate dialog opens and submits with defaults", async () => {
+  renderRuns();
+  await screen.findByTestId("run-row-r2");
+
+  fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
+  expect(await screen.findByText("Trigger Evaluate")).toBeInTheDocument();
+  expect(screen.getByLabelText("Stage")).toBeInTheDocument();
+  expect(screen.getByLabelText("Limit")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Start evaluate" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Start evaluate" }));
+
+  const postCall = await waitFor(() => {
+    const call = calls.find((c) => c.method === "POST" && c.url === "/api/runs/evaluate");
+    expect(call).toBeDefined();
+    return call!;
+  });
+  expect(postCall.body).toEqual({ stage: "both" });
+  expect(await screen.findByText(/Evaluate started/)).toBeInTheDocument();
+});
+
+test("evaluate 409 shows conflict toast", async () => {
+  // Override mock to return 409 for evaluate.
+  const baseFetch = globalThis.fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "POST" && url === "/api/runs/evaluate") {
+        return json(
+          { error: { code: "evaluate_already_running", message: "Evaluate already running", request_id: "req-2" } },
+          409,
+        );
+      }
+      return baseFetch(input, init);
+    }),
+  );
+
+  renderRuns();
+  await screen.findByTestId("run-row-r2");
+
+  fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
+  await screen.findByText("Trigger Evaluate");
+  fireEvent.click(screen.getByRole("button", { name: "Start evaluate" }));
+
+  expect(await screen.findByText("Evaluate already running")).toBeInTheDocument();
+});
+
+test("active runs query fetches GET /api/runs/active", async () => {
+  renderRuns();
+  await screen.findByTestId("run-row-r2");
+
+  // The active runs endpoint was called.
+  expect(calls.some((c) => c.url === "/api/runs/active" && c.method === "GET")).toBe(true);
 });

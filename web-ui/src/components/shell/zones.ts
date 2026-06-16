@@ -16,6 +16,7 @@ export const ZONES: Zone[] = [
   { path: "/library", label: "Library", badge: null, hints: "" },
   { path: "/insights", label: "Insights", badge: null, hints: "" },
   { path: "/runs", label: "Runs", badge: null, hints: "" },
+  { path: "/performance", label: "Performance", badge: null, hints: "" },
   { path: "/sources", label: "Sources", badge: null, hints: "" },
 ];
 

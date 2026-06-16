@@ -625,6 +625,115 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/performance/funnel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Funnel
+         * @description Evaluation funnel snapshots from pipeline runs.
+         *
+         *     Args:
+         *         service: Shared performance service.
+         *         window: Window in days (1..365).
+         *
+         *     Returns:
+         *         Funnel response.
+         */
+        get: operations["funnel_api_performance_funnel_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/performance/llm-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Llm Stats
+         * @description Daily LLM latency percentiles and token averages.
+         *
+         *     Args:
+         *         service: Shared performance service.
+         *         window: Window in days (1..365).
+         *
+         *     Returns:
+         *         LLM daily stats response.
+         */
+        get: operations["llm_stats_api_performance_llm_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/performance/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Performance Overview
+         * @description Aggregate performance metrics with period-over-period deltas.
+         *
+         *     Args:
+         *         service: Shared performance service.
+         *         window: Window in days (1..365).
+         *
+         *     Returns:
+         *         Performance overview response.
+         */
+        get: operations["performance_overview_api_performance_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/performance/step-timings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Step Timings
+         * @description Step timing series within the window, optionally filtered.
+         *
+         *     Args:
+         *         service: Shared performance service.
+         *         window: Window in days (1..365).
+         *         step_type: Optional filter on step_type.
+         *
+         *     Returns:
+         *         Step timings response.
+         */
+        get: operations["step_timings_api_performance_step_timings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs": {
         parameters: {
             query?: never;
@@ -637,16 +746,103 @@ export interface paths {
          * @description List pipeline runs, newest first, with the all-time total.
          *
          *     Args:
-         *         store: Shared job store from the app state.
-         *         limit: Maximum runs returned.
-         *         offset: Runs to skip before the returned window.
+         *         store: Shared job store.
+         *         limit: Max runs returned.
+         *         offset: Runs to skip.
          *
          *     Returns:
-         *         Runs window (started_at DESC, run_id DESC tiebreak) plus the total.
+         *         Runs window plus the total.
          */
         get: operations["list_runs_api_runs_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Active Runs
+         * @description Return all currently active (in-progress) runs.
+         *
+         *     Args:
+         *         run_manager: Shared run manager.
+         *
+         *     Returns:
+         *         Active runs keyed under ``runs``.
+         */
+        get: operations["get_active_runs_api_runs_active_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Evaluate
+         * @description Trigger a background evaluate run.
+         *
+         *     Args:
+         *         body: Request body with stage, corpus, limit.
+         *         run_manager: Shared run manager.
+         *
+         *     Returns:
+         *         The new run's identity and initial status.
+         *
+         *     Raises:
+         *         ApiError: 409 when an evaluate is already running.
+         */
+        post: operations["trigger_evaluate_api_runs_evaluate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Scan
+         * @description Trigger a background scan run.
+         *
+         *     Args:
+         *         body: Request body with source name.
+         *         run_manager: Shared run manager.
+         *         request: Current request (for context access).
+         *
+         *     Returns:
+         *         The new run's identity and initial status.
+         *
+         *     Raises:
+         *         ApiError: 409 when a scan is already running, 400 for unknown source.
+         */
+        post: operations["trigger_scan_api_runs_scan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -662,19 +858,50 @@ export interface paths {
         };
         /**
          * Get Run
-         * @description Load one pipeline run's counters by identity.
+         * @description Load one pipeline run by identity.
          *
          *     Args:
          *         run_id: Run identity.
-         *         store: Shared job store from the app state.
+         *         store: Shared job store.
          *
          *     Returns:
          *         The run's counters-only summary.
          *
          *     Raises:
-         *         ApiError: 404 (shared error shape) when the run is unknown.
+         *         ApiError: 404 when the run is unknown.
          */
         get: operations["get_run_api_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Progress
+         * @description Stream progress events for a run as Server-Sent Events.
+         *
+         *     Args:
+         *         run_id: Run identity to stream.
+         *         run_manager: Shared run manager.
+         *         store: Shared job store for checking finished runs.
+         *
+         *     Returns:
+         *         SSE streaming response.
+         *
+         *     Raises:
+         *         ApiError: 404 when the run is unknown.
+         */
+        get: operations["stream_progress_api_runs__run_id__progress_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -948,6 +1175,30 @@ export interface components {
             at: string;
         };
         /**
+         * FunnelResponse
+         * @description ``GET /performance/funnel`` response.
+         */
+        FunnelResponse: {
+            /** Funnel */
+            funnel: components["schemas"]["FunnelRow"][];
+        };
+        /**
+         * FunnelRow
+         * @description One funnel snapshot for a pipeline run.
+         */
+        FunnelRow: {
+            /** After Filter */
+            after_filter: number;
+            /** After Gate */
+            after_gate: number;
+            /** Run Id */
+            run_id: string;
+            /** Scored */
+            scored: number;
+            /** Total Candidates */
+            total_candidates: number;
+        };
+        /**
          * GapDetail
          * @description One missing/weak requirement with severity and mitigation.
          */
@@ -1190,6 +1441,30 @@ export interface components {
             total: number;
         };
         /**
+         * LLMDailyStatsRow
+         * @description One day of LLM stats.
+         */
+        LLMDailyStatsRow: {
+            /** Avg Input Tokens */
+            avg_input_tokens: number;
+            /** Avg Output Tokens */
+            avg_output_tokens: number;
+            /** Day */
+            day: string;
+            /** P50 Latency Ms */
+            p50_latency_ms: number;
+            /** P95 Latency Ms */
+            p95_latency_ms: number;
+        };
+        /**
+         * LLMStatsResponse
+         * @description ``GET /performance/llm-stats`` response.
+         */
+        LLMStatsResponse: {
+            /** Stats */
+            stats: components["schemas"]["LLMDailyStatsRow"][];
+        };
+        /**
          * NoteBody
          * @description ``POST /api/jobs/{id}/note`` request body.
          */
@@ -1207,6 +1482,28 @@ export interface components {
              * @default true
              */
             ok: boolean;
+        };
+        /**
+         * PerformanceOverviewResponse
+         * @description ``GET /performance/overview`` response.
+         */
+        PerformanceOverviewResponse: {
+            /** Avg Eval Duration Ms */
+            avg_eval_duration_ms: number;
+            /** Avg Scan Duration Ms */
+            avg_scan_duration_ms: number;
+            /** Cost Delta */
+            cost_delta: number | null;
+            /** Error Rate */
+            error_rate: number;
+            /** Error Rate Delta */
+            error_rate_delta: number | null;
+            /** Eval Duration Delta */
+            eval_duration_delta: number | null;
+            /** Scan Duration Delta */
+            scan_duration_delta: number | null;
+            /** Total Llm Cost Usd */
+            total_llm_cost_usd: number;
         };
         /**
          * PipelineAttentionEntry
@@ -1331,6 +1628,8 @@ export interface components {
              * Format: date-time
              */
             started_at: string;
+            /** Status */
+            status: string;
             /** Total Llm Cost Usd */
             total_llm_cost_usd: number;
         };
@@ -1396,6 +1695,35 @@ export interface components {
             status: string | null;
         };
         /**
+         * StepTimingRow
+         * @description One step timing row for the series endpoint.
+         */
+        StepTimingRow: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Elapsed Ms */
+            elapsed_ms: number;
+            /** Is Error */
+            is_error: boolean;
+            /** Run Id */
+            run_id: string;
+            /** Step Name */
+            step_name: string;
+            /** Step Type */
+            step_type: string;
+        };
+        /**
+         * StepTimingsResponse
+         * @description ``GET /performance/step-timings`` response.
+         */
+        StepTimingsResponse: {
+            /** Timings */
+            timings: components["schemas"]["StepTimingRow"][];
+        };
+        /**
          * StrengthDetail
          * @description One matched requirement with its resume evidence.
          */
@@ -1432,6 +1760,36 @@ export interface components {
             job_id: string;
             /** Status */
             status: string;
+        };
+        /**
+         * TriggerEvaluateRequest
+         * @description POST /api/runs/evaluate body.
+         */
+        TriggerEvaluateRequest: {
+            /**
+             * Corpus
+             * @default unrated
+             */
+            corpus: string;
+            /** Limit */
+            limit?: number | null;
+            /**
+             * Stage
+             * @default both
+             * @enum {string}
+             */
+            stage: "a" | "b" | "both";
+        };
+        /**
+         * TriggerScanRequest
+         * @description POST /api/runs/scan body.
+         */
+        TriggerScanRequest: {
+            /**
+             * Source
+             * @default mock
+             */
+            source: string;
         };
         /**
          * TwinDetail
@@ -1488,6 +1846,19 @@ export interface components {
             title: string;
             /** Url */
             url: string;
+        };
+        /**
+         * _TriggerResponse
+         * @description Response body for a successfully triggered run.
+         */
+        _TriggerResponse: {
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @default running
+             */
+            status: string;
         };
     };
     responses: never;
@@ -2174,6 +2545,131 @@ export interface operations {
             };
         };
     };
+    funnel_api_performance_funnel_get: {
+        parameters: {
+            query?: {
+                window?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FunnelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    llm_stats_api_performance_llm_stats_get: {
+        parameters: {
+            query?: {
+                window?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMStatsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    performance_overview_api_performance_overview_get: {
+        parameters: {
+            query?: {
+                window?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PerformanceOverviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    step_timings_api_performance_step_timings_get: {
+        parameters: {
+            query?: {
+                window?: number;
+                step_type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StepTimingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_runs_api_runs_get: {
         parameters: {
             query?: {
@@ -2206,6 +2702,96 @@ export interface operations {
             };
         };
     };
+    get_active_runs_api_runs_active_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
+    trigger_evaluate_api_runs_evaluate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerEvaluateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_TriggerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_scan_api_runs_scan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerScanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_TriggerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_run_api_runs__run_id__get: {
         parameters: {
             query?: never;
@@ -2224,6 +2810,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_progress_api_runs__run_id__progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

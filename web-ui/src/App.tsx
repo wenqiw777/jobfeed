@@ -9,16 +9,29 @@ import RunsPage from "@/routes/runs";
 import SourcesPage from "@/routes/sources";
 import TriagePage from "@/routes/triage";
 
-// Insights is the only recharts consumer — route-level lazy keeps the
-// charting bundle (~880KB pre-split) out of the eager chunk every other
-// zone pays for.
+// Insights and Performance are the recharts consumers — route-level lazy
+// keeps the charting bundle (~880KB pre-split) out of the eager chunk
+// every other zone pays for.
 const InsightsPage = lazy(() => import("@/routes/insights"));
+const PerformancePage = lazy(() => import("@/routes/performance"));
 
 /** Suspense fallback while the insights chunk loads — skeleton page, the
  * same shape the route shows while its query is pending (no spinners). */
 function InsightsFallback() {
   return (
     <div className="flex flex-col gap-3 px-4 py-3" aria-label="Loading insights">
+      <Skeleton className="h-20 w-full" />
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    </div>
+  );
+}
+
+function PerformanceFallback() {
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3" aria-label="Loading performance">
       <Skeleton className="h-20 w-full" />
       <div className="grid gap-3 lg:grid-cols-2">
         <Skeleton className="h-64 w-full" />
@@ -45,6 +58,14 @@ export default function App() {
           }
         />
         <Route path="/runs" element={<RunsPage />} />
+        <Route
+          path="/performance"
+          element={
+            <Suspense fallback={<PerformanceFallback />}>
+              <PerformancePage />
+            </Suspense>
+          }
+        />
         <Route path="/sources" element={<SourcesPage />} />
         <Route path="*" element={<Navigate to="/triage" replace />} />
       </Route>

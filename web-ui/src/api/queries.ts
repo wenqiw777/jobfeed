@@ -39,6 +39,7 @@ export type CompanyVendor = components["schemas"]["CompanyAddBody"]["vendor"];
 export type ProbeResponse = components["schemas"]["ProbeResponse"];
 export type ProbeEntryResult = components["schemas"]["ProbeEntryResult"];
 export type BulkInsertResponse = components["schemas"]["BulkInsertResponse"];
+export type TriggerResponse = components["schemas"]["_TriggerResponse"];
 
 /**
  * Structured query keys. Every jobs *list* key starts with "jobs" and
@@ -327,9 +328,10 @@ export function workflowAttentionTotal(attention: AttentionResponse): number {
   );
 }
 
-/** Runs list keys — read-only zone, nothing ever invalidates these. */
+/** Runs list keys — trigger mutations invalidate after firing. */
 export const runsKeys = {
   list: (query: RunsQuery) => ["runs", "list", query] as const,
+  active: ["runs", "active"] as const,
 };
 
 /** One runs-list page, newest first (server order). keepPreviousData
@@ -404,5 +406,136 @@ export function useProbeCompanies() {
   return useMutation({
     mutationFn: (entries: string[]) =>
       apiPost<ProbeResponse>("/api/companies/probe", { entries }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Runs: active + trigger mutations
+// ---------------------------------------------------------------------------
+
+/** Active run shape returned by GET /api/runs/active. The OpenAPI schema
+ * types the response as a generic dict, so we declare the concrete shape
+ * here for frontend consumption. */
+export interface ActiveRunEntry {
+  run_id: string;
+  source: string;
+  started_at: string;
+  counters: RunSummary;
+}
+
+export interface ActiveRunsResponse {
+  runs: ActiveRunEntry[];
+}
+
+/** Poll active runs (short interval while any are running). */
+export function useActiveRuns() {
+  return useQuery({
+    queryKey: runsKeys.active,
+    queryFn: () => apiFetch<ActiveRunsResponse>("/api/runs/active"),
+    // 3 s while runs are active, checked via refetchInterval callback.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data && data.runs.length > 0 ? 3_000 : false;
+    },
+  });
+}
+
+/** Trigger a scan run. Invalidates both the active and list queries on
+ * success so the UI picks up the new run immediately. */
+export function useTriggerScan() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ source }: { source: string }) =>
+      apiPost<TriggerResponse>("/api/runs/scan", { source }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: runsKeys.active });
+      void queryClient.invalidateQueries({ queryKey: runsKeys.list({}) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Performance
+// ---------------------------------------------------------------------------
+
+export type PerformanceOverviewResponse = components["schemas"]["PerformanceOverviewResponse"];
+export type StepTimingsResponse = components["schemas"]["StepTimingsResponse"];
+export type StepTimingRow = components["schemas"]["StepTimingRow"];
+export type LLMStatsResponse = components["schemas"]["LLMStatsResponse"];
+export type LLMDailyStatsRow = components["schemas"]["LLMDailyStatsRow"];
+export type FunnelResponse = components["schemas"]["FunnelResponse"];
+export type FunnelRow = components["schemas"]["FunnelRow"];
+
+export const performanceKeys = {
+  overview: (window: number) => ["performance", "overview", window] as const,
+  stepTimings: (window: number, stepType?: string) =>
+    ["performance", "step-timings", window, stepType] as const,
+  llmStats: (window: number) => ["performance", "llm-stats", window] as const,
+  funnel: (window: number) => ["performance", "funnel", window] as const,
+};
+
+export function usePerformanceOverview(window: number) {
+  return useQuery({
+    queryKey: performanceKeys.overview(window),
+    queryFn: () =>
+      apiFetch<PerformanceOverviewResponse>(
+        `/api/performance/overview?${buildParams({ window })}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useStepTimings(window: number, stepType?: string) {
+  return useQuery({
+    queryKey: performanceKeys.stepTimings(window, stepType),
+    queryFn: () =>
+      apiFetch<StepTimingsResponse>(
+        `/api/performance/step-timings?${buildParams({ window, step_type: stepType })}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useLLMStats(window: number) {
+  return useQuery({
+    queryKey: performanceKeys.llmStats(window),
+    queryFn: () =>
+      apiFetch<LLMStatsResponse>(
+        `/api/performance/llm-stats?${buildParams({ window })}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useFunnelStats(window: number) {
+  return useQuery({
+    queryKey: performanceKeys.funnel(window),
+    queryFn: () =>
+      apiFetch<FunnelResponse>(
+        `/api/performance/funnel?${buildParams({ window })}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Trigger an evaluate run. Same cache invalidation as scan. */
+export function useTriggerEvaluate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      stage,
+      limit,
+    }: {
+      stage: "a" | "b" | "both";
+      limit: number | null;
+    }) =>
+      apiPost<TriggerResponse>("/api/runs/evaluate", {
+        stage,
+        limit: limit ?? undefined,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: runsKeys.active });
+      void queryClient.invalidateQueries({ queryKey: runsKeys.list({}) });
+    },
   });
 }

@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
-import { useRuns, type RunSummary } from "@/api/queries";
+import { useActiveRuns, useRuns, type RunSummary } from "@/api/queries";
+import { LiveRunRow } from "@/components/runs/LiveRunRow";
+import { TriggerEvaluateButton } from "@/components/runs/TriggerEvaluateDialog";
+import { TriggerScanButton } from "@/components/runs/TriggerScanDialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatLocalDateTime } from "@/lib/dates";
@@ -49,17 +52,45 @@ function formatCost(usd: number): string {
 }
 
 /**
- * Runs: read-only history of pipeline runs, newest first (server order).
- * Triggering stays in the CLI until Phase 9 — the hint line below the
- * table says so quietly instead of offering a dead button.
+ * Runs: pipeline run history and live progress.
+ *
+ * Trigger buttons fire scans and evaluates; active runs stream progress
+ * via SSE at the top of the list, then roll into the history below.
  */
 export default function RunsPage() {
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const runs = useRuns({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+  const activeRuns = useActiveRuns();
+
+  const handleDone = useCallback(() => {
+    void activeRuns.refetch();
+  }, [activeRuns]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* Header: trigger buttons */}
+      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+        <span className="text-label uppercase tracking-wide text-mute">Runs</span>
+        <div className="flex items-center gap-1.5">
+          <TriggerScanButton />
+          <TriggerEvaluateButton />
+        </div>
+      </div>
+
+      {/* Active runs (live SSE rows) */}
+      {activeRuns.data && activeRuns.data.runs.length > 0 && (
+        <ul aria-label="Active runs">
+          {activeRuns.data.runs.map((ar) => (
+            <LiveRunRow
+              key={ar.run_id}
+              run={ar}
+              onDone={handleDone}
+            />
+          ))}
+        </ul>
+      )}
+
       <Body runs={runs} expandedId={expandedId} onToggle={setExpandedId} />
       <div className="flex items-center justify-between border-t border-border px-4 py-2">
         <span className="font-mono text-micro text-mute">
@@ -83,9 +114,6 @@ export default function RunsPage() {
           </Button>
         </div>
       </div>
-      <p className="px-4 pb-3 pt-1 text-micro text-mute">
-        Runs are read-only here; triggering scans from this page arrives with Phase 9.
-      </p>
     </div>
   );
 }
