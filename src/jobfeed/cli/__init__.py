@@ -12,7 +12,13 @@ from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.cli._probe import ProbeVendorFn, build_probe_company
 from jobfeed.config import Settings, load_settings
-from jobfeed.observability import JobfeedLogger, configure_logging, get_logger
+from jobfeed.observability import (
+    JobfeedLogger,
+    configure_logging,
+    get_logger,
+    init_otel,
+    init_sentry,
+)
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.services.digest import DigestService, DigestStore
@@ -54,8 +60,12 @@ def create_app(config_path: Path | None = None) -> AppContext:
     """
     settings = load_settings(config_path)
     configure_logging(
-        settings.observability.log_level, settings.observability.log_format
+        settings.observability.log_level,
+        settings.observability.log_format,
+        otel_enabled=settings.observability.otel_enabled,
     )
+    init_otel(settings.observability)
+    init_sentry(settings.observability)
     logger = get_logger()
     store = _create_store(settings)
     sources: dict[str, SimpleSource] = {"mock": MockSource()}

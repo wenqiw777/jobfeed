@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from jobfeed.cli import AppContext, create_app
-from jobfeed.observability import get_logger
+from jobfeed.observability import get_logger, init_otel, init_sentry
 from jobfeed.services.application import ApplicationService, ApplicationStore
 from jobfeed.services.insights import InsightsService, InsightsStore
 from jobfeed.services.jobs_view import JobsViewService, JobsViewStore
@@ -73,6 +73,9 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
             yield
         finally:
             await context["store"].close()
+
+    init_otel(context["settings"].observability)
+    init_sentry(context["settings"].observability)
 
     app = FastAPI(title="Jobfeed API", lifespan=lifespan)
     app.state.context = context

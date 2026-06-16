@@ -143,12 +143,17 @@ class ExecutionSettings(BaseModel):
 
 
 class ObservabilitySettings(BaseModel):
-    """Logging settings shared by CLI and service entry points."""
+    """Logging, OTel tracing, and Sentry error-tracking settings."""
 
     model_config = ConfigDict(extra="forbid")
 
     log_level: str = "info"
     log_format: Literal["human", "json"] = "human"
+    otel_enabled: bool = False
+    otel_endpoint: str = "http://localhost:4317"
+    otel_service_name: str = "jobfeed"
+    sentry_dsn: str | None = None
+    sentry_environment: str = "dev"
 
 
 class Settings(BaseModel):

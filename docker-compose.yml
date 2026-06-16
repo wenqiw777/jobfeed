@@ -15,6 +15,20 @@ services:
       timeout: 3s
       retries: 5
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: badger
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_VALUE: /badger/data
+      BADGER_DIRECTORY_KEY: /badger/key
+    volumes:
+      - jaeger_data:/badger
+
   jobfeed-cli:
     # Prebuilt image published to GHCR on release (see
     # .github/workflows/publish-image.yml). `docker compose pull jobfeed-cli`
@@ -61,3 +75,4 @@ services:
 volumes:
   pgdata:
   mlcache:
+  jaeger_data:

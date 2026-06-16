@@ -1563,6 +1563,10 @@
             "title": "Started At",
             "type": "string"
           },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
           "total_llm_cost_usd": {
             "title": "Total Llm Cost Usd",
             "type": "number"
@@ -1572,6 +1576,7 @@
           "run_id",
           "started_at",
           "source",
+          "status",
           "jobs_discovered",
           "jobs_inserted",
           "jobs_updated",

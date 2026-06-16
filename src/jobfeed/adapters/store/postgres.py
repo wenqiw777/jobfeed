@@ -63,6 +63,7 @@ from jobfeed.domain.models import (
     WorkflowAttentionItem,
 )
 from jobfeed.domain.models_llm import LLMUsage
+from jobfeed.domain.models_perf import StepTiming
 from jobfeed.domain.models_views import (
     VALID_TABS,
     InsightsDay,
@@ -621,6 +622,7 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         run_id=r["run_id"],
         started_at=r["started_at"],
         source=r["source"],
+        status=r["status"],
         jobs_discovered=r["jobs_discovered"],
         jobs_inserted=r["jobs_inserted"],
         jobs_updated=r["jobs_updated"],
@@ -3295,14 +3297,15 @@ class PostgresStore:
         async with pool.acquire() as conn:
             await conn.execute(
                 """INSERT INTO pipeline_runs (
-                       run_id, started_at, source, jobs_discovered,
+                       run_id, started_at, source, status, jobs_discovered,
                        jobs_inserted, jobs_updated, jobs_filtered,
                        jobs_ml_gated, stage_a_scored, stage_b_scored,
                        jobs_scored, total_llm_cost_usd, errors, finished_at
-                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
+                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)""",
                 run.run_id,
                 run.started_at,
                 run.source,
+                run.status,
                 run.jobs_discovered,
                 run.jobs_inserted,
                 run.jobs_updated,
@@ -3360,6 +3363,69 @@ class PostgresStore:
             )
             total = await self._count(conn, "SELECT COUNT(*) FROM pipeline_runs")
         return [_pipeline_run_from_record(r) for r in rows], total
+
+    async def update_pipeline_run_status(
+        self,
+        run_id: str,
+        status: str,
+        finished_at: datetime | None = None,
+    ) -> None:
+        """Update a pipeline run's status and optional finish time.
+
+        Args:
+            run_id: Run identity.
+            status: New status value (e.g. "succeeded", "failed").
+            finished_at: Optional completion timestamp.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE pipeline_runs
+                   SET status = $1, finished_at = $2
+                   WHERE run_id = $3""",
+                status,
+                finished_at,
+                run_id,
+            )
+
+    async def record_step_timing(self, timing: StepTiming) -> None:
+        """Persist a single step timing record.
+
+        Args:
+            timing: Step timing to persist.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO step_timings
+                       (run_id, step_type, step_name, elapsed_ms, is_error)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                timing.run_id,
+                timing.step_type,
+                timing.step_name,
+                timing.elapsed_ms,
+                timing.is_error,
+            )
+
+    async def record_step_timings(self, timings: list[StepTiming]) -> None:
+        """Persist multiple step timing records in a single batch.
+
+        Args:
+            timings: Step timings to persist.
+        """
+        if not timings:
+            return
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                """INSERT INTO step_timings
+                       (run_id, step_type, step_name, elapsed_ms, is_error)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                [
+                    (t.run_id, t.step_type, t.step_name, t.elapsed_ms, t.is_error)
+                    for t in timings
+                ],
+            )
 
     async def insights_overview(self, *, window_days: int) -> InsightsOverview:
         """Aggregate the insights overview.
