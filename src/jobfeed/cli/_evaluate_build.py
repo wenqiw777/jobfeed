@@ -177,6 +177,7 @@ async def build_and_run(
             ),
             stage_a_threshold=threshold,
             resume_text=resume_text,
+            default_eval_limit=settings.scoring.default_eval_limit,
             ml_gate_enabled=ml_gate_enabled,
             ml_gate_max_candidates=settings.ml_gate.max_candidates,
         ),

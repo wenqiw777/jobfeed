@@ -101,7 +101,9 @@ class SourcesLinkedInGuestConfig(BaseModel):
     The guest source scrapes LinkedIn's anonymous guest endpoints (no login,
     no browser). ``pacing_s`` spaces both list-page fetches and JD enrich
     requests; ``enrich_batch_limit`` caps how many unenriched jobs one
-    enrich pass attempts.
+    enrich pass attempts. ``enrich_after_scan`` makes ``scan`` run one such
+    pass automatically after this source is scanned (set false to keep scan
+    discover-only and run ``enrich-linkedin-guest`` manually).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -111,6 +113,7 @@ class SourcesLinkedInGuestConfig(BaseModel):
     max_jobs: int = Field(default=1000, ge=1)
     pacing_s: float = Field(default=1.0, gt=0)
     enrich_batch_limit: int = Field(default=500, ge=1)
+    enrich_after_scan: bool = True
     proxies: str | None = None
     timeout_s: float = Field(default=15.0, gt=0)
 

@@ -203,7 +203,7 @@ async def _insert_scored_job(
     score: int = HIGH_STAGE_A_SCORE,
     **overrides,
 ):
-    """Insert a job, score it with Stage A, and transition to scored.
+    """Insert a job and score it with Stage A (status advances to scored).
 
     Args:
         store: Connected store instance.
@@ -216,7 +216,6 @@ async def _insert_scored_job(
     """
     job_id, _ = await _insert_job(store, canonical_id, **overrides)
     await store.save_stage_a(job_id, _make_stage_a(score))
-    await store.transition_status(TransitionRequest(job_id=job_id, new_status="scored"))
     return job_id
 
 

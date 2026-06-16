@@ -71,6 +71,9 @@ class ScoringSettings(BaseModel):
 
     stage_a_threshold: int = 60
     ml_gate_enabled: bool = False
+    # Default per-stage cap when `evaluate` is run without --limit/--full.
+    # The CLI flags still override this; 0 means "evaluate nothing by default".
+    default_eval_limit: int = Field(default=150, ge=0)
 
 
 class MLGateSettings(BaseModel):

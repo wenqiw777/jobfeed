@@ -116,3 +116,37 @@ async def test_get_status_history_fresh_job(store: PostgresStore) -> None:
     saved = await store.save_job(_make_job("hist-empty-1"))
     history = await store.get_status_history(saved.job_id)
     assert history == ["new"]
+
+
+async def test_get_status_history_ignores_clock_skew(store: PostgresStore) -> None:
+    """History order follows insertion id, not a non-monotonic wall clock.
+
+    changed_at defaults to now() (wall clock at transaction start), which can
+    invert under NTP steps or load. Backdate the newest row's changed_at behind
+    an older one and confirm get_status_history still returns it first.
+    """
+    saved = await store.save_job(_make_job("hist-skew-1"))
+    await store.transition_status(
+        TransitionRequest(job_id=saved.job_id, new_status="scored", force=True)
+    )
+    await store.transition_status(
+        TransitionRequest(job_id=saved.job_id, new_status="applied", force=True)
+    )
+
+    # Simulate a backward clock step: the latest row (applied) gets a changed_at
+    # one hour BEFORE the prior (scored) row.
+    pool = store._get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE job_status_history
+               SET changed_at = (
+                   SELECT changed_at - interval '1 hour'
+                   FROM job_status_history
+                   WHERE job_id = $1 AND to_status = 'scored'
+               )
+               WHERE job_id = $1 AND to_status = 'applied'""",
+            int(saved.job_id),
+        )
+
+    history = await store.get_status_history(saved.job_id)
+    assert history == ["applied", "scored", "new"]

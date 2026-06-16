@@ -1038,6 +1038,22 @@ The Web UI is not a simple jobs table. The following product semantics must be p
 - **Selection UX**: single-page select, select-all-matching, bulk action feedback.
 - **Stats views**: KPI cards, Sankey funnel, Pipeline donut, Daily timeline, By-resume-variant table.
 
+### Phase 8 Zone Mapping (amendment, 2026-06-11)
+
+Phase 8 reorganizes the legacy pages into a two-loop, six-zone layout (Phase 8
+plan, D5). Every product semantic above is unchanged — only the page
+organization moves. Mapping:
+
+| Legacy page | Phase 8 zone | Semantics carried over |
+|---|---|---|
+| `/today` | Triage · Queue | statuses {new, scored, shortlisted, awaiting_referral}; hard filters; freshness; closed rows excluded; verdict sort; twin fold; decide → auto-advance |
+| Pending JD tab (on `/all`) | Triage · Pending JD | jd_quality missing/abandoned, no Stage A score, excludes archived/ignored, hard filters + freshness |
+| `/applied` ∪ `/followups` | Pipeline | status groups applied / interviewing / offer / Closed = {rejected, ghosted}; attention bar on top |
+| `/all` | Library | tabs All / Scored / Shortlisted = {shortlisted, awaiting_referral} / Archived = {archived, ignored}; closed rows shown with a badge |
+| `/stats` | Insights | KPI cards, funnel, donut, timeline, by-resume table |
+| — (new) | Runs | read-only `pipeline_runs` counters |
+| — (new) | Sources | ATS companies management + vendor probe |
+
 ---
 
 ## 16. CLI Parity Contract

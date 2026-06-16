@@ -5,6 +5,12 @@ DSN once per session — preferring ``PGTEST_DSN`` (a CI service or local
 Postgres), otherwise starting a single testcontainers Postgres for the run.
 When neither is available the PG fixtures skip (so the pure-unit suite still
 runs without Docker), unless ``JOBFEED_REQUIRE_POSTGRES=1`` forces a failure.
+
+Schema is migrated **once per session** (``migrated_pg_url``); each PG-backed
+test then resets only the *data* via a fast ``TRUNCATE ... RESTART IDENTITY
+CASCADE`` (``_truncate_all_data``) rather than re-running the full Alembic
+chain. Tests that exercise the migration/DDL process itself opt into the
+slower full-reset fixtures (``blank_migrated_dsn`` / ``empty_schema_dsn``).
 """
 
 from __future__ import annotations
@@ -36,7 +42,7 @@ def _alembic_upgrade(url: str) -> None:
 
 
 async def _reset_pg_schema(url: str) -> None:
-    """Drop and recreate the public schema for per-test isolation.
+    """Drop and recreate the public schema (full DDL reset).
 
     Args:
         url: PostgreSQL DSN.
@@ -50,11 +56,45 @@ async def _reset_pg_schema(url: str) -> None:
         await conn.close()
 
 
+async def _truncate_all_data(url: str) -> None:
+    """Fast per-test reset: truncate every user table, preserving schema.
+
+    Discovers the table list dynamically (so new migrations are picked up
+    without editing this helper) and truncates them all in a single statement.
+    ``RESTART IDENTITY`` resets serial sequences so id-from-1 assertions hold;
+    ``CASCADE`` satisfies foreign keys regardless of truncation order. The
+    Alembic bookkeeping table is excluded so the migrated schema persists.
+
+    Args:
+        url: PostgreSQL DSN.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(url)
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_type = 'BASE TABLE'
+              AND table_name <> 'alembic_version'
+            """
+        )
+        tables = [row["table_name"] for row in rows]
+        if not tables:
+            return
+        quoted = ", ".join(f'"{name}"' for name in tables)
+        await conn.execute(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE")
+    finally:
+        await conn.close()
+
+
 def _reset_and_migrate_sync(url: str) -> None:
     """Reset the schema and reapply migrations from synchronous code.
 
-    Used by sync fixtures (e.g. CLI runner tests) where no event loop is
-    running, so ``asyncio.run`` is safe.
+    Used by full-reset sync fixtures where no event loop is running, so
+    ``asyncio.run`` is safe.
 
     Args:
         url: PostgreSQL DSN.
@@ -112,33 +152,55 @@ def pg_url() -> Iterator[str]:
         container.stop()
 
 
-async def _fresh_connected_store(url: str) -> PostgresStore:
-    """Reset the schema, reapply migrations, and return a connected store.
+@pytest.fixture(scope="session")
+def migrated_pg_url(pg_url: str) -> str:
+    """Migrate the session database to head exactly once and return its DSN.
+
+    The full Alembic chain (and the ``DROP SCHEMA`` that precedes it) runs a
+    single time per test session; per-test isolation is then provided by the
+    fast ``_truncate_all_data`` data reset rather than re-migrating. All schema
+    objects (tables, the ``trg_jobs_seed_status`` trigger, indexes) are built
+    once here and persist for the whole run.
 
     Args:
-        url: PostgreSQL DSN.
+        pg_url: Session PostgreSQL DSN.
 
     Returns:
-        Connected PostgresStore against an empty, migrated database.
+        DSN of the migrated session database.
     """
-    await _reset_pg_schema(url)
-    _alembic_upgrade(url)
+    _reset_and_migrate_sync(pg_url)
+    return pg_url
+
+
+async def _fresh_connected_store(url: str) -> PostgresStore:
+    """Truncate all data and return a connected store against empty tables.
+
+    The schema is assumed already migrated (``migrated_pg_url``); only data is
+    reset, which is dramatically faster than a per-test re-migration.
+
+    Args:
+        url: PostgreSQL DSN of the migrated session database.
+
+    Returns:
+        Connected PostgresStore against an empty (but migrated) database.
+    """
+    await _truncate_all_data(url)
     store = PostgresStore(url)
     await store.connect()
     return store
 
 
 @pytest_asyncio.fixture
-async def store(pg_url: str) -> AsyncIterator[PostgresStore]:
-    """Yield a connected PostgresStore against a freshly migrated schema.
+async def store(migrated_pg_url: str) -> AsyncIterator[PostgresStore]:
+    """Yield a connected PostgresStore against freshly truncated tables.
 
     Args:
-        pg_url: Session PostgreSQL DSN.
+        migrated_pg_url: Session PostgreSQL DSN (migrated once per session).
 
     Yields:
         Connected PostgresStore.
     """
-    s = await _fresh_connected_store(pg_url)
+    s = await _fresh_connected_store(migrated_pg_url)
     try:
         yield s
     finally:
@@ -146,16 +208,16 @@ async def store(pg_url: str) -> AsyncIterator[PostgresStore]:
 
 
 @pytest_asyncio.fixture
-async def contract_store(pg_url: str) -> AsyncIterator[PostgresStore]:
+async def contract_store(migrated_pg_url: str) -> AsyncIterator[PostgresStore]:
     """Yield a connected store for the shared store-contract suite.
 
     Args:
-        pg_url: Session PostgreSQL DSN.
+        migrated_pg_url: Session PostgreSQL DSN (migrated once per session).
 
     Yields:
         Connected store implementing the JobStore protocol.
     """
-    s = await _fresh_connected_store(pg_url)
+    s = await _fresh_connected_store(migrated_pg_url)
     try:
         yield s
     finally:
@@ -163,16 +225,53 @@ async def contract_store(pg_url: str) -> AsyncIterator[PostgresStore]:
 
 
 @pytest.fixture
-def fresh_pg_dsn(pg_url: str) -> str:
-    """Reset + migrate the session database and return its DSN (sync).
+def fresh_pg_dsn(migrated_pg_url: str) -> str:
+    """Truncate the session database and return its DSN (sync).
 
-    For CLI runner tests that build their own store from a config file.
+    For CLI runner tests that build their own store from a config file. The
+    schema persists from the session-scoped migration; only data is reset, via
+    ``asyncio.run`` since no event loop is running in these sync tests.
+
+    Args:
+        migrated_pg_url: Session PostgreSQL DSN (migrated once per session).
+
+    Returns:
+        DSN of a migrated, data-empty database.
+    """
+    asyncio.run(_truncate_all_data(migrated_pg_url))
+    return migrated_pg_url
+
+
+@pytest.fixture
+def blank_migrated_dsn(pg_url: str) -> str:
+    """Drop the schema and reapply the full Alembic chain, then return its DSN.
+
+    For tests that exercise the migration/DDL process itself and therefore need
+    a genuinely freshly-migrated schema (not a pre-migrated-then-truncated one).
+    Slower than ``fresh_pg_dsn`` — use only when the schema build is under test.
 
     Args:
         pg_url: Session PostgreSQL DSN.
 
     Returns:
-        DSN of a freshly migrated, empty database.
+        DSN of a freshly dropped-and-migrated database.
     """
     _reset_and_migrate_sync(pg_url)
+    return pg_url
+
+
+@pytest.fixture
+def empty_schema_dsn(pg_url: str) -> str:
+    """Drop and recreate an empty public schema (no migrations), return its DSN.
+
+    For tests whose command/code under test is responsible for creating the
+    schema. Leaves ``public`` empty with no tables and no ``alembic_version``.
+
+    Args:
+        pg_url: Session PostgreSQL DSN.
+
+    Returns:
+        DSN of a database with an empty public schema.
+    """
+    asyncio.run(_reset_pg_schema(pg_url))
     return pg_url

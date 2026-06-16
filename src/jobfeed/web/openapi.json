@@ -1,0 +1,3102 @@
+{
+  "components": {
+    "schemas": {
+      "ApplicationDetail": {
+        "description": "Application audit refs: snapshot hashes only, never contents.",
+        "properties": {
+          "application_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Method"
+          },
+          "applied_at": {
+            "format": "date-time",
+            "title": "Applied At",
+            "type": "string"
+          },
+          "master_resume_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Master Resume Hash"
+          },
+          "tailored_resume_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tailored Resume Hash"
+          }
+        },
+        "required": [
+          "applied_at",
+          "application_method",
+          "master_resume_hash",
+          "tailored_resume_hash"
+        ],
+        "title": "ApplicationDetail",
+        "type": "object"
+      },
+      "ApplicationRow": {
+        "description": "One applications-history row: audit metadata + snapshot hashes only.",
+        "properties": {
+          "application_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Method"
+          },
+          "applied_at": {
+            "format": "date-time",
+            "title": "Applied At",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "master_resume_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Master Resume Hash"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "tailored_resume_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tailored Resume Hash"
+          }
+        },
+        "required": [
+          "job_id",
+          "applied_at",
+          "application_method",
+          "notes",
+          "master_resume_hash",
+          "tailored_resume_hash"
+        ],
+        "title": "ApplicationRow",
+        "type": "object"
+      },
+      "ApplicationStatsBlock": {
+        "description": "Windowed application stats including the by-resume table.\n\n``by_resume`` is empty (never null) when no application falls inside\nthe window.",
+        "properties": {
+          "applied_count": {
+            "title": "Applied Count",
+            "type": "integer"
+          },
+          "by_resume": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ResumeVariantStatsRow"
+            },
+            "title": "By Resume",
+            "type": "object"
+          },
+          "interview_count": {
+            "title": "Interview Count",
+            "type": "integer"
+          },
+          "median_days_to_response": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Days To Response"
+          },
+          "offer_count": {
+            "title": "Offer Count",
+            "type": "integer"
+          },
+          "rejection_count": {
+            "title": "Rejection Count",
+            "type": "integer"
+          },
+          "response_count": {
+            "title": "Response Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "applied_count",
+          "response_count",
+          "interview_count",
+          "offer_count",
+          "rejection_count",
+          "median_days_to_response",
+          "by_resume"
+        ],
+        "title": "ApplicationStatsBlock",
+        "type": "object"
+      },
+      "ApplicationsListResponse": {
+        "description": "``GET /api/applications`` response.",
+        "properties": {
+          "applications": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicationRow"
+            },
+            "title": "Applications",
+            "type": "array"
+          }
+        },
+        "required": [
+          "applications"
+        ],
+        "title": "ApplicationsListResponse",
+        "type": "object"
+      },
+      "ApplyResponse": {
+        "description": "``POST /api/jobs/{id}/apply`` response.\n\n``applied`` is False for the no-op parity case (already applied);\n``reapply_notice`` is set only on a new apply with a same-company\nactive application.",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "reapply_notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reapply Notice"
+          }
+        },
+        "required": [
+          "applied",
+          "reapply_notice"
+        ],
+        "title": "ApplyResponse",
+        "type": "object"
+      },
+      "AttentionResponse": {
+        "description": "``GET /api/attention``: the digest footer's six buckets.\n\nThree workflow buckets from ``workflow_attention()`` plus three\npipeline-health buckets from ``needs_attention()``, both with\nstore-default thresholds \u2014 the same two calls the digest footer makes.",
+        "properties": {
+          "enrich_errors": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineAttentionEntry"
+            },
+            "title": "Enrich Errors",
+            "type": "array"
+          },
+          "follow_up_today": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowAttentionEntry"
+            },
+            "title": "Follow Up Today",
+            "type": "array"
+          },
+          "going_ghosted": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowAttentionEntry"
+            },
+            "title": "Going Ghosted",
+            "type": "array"
+          },
+          "interview_prep": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowAttentionEntry"
+            },
+            "title": "Interview Prep",
+            "type": "array"
+          },
+          "low_quality_scored": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineAttentionEntry"
+            },
+            "title": "Low Quality Scored",
+            "type": "array"
+          },
+          "stuck_scoring": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineAttentionEntry"
+            },
+            "title": "Stuck Scoring",
+            "type": "array"
+          }
+        },
+        "required": [
+          "follow_up_today",
+          "interview_prep",
+          "going_ghosted",
+          "enrich_errors",
+          "low_quality_scored",
+          "stuck_scoring"
+        ],
+        "title": "AttentionResponse",
+        "type": "object"
+      },
+      "Body_apply_to_job_api_jobs__job_id__apply_post": {
+        "properties": {
+          "cover_letter": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Letter"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "tailored": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tailored"
+          },
+          "variant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant"
+          }
+        },
+        "title": "Body_apply_to_job_api_jobs__job_id__apply_post",
+        "type": "object"
+      },
+      "BulkCompanyRow": {
+        "description": "One company of a bulk-insert request.",
+        "properties": {
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "vendor": {
+            "enum": [
+              "greenhouse",
+              "ashby",
+              "lever"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "vendor"
+        ],
+        "title": "BulkCompanyRow",
+        "type": "object"
+      },
+      "BulkFailedItem": {
+        "description": "One failed transition of a bulk response.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "error"
+        ],
+        "title": "BulkFailedItem",
+        "type": "object"
+      },
+      "BulkInsertResponse": {
+        "description": "Bulk outcome: rows upserted (new + restored; active slugs skipped).",
+        "properties": {
+          "inserted": {
+            "title": "Inserted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "inserted"
+        ],
+        "title": "BulkInsertResponse",
+        "type": "object"
+      },
+      "BulkTransitionBody": {
+        "description": "``POST /api/jobs/bulk/transition`` request body.",
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BulkTransitionItem"
+            },
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "BulkTransitionBody",
+        "type": "object"
+      },
+      "BulkTransitionItem": {
+        "description": "One requested transition of a bulk request.",
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "to": {
+            "enum": [
+              "new",
+              "scored",
+              "shortlisted",
+              "awaiting_referral",
+              "applied",
+              "interviewing",
+              "offer",
+              "rejected",
+              "ghosted",
+              "archived",
+              "ignored"
+            ],
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "to"
+        ],
+        "title": "BulkTransitionItem",
+        "type": "object"
+      },
+      "BulkTransitionResponse": {
+        "description": "Bulk-transition outcome summary (cascaded = twin transitions).",
+        "properties": {
+          "cascaded": {
+            "title": "Cascaded",
+            "type": "integer"
+          },
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/BulkFailedItem"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "succeeded": {
+            "title": "Succeeded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "succeeded",
+          "skipped",
+          "failed",
+          "cascaded"
+        ],
+        "title": "BulkTransitionResponse",
+        "type": "object"
+      },
+      "CompaniesBulkBody": {
+        "description": "``POST /api/companies/bulk`` request body.",
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/BulkCompanyRow"
+            },
+            "minItems": 1,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "CompaniesBulkBody",
+        "type": "object"
+      },
+      "CompaniesListResponse": {
+        "description": "``GET /api/companies`` response.",
+        "properties": {
+          "companies": {
+            "items": {
+              "$ref": "#/components/schemas/CompanyOut"
+            },
+            "title": "Companies",
+            "type": "array"
+          }
+        },
+        "required": [
+          "companies"
+        ],
+        "title": "CompaniesListResponse",
+        "type": "object"
+      },
+      "CompanyAddBody": {
+        "description": "``POST /api/companies`` request body (the vendor is pinned).",
+        "properties": {
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "vendor": {
+            "enum": [
+              "greenhouse",
+              "ashby",
+              "lever"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "vendor"
+        ],
+        "title": "CompanyAddBody",
+        "type": "object"
+      },
+      "CompanyOut": {
+        "description": "One tracked company row of the wire contract.",
+        "properties": {
+          "consecutive_discover_failures": {
+            "title": "Consecutive Discover Failures",
+            "type": "integer"
+          },
+          "removed": {
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          }
+        },
+        "required": [
+          "slug",
+          "vendor",
+          "consecutive_discover_failures",
+          "removed"
+        ],
+        "title": "CompanyOut",
+        "type": "object"
+      },
+      "EvaluationDetail": {
+        "description": "Evaluation section of the detail response (stages optional).\n\n``stage_b_status`` is the raw pipeline status (the same store column the\nlist rows carry), set even when ``stage_b`` is None \u2014 below-threshold\nrows have no Stage B blocks but still need their derived display state.",
+        "properties": {
+          "stage_a": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StageADetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stage_b": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StageBDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stage_b_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Status"
+          }
+        },
+        "required": [
+          "stage_a",
+          "stage_b",
+          "stage_b_status"
+        ],
+        "title": "EvaluationDetail",
+        "type": "object"
+      },
+      "FollowupBody": {
+        "description": "``POST /api/jobs/{id}/followup`` request body (ISO datetime).",
+        "properties": {
+          "at": {
+            "description": "Follow-up time; must carry a UTC offset (naive -> 422).",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at"
+        ],
+        "title": "FollowupBody",
+        "type": "object"
+      },
+      "GapDetail": {
+        "description": "One missing/weak requirement with severity and mitigation.",
+        "properties": {
+          "mitigation": {
+            "title": "Mitigation",
+            "type": "string"
+          },
+          "requirement": {
+            "title": "Requirement",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement",
+          "severity",
+          "mitigation"
+        ],
+        "title": "GapDetail",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "InsightsDayEntry": {
+        "description": "One UTC day of the windowed series (only days having data appear).",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "integer"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "discovered": {
+            "title": "Discovered",
+            "type": "integer"
+          },
+          "evaluated": {
+            "title": "Evaluated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "discovered",
+          "evaluated",
+          "applied"
+        ],
+        "title": "InsightsDayEntry",
+        "type": "object"
+      },
+      "InsightsOverviewResponse": {
+        "description": "``GET /api/insights/overview`` response.\n\nTotals and distributions are all-time; ``daily`` and ``applications``\ncover the requested window. ``verdict_distribution`` includes the derived\n``below_threshold`` bucket (triage grouping); both distributions carry\nonly nonzero buckets.",
+        "properties": {
+          "applications": {
+            "$ref": "#/components/schemas/ApplicationStatsBlock"
+          },
+          "daily": {
+            "items": {
+              "$ref": "#/components/schemas/InsightsDayEntry"
+            },
+            "title": "Daily",
+            "type": "array"
+          },
+          "status_distribution": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Status Distribution",
+            "type": "object"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/InsightsTotals"
+          },
+          "verdict_distribution": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Verdict Distribution",
+            "type": "object"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_days",
+          "totals",
+          "verdict_distribution",
+          "status_distribution",
+          "daily",
+          "applications"
+        ],
+        "title": "InsightsOverviewResponse",
+        "type": "object"
+      },
+      "InsightsTotals": {
+        "description": "All-time funnel totals: discovered, gate-passed, evaluated, applied.\n\n``ml_gate_passed`` counts gate survivors (``ml_gate_result = 'pass'``) \u2014\nthe funnel-stage semantic, not gate failures; jobs never gated count\ntoward neither.",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "integer"
+          },
+          "evaluated": {
+            "title": "Evaluated",
+            "type": "integer"
+          },
+          "jobs": {
+            "title": "Jobs",
+            "type": "integer"
+          },
+          "ml_gate_passed": {
+            "title": "Ml Gate Passed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "jobs",
+          "ml_gate_passed",
+          "evaluated",
+          "applied"
+        ],
+        "title": "InsightsTotals",
+        "type": "object"
+      },
+      "InterviewAddBody": {
+        "description": "``POST /api/jobs/{id}/interviews`` request body.",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Interview time; must carry a UTC offset (naive -> 422).",
+            "title": "Scheduled At"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "InterviewAddBody",
+        "type": "object"
+      },
+      "InterviewCompleteBody": {
+        "description": "``PATCH /api/jobs/{id}/interviews/{index}`` request body.",
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "title": "InterviewCompleteBody",
+        "type": "object"
+      },
+      "InterviewRoundDetail": {
+        "description": "One interview round of the detail job.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "round_index": {
+            "title": "Round Index",
+            "type": "integer"
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled At"
+          }
+        },
+        "required": [
+          "round_index",
+          "label",
+          "scheduled_at",
+          "completed_at",
+          "notes"
+        ],
+        "title": "InterviewRoundDetail",
+        "type": "object"
+      },
+      "InterviewsListResponse": {
+        "description": "``GET /api/jobs/{id}/interviews`` response.",
+        "properties": {
+          "interviews": {
+            "items": {
+              "$ref": "#/components/schemas/InterviewRoundDetail"
+            },
+            "title": "Interviews",
+            "type": "array"
+          }
+        },
+        "required": [
+          "interviews"
+        ],
+        "title": "InterviewsListResponse",
+        "type": "object"
+      },
+      "JdPasteBody": {
+        "description": "``POST /api/jobs/{id}/jd`` request body.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "JdPasteBody",
+        "type": "object"
+      },
+      "JdPasteResponse": {
+        "description": "JD paste response: the job's stored assessed quality band.",
+        "properties": {
+          "jd_quality": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jd Quality"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "jd_quality"
+        ],
+        "title": "JdPasteResponse",
+        "type": "object"
+      },
+      "JobDetailJob": {
+        "description": "The detail job record (full posting incl. JD text).",
+        "properties": {
+          "canonical_id": {
+            "title": "Canonical Id",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "discovered_at": {
+            "format": "date-time",
+            "title": "Discovered At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "jd_quality": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jd Quality"
+          },
+          "jd_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jd Text"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "platform",
+          "canonical_id",
+          "url",
+          "title",
+          "company",
+          "location",
+          "discovered_at",
+          "posted_at",
+          "closed_at",
+          "jd_quality",
+          "jd_text"
+        ],
+        "title": "JobDetailJob",
+        "type": "object"
+      },
+      "JobDetailResponse": {
+        "description": "``GET /api/jobs/{id}`` response.",
+        "properties": {
+          "application": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApplicationDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evaluation": {
+            "$ref": "#/components/schemas/EvaluationDetail"
+          },
+          "interviews": {
+            "items": {
+              "$ref": "#/components/schemas/InterviewRoundDetail"
+            },
+            "title": "Interviews",
+            "type": "array"
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobDetailJob"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StatusDetail"
+          },
+          "twins": {
+            "items": {
+              "$ref": "#/components/schemas/TwinDetail"
+            },
+            "title": "Twins",
+            "type": "array"
+          }
+        },
+        "required": [
+          "job",
+          "evaluation",
+          "status",
+          "twins",
+          "interviews",
+          "application"
+        ],
+        "title": "JobDetailResponse",
+        "type": "object"
+      },
+      "JobSummary": {
+        "description": "One jobs-list row (the DTO form of ``JobsViewRow``).",
+        "properties": {
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "company_norm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company Norm"
+          },
+          "discovered_at": {
+            "format": "date-time",
+            "title": "Discovered At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "jd_quality": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jd Quality"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "stage_a_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage A Score"
+          },
+          "stage_b_fit_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Fit Score"
+          },
+          "stage_b_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Status"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "title_norm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title Norm"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "id",
+          "company",
+          "title",
+          "platform",
+          "url",
+          "status",
+          "verdict",
+          "stage_a_score",
+          "stage_b_fit_score",
+          "stage_b_status",
+          "posted_at",
+          "discovered_at",
+          "closed_at",
+          "jd_quality",
+          "company_norm",
+          "title_norm"
+        ],
+        "title": "JobSummary",
+        "type": "object"
+      },
+      "JobsListResponse": {
+        "description": "``GET /api/jobs`` response: rows, true total, SQL tab counts.",
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobSummary"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "tab_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tab Counts",
+            "type": "object"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "jobs",
+          "total",
+          "tab_counts"
+        ],
+        "title": "JobsListResponse",
+        "type": "object"
+      },
+      "NoteBody": {
+        "description": "``POST /api/jobs/{id}/note`` request body.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "NoteBody",
+        "type": "object"
+      },
+      "OkResponse": {
+        "description": "Generic acknowledgement for side-effect-only routes.",
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "OkResponse",
+        "type": "object"
+      },
+      "PipelineAttentionEntry": {
+        "description": "One pipeline-health row (enrich error, low quality, stuck scoring).",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "title",
+          "company",
+          "category",
+          "detail"
+        ],
+        "title": "PipelineAttentionEntry",
+        "type": "object"
+      },
+      "ProbeBody": {
+        "description": "``POST /api/companies/probe`` request body (1..200 entries).",
+        "properties": {
+          "entries": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "ProbeBody",
+        "type": "object"
+      },
+      "ProbeEntryResult": {
+        "description": "Per-entry probe outcome.\n\nA definitive all-vendor miss is ``vendor=None, error=None``; a\nnormalization or transport failure carries ``error`` instead.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "input": {
+            "title": "Input",
+            "type": "string"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          }
+        },
+        "required": [
+          "input",
+          "slug",
+          "vendor",
+          "error"
+        ],
+        "title": "ProbeEntryResult",
+        "type": "object"
+      },
+      "ProbeResponse": {
+        "description": "``POST /api/companies/probe`` response, in request order.",
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ProbeEntryResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "ProbeResponse",
+        "type": "object"
+      },
+      "RestoreResponse": {
+        "description": "``POST /api/jobs/{id}/restore`` response: where the job landed.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "RestoreResponse",
+        "type": "object"
+      },
+      "ResumeHooksDetail": {
+        "description": "The three resume-hook blocks of the Stage B output.",
+        "properties": {
+          "avoid_mentioning": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Avoid Mentioning",
+            "type": "array"
+          },
+          "lead_with": {
+            "title": "Lead With",
+            "type": "string"
+          },
+          "supporting": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supporting",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lead_with",
+          "supporting",
+          "avoid_mentioning"
+        ],
+        "title": "ResumeHooksDetail",
+        "type": "object"
+      },
+      "ResumeVariantStatsRow": {
+        "description": "Per-resume-variant application outcomes.",
+        "properties": {
+          "interviews": {
+            "title": "Interviews",
+            "type": "integer"
+          },
+          "offers": {
+            "title": "Offers",
+            "type": "integer"
+          },
+          "rejections": {
+            "title": "Rejections",
+            "type": "integer"
+          },
+          "responses": {
+            "title": "Responses",
+            "type": "integer"
+          },
+          "sent": {
+            "title": "Sent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sent",
+          "responses",
+          "interviews",
+          "offers",
+          "rejections"
+        ],
+        "title": "ResumeVariantStatsRow",
+        "type": "object"
+      },
+      "RunSummary": {
+        "description": "One pipeline run's identity and counters.\n\nCounters only \u2014 ``dry_run_preview`` never rides along on the wire.",
+        "properties": {
+          "errors": {
+            "title": "Errors",
+            "type": "integer"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "jobs_discovered": {
+            "title": "Jobs Discovered",
+            "type": "integer"
+          },
+          "jobs_filtered": {
+            "title": "Jobs Filtered",
+            "type": "integer"
+          },
+          "jobs_inserted": {
+            "title": "Jobs Inserted",
+            "type": "integer"
+          },
+          "jobs_ml_gated": {
+            "title": "Jobs Ml Gated",
+            "type": "integer"
+          },
+          "jobs_scored": {
+            "title": "Jobs Scored",
+            "type": "integer"
+          },
+          "jobs_updated": {
+            "title": "Jobs Updated",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "stage_a_scored": {
+            "title": "Stage A Scored",
+            "type": "integer"
+          },
+          "stage_b_scored": {
+            "title": "Stage B Scored",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "total_llm_cost_usd": {
+            "title": "Total Llm Cost Usd",
+            "type": "number"
+          }
+        },
+        "required": [
+          "run_id",
+          "started_at",
+          "source",
+          "jobs_discovered",
+          "jobs_inserted",
+          "jobs_updated",
+          "jobs_filtered",
+          "jobs_ml_gated",
+          "stage_a_scored",
+          "stage_b_scored",
+          "jobs_scored",
+          "total_llm_cost_usd",
+          "errors",
+          "finished_at"
+        ],
+        "title": "RunSummary",
+        "type": "object"
+      },
+      "RunsListResponse": {
+        "description": "``GET /api/runs`` response: the requested window plus the total.",
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunSummary"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runs",
+          "total"
+        ],
+        "title": "RunsListResponse",
+        "type": "object"
+      },
+      "StageADetail": {
+        "description": "Stage A summary: fast score plus its one-line rationale.",
+        "properties": {
+          "one_line": {
+            "title": "One Line",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "score",
+          "one_line"
+        ],
+        "title": "StageADetail",
+        "type": "object"
+      },
+      "StageBDetail": {
+        "description": "Stage B blocks: verdict, JD summary, fit analysis, resume hooks.\n\nDisplay DTO \u2014 it must never 500 on real-data nulls. Stage B rows in the\nlive corpus can carry a NULL/absent JD summary or fit score (the verdict-\nindependent fallback also fills here), so ``jd_summary`` and ``fit_score``\nare nullable and the list fields default to empty. ``verdict`` stays a\nplain string (\"\" when unscored, which the pill reads). ``hooks`` keeps a\nnon-optional empty default so both mapper paths and the frontend never\nhave to special-case its absence.",
+        "properties": {
+          "fit_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Score"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/GapDetail"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "hooks": {
+            "$ref": "#/components/schemas/ResumeHooksDetail"
+          },
+          "jd_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jd Summary"
+          },
+          "strengths": {
+            "items": {
+              "$ref": "#/components/schemas/StrengthDetail"
+            },
+            "title": "Strengths",
+            "type": "array"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict"
+        ],
+        "title": "StageBDetail",
+        "type": "object"
+      },
+      "StatusDetail": {
+        "description": "Workflow section: current status, notes, follow-up, history.",
+        "properties": {
+          "history": {
+            "items": {
+              "type": "string"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "next_followup_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Followup At"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "resume_variant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Variant"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "status",
+          "notes",
+          "next_followup_at",
+          "resume_variant",
+          "history"
+        ],
+        "title": "StatusDetail",
+        "type": "object"
+      },
+      "StrengthDetail": {
+        "description": "One matched requirement with its resume evidence.",
+        "properties": {
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "requirement": {
+            "title": "Requirement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement",
+          "evidence"
+        ],
+        "title": "StrengthDetail",
+        "type": "object"
+      },
+      "TransitionBody": {
+        "description": "``POST /api/jobs/{id}/transition`` request body.",
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "to": {
+            "enum": [
+              "new",
+              "scored",
+              "shortlisted",
+              "awaiting_referral",
+              "applied",
+              "interviewing",
+              "offer",
+              "rejected",
+              "ghosted",
+              "archived",
+              "ignored"
+            ],
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "title": "TransitionBody",
+        "type": "object"
+      },
+      "TransitionResponse": {
+        "description": "Single-transition response: the job's resulting status.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "TransitionResponse",
+        "type": "object"
+      },
+      "TwinDetail": {
+        "description": "One twin posting (same company_norm + title_norm) of the detail job.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "platform",
+          "url",
+          "status"
+        ],
+        "title": "TwinDetail",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WorkflowAttentionEntry": {
+        "description": "One workflow attention row (follow-up, interview prep, ghosting).",
+        "properties": {
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "days_since": {
+            "title": "Days Since",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "last_status_change_at": {
+            "format": "date-time",
+            "title": "Last Status Change At",
+            "type": "string"
+          },
+          "next_followup_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Followup At"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "title",
+          "company",
+          "url",
+          "status",
+          "last_status_change_at",
+          "next_followup_at",
+          "notes",
+          "reason",
+          "days_since"
+        ],
+        "title": "WorkflowAttentionEntry",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Jobfeed API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/applications": {
+      "get": {
+        "description": "List recent application records, newest first.\n\nArgs:\n    service: Shared application service from the app state.\n    limit: Maximum number of records to return.\n\nReturns:\n    Application history rows (audit metadata + snapshot hashes only).",
+        "operationId": "list_applications_api_applications_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Applications"
+      }
+    },
+    "/api/attention": {
+      "get": {
+        "description": "Six-bucket attention report \u2014 the digest footer's data over the wire.\n\nArgs:\n    workflow: Shared workflow service from the app state.\n    store: Shared job store (pipeline-health read).\n\nReturns:\n    Three workflow buckets plus three pipeline-health buckets, both\n    with store-default thresholds.",
+        "operationId": "attention_api_attention_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Attention"
+      }
+    },
+    "/api/companies": {
+      "get": {
+        "description": "List tracked companies, slug-ascending.\n\nArgs:\n    store: Shared job store from the app state.\n    vendor: Optional ATS vendor filter.\n    include_removed: Whether soft-removed rows are included.\n\nReturns:\n    Company rows with vendor, failure count, and the derived removed flag.",
+        "operationId": "list_companies_api_companies_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "vendor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "greenhouse",
+                    "ashby",
+                    "lever"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Vendor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_removed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Removed",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompaniesListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Companies"
+      },
+      "post": {
+        "description": "Track a company with a pinned vendor (upsert; never re-probed).\n\nThe upsert's ON CONFLICT path also restores a soft-removed slug: the new\nvendor overwrites the removal sentinel.\n\nArgs:\n    body: Slug and pinned ATS vendor.\n    store: Shared job store from the app state.\n\nReturns:\n    The written row (vendor pinned, failure counter reset to zero).",
+        "operationId": "add_company_api_companies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanyAddBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Company"
+      }
+    },
+    "/api/companies/bulk": {
+      "post": {
+        "description": "Upsert many companies at once, skipping slugs that are already active.\n\nPayload duplicates collapse to their first occurrence. Slugs tracked and\nnot removed are skipped; everything else \u2014 new or soft-removed \u2014 goes\nthrough the same upsert path as the single POST, so a removed company in\nthe payload is restored. Bulk rows write ``ats_override=False``\n(mirroring ``bootstrap-companies``) so bulk-added vendors stay\nre-probeable.\n\nArgs:\n    body: Bulk rows (slug + vendor each).\n    store: Shared job store from the app state.\n\nReturns:\n    Count of rows upserted (new plus restored).",
+        "operationId": "bulk_add_companies_api_companies_bulk_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompaniesBulkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkInsertResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Add Companies"
+      }
+    },
+    "/api/companies/probe": {
+      "post": {
+        "description": "Resolve each pasted entry's ATS vendor without writing anything.\n\nEntries are normalized to candidate slugs (lowercase trim; vendor board\nURLs reduce to their slug), then probed under a per-request concurrency\nbound of 5. One entry's failure never aborts the batch.\n\nArgs:\n    body: Pasted entries (1..200).\n    probe: Injected per-slug vendor probe from the cli assembly.\n\nReturns:\n    Per-entry results in request order.",
+        "operationId": "probe_companies_api_companies_probe_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe Companies"
+      }
+    },
+    "/api/companies/{slug}": {
+      "delete": {
+        "description": "Stop tracking a company (soft remove via the vendor sentinel).\n\nThe path slug is normalized (trim + lowercase) before the store call,\nmatching the write endpoints' slug handling.\n\nArgs:\n    slug: Company board slug.\n    store: Shared job store from the app state.\n\nReturns:\n    Acknowledgement.\n\nRaises:\n    ApiError: 422 for text outside the slug charset; 404 when the slug\n        is unknown or already removed.",
+        "operationId": "remove_company_api_companies__slug__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Company"
+      }
+    },
+    "/api/health": {
+      "get": {
+        "description": "Report process liveness and database reachability.\n\nArgs:\n    store: Shared job store from the app state.\n\nReturns:\n    200 ``{\"status\": \"ok\", \"db\": \"ok\"}`` when a cheap store read\n    succeeds, else 503 with a degraded body.",
+        "operationId": "get_health_api_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Health"
+      }
+    },
+    "/api/insights/overview": {
+      "get": {
+        "description": "Aggregate insights: totals, distributions, daily series, app stats.\n\nTotals and distributions are all-time; the daily series and the\napplication stats cover the requested window.\n\nArgs:\n    service: Shared insights service from the app state.\n    window: Window in days (1..365) for the daily series and app stats.\n\nReturns:\n    Composed overview response.",
+        "operationId": "insights_overview_api_insights_overview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Window",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsightsOverviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Insights Overview"
+      }
+    },
+    "/api/jobs": {
+      "get": {
+        "description": "List jobs for one tab with optional filters, fold, sort, pagination.\n\n``tab_counts`` apply ALL request filters (statuses, search, freshness,\nrequire_verdict), so sidebar/global counts should come from requests\nWITHOUT ``statuses``/``require_verdict`` narrowing.\n\nArgs:\n    params: Validated query parameters (plan A4 contract).\n    service: Shared jobs view service from the app state.\n\nReturns:\n    Jobs page: ``jobs`` (the view rows), true ``total``, ``tab_counts``.",
+        "operationId": "list_jobs_api_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tab",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "queue",
+                "pending_jd",
+                "all",
+                "scored",
+                "shortlisted",
+                "archived"
+              ],
+              "title": "Tab",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "statuses",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Statuses"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "posted_within_days",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Posted Within Days"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_verdict",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Require Verdict",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "apply_hard_filters",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Apply Hard Filters",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dedupe",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Dedupe",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "discovered_desc",
+              "enum": [
+                "discovered_desc",
+                "posted_desc",
+                "score_desc",
+                "company_asc"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Jobs"
+      }
+    },
+    "/api/jobs/bulk/transition": {
+      "post": {
+        "description": "Transition multiple jobs with twin-cluster cascade.\n\nArgs:\n    body: Requested (id, to) pairs and the force flag.\n    service: Shared workflow service from the app state.\n\nReturns:\n    Outcome summary: succeeded, skipped, failed items, cascaded count.\n\nRaises:\n    ApiError: 422 when a job id is not numeric.",
+        "operationId": "bulk_transition_api_jobs_bulk_transition_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkTransitionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkTransitionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Transition"
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "description": "Aggregate the full detail view for one job.\n\nArgs:\n    job_id: Store-assigned job identity (numeric).\n    service: Shared jobs view service from the app state.\n\nReturns:\n    Job, evaluation blocks, status + history + notes, twins, interview\n    rounds, and application snapshot refs.\n\nRaises:\n    HTTPException: 404 (shared error shape) when the job is unknown.",
+        "operationId": "get_job_detail_api_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Job Detail"
+      }
+    },
+    "/api/jobs/{job_id}/apply": {
+      "post": {
+        "description": "Record an application with resume snapshots and audit fields.\n\nMirrors the CLI apply command: master resume read from settings,\nStage B snapshot fields captured via the shared service helper, and the\nno-op parity result when the job was already applied.\n\nArgs:\n    job_id: Store-assigned job identity.\n    request: Current request (carries the app settings).\n    form: Parsed multipart upload + form fields.\n    service: Shared application service from the app state.\n    store: Shared job store (existence check only).\n\nReturns:\n    ``applied`` flag plus the reapply notice when one applies.\n\nRaises:\n    ApiError: 404 unknown job; 422 non-UTF-8 upload; 409 with code\n        ``illegal_transition`` when the job is in a terminal status.",
+        "operationId": "apply_to_job_api_jobs__job_id__apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_apply_to_job_api_jobs__job_id__apply_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply To Job"
+      }
+    },
+    "/api/jobs/{job_id}/followup": {
+      "post": {
+        "description": "Set the next follow-up time for a job.\n\nArgs:\n    job_id: Store-assigned job identity.\n    body: ISO datetime of the next follow-up.\n    service: Shared workflow service from the app state.\n\nReturns:\n    Acknowledgement.\n\nRaises:\n    ApiError: 404 when the job has no status row.",
+        "operationId": "set_followup_api_jobs__job_id__followup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowupBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Followup"
+      }
+    },
+    "/api/jobs/{job_id}/interviews": {
+      "get": {
+        "description": "List a job's interview rounds, ascending by round index.\n\nArgs:\n    job_id: Store-assigned job identity.\n    service: Shared workflow service from the app state.\n\nReturns:\n    Interview rounds of the job.",
+        "operationId": "list_interviews_api_jobs__job_id__interviews_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Interviews"
+      },
+      "post": {
+        "description": "Add an interview round (auto-transitions applied -> interviewing).\n\nArgs:\n    job_id: Store-assigned job identity.\n    body: Round label and optional scheduled time.\n    service: Shared workflow service from the app state.\n    store: Shared job store from the app state.\n\nReturns:\n    The newly created round.\n\nRaises:\n    ApiError: 404 when the job has no status row.",
+        "operationId": "add_interview_api_jobs__job_id__interviews_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterviewAddBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewRoundDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Interview"
+      }
+    },
+    "/api/jobs/{job_id}/interviews/{round_index}": {
+      "patch": {
+        "description": "Complete the indexed interview round, attaching optional notes.\n\nArgs:\n    job_id: Store-assigned job identity.\n    round_index: Round index to complete.\n    body: Optional notes.\n    service: Shared workflow service from the app state.\n\nReturns:\n    The completed round.\n\nRaises:\n    ApiError: 404 when no open round exists at that index.",
+        "operationId": "complete_interview_api_jobs__job_id__interviews__round_index__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "round_index",
+            "required": true,
+            "schema": {
+              "title": "Round Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterviewCompleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewRoundDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Interview"
+      }
+    },
+    "/api/jobs/{job_id}/jd": {
+      "post": {
+        "description": "Store manually pasted JD text and report the assessed quality.\n\nResolves the job's platform + canonical_id, delegates to the store's\n``enrich_paste``, then re-reads the job for its stored quality band.\n\nArgs:\n    job_id: Store-assigned job identity.\n    body: Pasted JD text (non-blank).\n    store: Shared job store from the app state.\n\nReturns:\n    Job id and its stored assessed JD quality.\n\nRaises:\n    ApiError: 404 when the job is unknown.",
+        "operationId": "paste_jd_api_jobs__job_id__jd_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JdPasteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JdPasteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Paste Jd"
+      }
+    },
+    "/api/jobs/{job_id}/note": {
+      "post": {
+        "description": "Append a note to a job (resets its ghost clock).\n\nArgs:\n    job_id: Store-assigned job identity.\n    body: Note text (non-blank).\n    service: Shared workflow service from the app state.\n\nReturns:\n    Acknowledgement.\n\nRaises:\n    ApiError: 404 when the job has no status row.",
+        "operationId": "add_note_api_jobs__job_id__note_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Note"
+      }
+    },
+    "/api/jobs/{job_id}/restore": {
+      "post": {
+        "description": "Restore a ghosted/archived job to its last non-terminal status.\n\nThe restore target comes from the job's status history (domain\n``pick_restore_target``) \u2014 never recomputed client-side.\n\nArgs:\n    job_id: Store-assigned job identity.\n    service: Shared workflow service from the app state.\n    store: Shared job store from the app state.\n\nReturns:\n    Job id and the status the job was restored to.\n\nRaises:\n    ApiError: 404 when the job has no status row; 409 with code\n        ``not_restorable`` when the job is not ghosted or archived.",
+        "operationId": "restore_job_api_jobs__job_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Job"
+      }
+    },
+    "/api/jobs/{job_id}/transition": {
+      "post": {
+        "description": "Transition a single job, optionally appending a note.\n\nArgs:\n    job_id: Store-assigned job identity.\n    body: Target status, optional note, force flag.\n    service: Shared workflow service from the app state.\n\nReturns:\n    The job's resulting status.\n\nRaises:\n    ApiError: 404 when the job has no status row; 409 with code\n        ``illegal_transition`` when the transition graph forbids it.",
+        "operationId": "transition_job_api_jobs__job_id__transition_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransitionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transition Job"
+      }
+    },
+    "/api/runs": {
+      "get": {
+        "description": "List pipeline runs, newest first, with the all-time total.\n\nArgs:\n    store: Shared job store from the app state.\n    limit: Maximum runs returned.\n    offset: Runs to skip before the returned window.\n\nReturns:\n    Runs window (started_at DESC, run_id DESC tiebreak) plus the total.",
+        "operationId": "list_runs_api_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runs"
+      }
+    },
+    "/api/runs/{run_id}": {
+      "get": {
+        "description": "Load one pipeline run's counters by identity.\n\nArgs:\n    run_id: Run identity.\n    store: Shared job store from the app state.\n\nReturns:\n    The run's counters-only summary.\n\nRaises:\n    ApiError: 404 (shared error shape) when the run is unknown.",
+        "operationId": "get_run_api_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run"
+      }
+    }
+  }
+}

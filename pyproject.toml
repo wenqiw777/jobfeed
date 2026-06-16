@@ -12,6 +12,14 @@ dependencies = [
     "asyncpg >= 0.30",
     "beautifulsoup4 >= 4.12",
     "click",
+    # Web API (Phase 8): FastAPI thin shell served by uvicorn from `jobfeed
+    # serve`; python-multipart backs the multipart apply-upload route.
+    # >= 0.115: first release with query-parameter Pydantic models
+    # (`Annotated[JobsListParams, Query()]`), which the /api/jobs route uses;
+    # an older constrained FastAPI would not parse that query contract. The
+    # floor keeps locked/constrained installs reproducible, not just fresh
+    # latest-resolves.
+    "fastapi >= 0.115",
     # ML gate (Phase 5): numpy (feature vectorizer), xgboost (model load), and
     # the fastembed ONNX embedder are all core — exercised by `make quality`
     # unit tests and lazy-imported in the gate. fastembed runs `all-MiniLM-L6-v2`
@@ -38,7 +46,13 @@ dependencies = [
     # country_indeed / linkedin_fetch_description kwargs _jobspy.scrape passes,
     # which would otherwise raise (contained as JobSpyError -> silent 0 jobs).
     "python-jobspy >= 1.1.82",
+    # >= 0.0.7: the python-multipart API FastAPI's Form/File parsing requires
+    # for the apply-upload route; older releases break the multipart handler.
+    "python-multipart >= 0.0.7",
     "structlog",
+    # >= 0.30: the uvicorn that runs `jobfeed serve`; a modern floor keeps the
+    # loopback server's lifespan/shutdown behavior reproducible across installs.
+    "uvicorn >= 0.30",
 ]
 
 [project.optional-dependencies]

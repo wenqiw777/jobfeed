@@ -12,10 +12,10 @@ from jobfeed.adapters.sources._ats_probe import probe_company
 from jobfeed.adapters.sources._http import (
     ProbeIndeterminateError,
     ProbeNetworkError,
-    create_http_client,
 )
 from jobfeed.adapters.sources.ats import SUPPORTED_VENDORS
 from jobfeed.cli import AppContext, require_app, run_with_store
+from jobfeed.cli._probe import build_probe_company
 from jobfeed.domain.models import CompanyRecord
 from jobfeed.ports.store_ops import StoreOpsMixin
 
@@ -93,14 +93,13 @@ async def _probe_vendor(app: AppContext, slug: str) -> str:
         click.ClickException: When no vendor resolves (definitive miss) or the
             probe outcome is unresolved (network error / ambiguous response).
     """
-    timeout = app["settings"].sources.ats.probe_timeout_s
-    client = create_http_client(timeout)
+    # probe_fn resolves the module attribute at call time so tests can
+    # monkeypatch ``probe_company`` on this module.
+    probe = build_probe_company(app["settings"], probe_fn=probe_company)
     try:
-        detected = await probe_company(client, slug, timeout=timeout)
+        detected = await probe(slug)
     except (ProbeNetworkError, ProbeIndeterminateError) as exc:
         raise click.ClickException(f"probe unresolved for '{slug}': {exc}") from exc
-    finally:
-        await client.aclose()
     if detected is None:
         raise click.ClickException(
             f"no ATS vendor found for '{slug}' "

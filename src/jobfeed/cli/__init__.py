@@ -10,6 +10,7 @@ import click
 
 from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.adapters.store.postgres import PostgresStore
+from jobfeed.cli._probe import ProbeVendorFn, build_probe_company
 from jobfeed.config import Settings, load_settings
 from jobfeed.observability import JobfeedLogger, configure_logging, get_logger
 from jobfeed.ports.source import SimpleSource
@@ -28,6 +29,7 @@ class AppContext(TypedDict):
     sources: dict[str, SimpleSource]
     scan_service: ScanService
     digest_service: DigestService
+    probe_company: ProbeVendorFn
     logger: JobfeedLogger
     verbose: bool
 
@@ -63,6 +65,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
         sources=sources,
         scan_service=ScanService(store, logger),
         digest_service=DigestService(cast(DigestStore, store), logger),
+        probe_company=build_probe_company(settings),
         logger=logger,
         verbose=False,
     )
@@ -223,6 +226,7 @@ from jobfeed.cli.maintenance import mark_stale_closed  # noqa: E402
 from jobfeed.cli.migrate import migrate  # noqa: E402
 from jobfeed.cli.ml_gate import ml_gate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
+from jobfeed.cli.serve import serve  # noqa: E402
 from jobfeed.cli.snapshots import snapshots  # noqa: E402
 from jobfeed.cli.status import archive, followup, mark, note  # noqa: E402
 from jobfeed.cli.status_query import list_cmd, stats  # noqa: E402
@@ -248,10 +252,12 @@ cli.add_command(enrich_linkedin_guest)
 cli.add_command(interview)
 cli.add_command(companies)
 cli.add_command(bootstrap_companies)
+cli.add_command(serve)
 
 
 __all__ = [
     "AppContext",
+    "ProbeVendorFn",
     "cli",
     "create_app",
     "require_app",

@@ -134,42 +134,64 @@ def enrich_linkedin_guest(ctx: click.Context) -> None:
     config = app["settings"].sources.linkedin_guest
     require_enabled(config.enabled, "linkedin-guest")
     summary = asyncio.run(_run_enrich_linkedin_guest(app, config))
-    click.echo(_format_enrich_summary(summary))
+    click.echo(format_enrich_summary(summary))
 
 
 async def _run_enrich_linkedin_guest(
     app: AppContext,
     config: SourcesLinkedInGuestConfig,
 ) -> EnrichSummary:
-    """Build the guest enricher + service and run one enrichment pass.
-
-    The httpx client is opened here (proxy/timeout from config) and closed by
-    the ``async with`` on every path, including service errors.
-    """
-
     async def action() -> EnrichSummary:
-        client = create_client(config.proxies, config.timeout_s)
-        async with client:
-
-            async def fetch_url(url: str) -> GuestResponse:
-                return await fetch(client, url)
-
-            service = EnrichService(
-                enricher=LinkedInGuestEnricher(fetcher=fetch_url, logger=app["logger"]),
-                store=cast(StoreOpsMixin, app["store"]),
-                logger=app["logger"],
-                pacing=EnrichPacing(min_interval_s=config.pacing_s),
-            )
-            return await service.run(
-                platform="linkedin_guest",
-                batch_limit=config.enrich_batch_limit,
-            )
+        return await run_guest_enrich_pass(app, config)
 
     return await run_with_store(app, action)
 
 
-def _format_enrich_summary(summary: EnrichSummary) -> str:
-    """Render the pass counters; ``blocked`` counts block events."""
+async def run_guest_enrich_pass(
+    app: AppContext,
+    config: SourcesLinkedInGuestConfig,
+) -> EnrichSummary:
+    """Build the guest enricher + service and run one enrichment pass.
+
+    Shared by the standalone ``enrich-linkedin-guest`` command and the scan
+    command's default post-scan pass. The caller owns the store connection;
+    the httpx client is opened here (proxy/timeout from config) and closed by
+    the ``async with`` on every path, including service errors.
+
+    Args:
+        app: Initialized application context (store must be connected).
+        config: The linkedin_guest source config (pacing/proxy/batch knobs).
+
+    Returns:
+        Counters for the completed enrichment pass.
+    """
+    client = create_client(config.proxies, config.timeout_s)
+    async with client:
+
+        async def fetch_url(url: str) -> GuestResponse:
+            return await fetch(client, url)
+
+        service = EnrichService(
+            enricher=LinkedInGuestEnricher(fetcher=fetch_url, logger=app["logger"]),
+            store=cast(StoreOpsMixin, app["store"]),
+            logger=app["logger"],
+            pacing=EnrichPacing(min_interval_s=config.pacing_s),
+        )
+        return await service.run(
+            platform="linkedin_guest",
+            batch_limit=config.enrich_batch_limit,
+        )
+
+
+def format_enrich_summary(summary: EnrichSummary) -> str:
+    """Render the pass counters; ``blocked`` counts block events.
+
+    Args:
+        summary: Counters from one enrichment pass.
+
+    Returns:
+        A one-line human-readable summary.
+    """
     line = (
         f"Enriched {summary.enriched}, closed {summary.closed}, "
         f"blocked {summary.blocked} (block events), skipped {summary.skipped}"
@@ -179,4 +201,9 @@ def _format_enrich_summary(summary: EnrichSummary) -> str:
     return line
 
 
-__all__ = ["enrich_linkedin_guest", "enrich_paste"]
+__all__ = [
+    "enrich_linkedin_guest",
+    "enrich_paste",
+    "format_enrich_summary",
+    "run_guest_enrich_pass",
+]

@@ -46,6 +46,7 @@ class EvaluateRuntimeConfig:
     llm: EvaluateLLMConfig
     stage_a_threshold: int
     resume_text: str
+    default_eval_limit: int = 150
     ml_gate_enabled: bool = False
     ml_gate_max_candidates: int = 5000
     ghost_days: int = 30

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 try:
@@ -62,6 +63,15 @@ from jobfeed.domain.models import (
     WorkflowAttentionItem,
 )
 from jobfeed.domain.models_llm import LLMUsage
+from jobfeed.domain.models_views import (
+    VALID_TABS,
+    InsightsDay,
+    InsightsOverview,
+    JobsViewPage,
+    JobsViewQuery,
+    JobsViewRow,
+    TwinStatusRow,
+)
 from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.domain.status import (
@@ -70,6 +80,7 @@ from jobfeed.domain.status import (
     DEFAULT_ARCHIVE_IGNORED_DAYS,
     DEFAULT_FOLLOWUP_GRACE_DAYS,
     DEFAULT_GHOST_DAYS,
+    REASON_AUTO_SCORED,
     RESPONSE_STATUSES,
     is_terminal,
     validate_transition,
@@ -124,6 +135,146 @@ def _job_from_record(r: asyncpg.Record) -> JobPosting:
     )
 
 
+# ---------------------------------------------------------------------------
+# Jobs view (Phase 8 web read path)
+# ---------------------------------------------------------------------------
+
+# Tab predicates over jobs LEFT JOIN evaluations LEFT JOIN job_status. Triage
+# tabs (queue, pending_jd) exclude closed rows; Library tabs include them.
+# job_status rows are trigger-seeded on every jobs insert, so
+# job_status.status is never NULL despite the LEFT JOIN.
+_JOBS_VIEW_TAB_PREDICATES: dict[str, str] = {
+    "queue": (
+        "(job_status.status IN"
+        " ('new', 'scored', 'shortlisted', 'awaiting_referral')"
+        " AND jobs.closed_at IS NULL)"
+    ),
+    # Pending-JD: no usable JD (same quality predicate as
+    # mark_stale_jobs_closed), never Stage A-scored, not archived/ignored,
+    # still open (rewrite-spec §15 semantics).
+    "pending_jd": (
+        "((jobs.jd_quality IS NULL"
+        " OR jobs.jd_quality IN ('missing', 'abandoned'))"
+        " AND evaluations.stage_a_score IS NULL"
+        " AND job_status.status NOT IN ('archived', 'ignored')"
+        " AND jobs.closed_at IS NULL)"
+    ),
+    "all": "TRUE",
+    "scored": "job_status.status = 'scored'",
+    "shortlisted": "job_status.status IN ('shortlisted', 'awaiting_referral')",
+    "archived": "job_status.status IN ('archived', 'ignored')",
+}
+
+_JOBS_VIEW_FROM = (
+    "FROM jobs"
+    " LEFT JOIN evaluations ON evaluations.job_id = jobs.id"
+    " LEFT JOIN job_status ON job_status.job_id = jobs.id"
+)
+
+_JOBS_VIEW_COLUMNS = (
+    "jobs.*, job_status.status AS status,"
+    " evaluations.stage_a_score, evaluations.stage_b_verdict,"
+    " evaluations.stage_b_status,"
+    " (evaluations.stage_b_fit_json ->> 'score_0_100')::integer"
+    " AS stage_b_fit_score"
+)
+
+# SQL ORDER BY per JobsViewQuery.sort, mirroring the in-memory keys in
+# services/_jobs_view_sort.py (score = Stage B fit with Stage A fallback,
+# NULLS LAST; every sort ends in the discovered_at DESC, id DESC tiebreak)
+# so plain Library requests paginate in SQL beyond the corpus cap (D10).
+_JOBS_VIEW_SORT_SQL: dict[str, str] = {
+    "discovered_desc": "jobs.discovered_at DESC, jobs.id DESC",
+    "posted_desc": (
+        "jobs.posted_at DESC NULLS LAST, jobs.discovered_at DESC, jobs.id DESC"
+    ),
+    "score_desc": (
+        "COALESCE((evaluations.stage_b_fit_json ->> 'score_0_100')::integer,"
+        " evaluations.stage_a_score) DESC NULLS LAST,"
+        " jobs.discovered_at DESC, jobs.id DESC"
+    ),
+    "company_asc": (
+        "jobs.company_norm ASC NULLS LAST, jobs.discovered_at DESC, jobs.id DESC"
+    ),
+}
+
+
+def _jobs_view_filters(query: JobsViewQuery) -> tuple[list[str], list[object]]:
+    """Build the request's shared WHERE fragments and their $1-based params.
+
+    These filters (statuses, search, freshness, require_verdict) apply to the
+    active tab's rows and total AND to every tab_counts bucket, so
+    tab_counts[t] always equals the total of re-running the request with
+    tab=t.
+
+    Args:
+        query: Jobs view query.
+
+    Returns:
+        Tuple of (SQL fragments, positional params), params numbered $1..$n.
+    """
+    fragments: list[str] = []
+    params: list[object] = []
+    if query.statuses:
+        params.append(list(query.statuses))
+        fragments.append(f"job_status.status = ANY(${len(params)}::text[])")
+    if query.search:
+        params.append(f"%{_escape_like_prefix(query.search)}%")
+        index = len(params)
+        fragments.append(f"(jobs.company ILIKE ${index} OR jobs.title ILIKE ${index})")
+    if query.posted_within_days is not None:
+        # Freshness cuts on discovered_at per rewrite-spec §15 — a job posted
+        # long ago but newly scraped is fresh to the user's workflow.
+        params.append(query.posted_within_days)
+        fragments.append(
+            f"jobs.discovered_at >= now() - make_interval(days => ${len(params)})"
+        )
+    if query.require_verdict:
+        fragments.append("evaluations.stage_b_verdict IS NOT NULL")
+    return fragments, params
+
+
+def _jobs_view_counts_sql(shared_where: str) -> str:
+    """Render the one-query per-tab COUNT(*) FILTER aggregate.
+
+    Args:
+        shared_where: WHERE clause of shared request filters ('TRUE' if none).
+
+    Returns:
+        SQL returning one row with a count column per tab. Aliases are quoted
+        because 'all' is a reserved word.
+    """
+    selects = ", ".join(
+        f'COUNT(*) FILTER (WHERE {_JOBS_VIEW_TAB_PREDICATES[tab]}) AS "{tab}"'
+        for tab in VALID_TABS
+    )
+    return f"SELECT {selects} {_JOBS_VIEW_FROM} WHERE {shared_where}"
+
+
+def _jobs_view_row_from_record(r: asyncpg.Record) -> JobsViewRow:
+    """Build a JobsViewRow from a jobs+evaluations+job_status record.
+
+    Args:
+        r: Joined record carrying jobs.*, the status alias, and the
+            evaluation summary columns.
+
+    Returns:
+        View row. The Stage B fit score is lifted from stage_b_fit_json's
+        'score_0_100' key — the same key get_evaluation hydrates FitAnalysis
+        from.
+    """
+    return JobsViewRow(
+        job=_job_from_record(r),
+        company_norm=r["company_norm"],
+        title_norm=r["title_norm"],
+        status=r["status"],
+        verdict=r["stage_b_verdict"],
+        stage_a_score=r["stage_a_score"],
+        stage_b_fit_score=r["stage_b_fit_score"],
+        stage_b_status=r["stage_b_status"],
+    )
+
+
 def _gate_candidate_from_record(r: asyncpg.Record) -> GateCandidate:
     """Build a GateCandidate (job + persisted ml_gate_result) from a jobs record.
 
@@ -156,6 +307,8 @@ def _evaluation_from_record(r: asyncpg.Record) -> JobEvaluation:
         job=_job_from_record(r),
         stage_a=_stage_a_from_record(r),
         stage_b=_stage_b_from_record(r),
+        stage_b_status=r.get("stage_b_status"),
+        stage_b_blocks=_stage_b_blocks_from_record(r),
     )
 
 
@@ -200,6 +353,54 @@ def _as_json_obj(value: object) -> Any:
     return value
 
 
+def _stage_b_strengths(fit_json: dict[str, Any]) -> list[MatchItem]:
+    """Parse the fit-analysis strong-match block into typed match items.
+
+    Real evaluation rows can carry a missing or NULL ``strong_match`` key, so
+    coalesce to an empty list rather than subscripting (which KeyErrors /
+    TypeErrors on missing/null) — the detail/display path must never crash.
+    """
+    strong_match = fit_json.get("strong_match")
+    if not isinstance(strong_match, list):
+        return []
+    return [
+        MatchItem(
+            requirement=m["requirement"],
+            evidence=m.get("evidence_from_resume", m.get("evidence", "")),
+        )
+        for m in strong_match
+    ]
+
+
+def _stage_b_gaps(fit_json: dict[str, Any]) -> list[GapItem]:
+    """Parse the fit-analysis gaps block into typed gap items.
+
+    Real evaluation rows can carry a missing or NULL ``gaps`` key, so coalesce
+    to an empty list rather than subscripting (which KeyErrors / TypeErrors on
+    missing/null) — the detail/display path must never crash.
+    """
+    gaps = fit_json.get("gaps")
+    if not isinstance(gaps, list):
+        return []
+    return [
+        GapItem(
+            requirement=g["requirement"],
+            severity=_map_legacy_severity(g["severity"]),
+            mitigation=g.get("mitigation") or "",
+        )
+        for g in gaps
+    ]
+
+
+def _stage_b_fit_analysis(fit_json: dict[str, Any]) -> FitAnalysis:
+    """Build the normalized fit analysis (score + strengths + gaps)."""
+    return FitAnalysis(
+        score=fit_json["score_0_100"],
+        strengths=_stage_b_strengths(fit_json),
+        gaps=_stage_b_gaps(fit_json),
+    )
+
+
 def _stage_b_from_record(r: asyncpg.Record) -> StageBResult | None:
     """Build a Stage B result when the record has completed Stage B data.
 
@@ -214,53 +415,132 @@ def _stage_b_from_record(r: asyncpg.Record) -> StageBResult | None:
     if r.get("stage_b_verdict") is None:
         # Defensive: legacy/inconsistent rows can be 'completed' without a
         # verdict. Treat as no usable Stage B result rather than crashing.
+        # The verdict-independent fit/blocks for the detail pane come from
+        # _stage_b_blocks_from_record instead.
         return None
 
-    verdict_json = _as_json_obj(r["stage_b_verdict_json"])
-    jd_summary_json = _as_json_obj(r["stage_b_summary_json"])
     fit_json = _as_json_obj(r["stage_b_fit_json"])
+    if not isinstance(fit_json, dict) or fit_json.get("score_0_100") is None:
+        # Defensive: real 'completed' rows can carry a verdict but a NULL/absent
+        # fit score (102 such rows in the live corpus). The strict domain
+        # FitAnalysis requires an int score, so we cannot build a StageBResult
+        # here without crashing. Fall through to None; the verdict-independent
+        # _stage_b_blocks_from_record feeds the detail display path instead.
+        return None
     hooks_json = _as_json_obj(r["stage_b_hooks_json"])
 
     raw_blocks: dict[str, object] = {
-        "verdict": verdict_json,
-        "jd_summary": jd_summary_json,
+        "verdict": _as_json_obj(r["stage_b_verdict_json"]),
+        "jd_summary": _as_json_obj(r["stage_b_summary_json"]),
         "fit_analysis": fit_json,
         "resume_hooks": hooks_json,
     }
 
-    strengths = [
-        MatchItem(
-            requirement=m["requirement"],
-            evidence=m.get("evidence_from_resume", m.get("evidence", "")),
-        )
-        for m in fit_json["strong_match"]
-    ]
-    gaps = [
-        GapItem(
-            requirement=g["requirement"],
-            severity=_map_legacy_severity(g["severity"]),
-            mitigation=g.get("mitigation") or "",
-        )
-        for g in fit_json["gaps"]
-    ]
-
-    resume_hooks = _read_legacy_hooks(hooks_json)
-
     return StageBResult(
         verdict=Verdict(r["stage_b_verdict"]),
         jd_summary=r["stage_b_jd_summary"],
-        fit_analysis=FitAnalysis(
-            score=fit_json["score_0_100"],
-            strengths=strengths,
-            gaps=gaps,
-        ),
-        resume_hooks=resume_hooks,
+        fit_analysis=_stage_b_fit_analysis(fit_json),
+        resume_hooks=_read_legacy_hooks(hooks_json),
         model=r["stage_b_model"],
         prompt_hash=r["stage_b_prompt_hash"],
         resume_hash=r["stage_b_resume_hash"],
         cost_usd=r["stage_b_cost_usd"],
         raw_blocks=raw_blocks,
     )
+
+
+def _stage_b_hooks_block(hooks_json: object) -> dict[str, object]:
+    """Normalize the resume-hooks block to the detail wire shape.
+
+    Prefers a structured ``lead_with``/``supporting``/``avoid_mentioning``
+    object; otherwise derives lead/supporting from the flat hook list.
+    """
+    if isinstance(hooks_json, dict) and "lead_with" in hooks_json:
+        supporting = hooks_json.get("supporting")
+        avoid = hooks_json.get("avoid_mentioning")
+        return {
+            "lead_with": str(hooks_json.get("lead_with") or ""),
+            "supporting": [str(s) for s in supporting]
+            if isinstance(supporting, list)
+            else [],
+            "avoid_mentioning": [str(a) for a in avoid]
+            if isinstance(avoid, list)
+            else [],
+        }
+    flat = _read_legacy_hooks(hooks_json) if isinstance(hooks_json, dict) else []
+    return {
+        "lead_with": flat[0] if flat else "",
+        "supporting": flat[1:],
+        "avoid_mentioning": [],
+    }
+
+
+def _stage_b_jd_summary(r: asyncpg.Record) -> str:
+    """Read the Stage B JD summary, flat column first then the JSON block.
+
+    The flat ``stage_b_jd_summary`` is co-written with the verdict; a
+    verdict-less legacy row may have nulled it while the JSON summary block
+    survives, so fall back to ``stage_b_summary_json``'s ``role_in_3_lines``.
+
+    Args:
+        r: Database record with evaluation columns.
+
+    Returns:
+        The JD summary text, or an empty string when neither source has it.
+    """
+    flat = r.get("stage_b_jd_summary")
+    if flat:
+        return str(flat)
+    summary_json = _as_json_obj(r.get("stage_b_summary_json"))
+    if isinstance(summary_json, dict):
+        return str(summary_json.get("role_in_3_lines") or "")
+    return ""
+
+
+def _stage_b_blocks_from_record(r: asyncpg.Record) -> dict[str, object] | None:
+    """Build the verdict-independent Stage B display blocks for the detail.
+
+    Returns the normalized display shape (jd_summary / fit_score / strengths
+    / gaps / hooks) for any ``completed`` row carrying a usable fit JSON
+    object — even one whose flat verdict is NULL, or whose ``score_0_100`` is
+    absent/NULL — so the detail pane renders the same Stage B content the list
+    row implies. The fit score is coalesced to None (rendered as "—") rather
+    than fed to the strict domain ``FitAnalysis`` (which requires an int and
+    would raise); strengths/gaps already coalesce missing blocks to []. The
+    display DTO ``StageBDetail`` tolerates the null score and null summary.
+    Returns None only when there is no completed fit JSON object at all.
+
+    Args:
+        r: Database record with evaluation columns.
+
+    Returns:
+        Normalized blocks dict, or None when no completed fit JSON exists.
+    """
+    if r.get("stage_b_status") != "completed":
+        return None
+    fit_json = _as_json_obj(r.get("stage_b_fit_json"))
+    if not isinstance(fit_json, dict):
+        return None
+    score = fit_json.get("score_0_100")
+    return {
+        "jd_summary": _stage_b_jd_summary(r),
+        "fit_score": score
+        if isinstance(score, int) and not isinstance(score, bool)
+        else None,
+        "strengths": [
+            {"requirement": s.requirement, "evidence": s.evidence}
+            for s in _stage_b_strengths(fit_json)
+        ],
+        "gaps": [
+            {
+                "requirement": g.requirement,
+                "severity": g.severity,
+                "mitigation": g.mitigation,
+            }
+            for g in _stage_b_gaps(fit_json)
+        ],
+        "hooks": _stage_b_hooks_block(_as_json_obj(r.get("stage_b_hooks_json"))),
+    }
 
 
 _LEGACY_SEVERITY_MAP: dict[str, str] = {
@@ -353,6 +633,96 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         errors=r["errors"],
         finished_at=r["finished_at"],
     )
+
+
+# Insights aggregates (Phase 8). Totals and distributions are all-time;
+# only the daily series is windowed. The verdict CASE mirrors the triage
+# grouping: an explicit verdict wins; verdict-less threshold-skipped rows
+# form the derived below_threshold bucket.
+# ml_gate_passed counts gate survivors (ml_gate_result = 'pass') — the
+# funnel-stage semantic — not gate failures; jobs never gated (NULL) count
+# toward neither.
+_INSIGHTS_TOTALS_SQL = """SELECT
+    (SELECT COUNT(*) FROM jobs) AS total_jobs,
+    (SELECT COUNT(*) FROM jobs WHERE ml_gate_result = 'pass')
+        AS ml_gate_passed_jobs,
+    (SELECT COUNT(*) FROM evaluations WHERE stage_a_at IS NOT NULL)
+        AS evaluated_jobs,
+    (SELECT COUNT(*) FROM applied) AS applied_jobs"""
+
+_INSIGHTS_VERDICTS_SQL = """SELECT
+        CASE WHEN stage_b_verdict IS NOT NULL THEN stage_b_verdict
+             ELSE 'below_threshold' END AS bucket,
+        COUNT(*) AS n
+    FROM evaluations
+    WHERE stage_b_verdict IS NOT NULL
+       OR stage_b_status = 'skipped_below_threshold'
+    GROUP BY bucket"""
+
+_INSIGHTS_STATUSES_SQL = """SELECT status AS bucket, COUNT(*) AS n
+    FROM job_status GROUP BY status"""
+
+
+def _insights_day_sql(table: str, column: str) -> str:
+    """Build the per-day count query for one insights measure.
+
+    ``AT TIME ZONE 'UTC'`` pins the day buckets to UTC regardless of the
+    session timezone; rows with a NULL timestamp never match the window.
+    The window is closed on both ends (``[now - N days, now]``), so a
+    future-dated timestamp never emits a future bucket.
+
+    Args:
+        table: Source table (in-repo literal, never user input).
+        column: Timestamptz column to bucket (in-repo literal).
+
+    Returns:
+        SQL with one ``$1`` parameter: the window size in days.
+    """
+    return (
+        f"SELECT ({column} AT TIME ZONE 'UTC')::date AS day, COUNT(*) AS n"
+        f" FROM {table}"
+        f" WHERE {column} >= now() - make_interval(days => $1)"
+        f" AND {column} <= now()"
+        " GROUP BY day"
+    )
+
+
+def _merge_insights_days(
+    discovered: list[asyncpg.Record],
+    evaluated: list[asyncpg.Record],
+    applied: list[asyncpg.Record],
+) -> list[InsightsDay]:
+    """Merge the three per-day count queries into one ascending series.
+
+    Only days appearing in at least one measure are emitted (consumers
+    zero-fill gaps). Time complexity: O(n log n) — linear over the rows plus
+    the final sort by day.
+
+    Args:
+        discovered: (day, n) rows bucketed on ``jobs.discovered_at``.
+        evaluated: (day, n) rows bucketed on ``evaluations.stage_a_at``.
+        applied: (day, n) rows bucketed on ``applied.applied_at``.
+
+    Returns:
+        Per-day funnel counts, ascending by day.
+    """
+    by_day: dict[date, dict[str, int]] = {}
+    for measure, rows in (
+        ("discovered", discovered),
+        ("evaluated", evaluated),
+        ("applied", applied),
+    ):
+        for r in rows:
+            by_day.setdefault(r["day"], {})[measure] = int(r["n"])
+    return [
+        InsightsDay(
+            day=day,
+            discovered=counts.get("discovered", 0),
+            evaluated=counts.get("evaluated", 0),
+            applied=counts.get("applied", 0),
+        )
+        for day, counts in sorted(by_day.items())
+    ]
 
 
 def _status_info_from_record(r: asyncpg.Record) -> StatusInfo:
@@ -2012,14 +2382,18 @@ class PostgresStore:
         return {row["canonical_id"] for row in rows}
 
     async def save_stage_a(self, job_id: str, result: StageAResult) -> None:
-        """Persist a successful Stage A result.
+        """Persist a successful Stage A result and advance status to scored.
+
+        The evaluation upsert and the ``new -> scored`` status advance commit
+        atomically. The advance only fires when the job is still ``new``, so
+        re-evaluation and jobs already moved along the workflow are untouched.
 
         Args:
             job_id: Store-assigned identity.
             result: Stage A result.
         """
         pool = self._get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             await conn.execute(
                 """INSERT INTO evaluations (
                        job_id, stage_a_score, stage_a_one_line,
@@ -2058,6 +2432,19 @@ class PostgresStore:
                 result.prompt_hash,
                 result.resume_hash,
             )
+            row = await conn.fetchrow(
+                "SELECT status FROM job_status WHERE job_id = $1 FOR UPDATE",
+                int(job_id),
+            )
+            if row is not None and row["status"] == "new":
+                await self._transition_status_in_tx(
+                    conn,
+                    TransitionRequest(
+                        job_id=job_id,
+                        new_status="scored",
+                        reason=REASON_AUTO_SCORED,
+                    ),
+                )
 
     async def save_stage_a_error(self, job_id: str, error: str) -> None:
         """Record a Stage A error (retryable).
@@ -2727,6 +3114,134 @@ class PostgresStore:
             )
         return [_evaluation_from_record(r) for r in rows]
 
+    async def query_jobs_view(self, query: JobsViewQuery) -> JobsViewPage:
+        """Run the filtered, paginated Phase 8 jobs view query.
+
+        One SELECT over jobs LEFT JOIN evaluations LEFT JOIN job_status for
+        the active tab's rows (ordered per ``query.sort``, bounded by
+        limit/offset), plus the active tab's total and a one-row per-tab
+        count aggregate. All request filters apply to the rows, the total,
+        and every tab_counts bucket alike, so tab_counts[t] equals the total
+        of re-running the same request with tab=t.
+
+        Args:
+            query: Tab, filters, sort, and pagination window.
+
+        Returns:
+            Bounded jobs view page.
+        """
+        shared, params = _jobs_view_filters(query)
+        where = " AND ".join([_JOBS_VIEW_TAB_PREDICATES[query.tab], *shared])
+        shared_where = " AND ".join(shared) if shared else "TRUE"
+        rows_sql = (
+            f"SELECT {_JOBS_VIEW_COLUMNS} {_JOBS_VIEW_FROM} WHERE {where}"
+            f" ORDER BY {_JOBS_VIEW_SORT_SQL[query.sort]}"
+            f" LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(rows_sql, *params, query.limit, query.offset)
+            total = await self._count(
+                conn,
+                f"SELECT COUNT(*) {_JOBS_VIEW_FROM} WHERE {where}",
+                *params,
+            )
+            counts_row = await conn.fetchrow(
+                _jobs_view_counts_sql(shared_where), *params
+            )
+        return JobsViewPage(
+            rows=[_jobs_view_row_from_record(r) for r in rows],
+            total=total,
+            tab_counts={tab: int(counts_row[tab]) for tab in VALID_TABS},
+        )
+
+    async def list_twin_rows_by_status(
+        self,
+        keys: Sequence[tuple[str, str]],
+        *,
+        statuses: Sequence[str],
+        limit: int,
+    ) -> list[JobsViewRow]:
+        """List view rows in the given statuses for the given twin keys.
+
+        Feeds the display fold (plan D9): the tab-filtered jobs-view corpus
+        never contains out-of-tab siblings, so the fold pulls them in
+        explicitly (e.g. the in-flight ``applied`` twin of a queue row). The
+        ``<> ''`` guards are NULL-safe, so blank-norm rows never match —
+        mirroring ``list_twin_statuses``.
+
+        Args:
+            keys: Non-blank ``(company_norm, title_norm)`` cluster keys.
+            statuses: Workflow statuses to keep.
+            limit: Maximum rows returned.
+
+        Returns:
+            Matching view rows, newest discovered first.
+        """
+        if not keys or not statuses:
+            return []
+        sql = (
+            f"SELECT {_JOBS_VIEW_COLUMNS} {_JOBS_VIEW_FROM}"
+            " JOIN unnest($1::text[], $2::text[])"
+            "   AS twin_keys(company_norm, title_norm)"
+            "   ON jobs.company_norm = twin_keys.company_norm"
+            "  AND jobs.title_norm = twin_keys.title_norm"
+            " WHERE job_status.status = ANY($3::text[])"
+            "   AND jobs.company_norm <> ''"
+            "   AND jobs.title_norm <> ''"
+            " ORDER BY jobs.discovered_at DESC, jobs.id DESC"
+            " LIMIT $4"
+        )
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                sql,
+                [key[0] for key in keys],
+                [key[1] for key in keys],
+                list(statuses),
+                limit,
+            )
+        return [_jobs_view_row_from_record(r) for r in rows]
+
+    async def list_twin_statuses(self, job_id: str) -> list[TwinStatusRow]:
+        """List a job's twins (same persisted company_norm + title_norm).
+
+        The job itself is excluded. Blank/NULL norms never cluster (the
+        ``<> ''`` guards are NULL-safe: NULL comparisons are not true), so a
+        blank-norm job has no twins — mirroring ``expand_twin_ids``.
+
+        Args:
+            job_id: Store-assigned identity of the detail job.
+
+        Returns:
+            Twin rows (platform, url, current status), ordered by job id.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT twin.id, twin.platform, twin.url, job_status.status
+                   FROM jobs
+                   JOIN jobs twin
+                     ON twin.company_norm = jobs.company_norm
+                    AND twin.title_norm = jobs.title_norm
+                    AND twin.id <> jobs.id
+                   LEFT JOIN job_status ON job_status.job_id = twin.id
+                   WHERE jobs.id = $1
+                     AND jobs.company_norm <> ''
+                     AND jobs.title_norm <> ''
+                   ORDER BY twin.id""",
+                int(job_id),
+            )
+        return [
+            TwinStatusRow(
+                job_id=str(r["id"]),
+                platform=r["platform"],
+                url=r["url"],
+                status=r["status"],
+            )
+            for r in rows
+        ]
+
     async def save_ml_gate_result(self, job_id: str, result: MLGateResult) -> None:
         """Persist ML gate decision and features.
 
@@ -2817,6 +3332,72 @@ class PostgresStore:
                 run_id,
             )
         return _pipeline_run_from_record(row) if row is not None else None
+
+    async def list_pipeline_runs(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[PipelineRun], int]:
+        """List pipeline runs, newest first, with the all-time total.
+
+        Args:
+            limit: Maximum runs returned.
+            offset: Runs to skip before the returned window.
+
+        Returns:
+            Tuple of (runs ordered by started_at DESC with run_id DESC as a
+            deterministic tiebreak, total run count ignoring the window).
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM pipeline_runs
+                   ORDER BY started_at DESC, run_id DESC
+                   LIMIT $1 OFFSET $2""",
+                limit,
+                offset,
+            )
+            total = await self._count(conn, "SELECT COUNT(*) FROM pipeline_runs")
+        return [_pipeline_run_from_record(r) for r in rows], total
+
+    async def insights_overview(self, *, window_days: int) -> InsightsOverview:
+        """Aggregate the insights overview.
+
+        Totals and the verdict/status distributions are all-time; only the
+        daily series is windowed (UTC day buckets over
+        ``[now - window_days, now]``, emitting only days having data).
+
+        Args:
+            window_days: Daily-series window in days (caller-validated).
+
+        Returns:
+            Insights overview aggregate.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            totals = await conn.fetchrow(_INSIGHTS_TOTALS_SQL)
+            verdict_rows = await conn.fetch(_INSIGHTS_VERDICTS_SQL)
+            status_rows = await conn.fetch(_INSIGHTS_STATUSES_SQL)
+            discovered = await conn.fetch(
+                _insights_day_sql("jobs", "discovered_at"), window_days
+            )
+            evaluated = await conn.fetch(
+                _insights_day_sql("evaluations", "stage_a_at"), window_days
+            )
+            applied = await conn.fetch(
+                _insights_day_sql("applied", "applied_at"), window_days
+            )
+        return InsightsOverview(
+            window_days=window_days,
+            total_jobs=int(totals["total_jobs"]),
+            ml_gate_passed_jobs=int(totals["ml_gate_passed_jobs"]),
+            evaluated_jobs=int(totals["evaluated_jobs"]),
+            applied_jobs=int(totals["applied_jobs"]),
+            verdict_distribution={r["bucket"]: int(r["n"]) for r in verdict_rows},
+            status_distribution={r["bucket"]: int(r["n"]) for r in status_rows},
+            daily=_merge_insights_days(discovered, evaluated, applied),
+        )
 
     # ------------------------------------------------------------------
     # Status management
@@ -2968,9 +3549,13 @@ class PostgresStore:
                     raise ValueError(f"job {job_id} is not archived (status={current})")
 
                 hist = await conn.fetchrow(
+                    # Order by the append-only id, not changed_at: the wall
+                    # clock can invert two transitions written close together
+                    # (see get_status_history), which would restore to the
+                    # wrong target.
                     """SELECT to_status FROM job_status_history
                        WHERE job_id = $1 AND to_status != 'archived'
-                       ORDER BY changed_at DESC, id DESC
+                       ORDER BY id DESC
                        LIMIT 1""",
                     int(job_id),
                 )
@@ -3136,18 +3721,21 @@ class PostgresStore:
 
         return [_status_info_from_record(r) for r in rows]
 
-    async def append_note(self, *, job_id: str, text: str) -> None:
+    async def append_note(self, *, job_id: str, text: str) -> bool:
         """Append timestamped note, reset ghost clock.
 
         Args:
             job_id: Store-assigned job identity.
             text: Note text to append.
+
+        Returns:
+            True if a job_status row was updated, False if none exists.
         """
         prefix = datetime.now(UTC).strftime("[%Y-%m-%d %H:%M] ")
         line = prefix + text + "\n"
         pool = self._get_pool()
         async with pool.acquire() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 """UPDATE job_status
                    SET notes = COALESCE(notes, '') || $1,
                        last_status_change_at = now()
@@ -3155,6 +3743,8 @@ class PostgresStore:
                 line,
                 int(job_id),
             )
+        # asyncpg returns "UPDATE N" where N is the row count
+        return not result.endswith(" 0")
 
     async def set_followup(self, *, job_id: str, at: datetime) -> bool:
         """Set the next follow-up time for a job.
@@ -3329,6 +3919,14 @@ class PostgresStore:
     async def get_status_history(self, job_id: str) -> list[str]:
         """Return to_status values from job_status_history, newest-first.
 
+        Ordered by the append-only ``id`` (BIGSERIAL), not ``changed_at``:
+        ``changed_at`` defaults to ``now()`` (the wall clock at transaction
+        start), which is not monotonic under NTP steps or load, so two
+        transitions written milliseconds apart can invert. ``id`` is the
+        gap-free insertion order and stays correct for legacy-imported rows
+        too (their ids preserve original chronology, and the sequence is
+        bumped past them on import).
+
         Args:
             job_id: Store-assigned identity.
 
@@ -3339,7 +3937,7 @@ class PostgresStore:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT to_status FROM job_status_history"
-                " WHERE job_id = $1 ORDER BY changed_at DESC, id DESC",
+                " WHERE job_id = $1 ORDER BY id DESC",
                 int(job_id),
             )
         return [r["to_status"] for r in rows]
@@ -3417,6 +4015,7 @@ class PostgresStore:
             try:
                 cluster_ok = 0
                 cluster_skipped = 0
+                cluster_cascaded = 0
                 async with pool.acquire() as conn:
                     async with conn.transaction():
                         await self._transition_status_in_tx(
@@ -3453,8 +4052,10 @@ class PostgresStore:
                                 ),
                             )
                             cluster_ok += 1
+                            cluster_cascaded += 1
                 result.succeeded += cluster_ok
                 result.skipped += cluster_skipped
+                result.cascaded += cluster_cascaded
                 processed_ids.update(cluster)
             except Exception as exc:
                 result.failed.append((job_id, str(exc)))

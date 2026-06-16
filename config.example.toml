@@ -77,6 +77,10 @@ master_resume_path = "resume.example.md"
 
 [scoring]
 stage_a_threshold = 60
+# ml_gate_enabled = false       # Phase 5 pre-Stage-A XGBoost filter (see [ml_gate] below)
+# Default per-stage cap for `jobfeed evaluate` when neither --limit nor --full
+# is passed. CLI flags still override this; --full ignores it entirely.
+default_eval_limit = 150
 
 # Digest file output — when output_dir is set, `jobfeed digest` also writes
 # today.md plus a dated YYYY-MM-DD.md there (both overwritten each run), and
@@ -132,7 +136,9 @@ enabled = false
 # search_urls = ["https://www.linkedin.com/jobs/search/?keywords=software%20engineer%20intern&location=United%20States&f_TPR=r86400"]
 # max_jobs = 1000            # cap on postings collected per scan
 # pacing_s = 1.0             # sleep between guest requests (list pages + JD fetches)
-# enrich_batch_limit = 500   # max rows one enrich-linkedin-guest pass attempts
+# enrich_batch_limit = 500   # max rows one enrich pass attempts
+# enrich_after_scan = true   # scan runs one JD-enrich pass after this source;
+#                            # false = discover-only (run enrich-linkedin-guest manually)
 # proxies =                  # unset = direct; e.g. "http://user:pass@host:port"
 # timeout_s = 15.0           # per-request read timeout
 

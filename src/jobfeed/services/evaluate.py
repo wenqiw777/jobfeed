@@ -30,6 +30,7 @@ from jobfeed.services._evaluate_helpers import (
     record_usage,
     require_job_id,
 )
+from jobfeed.services._evaluate_sweep import sweep_stage_b
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 from jobfeed.services.runs import start_pipeline_run
 
@@ -78,7 +79,7 @@ class EvaluateService:
                 )
         run = start_pipeline_run("evaluate")
         bind_run_id(run.run_id)
-        lim = 100 if limit is None else limit
+        lim = self._config.default_eval_limit if limit is None else limit
         if dry_run:
             request = DryRunRequest(self._logger, stage, corpus, lim, max_days)
             await build_dry_run_preview(self._deps, self._config, run, request)
@@ -115,6 +116,7 @@ class EvaluateService:
         jobs = await load_stage_a_for_run(
             self._deps.store, corpus, limit, max_days, survivors
         )
+        self._logger.info("stage_a_queued", count=len(jobs))
         sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
 
         async def _worker(job: JobPosting) -> None:
@@ -204,6 +206,7 @@ class EvaluateService:
         jobs = await load_stage_b_for_run(
             self._deps.store, limit, max_days, self._config.stage_a_threshold
         )
+        self._logger.info("stage_b_queued", count=len(jobs))
         stage_a_scores = await load_stage_a_scores(self._deps.store, jobs)
         sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
         failed: list[JobPosting] = []
@@ -218,7 +221,7 @@ class EvaluateService:
                     failed.append(job)
 
         await asyncio.gather(*(_worker(j) for j in jobs))
-        await self._sweep_stage_b(failed, run)
+        await sweep_stage_b(self._deps, run, failed, score_stage_b=self._score_stage_b)
 
     async def _score_stage_b(
         self,
@@ -274,27 +277,3 @@ class EvaluateService:
             )
             return "completed"
         return "failed"  # pragma: no cover
-
-    async def _sweep_stage_b(self, failed: list[JobPosting], run: PipelineRun) -> None:
-        sweep = self._deps.llm_stage_b_sweep
-        if sweep is None:
-            for job in failed:
-                jid = require_job_id(job)
-                await self._deps.store.save_stage_b_error(
-                    jid, "stage_b_failed_no_sweep"
-                )
-                run.errors += 1
-            return
-        stage_a_scores = await load_stage_a_scores(self._deps.store, failed)
-        for job in failed:
-            jid = require_job_id(job)
-            outcome = await self._score_stage_b(
-                job,
-                run,
-                sweep,
-                stage_a_score=stage_a_scores.get(jid),
-                parse_attempts=1,
-            )
-            if outcome != "completed":
-                await self._deps.store.save_stage_b_error(jid, "stage_b_sweep_failed")
-                run.errors += 1

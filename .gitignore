@@ -33,11 +33,22 @@ pip-wheel-metadata/
 # Local runtime state for the Phase 0 walking skeleton
 .jobfeed-dev/
 
+# Web UI (the bare dist/ pattern above also matches web-ui/dist, but keep
+# these explicit so scoping the Python patterns later can't expose them).
+web-ui/node_modules/
+web-ui/dist/
+web-ui/coverage/
+web-ui/.eslintcache
+web-ui/*.tsbuildinfo
+npm-debug.log*
+web-ui/node_modules/
+
 # Local editor and OS metadata
 .DS_Store
 .idea/
 .vscode/
 .claude/worktrees/
+.gstack/
 
 # Local/personal config (use config.example.toml as the template)
 /config.toml
