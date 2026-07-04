@@ -11,7 +11,9 @@ from pydantic import ValidationError
 from jobfeed.config import (
     LLMSettings,
     MLGateSettings,
+    ObservabilitySettings,
     ScoringSettings,
+    Settings,
     SourcesATSConfig,
     SourcesConfig,
     SourcesIndeedConfig,
@@ -881,3 +883,55 @@ def test_load_settings_parses_ml_gate_section(tmp_path: Path) -> None:
     assert settings.ml_gate.embedding_max_chars == ML_GATE_TOML_EMBEDDING_MAX_CHARS
     assert settings.ml_gate.threshold_override == ML_GATE_TOML_THRESHOLD_OVERRIDE
     assert settings.ml_gate.max_candidates == ML_GATE_TOML_MAX_CANDIDATES
+
+
+# --- Phase 9 ObservabilitySettings OTel/Sentry tests ---
+
+
+def test_observability_settings_defaults() -> None:
+    """ObservabilitySettings should expose correct defaults for all fields."""
+    cfg = ObservabilitySettings()
+
+    assert cfg.log_level == "info"
+    assert cfg.log_format == "human"
+    assert cfg.otel_enabled is False
+    assert cfg.otel_endpoint == "http://localhost:4317"
+    assert cfg.otel_service_name == "jobfeed"
+    assert cfg.sentry_dsn is None
+    assert cfg.sentry_environment == "dev"
+
+
+def test_observability_settings_accepts_otel_enabled() -> None:
+    """Settings should validate when observability.otel_enabled is True."""
+    settings = Settings(observability={"otel_enabled": True})
+
+    assert settings.observability.otel_enabled is True
+
+
+def test_observability_settings_rejects_unknown_field() -> None:
+    """Settings should reject unknown observability fields (extra='forbid')."""
+    with pytest.raises(ValidationError):
+        Settings(observability={"otel_enabled": True, "unknown_field": "x"})
+
+
+def test_observability_settings_rejects_unknown_key_directly() -> None:
+    """ObservabilitySettings rejects extra keys when constructed directly."""
+    with pytest.raises(ValidationError):
+        ObservabilitySettings(unknown_key="value")  # type: ignore[call-arg]
+
+
+def test_observability_settings_accepts_custom_values() -> None:
+    """ObservabilitySettings should accept all custom field values."""
+    cfg = ObservabilitySettings(
+        otel_enabled=True,
+        otel_endpoint="http://jaeger:4317",
+        otel_service_name="jobfeed-prod",
+        sentry_dsn="https://key@sentry.io/123",
+        sentry_environment="production",
+    )
+
+    assert cfg.otel_enabled is True
+    assert cfg.otel_endpoint == "http://jaeger:4317"
+    assert cfg.otel_service_name == "jobfeed-prod"
+    assert cfg.sentry_dsn == "https://key@sentry.io/123"
+    assert cfg.sentry_environment == "production"

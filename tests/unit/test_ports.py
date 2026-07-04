@@ -167,6 +167,13 @@ class FakeStore:
             run: Pipeline run to persist.
         """
 
+    async def update_pipeline_run_status(self, run: PipelineRun) -> None:
+        """Persist a pipeline run's counters, status, and finish time.
+
+        Args:
+            run: Pipeline run with accumulated counters.
+        """
+
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Load a pipeline run by identity.
 

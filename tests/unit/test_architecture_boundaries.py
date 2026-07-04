@@ -20,7 +20,7 @@ DOMAIN_ALLOWED_IMPORTS = {
     "typing",
 }
 ADAPTER_IMPORT_PREFIX = "jobfeed.adapters"
-SERVICE_FORBIDDEN_IMPORTS = (ADAPTER_IMPORT_PREFIX, "jobfeed.config")
+SERVICE_FORBIDDEN_IMPORTS = (ADAPTER_IMPORT_PREFIX, "jobfeed.config", "jobfeed.cli")
 
 
 @dataclass(frozen=True)

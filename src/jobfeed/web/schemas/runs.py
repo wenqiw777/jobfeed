@@ -18,6 +18,7 @@ class RunSummary(BaseModel):
     run_id: str
     started_at: datetime
     source: str
+    status: str
     jobs_discovered: int
     jobs_inserted: int
     jobs_updated: int
@@ -51,6 +52,7 @@ def run_summary(run: PipelineRun) -> RunSummary:
         run_id=run.run_id,
         started_at=run.started_at,
         source=run.source,
+        status=run.status,
         jobs_discovered=run.jobs_discovered,
         jobs_inserted=run.jobs_inserted,
         jobs_updated=run.jobs_updated,

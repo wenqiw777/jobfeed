@@ -193,6 +193,7 @@ def test_pipeline_run_uses_zero_and_none_defaults() -> None:
     """PipelineRun counters should default to an empty run state."""
     run = PipelineRun(run_id="run-1", started_at=fixed_time(), source="scan")
 
+    assert run.status == "running"
     assert run.jobs_discovered == 0
     assert run.jobs_inserted == 0
     assert run.jobs_updated == 0
@@ -363,6 +364,7 @@ def test_models_module_imports_only_allowed_stdlib_dependencies() -> None:
         "jobfeed.domain.models_application",
         "jobfeed.domain.models_llm",
         "jobfeed.domain.models_ops",
+        "jobfeed.domain.models_run",
         "jobfeed.domain.models_status",
         "jobfeed.domain.types",
         "typing",

@@ -63,6 +63,13 @@ from jobfeed.domain.models import (
     WorkflowAttentionItem,
 )
 from jobfeed.domain.models_llm import LLMUsage
+from jobfeed.domain.models_perf import (
+    FunnelStats,
+    LLMDailyStats,
+    PerformanceOverview,
+    StepTiming,
+    StepTimingSeries,
+)
 from jobfeed.domain.models_views import (
     VALID_TABS,
     InsightsDay,
@@ -105,6 +112,18 @@ def _escape_like_prefix(prefix: str) -> str:
     """
     # Escape the escape char first, or the % / _ escapes below get double-escaped.
     return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _opt_float(value: Any) -> float | None:
+    """Coerce an optional numeric database value to ``float | None``.
+
+    Args:
+        value: Possibly-None numeric from an asyncpg Record.
+
+    Returns:
+        Float when truthy, else None.
+    """
+    return float(value) if value is not None else None
 
 
 def _job_from_record(r: asyncpg.Record) -> JobPosting:
@@ -621,11 +640,13 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         run_id=r["run_id"],
         started_at=r["started_at"],
         source=r["source"],
+        status=r["status"],
         jobs_discovered=r["jobs_discovered"],
         jobs_inserted=r["jobs_inserted"],
         jobs_updated=r["jobs_updated"],
         jobs_filtered=r["jobs_filtered"],
         jobs_ml_gated=r["jobs_ml_gated"],
+        jobs_gate_passed=r["jobs_gate_passed"],
         stage_a_scored=r["stage_a_scored"],
         stage_b_scored=r["stage_b_scored"],
         jobs_scored=r["jobs_scored"],
@@ -3295,19 +3316,24 @@ class PostgresStore:
         async with pool.acquire() as conn:
             await conn.execute(
                 """INSERT INTO pipeline_runs (
-                       run_id, started_at, source, jobs_discovered,
+                       run_id, started_at, source, status, jobs_discovered,
                        jobs_inserted, jobs_updated, jobs_filtered,
-                       jobs_ml_gated, stage_a_scored, stage_b_scored,
-                       jobs_scored, total_llm_cost_usd, errors, finished_at
-                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)""",
+                       jobs_ml_gated, jobs_gate_passed, stage_a_scored,
+                       stage_b_scored, jobs_scored, total_llm_cost_usd,
+                       errors, finished_at
+                   ) VALUES (
+                       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
+                   )""",
                 run.run_id,
                 run.started_at,
                 run.source,
+                run.status,
                 run.jobs_discovered,
                 run.jobs_inserted,
                 run.jobs_updated,
                 run.jobs_filtered,
                 run.jobs_ml_gated,
+                run.jobs_gate_passed,
                 run.stage_a_scored,
                 run.stage_b_scored,
                 run.jobs_scored,
@@ -3338,28 +3364,337 @@ class PostgresStore:
         *,
         limit: int = 50,
         offset: int = 0,
+        days: int | None = None,
     ) -> tuple[list[PipelineRun], int]:
-        """List pipeline runs, newest first, with the all-time total.
+        """List pipeline runs, newest first, with the matching total.
 
         Args:
             limit: Maximum runs returned.
             offset: Runs to skip before the returned window.
+            days: Optional look-back window; only runs started within the
+                last ``days`` days are listed and counted.
 
         Returns:
             Tuple of (runs ordered by started_at DESC with run_id DESC as a
-            deterministic tiebreak, total run count ignoring the window).
+            deterministic tiebreak, total count of runs matching ``days``
+            ignoring limit/offset).
+        """
+        # Filter params first, LIMIT/OFFSET appended last, so the one WHERE
+        # fragment serves both queries with no hand-numbered placeholders.
+        params: list[int] = []
+        where = ""
+        if days is not None:
+            params.append(days)
+            where = f"WHERE started_at >= now() - make_interval(days => ${len(params)})"
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            total = await self._count(
+                conn, f"SELECT COUNT(*) FROM pipeline_runs {where}", *params
+            )
+            rows = await conn.fetch(
+                f"""SELECT * FROM pipeline_runs
+                   {where}
+                   ORDER BY started_at DESC, run_id DESC
+                   LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}""",
+                *params,
+                limit,
+                offset,
+            )
+        return [_pipeline_run_from_record(r) for r in rows], total
+
+    async def update_pipeline_run_status(
+        self,
+        run: PipelineRun,
+    ) -> None:
+        """Persist a pipeline run's current counters, status, and finish time.
+
+        Args:
+            run: Pipeline run with accumulated counters to persist.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE pipeline_runs
+                   SET status = $1, finished_at = $2,
+                       jobs_discovered = $3, jobs_inserted = $4,
+                       jobs_updated = $5, jobs_filtered = $6,
+                       jobs_ml_gated = $7, jobs_gate_passed = $8,
+                       stage_a_scored = $9, stage_b_scored = $10,
+                       jobs_scored = $11, total_llm_cost_usd = $12,
+                       errors = $13
+                   WHERE run_id = $14""",
+                run.status,
+                run.finished_at,
+                run.jobs_discovered,
+                run.jobs_inserted,
+                run.jobs_updated,
+                run.jobs_filtered,
+                run.jobs_ml_gated,
+                run.jobs_gate_passed,
+                run.stage_a_scored,
+                run.stage_b_scored,
+                run.jobs_scored,
+                run.total_llm_cost_usd,
+                run.errors,
+                run.run_id,
+            )
+
+    async def record_step_timing(self, timing: StepTiming) -> None:
+        """Persist a single step timing record.
+
+        Args:
+            timing: Step timing to persist.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO step_timings
+                       (run_id, step_type, step_name, elapsed_ms, is_error)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                timing.run_id,
+                timing.step_type,
+                timing.step_name,
+                timing.elapsed_ms,
+                timing.is_error,
+            )
+
+    async def record_step_timings(self, timings: list[StepTiming]) -> None:
+        """Persist multiple step timing records in a single batch.
+
+        Args:
+            timings: Step timings to persist.
+        """
+        if not timings:
+            return
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                """INSERT INTO step_timings
+                       (run_id, step_type, step_name, elapsed_ms, is_error)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                [
+                    (t.run_id, t.step_type, t.step_name, t.elapsed_ms, t.is_error)
+                    for t in timings
+                ],
+            )
+
+    # ------------------------------------------------------------------
+    # Performance queries
+    # ------------------------------------------------------------------
+
+    async def get_performance_overview(self, window_days: int) -> PerformanceOverview:
+        """Aggregate performance metrics with period-over-period deltas.
+
+        Uses two equal-sized windows (current and previous) to compute
+        deltas. Falls back to None when no previous-window data exists.
+
+        Args:
+            window_days: Number of days in the current window.
+
+        Returns:
+            Overview with averages, totals, and deltas.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """WITH bounds AS (
+                       SELECT now() - make_interval(days => $1) AS cur_start,
+                              now() - make_interval(days => $1 * 2) AS prev_start
+                   ),
+                   cur AS (
+                       SELECT
+                           COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
+                               FILTER (WHERE source != 'evaluate'), 0) AS avg_scan,
+                           COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
+                               FILTER (WHERE source ILIKE '%%evaluat%%'), 0) AS avg_eval,
+                           COALESCE(SUM(total_llm_cost_usd), 0) AS cost,
+                           CASE WHEN COUNT(*) > 0
+                               THEN COUNT(*) FILTER (WHERE errors > 0)::float / COUNT(*)
+                               ELSE 0 END AS err_rate
+                       FROM pipeline_runs, bounds
+                       WHERE started_at >= bounds.cur_start
+                         AND finished_at IS NOT NULL
+                   ),
+                   prev AS (
+                       SELECT
+                           COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
+                               FILTER (WHERE source != 'evaluate'), 0) AS avg_scan,
+                           COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
+                               FILTER (WHERE source ILIKE '%%evaluat%%'), 0) AS avg_eval,
+                           COALESCE(SUM(total_llm_cost_usd), 0) AS cost,
+                           CASE WHEN COUNT(*) > 0
+                               THEN COUNT(*) FILTER (WHERE errors > 0)::float / COUNT(*)
+                               ELSE 0 END AS err_rate,
+                           COUNT(*) AS cnt
+                       FROM pipeline_runs, bounds
+                       WHERE started_at >= bounds.prev_start
+                         AND started_at < bounds.cur_start
+                         AND finished_at IS NOT NULL
+                   )
+                   SELECT cur.avg_scan, cur.avg_eval, cur.cost, cur.err_rate,
+                          CASE WHEN prev.cnt > 0 AND prev.avg_scan > 0
+                              THEN (cur.avg_scan - prev.avg_scan) / prev.avg_scan
+                              ELSE NULL END AS scan_delta,
+                          CASE WHEN prev.cnt > 0 AND prev.avg_eval > 0
+                              THEN (cur.avg_eval - prev.avg_eval) / prev.avg_eval
+                              ELSE NULL END AS eval_delta,
+                          CASE WHEN prev.cnt > 0 AND prev.cost > 0
+                              THEN (cur.cost - prev.cost) / prev.cost
+                              ELSE NULL END AS cost_delta,
+                          CASE WHEN prev.cnt > 0 AND prev.err_rate > 0
+                              THEN (cur.err_rate - prev.err_rate) / prev.err_rate
+                              ELSE NULL END AS err_delta
+                   FROM cur, prev""",
+                window_days,
+            )
+        assert row is not None
+        return PerformanceOverview(
+            avg_scan_duration_ms=float(row["avg_scan"]),
+            avg_eval_duration_ms=float(row["avg_eval"]),
+            total_llm_cost_usd=float(row["cost"]),
+            error_rate=float(row["err_rate"]),
+            scan_duration_delta=_opt_float(row["scan_delta"]),
+            eval_duration_delta=_opt_float(row["eval_delta"]),
+            cost_delta=_opt_float(row["cost_delta"]),
+            error_rate_delta=_opt_float(row["err_delta"]),
+        )
+
+    async def get_step_timings(
+        self, window_days: int, step_type: str | None = None
+    ) -> list[StepTimingSeries]:
+        """Fetch step timing rows within the window.
+
+        Args:
+            window_days: Look-back window in days.
+            step_type: Optional filter on step_type.
+
+        Returns:
+            Step timings ordered by created_at ascending, id as tiebreaker.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            if step_type is not None:
+                rows = await conn.fetch(
+                    """SELECT step_type, step_name, run_id,
+                              elapsed_ms, is_error, created_at
+                       FROM step_timings
+                       WHERE created_at >= now() - make_interval(days => $1)
+                         AND step_type = $2
+                       ORDER BY created_at, id""",
+                    window_days,
+                    step_type,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT step_type, step_name, run_id,
+                              elapsed_ms, is_error, created_at
+                       FROM step_timings
+                       WHERE created_at >= now() - make_interval(days => $1)
+                       ORDER BY created_at, id""",
+                    window_days,
+                )
+        return [
+            StepTimingSeries(
+                step_type=r["step_type"],
+                step_name=r["step_name"],
+                run_id=r["run_id"],
+                elapsed_ms=float(r["elapsed_ms"]),
+                is_error=r["is_error"],
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ]
+
+    async def get_llm_daily_stats(self, window_days: int) -> list[LLMDailyStats]:
+        """Daily LLM latency percentiles and token averages.
+
+        Args:
+            window_days: Look-back window in days.
+
+        Returns:
+            Daily stats ordered by day ascending.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT * FROM pipeline_runs
-                   ORDER BY started_at DESC, run_id DESC
-                   LIMIT $1 OFFSET $2""",
-                limit,
-                offset,
+                """SELECT date(timestamp) AS day,
+                          percentile_cont(0.5) WITHIN GROUP
+                              (ORDER BY latency_ms) AS p50,
+                          percentile_cont(0.95) WITHIN GROUP
+                              (ORDER BY latency_ms) AS p95,
+                          avg(input_tokens) AS avg_in,
+                          avg(output_tokens) AS avg_out
+                   FROM llm_usage
+                   WHERE timestamp >= now() - make_interval(days => $1)
+                   GROUP BY 1
+                   ORDER BY 1""",
+                window_days,
             )
-            total = await self._count(conn, "SELECT COUNT(*) FROM pipeline_runs")
-        return [_pipeline_run_from_record(r) for r in rows], total
+        return [
+            LLMDailyStats(
+                day=r["day"].isoformat(),
+                p50_latency_ms=float(r["p50"]),
+                p95_latency_ms=float(r["p95"]),
+                avg_input_tokens=float(r["avg_in"]),
+                avg_output_tokens=float(r["avg_out"]),
+            )
+            for r in rows
+        ]
+
+    async def get_funnel_stats(self, window_days: int) -> list[FunnelStats]:
+        """Evaluation funnel snapshots from evaluate pipeline runs.
+
+        Only ``source = 'evaluate'`` runs contribute rows — scan runs carry
+        no funnel counters and would render all-zero funnels.
+        ``after_gate`` is the per-run gate-survivor counter; ``scored`` is
+        the count of jobs that actually received a score (capped below
+        ``after_gate`` by the Stage A limit, budget, and scoring errors).
+        ``after_filter`` adds back the gate-failed count and
+        ``total_candidates`` the hard-filtered count.
+
+        Args:
+            window_days: Look-back window in days.
+
+        Returns:
+            Funnel stats per evaluate run, newest first.
+        """
+        # jobs_gate_passed is the true gate-survivor count (Phase 9
+        # follow-up). Rows predating migration 0008 — and gate-disabled
+        # runs — have 0, so GREATEST falls back to the scored counters
+        # (stage_a_scored for stage a/both runs, stage_b_scored for
+        # stage-b-only runs), keeping the funnel monotone.
+        # jobs_scored is NOT used: it sums both stages and double-counts.
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT run_id,
+                          jobs_filtered + jobs_ml_gated
+                              + GREATEST(jobs_gate_passed, stage_a_scored,
+                                         stage_b_scored)
+                              AS total_candidates,
+                          jobs_ml_gated
+                              + GREATEST(jobs_gate_passed, stage_a_scored,
+                                         stage_b_scored)
+                              AS after_filter,
+                          GREATEST(jobs_gate_passed, stage_a_scored,
+                                   stage_b_scored) AS after_gate,
+                          GREATEST(stage_a_scored, stage_b_scored) AS scored
+                   FROM pipeline_runs
+                   WHERE started_at >= now() - make_interval(days => $1)
+                     AND source = 'evaluate'
+                   ORDER BY started_at DESC""",
+                window_days,
+            )
+        return [
+            FunnelStats(
+                run_id=r["run_id"],
+                total_candidates=r["total_candidates"],
+                after_filter=r["after_filter"],
+                after_gate=r["after_gate"],
+                scored=r["scored"],
+            )
+            for r in rows
+        ]
 
     async def insights_overview(self, *, window_days: int) -> InsightsOverview:
         """Aggregate the insights overview.

@@ -37,6 +37,12 @@ export function formatRelativeAge(iso: string | null, now: Date = new Date()): s
   return `${then.getMonth() + 1}/${then.getDate()}/${yy}`;
 }
 
+/** "2026-06-11" -> "6/11" for the mono chart axis ticks. */
+export function dayTick(day: string): string {
+  const [, month, date] = day.split("-");
+  return `${Number(month)}/${Number(date)}`;
+}
+
 /** Local wall-clock "YYYY-MM-DD HH:mm" for the mono runs columns. */
 export function formatLocalDateTime(iso: string | null): string {
   if (iso === null) {

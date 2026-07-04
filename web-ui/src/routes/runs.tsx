@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
-import { useRuns, type RunSummary } from "@/api/queries";
+import { useActiveRuns, useRuns, type RunSummary } from "@/api/queries";
+import { LiveRunRow } from "@/components/runs/LiveRunRow";
+import { TriggerEvaluateButton } from "@/components/runs/TriggerEvaluateDialog";
+import { TriggerScanButton } from "@/components/runs/TriggerScanDialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatLocalDateTime } from "@/lib/dates";
@@ -49,18 +52,50 @@ function formatCost(usd: number): string {
 }
 
 /**
- * Runs: read-only history of pipeline runs, newest first (server order).
- * Triggering stays in the CLI until Phase 9 — the hint line below the
- * table says so quietly instead of offering a dead button.
+ * Runs: pipeline run history and live progress.
+ *
+ * Trigger buttons fire scans and evaluates; active runs stream progress
+ * via SSE at the top of the list, then roll into the history below.
  */
 export default function RunsPage() {
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const runs = useRuns({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+  const activeRuns = useActiveRuns();
+
+  const handleDone = useCallback(() => {
+    void activeRuns.refetch();
+  }, [activeRuns]);
+
+  // A running run is served by both /api/runs/active and /api/runs for
+  // its entire duration — keep it in the live list only.
+  const activeIds = new Set(activeRuns.data?.runs.map((ar) => ar.run_id) ?? []);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <Body runs={runs} expandedId={expandedId} onToggle={setExpandedId} />
+      {/* Header: trigger buttons */}
+      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+        <span className="text-label uppercase tracking-wide text-mute">Runs</span>
+        <div className="flex items-center gap-1.5">
+          <TriggerScanButton />
+          <TriggerEvaluateButton />
+        </div>
+      </div>
+
+      {/* Active runs (live SSE rows) */}
+      {activeRuns.data && activeRuns.data.runs.length > 0 && (
+        <ul aria-label="Active runs">
+          {activeRuns.data.runs.map((ar) => (
+            <LiveRunRow
+              key={ar.run_id}
+              run={ar}
+              onDone={handleDone}
+            />
+          ))}
+        </ul>
+      )}
+
+      <Body runs={runs} activeIds={activeIds} expandedId={expandedId} onToggle={setExpandedId} />
       <div className="flex items-center justify-between border-t border-border px-4 py-2">
         <span className="font-mono text-micro text-mute">
           <RangeLabel page={page} pageRows={runs.data?.runs.length ?? 0} total={runs.data?.total ?? 0} />
@@ -83,9 +118,6 @@ export default function RunsPage() {
           </Button>
         </div>
       </div>
-      <p className="px-4 pb-3 pt-1 text-micro text-mute">
-        Runs are read-only here; triggering scans from this page arrives with Phase 9.
-      </p>
     </div>
   );
 }
@@ -103,11 +135,13 @@ function RangeLabel({ page, pageRows, total }: { page: number; pageRows: number;
 
 interface BodyProps {
   runs: ReturnType<typeof useRuns>;
+  /** run_ids currently rendered as live rows — excluded from history. */
+  activeIds: Set<string>;
   expandedId: string | null;
   onToggle: (runId: string | null) => void;
 }
 
-function Body({ runs, expandedId, onToggle }: BodyProps) {
+function Body({ runs, activeIds, expandedId, onToggle }: BodyProps) {
   if (runs.isPending) {
     return (
       <div className="flex flex-col gap-1 px-4 py-3" aria-label="Loading runs">
@@ -120,7 +154,13 @@ function Body({ runs, expandedId, onToggle }: BodyProps) {
   if (runs.isError) {
     return <p className="px-4 py-6 text-body-sm text-danger">{runs.error.message}</p>;
   }
-  if (runs.data.runs.length === 0) {
+  const historyRuns = runs.data.runs.filter((run) => !activeIds.has(run.run_id));
+  if (historyRuns.length === 0) {
+    // With live rows on screen the "No runs yet" teaching state would
+    // lie — the first run is happening right now.
+    if (activeIds.size > 0) {
+      return <div className="min-h-0 flex-1" />;
+    }
     return (
       <div className="grid flex-1 place-items-center px-6 text-center">
         <div>
@@ -149,7 +189,7 @@ function Body({ runs, expandedId, onToggle }: BodyProps) {
         <span className="text-right">Cost</span>
       </div>
       <ul aria-label="Runs">
-        {runs.data.runs.map((run) => (
+        {historyRuns.map((run) => (
           <RunRow
             key={run.run_id}
             run={run}

@@ -3,6 +3,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, XAxis, YAxis } fro
 import type { InsightsOverviewResponse } from "@/api/queries";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
 import { zeroFillDaily } from "@/lib/daily-series";
+import { dayTick } from "@/lib/dates";
 
 const SERIES = [
   { key: "discovered", label: "discovered", color: "rgb(var(--accent))" },
@@ -11,12 +12,6 @@ const SERIES = [
 ] as const;
 
 const INITIAL_DIMENSION = { width: 600, height: 200 };
-
-/** "2026-06-11" -> "6/11" for the mono axis ticks. */
-function dayTick(day: string): string {
-  const [, month, date] = day.split("-");
-  return `${Number(month)}/${Number(date)}`;
-}
 
 /**
  * Discovered / evaluated / applied per day. The API series is sparse

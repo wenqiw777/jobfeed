@@ -96,6 +96,11 @@ default_runner = "in_process"
 [observability]
 log_level = "info"
 log_format = "human"
+# otel_enabled = false          # set true to export traces to the OTLP endpoint
+# otel_endpoint = "http://localhost:4317"
+# otel_service_name = "jobfeed"
+# sentry_dsn =                  # unset = Sentry disabled; set to your project DSN
+# sentry_environment = "dev"
 
 [sources.ats]
 enabled = true

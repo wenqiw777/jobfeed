@@ -53,6 +53,15 @@ dependencies = [
     # >= 0.30: the uvicorn that runs `jobfeed serve`; a modern floor keeps the
     # loopback server's lifespan/shutdown behavior reproducible across installs.
     "uvicorn >= 0.30",
+    # Observability (Phase 9): OpenTelemetry SDK + exporters + auto-instrumentation
+    # for httpx, asyncpg, and FastAPI; Sentry error tracking with FastAPI integration.
+    "opentelemetry-api >= 1.25",
+    "opentelemetry-sdk >= 1.25",
+    "opentelemetry-exporter-otlp-proto-grpc >= 1.25",
+    "opentelemetry-instrumentation-httpx >= 0.46b",
+    "opentelemetry-instrumentation-asyncpg >= 0.46b",
+    "opentelemetry-instrumentation-fastapi >= 0.46b",
+    "sentry-sdk[fastapi] >= 2.0",
 ]
 
 [project.optional-dependencies]
@@ -140,7 +149,7 @@ mypy_path = "src"
 # onnxruntime likewise ship no stubs and are confined to the lazily imported
 # ML-gate adapter (adapters/ml/*); treat them as untyped too.
 [[tool.mypy.overrides]]
-module = ["jobspy.*", "pandas", "xgboost.*", "fastembed.*", "onnxruntime.*"]
+module = ["jobspy.*", "pandas", "xgboost.*", "fastembed.*", "onnxruntime.*", "opentelemetry.*", "sentry_sdk.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

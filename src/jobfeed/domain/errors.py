@@ -39,10 +39,35 @@ class SourceBusyError(JobfeedError):
     """
 
 
+class SourceConfigError(JobfeedError):
+    """Raised when a requested scan source is disabled or misconfigured.
+
+    Lives in the domain layer so the web layer can reject a trigger request
+    without importing CLI/config machinery; the composition layer translates
+    configuration failures (e.g. a disabled source) into this type.
+    """
+
+
+class ResumeNotConfiguredError(JobfeedError):
+    """Raised when the master resume file is missing on a scoring run.
+
+    A dedicated type (not FileNotFoundError) so the web trigger route can
+    map exactly this user misconfiguration to a 400 without mislabeling
+    other missing files (ML model, price table) that are server faults.
+    """
+
+
+class RunConflictError(Exception):
+    """A pipeline run of the requested type is already active."""
+
+
 __all__ = [
     "JobfeedError",
+    "ResumeNotConfiguredError",
+    "RunConflictError",
     "ScoringParseError",
     "SnapshotAmbiguousError",
     "SnapshotNotFoundError",
     "SourceBusyError",
+    "SourceConfigError",
 ]

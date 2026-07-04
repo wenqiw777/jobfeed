@@ -38,6 +38,9 @@ class RecordingStore:
         """Record the final pipeline run."""
         self.runs.append(run)
 
+    async def update_pipeline_run_status(self, _run: object) -> None:
+        """No-op status update."""
+
 
 class RecordingLogger:
     """Small in-memory logger for service assertions."""

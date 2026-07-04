@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
 from jobfeed.domain.errors import SourceBusyError
 from jobfeed.domain.models import JobPosting, PipelineRun
-from jobfeed.observability import JobfeedLogger, bind_run_id
+from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
 from jobfeed.ports.source import EnrichResult, ScanSession, SessionSource, SimpleSource
 from jobfeed.ports.store import JobStore
+from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.error_handler import ServiceErrorHandler
 from jobfeed.services.runs import start_pipeline_run
+
+ProgressCallback = Callable[[PipelineRun], None]
 
 SourcePort = SimpleSource | SessionSource
 SourceSpec = tuple[str, SourcePort, dict[str, object]]
@@ -33,26 +37,49 @@ class ScanService:
         self.logger = logger
         self.error_handler = ServiceErrorHandler(store=store, logger=logger)
 
-    async def run(self, sources: list[SourceSpec]) -> PipelineRun:
+    async def run(
+        self,
+        sources: list[SourceSpec],
+        on_progress: ProgressCallback | None = None,
+        run: PipelineRun | None = None,
+    ) -> PipelineRun:
         """Fetch jobs from sources and persist scan counters.
 
         Args:
             sources: Source name, source port, and source config tuples.
+            on_progress: Optional callback invoked after each source completes.
+            run: Pre-created pipeline run (from RunManager); fresh if None.
 
         Returns:
             Recorded pipeline run with discovery and upsert counters.
+        Raises: Whatever escaped the scan, after the run is marked failed.
         """
-        run = start_pipeline_run(_run_source_name(sources))
+        if run is None:
+            run = start_pipeline_run(run_source_name(sources))
         bind_run_id(run.run_id)
-        await asyncio.gather(
-            *(
-                self._scan_one_source(run, name, source, config)
-                for name, source, config in sources
-            )
-        )
-        run.finished_at = datetime.now(UTC)
+        self._tracer = get_tracer("jobfeed.scan")
+        self._perf_store = get_perf_store(self.store)
+        self._on_progress = on_progress
         await self.store.record_pipeline_run(run)
+        try:
+            await asyncio.gather(
+                *(
+                    self._scan_one_source(run, name, source, config)
+                    for name, source, config in sources
+                )
+            )
+        except Exception:
+            # An escaped exception (e.g. a store failure while saving jobs)
+            # must not leave the persisted run stuck in "running" forever.
+            await self._finalize_run(run, "failed")
+            raise
+        await self._finalize_run(run, "succeeded")
         return run
+
+    async def _finalize_run(self, run: PipelineRun, status: str) -> None:
+        run.finished_at = datetime.now(UTC)
+        run.status = status
+        await self.store.update_pipeline_run_status(run)
 
     async def _scan_one_source(
         self,
@@ -61,10 +88,19 @@ class ScanService:
         source: SourcePort,
         config: dict[str, object],
     ) -> None:
-        if isinstance(source, SessionSource):
-            await self._scan_session_source(run, name, source, config)
-            return
-        await self._scan_simple_source(run, name, source, config)
+        async with StepTimer(
+            self._perf_store,
+            run.run_id,
+            "source_fetch",
+            name,
+            self._tracer,
+        ):
+            if isinstance(source, SessionSource):
+                await self._scan_session_source(run, name, source, config)
+            else:
+                await self._scan_simple_source(run, name, source, config)
+        if self._on_progress is not None:
+            self._on_progress(run)
 
     async def _scan_simple_source(
         self,
@@ -174,10 +210,18 @@ def _merge_enrichment(posting: JobPosting, result: EnrichResult) -> JobPosting:
     )
 
 
-def _run_source_name(sources: list[SourceSpec]) -> str:
+def run_source_name(sources: list[SourceSpec]) -> str:
+    """Derive a run's source label from its source specs.
+
+    Args:
+        sources: Source specs the scan will run.
+
+    Returns:
+        The sole source's name for single-source scans, else "scan".
+    """
     if len(sources) == SINGLE_SOURCE_COUNT:
         return sources[0][0]
     return "scan"
 
 
-__all__ = ["ScanService", "SourceSpec"]
+__all__ = ["ScanService", "SourceSpec", "run_source_name"]

@@ -636,6 +636,57 @@
         "title": "FollowupBody",
         "type": "object"
       },
+      "FunnelResponse": {
+        "description": "``GET /performance/funnel`` response.",
+        "properties": {
+          "funnel": {
+            "items": {
+              "$ref": "#/components/schemas/FunnelRow"
+            },
+            "title": "Funnel",
+            "type": "array"
+          }
+        },
+        "required": [
+          "funnel"
+        ],
+        "title": "FunnelResponse",
+        "type": "object"
+      },
+      "FunnelRow": {
+        "description": "One funnel snapshot for a pipeline run.",
+        "properties": {
+          "after_filter": {
+            "title": "After Filter",
+            "type": "integer"
+          },
+          "after_gate": {
+            "title": "After Gate",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "scored": {
+            "title": "Scored",
+            "type": "integer"
+          },
+          "total_candidates": {
+            "title": "Total Candidates",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "total_candidates",
+          "after_filter",
+          "after_gate",
+          "scored"
+        ],
+        "title": "FunnelRow",
+        "type": "object"
+      },
       "GapDetail": {
         "description": "One missing/weak requirement with severity and mitigation.",
         "properties": {
@@ -1270,6 +1321,57 @@
         "title": "JobsListResponse",
         "type": "object"
       },
+      "LLMDailyStatsRow": {
+        "description": "One day of LLM stats.",
+        "properties": {
+          "avg_input_tokens": {
+            "title": "Avg Input Tokens",
+            "type": "number"
+          },
+          "avg_output_tokens": {
+            "title": "Avg Output Tokens",
+            "type": "number"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "p50_latency_ms": {
+            "title": "P50 Latency Ms",
+            "type": "number"
+          },
+          "p95_latency_ms": {
+            "title": "P95 Latency Ms",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "p50_latency_ms",
+          "p95_latency_ms",
+          "avg_input_tokens",
+          "avg_output_tokens"
+        ],
+        "title": "LLMDailyStatsRow",
+        "type": "object"
+      },
+      "LLMStatsResponse": {
+        "description": "``GET /performance/llm-stats`` response.",
+        "properties": {
+          "stats": {
+            "items": {
+              "$ref": "#/components/schemas/LLMDailyStatsRow"
+            },
+            "title": "Stats",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stats"
+        ],
+        "title": "LLMStatsResponse",
+        "type": "object"
+      },
       "NoteBody": {
         "description": "``POST /api/jobs/{id}/note`` request body.",
         "properties": {
@@ -1294,6 +1396,83 @@
           }
         },
         "title": "OkResponse",
+        "type": "object"
+      },
+      "PerformanceOverviewResponse": {
+        "description": "``GET /performance/overview`` response.",
+        "properties": {
+          "avg_eval_duration_ms": {
+            "title": "Avg Eval Duration Ms",
+            "type": "number"
+          },
+          "avg_scan_duration_ms": {
+            "title": "Avg Scan Duration Ms",
+            "type": "number"
+          },
+          "cost_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Delta"
+          },
+          "error_rate": {
+            "title": "Error Rate",
+            "type": "number"
+          },
+          "error_rate_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Rate Delta"
+          },
+          "eval_duration_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Duration Delta"
+          },
+          "scan_duration_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Duration Delta"
+          },
+          "total_llm_cost_usd": {
+            "title": "Total Llm Cost Usd",
+            "type": "number"
+          }
+        },
+        "required": [
+          "avg_scan_duration_ms",
+          "avg_eval_duration_ms",
+          "total_llm_cost_usd",
+          "error_rate",
+          "scan_duration_delta",
+          "eval_duration_delta",
+          "cost_delta",
+          "error_rate_delta"
+        ],
+        "title": "PerformanceOverviewResponse",
         "type": "object"
       },
       "PipelineAttentionEntry": {
@@ -1563,6 +1742,10 @@
             "title": "Started At",
             "type": "string"
           },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
           "total_llm_cost_usd": {
             "title": "Total Llm Cost Usd",
             "type": "number"
@@ -1572,6 +1755,7 @@
           "run_id",
           "started_at",
           "source",
+          "status",
           "jobs_discovered",
           "jobs_inserted",
           "jobs_updated",
@@ -1747,6 +1931,63 @@
         "title": "StatusDetail",
         "type": "object"
       },
+      "StepTimingRow": {
+        "description": "One step timing row for the series endpoint.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "title": "Elapsed Ms",
+            "type": "number"
+          },
+          "is_error": {
+            "title": "Is Error",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "step_name": {
+            "title": "Step Name",
+            "type": "string"
+          },
+          "step_type": {
+            "title": "Step Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_type",
+          "step_name",
+          "run_id",
+          "elapsed_ms",
+          "is_error",
+          "created_at"
+        ],
+        "title": "StepTimingRow",
+        "type": "object"
+      },
+      "StepTimingsResponse": {
+        "description": "``GET /performance/step-timings`` response.",
+        "properties": {
+          "timings": {
+            "items": {
+              "$ref": "#/components/schemas/StepTimingRow"
+            },
+            "title": "Timings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "timings"
+        ],
+        "title": "StepTimingsResponse",
+        "type": "object"
+      },
       "StrengthDetail": {
         "description": "One matched requirement with its resume evidence.",
         "properties": {
@@ -1826,6 +2067,51 @@
           "status"
         ],
         "title": "TransitionResponse",
+        "type": "object"
+      },
+      "TriggerEvaluateRequest": {
+        "description": "POST /api/runs/evaluate body.",
+        "properties": {
+          "corpus": {
+            "default": "unrated",
+            "title": "Corpus",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "stage": {
+            "default": "both",
+            "enum": [
+              "a",
+              "b",
+              "both"
+            ],
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "title": "TriggerEvaluateRequest",
+        "type": "object"
+      },
+      "TriggerScanRequest": {
+        "description": "POST /api/runs/scan body.",
+        "properties": {
+          "source": {
+            "default": "mock",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "title": "TriggerScanRequest",
         "type": "object"
       },
       "TwinDetail": {
@@ -1970,6 +2256,25 @@
           "days_since"
         ],
         "title": "WorkflowAttentionEntry",
+        "type": "object"
+      },
+      "_TriggerResponse": {
+        "description": "Response body for a successfully triggered run.",
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "running",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "_TriggerResponse",
         "type": "object"
       }
     }
@@ -3004,9 +3309,197 @@
         "summary": "Transition Job"
       }
     },
+    "/api/performance/funnel": {
+      "get": {
+        "description": "Evaluation funnel snapshots from pipeline runs.\n\nArgs:\n    service: Shared performance service.\n    window: Window in days (1..365).\n\nReturns:\n    Funnel response.",
+        "operationId": "funnel_api_performance_funnel_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Window",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunnelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Funnel"
+      }
+    },
+    "/api/performance/llm-stats": {
+      "get": {
+        "description": "Daily LLM latency percentiles and token averages.\n\nArgs:\n    service: Shared performance service.\n    window: Window in days (1..365).\n\nReturns:\n    LLM daily stats response.",
+        "operationId": "llm_stats_api_performance_llm_stats_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Window",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Llm Stats"
+      }
+    },
+    "/api/performance/overview": {
+      "get": {
+        "description": "Aggregate performance metrics with period-over-period deltas.\n\nArgs:\n    service: Shared performance service.\n    window: Window in days (1..365).\n\nReturns:\n    Performance overview response.",
+        "operationId": "performance_overview_api_performance_overview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Window",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PerformanceOverviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Performance Overview"
+      }
+    },
+    "/api/performance/step-timings": {
+      "get": {
+        "description": "Step timing series within the window, optionally filtered.\n\nArgs:\n    service: Shared performance service.\n    window: Window in days (1..365).\n    step_type: Optional filter on step_type.\n\nReturns:\n    Step timings response.",
+        "operationId": "step_timings_api_performance_step_timings_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Window",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "step_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Step Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepTimingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Step Timings"
+      }
+    },
     "/api/runs": {
       "get": {
-        "description": "List pipeline runs, newest first, with the all-time total.\n\nArgs:\n    store: Shared job store from the app state.\n    limit: Maximum runs returned.\n    offset: Runs to skip before the returned window.\n\nReturns:\n    Runs window (started_at DESC, run_id DESC tiebreak) plus the total.",
+        "description": "List pipeline runs, newest first, with the matching total.\n\nArgs:\n    store: Shared job store.\n    limit: Max runs returned.\n    offset: Runs to skip.\n    days: Optional look-back window; omit for all time.\n\nReturns:\n    Runs window plus the total count matching ``days``.",
         "operationId": "list_runs_api_runs_get",
         "parameters": [
           {
@@ -3030,6 +3523,24 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 365,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Days"
             }
           }
         ],
@@ -3058,9 +3569,114 @@
         "summary": "List Runs"
       }
     },
+    "/api/runs/active": {
+      "get": {
+        "description": "Return all currently active (in-progress) runs.\n\nArgs:\n    run_manager: Shared run manager.\n\nReturns:\n    Active runs keyed under ``runs``.",
+        "operationId": "get_active_runs_api_runs_active_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "title": "Response Get Active Runs Api Runs Active Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Active Runs"
+      }
+    },
+    "/api/runs/evaluate": {
+      "post": {
+        "description": "Trigger a background evaluate run.\n\nArgs:\n    body: Request body with stage, corpus, limit.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when an evaluate is already running, 400 when the\n        master resume file is not configured.",
+        "operationId": "trigger_evaluate_api_runs_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerEvaluateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_TriggerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Evaluate"
+      }
+    },
+    "/api/runs/scan": {
+      "post": {
+        "description": "Trigger a background scan run.\n\nArgs:\n    body: Request body with source name.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when a scan is already running, 400 for an unknown\n        or disabled source.",
+        "operationId": "trigger_scan_api_runs_scan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_TriggerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Scan"
+      }
+    },
     "/api/runs/{run_id}": {
       "get": {
-        "description": "Load one pipeline run's counters by identity.\n\nArgs:\n    run_id: Run identity.\n    store: Shared job store from the app state.\n\nReturns:\n    The run's counters-only summary.\n\nRaises:\n    ApiError: 404 (shared error shape) when the run is unknown.",
+        "description": "Load one pipeline run by identity.\n\nArgs:\n    run_id: Run identity.\n    store: Shared job store.\n\nReturns:\n    The run's counters-only summary.\n\nRaises:\n    ApiError: 404 when the run is unknown.",
         "operationId": "get_run_api_runs__run_id__get",
         "parameters": [
           {
@@ -3096,6 +3712,44 @@
           }
         },
         "summary": "Get Run"
+      }
+    },
+    "/api/runs/{run_id}/progress": {
+      "get": {
+        "description": "Stream progress events for a run as Server-Sent Events.\n\nArgs:\n    run_id: Run identity to stream.\n    run_manager: Shared run manager.\n    store: Shared job store for checking finished runs.\n\nReturns:\n    SSE streaming response.\n\nRaises:\n    ApiError: 404 when the run is unknown.",
+        "operationId": "stream_progress_api_runs__run_id__progress_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Progress"
       }
     }
   }
