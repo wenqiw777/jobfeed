@@ -45,7 +45,7 @@ async def test_pipeline_run_status_persists(store: PostgresStore) -> None:
     assert loaded.status == "running"
 
 
-async def test_pipeline_run_status_default_succeeded(store: PostgresStore) -> None:
+async def test_pipeline_run_status_default_running(store: PostgresStore) -> None:
     """A run recorded with default status uses 'running'."""
     run = PipelineRun(run_id="run-default-1", started_at=FIXED_TIME, source="test")
     await store.record_pipeline_run(run)
@@ -61,8 +61,9 @@ async def test_update_pipeline_run_status(store: PostgresStore) -> None:
     run = _make_run("run-update-1")
     await store.record_pipeline_run(run)
 
-    finished = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
-    await store.update_pipeline_run_status("run-update-1", "succeeded", finished)
+    run.status = "succeeded"
+    run.finished_at = datetime(2026, 6, 16, 12, 30, tzinfo=UTC)
+    await store.update_pipeline_run_status(run)
 
     loaded = await store.get_pipeline_run("run-update-1")
     assert loaded is not None
@@ -75,8 +76,9 @@ async def test_update_pipeline_run_status_failed(store: PostgresStore) -> None:
     run = _make_run("run-fail-1")
     await store.record_pipeline_run(run)
 
-    finished = datetime(2026, 6, 16, 12, 15, tzinfo=UTC)
-    await store.update_pipeline_run_status("run-fail-1", "failed", finished)
+    run.status = "failed"
+    run.finished_at = datetime(2026, 6, 16, 12, 15, tzinfo=UTC)
+    await store.update_pipeline_run_status(run)
 
     loaded = await store.get_pipeline_run("run-fail-1")
     assert loaded is not None

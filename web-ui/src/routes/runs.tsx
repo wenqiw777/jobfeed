@@ -67,6 +67,10 @@ export default function RunsPage() {
     void activeRuns.refetch();
   }, [activeRuns]);
 
+  // A running run is served by both /api/runs/active and /api/runs for
+  // its entire duration — keep it in the live list only.
+  const activeIds = new Set(activeRuns.data?.runs.map((ar) => ar.run_id) ?? []);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header: trigger buttons */}
@@ -91,7 +95,7 @@ export default function RunsPage() {
         </ul>
       )}
 
-      <Body runs={runs} expandedId={expandedId} onToggle={setExpandedId} />
+      <Body runs={runs} activeIds={activeIds} expandedId={expandedId} onToggle={setExpandedId} />
       <div className="flex items-center justify-between border-t border-border px-4 py-2">
         <span className="font-mono text-micro text-mute">
           <RangeLabel page={page} pageRows={runs.data?.runs.length ?? 0} total={runs.data?.total ?? 0} />
@@ -131,11 +135,13 @@ function RangeLabel({ page, pageRows, total }: { page: number; pageRows: number;
 
 interface BodyProps {
   runs: ReturnType<typeof useRuns>;
+  /** run_ids currently rendered as live rows — excluded from history. */
+  activeIds: Set<string>;
   expandedId: string | null;
   onToggle: (runId: string | null) => void;
 }
 
-function Body({ runs, expandedId, onToggle }: BodyProps) {
+function Body({ runs, activeIds, expandedId, onToggle }: BodyProps) {
   if (runs.isPending) {
     return (
       <div className="flex flex-col gap-1 px-4 py-3" aria-label="Loading runs">
@@ -148,7 +154,13 @@ function Body({ runs, expandedId, onToggle }: BodyProps) {
   if (runs.isError) {
     return <p className="px-4 py-6 text-body-sm text-danger">{runs.error.message}</p>;
   }
-  if (runs.data.runs.length === 0) {
+  const historyRuns = runs.data.runs.filter((run) => !activeIds.has(run.run_id));
+  if (historyRuns.length === 0) {
+    // With live rows on screen the "No runs yet" teaching state would
+    // lie — the first run is happening right now.
+    if (activeIds.size > 0) {
+      return <div className="min-h-0 flex-1" />;
+    }
     return (
       <div className="grid flex-1 place-items-center px-6 text-center">
         <div>
@@ -177,7 +189,7 @@ function Body({ runs, expandedId, onToggle }: BodyProps) {
         <span className="text-right">Cost</span>
       </div>
       <ul aria-label="Runs">
-        {runs.data.runs.map((run) => (
+        {historyRuns.map((run) => (
           <RunRow
             key={run.run_id}
             run={run}

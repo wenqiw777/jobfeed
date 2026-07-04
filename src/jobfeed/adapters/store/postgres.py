@@ -646,6 +646,7 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         jobs_updated=r["jobs_updated"],
         jobs_filtered=r["jobs_filtered"],
         jobs_ml_gated=r["jobs_ml_gated"],
+        jobs_gate_passed=r["jobs_gate_passed"],
         stage_a_scored=r["stage_a_scored"],
         stage_b_scored=r["stage_b_scored"],
         jobs_scored=r["jobs_scored"],
@@ -3317,9 +3318,12 @@ class PostgresStore:
                 """INSERT INTO pipeline_runs (
                        run_id, started_at, source, status, jobs_discovered,
                        jobs_inserted, jobs_updated, jobs_filtered,
-                       jobs_ml_gated, stage_a_scored, stage_b_scored,
-                       jobs_scored, total_llm_cost_usd, errors, finished_at
-                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)""",
+                       jobs_ml_gated, jobs_gate_passed, stage_a_scored,
+                       stage_b_scored, jobs_scored, total_llm_cost_usd,
+                       errors, finished_at
+                   ) VALUES (
+                       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
+                   )""",
                 run.run_id,
                 run.started_at,
                 run.source,
@@ -3329,6 +3333,7 @@ class PostgresStore:
                 run.jobs_updated,
                 run.jobs_filtered,
                 run.jobs_ml_gated,
+                run.jobs_gate_passed,
                 run.stage_a_scored,
                 run.stage_b_scored,
                 run.jobs_scored,
@@ -3359,51 +3364,79 @@ class PostgresStore:
         *,
         limit: int = 50,
         offset: int = 0,
+        days: int | None = None,
     ) -> tuple[list[PipelineRun], int]:
-        """List pipeline runs, newest first, with the all-time total.
+        """List pipeline runs, newest first, with the matching total.
 
         Args:
             limit: Maximum runs returned.
             offset: Runs to skip before the returned window.
+            days: Optional look-back window; only runs started within the
+                last ``days`` days are listed and counted.
 
         Returns:
             Tuple of (runs ordered by started_at DESC with run_id DESC as a
-            deterministic tiebreak, total run count ignoring the window).
+            deterministic tiebreak, total count of runs matching ``days``
+            ignoring limit/offset).
         """
+        # Filter params first, LIMIT/OFFSET appended last, so the one WHERE
+        # fragment serves both queries with no hand-numbered placeholders.
+        params: list[int] = []
+        where = ""
+        if days is not None:
+            params.append(days)
+            where = f"WHERE started_at >= now() - make_interval(days => ${len(params)})"
         pool = self._get_pool()
         async with pool.acquire() as conn:
+            total = await self._count(
+                conn, f"SELECT COUNT(*) FROM pipeline_runs {where}", *params
+            )
             rows = await conn.fetch(
-                """SELECT * FROM pipeline_runs
+                f"""SELECT * FROM pipeline_runs
+                   {where}
                    ORDER BY started_at DESC, run_id DESC
-                   LIMIT $1 OFFSET $2""",
+                   LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}""",
+                *params,
                 limit,
                 offset,
             )
-            total = await self._count(conn, "SELECT COUNT(*) FROM pipeline_runs")
         return [_pipeline_run_from_record(r) for r in rows], total
 
     async def update_pipeline_run_status(
         self,
-        run_id: str,
-        status: str,
-        finished_at: datetime | None = None,
+        run: PipelineRun,
     ) -> None:
-        """Update a pipeline run's status and optional finish time.
+        """Persist a pipeline run's current counters, status, and finish time.
 
         Args:
-            run_id: Run identity.
-            status: New status value (e.g. "succeeded", "failed").
-            finished_at: Optional completion timestamp.
+            run: Pipeline run with accumulated counters to persist.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 """UPDATE pipeline_runs
-                   SET status = $1, finished_at = $2
-                   WHERE run_id = $3""",
-                status,
-                finished_at,
-                run_id,
+                   SET status = $1, finished_at = $2,
+                       jobs_discovered = $3, jobs_inserted = $4,
+                       jobs_updated = $5, jobs_filtered = $6,
+                       jobs_ml_gated = $7, jobs_gate_passed = $8,
+                       stage_a_scored = $9, stage_b_scored = $10,
+                       jobs_scored = $11, total_llm_cost_usd = $12,
+                       errors = $13
+                   WHERE run_id = $14""",
+                run.status,
+                run.finished_at,
+                run.jobs_discovered,
+                run.jobs_inserted,
+                run.jobs_updated,
+                run.jobs_filtered,
+                run.jobs_ml_gated,
+                run.jobs_gate_passed,
+                run.stage_a_scored,
+                run.stage_b_scored,
+                run.jobs_scored,
+                run.total_llm_cost_usd,
+                run.errors,
+                run.run_id,
             )
 
     async def record_step_timing(self, timing: StepTiming) -> None:
@@ -3471,7 +3504,7 @@ class PostgresStore:
                    cur AS (
                        SELECT
                            COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
-                               FILTER (WHERE source ILIKE '%%scan%%'), 0) AS avg_scan,
+                               FILTER (WHERE source != 'evaluate'), 0) AS avg_scan,
                            COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
                                FILTER (WHERE source ILIKE '%%evaluat%%'), 0) AS avg_eval,
                            COALESCE(SUM(total_llm_cost_usd), 0) AS cost,
@@ -3485,7 +3518,7 @@ class PostgresStore:
                    prev AS (
                        SELECT
                            COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
-                               FILTER (WHERE source ILIKE '%%scan%%'), 0) AS avg_scan,
+                               FILTER (WHERE source != 'evaluate'), 0) AS avg_scan,
                            COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
                                FILTER (WHERE source ILIKE '%%evaluat%%'), 0) AS avg_eval,
                            COALESCE(SUM(total_llm_cost_usd), 0) AS cost,
@@ -3536,7 +3569,7 @@ class PostgresStore:
             step_type: Optional filter on step_type.
 
         Returns:
-            Step timings ordered by created_at ascending.
+            Step timings ordered by created_at ascending, id as tiebreaker.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -3547,7 +3580,7 @@ class PostgresStore:
                        FROM step_timings
                        WHERE created_at >= now() - make_interval(days => $1)
                          AND step_type = $2
-                       ORDER BY created_at""",
+                       ORDER BY created_at, id""",
                     window_days,
                     step_type,
                 )
@@ -3557,7 +3590,7 @@ class PostgresStore:
                               elapsed_ms, is_error, created_at
                        FROM step_timings
                        WHERE created_at >= now() - make_interval(days => $1)
-                       ORDER BY created_at""",
+                       ORDER BY created_at, id""",
                     window_days,
                 )
         return [
@@ -3609,30 +3642,46 @@ class PostgresStore:
         ]
 
     async def get_funnel_stats(self, window_days: int) -> list[FunnelStats]:
-        """Evaluation funnel snapshots from pipeline runs.
+        """Evaluation funnel snapshots from evaluate pipeline runs.
 
-        ``total_candidates`` is the sum of filtered, gated, and scored jobs
-        for each run. ``after_filter`` removes the filtered count;
-        ``after_gate`` further removes the gated count; ``scored`` is the
-        final funnel count.
+        Only ``source = 'evaluate'`` runs contribute rows — scan runs carry
+        no funnel counters and would render all-zero funnels.
+        ``after_gate`` is the per-run gate-survivor counter; ``scored`` is
+        the count of jobs that actually received a score (capped below
+        ``after_gate`` by the Stage A limit, budget, and scoring errors).
+        ``after_filter`` adds back the gate-failed count and
+        ``total_candidates`` the hard-filtered count.
 
         Args:
             window_days: Look-back window in days.
 
         Returns:
-            Funnel stats per run, newest first.
+            Funnel stats per evaluate run, newest first.
         """
+        # jobs_gate_passed is the true gate-survivor count (Phase 9
+        # follow-up). Rows predating migration 0008 — and gate-disabled
+        # runs — have 0, so GREATEST falls back to the scored counters
+        # (stage_a_scored for stage a/both runs, stage_b_scored for
+        # stage-b-only runs), keeping the funnel monotone.
+        # jobs_scored is NOT used: it sums both stages and double-counts.
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """SELECT run_id,
-                          jobs_filtered + jobs_ml_gated + jobs_scored
+                          jobs_filtered + jobs_ml_gated
+                              + GREATEST(jobs_gate_passed, stage_a_scored,
+                                         stage_b_scored)
                               AS total_candidates,
-                          jobs_ml_gated + jobs_scored AS after_filter,
-                          jobs_scored AS after_gate,
-                          jobs_scored AS scored
+                          jobs_ml_gated
+                              + GREATEST(jobs_gate_passed, stage_a_scored,
+                                         stage_b_scored)
+                              AS after_filter,
+                          GREATEST(jobs_gate_passed, stage_a_scored,
+                                   stage_b_scored) AS after_gate,
+                          GREATEST(stage_a_scored, stage_b_scored) AS scored
                    FROM pipeline_runs
                    WHERE started_at >= now() - make_interval(days => $1)
+                     AND source = 'evaluate'
                    ORDER BY started_at DESC""",
                 window_days,
             )

@@ -5,11 +5,14 @@ Uses a mock RunManager to verify the route logic without real services.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from jobfeed.domain.errors import RunConflictError
+from jobfeed.domain.errors import (
+    ResumeNotConfiguredError,
+    RunConflictError,
+    SourceConfigError,
+)
 from jobfeed.domain.models import PipelineRun
 from jobfeed.services.run_manager import ActiveRun
 from jobfeed.web.app import build_web_app
@@ -38,35 +41,38 @@ class FakeRunManager:
         *,
         should_conflict_scan: bool = False,
         should_conflict_eval: bool = False,
+        disabled_source: str | None = None,
+        missing_resume: bool = False,
     ) -> None:
         self._should_conflict_scan = should_conflict_scan
         self._should_conflict_eval = should_conflict_eval
+        self._disabled_source = disabled_source
+        self._missing_resume = missing_resume
         self._active: list[ActiveRun] = []
         self.scan_calls: list[object] = []
         self.eval_calls: list[dict[str, object]] = []
 
-    async def trigger_scan(self, sources: list[object]) -> str:
-        """Record the call and return a run id, or raise on conflict."""
+    async def trigger_scan(self, source_name_or_specs: object) -> str:
+        """Record the call and return a run id, or raise on conflict/config."""
         if self._should_conflict_scan:
             raise RunConflictError("A scan is already running")
-        self.scan_calls.append(sources)
+        if source_name_or_specs == self._disabled_source:
+            raise SourceConfigError(f"Source '{self._disabled_source}' is disabled")
+        self.scan_calls.append(source_name_or_specs)
         return "run-scan-1"
 
     async def trigger_evaluate(self, **kwargs: Any) -> str:
-        """Record the call and return a run id, or raise on conflict."""
+        """Record the call and return a run id, or raise on conflict/config."""
         if self._should_conflict_eval:
             raise RunConflictError("An evaluation is already running")
+        if self._missing_resume:
+            raise ResumeNotConfiguredError("Resume file not found: /no/such/resume.md")
         self.eval_calls.append(kwargs)
         return "run-eval-1"
 
     def get_active_runs(self) -> list[ActiveRun]:
         """Return pre-configured active runs."""
         return list(self._active)
-
-    async def subscribe(self, run_id: str) -> AsyncIterator[PipelineRun]:  # noqa: ARG002
-        """No-op subscriber (not exercised by trigger tests)."""
-        return  # pragma: no cover
-        yield  # pragma: no cover
 
     async def recover_stale_runs(self) -> int:
         """No-op recovery."""
@@ -112,6 +118,16 @@ async def test_trigger_scan_unknown_source_returns_400() -> None:
     assert resp.json()["error"]["code"] == "unknown_source"
 
 
+async def test_trigger_scan_disabled_source_returns_400() -> None:
+    """POST /api/runs/scan with a known-but-disabled source returns 400."""
+    app, _mgr = _build_app(FakeRunManager(disabled_source="speedyapply"))
+    async with open_client(app) as client:
+        resp = await client.post("/api/runs/scan", json={"source": "speedyapply"})
+
+    assert resp.status_code == HTTP_BAD_REQUEST
+    assert resp.json()["error"]["code"] == "source_disabled"
+
+
 async def test_trigger_scan_conflict_returns_409() -> None:
     """POST /api/runs/scan when already running returns 409."""
     app, _mgr = _build_app(FakeRunManager(should_conflict_scan=True))
@@ -155,6 +171,18 @@ async def test_trigger_evaluate_defaults() -> None:
     assert mgr.eval_calls[0]["stage"] == "both"
     assert mgr.eval_calls[0]["corpus"] == "unrated"
     assert mgr.eval_calls[0]["limit"] is None
+
+
+async def test_trigger_evaluate_missing_resume_returns_400() -> None:
+    """POST /api/runs/evaluate maps a missing master resume to a clean 400."""
+    app, _mgr = _build_app(FakeRunManager(missing_resume=True))
+    async with open_client(app) as client:
+        resp = await client.post("/api/runs/evaluate", json={})
+
+    assert resp.status_code == HTTP_BAD_REQUEST
+    body = resp.json()["error"]
+    assert body["code"] == "resume_not_configured"
+    assert "/no/such/resume.md" in body["message"]
 
 
 async def test_trigger_evaluate_conflict_returns_409() -> None:

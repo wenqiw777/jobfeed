@@ -21,24 +21,27 @@ interface RunBreakdown {
   stage_b_s: number;
 }
 
+/** The exact evaluate-phase names the backend emits under
+ * `step_type="stage"`. Anything else is ignored — never silently
+ * folded into a bucket. */
+const STAGE_NAMES = ["funnel", "stage_a", "stage_b"] as const;
+type StageName = (typeof STAGE_NAMES)[number];
+
+function isStageName(name: string): name is StageName {
+  return (STAGE_NAMES as readonly string[]).includes(name);
+}
+
 function aggregate(timings: StepTimingRow[]): RunBreakdown[] {
-  const evalSteps = timings.filter(
-    (t) => t.step_type === "evaluate" || t.step_type === "funnel" || t.step_type === "gate",
+  const stageSteps = timings.filter(
+    (t) => t.step_type === "stage" && isStageName(t.step_name),
   );
-  const runs = new Map<string, { funnel: number; stage_a: number; stage_b: number }>();
-  for (const row of evalSteps) {
+  const runs = new Map<string, Record<StageName, number>>();
+  for (const row of stageSteps) {
     if (!runs.has(row.run_id)) {
       runs.set(row.run_id, { funnel: 0, stage_a: 0, stage_b: 0 });
     }
     const entry = runs.get(row.run_id)!;
-    const name = row.step_name.toLowerCase();
-    if (name.includes("stage_b") || name.includes("stage-b")) {
-      entry.stage_b += row.elapsed_ms;
-    } else if (name.includes("stage_a") || name.includes("stage-a")) {
-      entry.stage_a += row.elapsed_ms;
-    } else {
-      entry.funnel += row.elapsed_ms;
-    }
+    entry[row.step_name as StageName] += row.elapsed_ms;
   }
   return [...runs.entries()]
     .map(([id, v]) => ({

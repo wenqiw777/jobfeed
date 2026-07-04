@@ -47,7 +47,11 @@ async def gate_representatives(
     already_pass = [c.job for c in representatives if c.ml_gate_result == "pass"]
     to_gate = [c.job for c in representatives if c.ml_gate_result is None]
     newly_passed = await gate_unrated(deps, gate, run, to_gate, dry_run)
-    return already_pass + newly_passed
+    survivors = already_pass + newly_passed
+    # The survivor count is the funnel's "after gate" stage; the scored
+    # counters can't stand in for it (Stage A limit/budget cap them).
+    run.jobs_gate_passed += len(survivors)
+    return survivors
 
 
 async def gate_unrated(
@@ -78,7 +82,10 @@ async def gate_unrated(
         GateInput(job_id=_job_id(job), title=job.title, jd_text=job.jd_text or "")
         for job in to_gate
     ]
-    results = await asyncio.to_thread(_predict_sync, gate, inputs)
+    # The port is honored as-is: keeping the main loop responsive during
+    # CPU-bound inference is the adapter's job (XGBoostGate offloads to a
+    # worker thread internally), so an async gate implementation stays legal.
+    results = await gate.predict_batch(inputs)
     await _persist_gate_results(deps, to_gate, results, dry_run)
     run.jobs_ml_gated += sum(1 for result in results if result.result != "pass")
     return [
@@ -86,17 +93,6 @@ async def gate_unrated(
         for job, result in zip(to_gate, results, strict=True)
         if result.result == "pass"
     ]
-
-
-def _predict_sync(gate: MLGate, inputs: list[GateInput]) -> list[MLGateResult]:
-    """Run the gate coroutine in a fresh event loop inside a worker thread.
-
-    ``predict_batch`` is async in the port protocol but performs synchronous
-    CPU-bound work (XGBoost / numpy). Running it in ``asyncio.to_thread`` keeps
-    the main loop responsive; the thread-local ``asyncio.run`` provides the
-    event loop the coroutine needs without touching the caller's loop.
-    """
-    return asyncio.run(gate.predict_batch(inputs))
 
 
 async def _persist_gate_results(

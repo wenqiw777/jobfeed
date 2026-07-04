@@ -3499,7 +3499,7 @@
     },
     "/api/runs": {
       "get": {
-        "description": "List pipeline runs, newest first, with the all-time total.\n\nArgs:\n    store: Shared job store.\n    limit: Max runs returned.\n    offset: Runs to skip.\n\nReturns:\n    Runs window plus the total.",
+        "description": "List pipeline runs, newest first, with the matching total.\n\nArgs:\n    store: Shared job store.\n    limit: Max runs returned.\n    offset: Runs to skip.\n    days: Optional look-back window; omit for all time.\n\nReturns:\n    Runs window plus the total count matching ``days``.",
         "operationId": "list_runs_api_runs_get",
         "parameters": [
           {
@@ -3523,6 +3523,24 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 365,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Days"
             }
           }
         ],
@@ -3580,7 +3598,7 @@
     },
     "/api/runs/evaluate": {
       "post": {
-        "description": "Trigger a background evaluate run.\n\nArgs:\n    body: Request body with stage, corpus, limit.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when an evaluate is already running.",
+        "description": "Trigger a background evaluate run.\n\nArgs:\n    body: Request body with stage, corpus, limit.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when an evaluate is already running, 400 when the\n        master resume file is not configured.",
         "operationId": "trigger_evaluate_api_runs_evaluate_post",
         "requestBody": {
           "content": {
@@ -3619,7 +3637,7 @@
     },
     "/api/runs/scan": {
       "post": {
-        "description": "Trigger a background scan run.\n\nArgs:\n    body: Request body with source name.\n    run_manager: Shared run manager.\n    request: Current request (for context access).\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when a scan is already running, 400 for unknown source.",
+        "description": "Trigger a background scan run.\n\nArgs:\n    body: Request body with source name.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when a scan is already running, 400 for an unknown\n        or disabled source.",
         "operationId": "trigger_scan_api_runs_scan_post",
         "requestBody": {
           "content": {

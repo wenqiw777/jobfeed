@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from jobfeed.domain.errors import ResumeNotConfiguredError
+
 if TYPE_CHECKING:
     from jobfeed.cli import AppContext
     from jobfeed.services.evaluate import EvaluateService
@@ -55,8 +57,8 @@ def build_evaluate_service(
         A ready-to-run EvaluateService.
 
     Raises:
-        FileNotFoundError: If the master resume file is missing on a
-            non-dry run.
+        ResumeNotConfiguredError: If the master resume file is missing on
+            a non-dry run.
     """
     from jobfeed.adapters.llm._factory import (  # noqa: PLC0415
         LLMClientBuildOptions,
@@ -143,7 +145,7 @@ def build_evaluate_service(
         else settings.scoring.stage_a_threshold
     )
     ml_gate_enabled = settings.scoring.ml_gate_enabled
-    gate_needed = needs_ml_gate(
+    needs_gate = needs_ml_gate(
         params.stage, params.limit, ml_gate_enabled=ml_gate_enabled
     )
     return EvaluateService(
@@ -155,7 +157,7 @@ def build_evaluate_service(
             llm_stage_a=llm_a,
             llm_stage_b=llm_b,
             llm_stage_b_sweep=llm_b_sweep,
-            ml_gate=build_ml_gate(settings) if gate_needed else None,
+            ml_gate=build_ml_gate(settings) if needs_gate else None,
             hard_filters=build_hard_filters(settings),
         ),
         config=EvaluateRuntimeConfig(
@@ -187,14 +189,15 @@ def _load_resume_text(resume_path_str: str, is_dry_run: bool) -> str:
         Resume file contents, or empty string for dry runs.
 
     Raises:
-        FileNotFoundError: If the resume file is missing on a non-dry run.
+        ResumeNotConfiguredError: If the resume file is missing on a
+            non-dry run.
     """
     if is_dry_run:
         return ""
     resume_path = Path(resume_path_str)
     if not resume_path.is_file():
         msg = f"Resume file not found: {resume_path}"
-        raise FileNotFoundError(msg)
+        raise ResumeNotConfiguredError(msg)
     return resume_path.read_text(encoding="utf-8")
 
 

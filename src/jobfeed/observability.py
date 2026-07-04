@@ -172,7 +172,7 @@ def _auto_instrument() -> None:
 
     HTTPXClientInstrumentor().instrument()
     AsyncPGInstrumentor().instrument()  # type: ignore[no-untyped-call]
-    FastAPIInstrumentor.instrument()
+    FastAPIInstrumentor().instrument()
 
 
 _sentry_initialized: bool = False

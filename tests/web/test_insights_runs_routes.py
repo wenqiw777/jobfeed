@@ -512,6 +512,28 @@ async def _seed_runs(store: PostgresStore) -> datetime:
     return newest
 
 
+async def test_runs_list_days_window_filters_and_counts(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """GET /api/runs?days=N lists and counts only runs inside the window."""
+    async with _seed_store(fresh_pg_dsn) as store:
+        newest = datetime.now(UTC).replace(microsecond=0)
+        await store.record_pipeline_run(_run("run-recent", newest - timedelta(hours=2)))
+        await store.record_pipeline_run(_run("run-stale", newest - timedelta(days=10)))
+    app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        windowed = await client.get("/api/runs", params={"days": 7})
+        alltime = await client.get("/api/runs")
+
+    assert windowed.status_code == HTTP_OK, windowed.text
+    payload = windowed.json()
+    assert [run["run_id"] for run in payload["runs"]] == ["run-recent"]
+    assert payload["total"] == 1
+    both = 2
+    assert alltime.json()["total"] == both
+
+
 async def test_runs_list_newest_first_with_pagination(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:

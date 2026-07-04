@@ -202,6 +202,32 @@ async def test_step_timings_all_types(store: PostgresStore) -> None:
     assert all_timings[1].is_error is True
 
 
+async def test_step_timings_ordering_is_stable(store: PostgresStore) -> None:
+    """Rows sharing one created_at (batch insert) come back in id order."""
+    now = datetime.now(UTC)
+    await store.record_pipeline_run(
+        _run("perf-st-order", started_at=now - timedelta(hours=1))
+    )
+    # record_step_timings runs in one transaction, so NOW() (created_at) is
+    # identical for every row -- only the id tiebreaker keeps insertion order.
+    names = ["first", "second", "third", "fourth"]
+    await store.record_step_timings(
+        [
+            StepTiming(
+                run_id="perf-st-order",
+                step_type="scan",
+                step_name=name,
+                elapsed_ms=float(i),
+            )
+            for i, name in enumerate(names)
+        ]
+    )
+
+    timings = await store.get_step_timings(_WINDOW)
+
+    assert [t.step_name for t in timings] == names
+
+
 # ------------------------------------------------------------------
 # get_llm_daily_stats
 # ------------------------------------------------------------------
@@ -255,15 +281,23 @@ async def test_funnel_stats_empty(store: PostgresStore) -> None:
 
 
 async def test_funnel_stats_computes_totals(store: PostgresStore) -> None:
-    """Funnel correctly derives total, after_filter, after_gate, scored."""
+    """Funnel correctly derives total, after_filter, after_gate, scored.
+
+    A stage="both" run has jobs_scored = stage_a_scored + stage_b_scored
+    (double-counting jobs that reached Stage B); the funnel must use the
+    unique per-job count (stage_a_scored) instead.
+    """
     now = datetime.now(UTC)
     await store.record_pipeline_run(
         _run(
             "perf-funnel-1",
+            source="evaluate",
             started_at=now - timedelta(hours=1),
             jobs_filtered=5,
             jobs_ml_gated=3,
-            jobs_scored=10,
+            stage_a_scored=10,
+            stage_b_scored=4,
+            jobs_scored=14,  # stage_a + stage_b sum; must NOT leak into funnel
         )
     )
 
@@ -276,6 +310,103 @@ async def test_funnel_stats_computes_totals(store: PostgresStore) -> None:
     assert f.total_candidates == expected_total
     expected_after_filter = 13  # 3 + 10
     assert f.after_filter == expected_after_filter
-    expected_after_gate = 10
+    expected_after_gate = 10  # stage_a_scored, not jobs_scored (14)
     assert f.after_gate == expected_after_gate
     assert f.scored == expected_after_gate
+
+
+async def test_funnel_stats_prefers_gate_passed_counter(store: PostgresStore) -> None:
+    """after_gate reports gate survivors, not the (limit-capped) scored count.
+
+    A run that gated 500 candidates, passed 100, but scored only 50 (Stage A
+    limit) must show after_gate=100; scored stays 50. Legacy rows with
+    jobs_gate_passed=0 keep the scored-counter fallback (covered by
+    test_funnel_stats_computes_totals).
+    """
+    now = datetime.now(UTC)
+    await store.record_pipeline_run(
+        _run(
+            "perf-funnel-gate",
+            source="evaluate",
+            started_at=now - timedelta(hours=1),
+            jobs_filtered=5,
+            jobs_ml_gated=400,
+            jobs_gate_passed=100,
+            stage_a_scored=50,
+            stage_b_scored=20,
+            jobs_scored=70,
+        )
+    )
+
+    funnels = await store.get_funnel_stats(_WINDOW)
+
+    assert len(funnels) == 1
+    f = funnels[0]
+    expected_after_gate = 100  # gate survivors, not the 50 scored
+    assert f.after_gate == expected_after_gate
+    expected_after_filter = 500  # 400 failed + 100 passed
+    assert f.after_filter == expected_after_filter
+    expected_scored = 50
+    assert f.scored == expected_scored
+    assert f.total_candidates == expected_after_filter + 5
+
+
+async def test_funnel_stats_stage_b_only_run(store: PostgresStore) -> None:
+    """A Stage-B-only run (stage_a_scored=0) falls back to stage_b_scored."""
+    now = datetime.now(UTC)
+    await store.record_pipeline_run(
+        _run(
+            "perf-funnel-b-only",
+            source="evaluate",
+            started_at=now - timedelta(hours=1),
+            stage_a_scored=0,
+            stage_b_scored=4,
+            jobs_scored=4,
+        )
+    )
+
+    funnels = await store.get_funnel_stats(_WINDOW)
+
+    assert len(funnels) == 1
+    f = funnels[0]
+    expected_scored = 4
+    assert f.total_candidates == expected_scored
+    assert f.after_filter == expected_scored
+    assert f.after_gate == expected_scored
+    assert f.scored == expected_scored
+
+
+async def test_funnel_stats_excludes_scan_runs(store: PostgresStore) -> None:
+    """Scan runs contribute no funnel rows; only evaluate runs appear."""
+    now = datetime.now(UTC)
+    await store.record_pipeline_run(
+        _run("perf-funnel-scan", source="scan", started_at=now - timedelta(hours=2))
+    )
+    await store.record_pipeline_run(
+        _run("perf-funnel-ats", source="ats", started_at=now - timedelta(hours=2))
+    )
+    await store.record_pipeline_run(
+        _run(
+            "perf-funnel-eval",
+            source="evaluate",
+            started_at=now - timedelta(hours=1),
+            stage_a_scored=2,
+            jobs_scored=2,
+        )
+    )
+
+    funnels = await store.get_funnel_stats(_WINDOW)
+
+    assert [f.run_id for f in funnels] == ["perf-funnel-eval"]
+
+
+async def test_funnel_stats_empty_for_scan_only_window(store: PostgresStore) -> None:
+    """A window holding only scan runs yields an empty funnel, not zeros."""
+    now = datetime.now(UTC)
+    await store.record_pipeline_run(
+        _run("perf-scan-only", source="scan", started_at=now - timedelta(hours=1))
+    )
+
+    funnels = await store.get_funnel_stats(_WINDOW)
+
+    assert funnels == []

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime
 
 import pytest
 
-from jobfeed.domain.errors import RunConflictError
+from jobfeed.domain.errors import RunConflictError, SourceConfigError
 from jobfeed.domain.models import PipelineRun
-from jobfeed.services.run_manager import ActiveRun, RunManager
+from jobfeed.services.run_manager import RUN_DONE, ActiveRun, RunManager
+from jobfeed.services.scan import SourceSpec
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -20,14 +22,12 @@ class RecordingStore:
     """Minimal store double for RunManager tests."""
 
     def __init__(self) -> None:
-        self.status_updates: list[tuple[str, str, datetime | None]] = []
+        self.status_updates: list[tuple[str, str]] = []
         self._runs: list[PipelineRun] = []
 
-    async def update_pipeline_run_status(
-        self, run_id: str, status: str, finished_at: datetime | None = None
-    ) -> None:
+    async def update_pipeline_run_status(self, run: PipelineRun) -> None:
         """Record a status transition."""
-        self.status_updates.append((run_id, status, finished_at))
+        self.status_updates.append((run.run_id, run.status))
 
     async def list_pipeline_runs(
         self, *, limit: int = 50, **_kw: object
@@ -38,6 +38,13 @@ class RecordingStore:
     async def record_pipeline_run(self, run: PipelineRun) -> None:
         """Record a pipeline run (called by ScanService/EvaluateService)."""
         self._runs.append(run)
+
+    async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
+        """Return a recorded run by identity, if any."""
+        for run in self._runs:
+            if run.run_id == run_id:
+                return run
+        return None
 
 
 class RecordingLogger:
@@ -78,17 +85,17 @@ class FakeScanService:
         self,
         _sources: list[object],
         on_progress: object = None,
+        run: PipelineRun | None = None,
     ) -> PipelineRun:
         """Simulate a scan run."""
         if self._should_fail:
             msg = "scan exploded"
             raise RuntimeError(msg)
         self.ran = True
-        run = PipelineRun(
-            run_id="fake",
-            started_at=datetime.now(UTC),
-            source="mock",
-        )
+        if run is None:
+            run = PipelineRun(
+                run_id="fake", started_at=datetime.now(UTC), source="mock"
+            )
         if on_progress is not None:
             on_progress(run)  # type: ignore[operator]
         return run
@@ -107,11 +114,11 @@ class FakeEvaluateService:
             msg = "evaluate exploded"
             raise RuntimeError(msg)
         self.ran = True
-        run = PipelineRun(
-            run_id="fake",
-            started_at=datetime.now(UTC),
-            source="evaluate",
-        )
+        run = kwargs.get("run")
+        if run is None:
+            run = PipelineRun(
+                run_id="fake", started_at=datetime.now(UTC), source="evaluate"
+            )
         on_progress = kwargs.get("on_progress")
         if on_progress is not None:
             on_progress(run)  # type: ignore[operator]
@@ -147,14 +154,17 @@ def _make_gated_scan(gate: asyncio.Event) -> object:
 
     class _Gated:
         async def run(
-            self, _sources: object, on_progress: object = None
+            self,
+            _sources: object,
+            on_progress: object = None,
+            run: object = None,  # noqa: ARG002
         ) -> PipelineRun:
             """Block until gate is set, then call on_progress."""
             await gate.wait()
-            run = PipelineRun(run_id="x", started_at=datetime.now(UTC), source="mock")
+            r = PipelineRun(run_id="x", started_at=datetime.now(UTC), source="mock")
             if on_progress is not None:
-                on_progress(run)  # type: ignore[operator]
-            return run
+                on_progress(r)  # type: ignore[operator]
+            return r
 
     return _Gated()
 
@@ -182,8 +192,7 @@ async def test_scan_completes_with_succeeded_status() -> None:
     await asyncio.sleep(0.1)
     assert mgr.get_active_runs() == []
     assert any(
-        rid == run_id and status == "succeeded"
-        for rid, status, _ in store.status_updates
+        rid == run_id and status == "succeeded" for rid, status in store.status_updates
     )
 
 
@@ -269,10 +278,159 @@ async def test_service_exception_sets_failed_status() -> None:
     await asyncio.sleep(0.1)
 
     assert any(
-        rid == run_id and status == "failed" for rid, status, _ in store.status_updates
+        rid == run_id and status == "failed" for rid, status in store.status_updates
     )
     assert any(ev == "run_failed" for ev, _ in logger.events)
     assert mgr.get_active_runs() == []
+
+
+@pytest.mark.asyncio
+async def test_scan_factory_failure_releases_lock() -> None:
+    """If scan_service_factory raises, the lock frees and nothing stays active."""
+
+    def _failing_factory() -> object:
+        msg = "factory exploded"
+        raise RuntimeError(msg)
+
+    mgr = RunManager(
+        store=RecordingStore(),
+        logger=RecordingLogger(),
+        scan_service_factory=_failing_factory,  # type: ignore[arg-type]
+        evaluate_service_factory=lambda **_kw: FakeEvaluateService(),
+    )
+
+    with pytest.raises(RuntimeError, match="factory exploded"):
+        await mgr.trigger_scan([("mock", object(), {})])
+
+    # Lock should be released, so a second trigger should NOT raise conflict
+    assert not mgr._scan_lock.locked()
+    assert mgr.get_active_runs() == []
+
+
+@pytest.mark.asyncio
+async def test_evaluate_factory_failure_releases_lock() -> None:
+    """If evaluate_service_factory raises, the lock frees and no phantom run stays."""
+
+    def _failing_factory(**_kw: object) -> object:
+        msg = "factory exploded"
+        raise RuntimeError(msg)
+
+    mgr = RunManager(
+        store=RecordingStore(),
+        logger=RecordingLogger(),
+        scan_service_factory=FakeScanService,
+        evaluate_service_factory=_failing_factory,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="factory exploded"):
+        await mgr.trigger_evaluate(stage="both")
+
+    # Lock should be released, so a second trigger should NOT raise conflict
+    assert not mgr._eval_lock.locked()
+    assert mgr.get_active_runs() == []
+
+
+@pytest.mark.asyncio
+async def test_scan_resolver_failure_leaves_no_trace() -> None:
+    """A resolver failure (e.g. disabled source) propagates and registers nothing."""
+
+    async def _failing_resolver(
+        _name: str, _stack: contextlib.AsyncExitStack
+    ) -> list[SourceSpec]:
+        raise SourceConfigError("Source 'speedyapply' is disabled")
+
+    store = RecordingStore()
+    mgr = RunManager(
+        store=store,
+        logger=RecordingLogger(),
+        scan_service_factory=FakeScanService,
+        evaluate_service_factory=lambda **_kw: FakeEvaluateService(),
+        scan_source_resolver=_failing_resolver,
+    )
+
+    with pytest.raises(SourceConfigError):
+        await mgr.trigger_scan("speedyapply")
+
+    assert not mgr._scan_lock.locked()
+    assert mgr.get_active_runs() == []
+    assert store.status_updates == []
+    assert store._runs == []
+
+
+@pytest.mark.asyncio
+async def test_scan_run_persists_failure_row_when_service_never_recorded() -> None:
+    """A run whose service died before recording still lands as failed history."""
+    store = RecordingStore()
+    failing = FakeScanService(should_fail=True)
+    mgr = _build_manager(store=store, scan_service=failing)
+    run_id = await mgr.trigger_scan([("mock", object(), {})])
+    await asyncio.sleep(0.1)
+
+    # FakeScanService raises before record_pipeline_run: _finish_run must
+    # insert the row itself so the failed run does not vanish from history.
+    persisted = await store.get_pipeline_run(run_id)
+    assert persisted is not None
+    assert persisted.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_finish_run_keeps_service_finalized_status() -> None:
+    """A terminal status the service already set survives _finish_run."""
+
+    class _NuancedScan:
+        async def run(
+            self,
+            _sources: object,
+            on_progress: object = None,  # noqa: ARG002
+            run: PipelineRun | None = None,
+        ) -> PipelineRun:
+            """Finalize with a nuanced terminal status, then return cleanly."""
+            assert run is not None
+            run.status = "completed_with_errors"
+            return run
+
+    store = RecordingStore()
+    mgr = RunManager(
+        store=store,
+        logger=RecordingLogger(),
+        scan_service_factory=_NuancedScan,  # type: ignore[arg-type]
+        evaluate_service_factory=lambda **_kw: FakeEvaluateService(),
+    )
+    run_id = await mgr.trigger_scan([("mock", object(), {})])
+    await asyncio.sleep(0.1)
+
+    persisted = await store.get_pipeline_run(run_id)
+    assert persisted is not None
+    assert persisted.status == "completed_with_errors"  # not clobbered
+
+
+@pytest.mark.asyncio
+async def test_web_scan_preserves_requested_source_label() -> None:
+    """A string-triggered scan keeps the requested source token as the label."""
+
+    async def _resolver(
+        _name: str, _stack: contextlib.AsyncExitStack
+    ) -> list[SourceSpec]:
+        return [("ats", object(), {})]
+
+    gate = asyncio.Event()
+    blocking = _make_gated_scan(gate)
+    store = RecordingStore()
+    mgr = RunManager(
+        store=store,
+        logger=RecordingLogger(),
+        scan_service_factory=lambda: blocking,  # type: ignore[arg-type]
+        evaluate_service_factory=lambda **_kw: FakeEvaluateService(),
+        scan_source_resolver=_resolver,
+    )
+    await mgr.trigger_scan("ats")
+
+    active = mgr.get_active_runs()
+    assert active[0].source == "ats"
+    assert active[0].run.source == "ats"
+
+    gate.set()
+    await asyncio.sleep(0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +438,19 @@ async def test_service_exception_sets_failed_status() -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _drain(queue: asyncio.Queue[PipelineRun | object]) -> list[PipelineRun]:
+    """Collect queue items until RUN_DONE arrives."""
+    items: list[PipelineRun] = []
+    while True:
+        item = await asyncio.wait_for(queue.get(), timeout=1)
+        if item is RUN_DONE:
+            return items
+        items.append(item)  # type: ignore[arg-type]
+
+
 @pytest.mark.asyncio
 async def test_subscribe_yields_progress_events() -> None:
-    """subscribe should yield events from progress broadcasts."""
+    """subscribe queues should receive progress broadcasts then RUN_DONE."""
     gate = asyncio.Event()
     blocking = _make_gated_scan(gate)
     mgr = RunManager(
@@ -293,17 +461,10 @@ async def test_subscribe_yields_progress_events() -> None:
     )
     run_id = await mgr.trigger_scan([("mock", object(), {})])
 
-    received: list[PipelineRun] = []
-
-    async def _collect() -> None:
-        async for event in mgr.subscribe(run_id):
-            received.append(event)
-
-    task = asyncio.create_task(_collect())
-    await asyncio.sleep(0.01)  # let subscriber register
+    queue = mgr.subscribe(run_id)
     gate.set()
-    await asyncio.sleep(0.1)  # let run complete
-    await task
+    received = await _drain(queue)
+    mgr.unsubscribe(run_id, queue)
 
     # on_progress fires once, plus _finish_run broadcasts once
     assert len(received) >= 1
@@ -322,22 +483,62 @@ async def test_multiple_subscribers_receive_events() -> None:
     )
     run_id = await mgr.trigger_scan([("mock", object(), {})])
 
-    received_a: list[PipelineRun] = []
-    received_b: list[PipelineRun] = []
-
-    async def _collect(target: list[PipelineRun]) -> None:
-        async for event in mgr.subscribe(run_id):
-            target.append(event)
-
-    task_a = asyncio.create_task(_collect(received_a))
-    task_b = asyncio.create_task(_collect(received_b))
-    await asyncio.sleep(0.01)  # let subscribers register
+    queue_a = mgr.subscribe(run_id)
+    queue_b = mgr.subscribe(run_id)
     gate.set()
-    await asyncio.sleep(0.1)  # let run complete
-    await asyncio.gather(task_a, task_b)
+    received_a, received_b = await asyncio.gather(_drain(queue_a), _drain(queue_b))
 
     assert len(received_a) == len(received_b)
     assert len(received_a) >= 1
+
+
+@pytest.mark.asyncio
+async def test_subscribe_after_finish_gets_immediate_done() -> None:
+    """Subscribing to a finished run yields RUN_DONE without blocking."""
+    mgr = _build_manager()
+    run_id = await mgr.trigger_scan([("mock", object(), {})])
+    await asyncio.sleep(0.1)  # let the run finish
+
+    queue = mgr.subscribe(run_id)
+    item = await asyncio.wait_for(queue.get(), timeout=1)
+    mgr.unsubscribe(run_id, queue)
+
+    assert item is RUN_DONE
+
+
+@pytest.mark.asyncio
+async def test_broadcast_snapshots_are_immutable() -> None:
+    """Queued progress events keep their counters despite later mutations."""
+
+    class _TwoProgress:
+        async def run(
+            self,
+            _sources: object,
+            on_progress: object = None,
+            run: PipelineRun | None = None,
+        ) -> PipelineRun:
+            """Mutate the shared run between two progress broadcasts."""
+            assert run is not None
+            run.jobs_discovered = 1
+            on_progress(run)  # type: ignore[operator]
+            run.jobs_discovered = 2
+            on_progress(run)  # type: ignore[operator]
+            return run
+
+    mgr = RunManager(
+        store=RecordingStore(),
+        logger=RecordingLogger(),
+        scan_service_factory=_TwoProgress,  # type: ignore[arg-type]
+        evaluate_service_factory=lambda **_kw: FakeEvaluateService(),
+    )
+    run_id = await mgr.trigger_scan([("mock", object(), {})])
+    queue = mgr.subscribe(run_id)
+
+    received = await _drain(queue)
+    mgr.unsubscribe(run_id, queue)
+
+    # Without per-event snapshots both queued items would read 2.
+    assert [r.jobs_discovered for r in received[:2]] == [1, 2]
 
 
 # ---------------------------------------------------------------------------
@@ -369,10 +570,9 @@ async def test_recover_stale_runs_transitions_running_to_failed() -> None:
 
     assert recovered == 1
     assert any(
-        rid == "stale-1" and status == "failed"
-        for rid, status, _ in store.status_updates
+        rid == "stale-1" and status == "failed" for rid, status in store.status_updates
     )
-    assert not any(rid == "done-1" for rid, _, _ in store.status_updates)
+    assert not any(rid == "done-1" for rid, _ in store.status_updates)
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import datetime
 
 import pytest
 
@@ -168,18 +167,11 @@ class FakeStore:
             run: Pipeline run to persist.
         """
 
-    async def update_pipeline_run_status(
-        self,
-        run_id: str,
-        status: str,
-        finished_at: datetime | None = None,
-    ) -> None:
-        """Update a pipeline run's status.
+    async def update_pipeline_run_status(self, run: PipelineRun) -> None:
+        """Persist a pipeline run's counters, status, and finish time.
 
         Args:
-            run_id: Run identity.
-            status: New status value.
-            finished_at: Optional completion timestamp.
+            run: Pipeline run with accumulated counters.
         """
 
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:

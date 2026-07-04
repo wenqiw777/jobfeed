@@ -8,8 +8,10 @@ correctly with OTel disabled (no-op spans).
 from __future__ import annotations
 
 import ast
+import asyncio
 import shutil
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -124,6 +126,33 @@ async def test_predict_batch_works_with_noop_spans(_gate: XGBoostGate) -> None:
     assert len(results) == 1
     assert results[0].result in ("pass", "fail")
     assert results[0].version == "v1"
+
+
+async def test_predict_batch_offloads_to_worker_thread(_gate: XGBoostGate) -> None:
+    """The adapter runs its CPU-bound scoring via asyncio.to_thread.
+
+    The MLGate port is async; keeping the loop responsive during XGBoost /
+    numpy work is this adapter's job, not the calling service's.
+    """
+    with mock.patch(
+        "jobfeed.adapters.ml.xgboost_gate.asyncio.to_thread",
+        wraps=asyncio.to_thread,
+    ) as mock_to_thread:
+        results = await _gate.predict_batch(
+            [GateInput(job_id="s1", title=CLEAN_TITLE, jd_text=CLEAN_JD)]
+        )
+    mock_to_thread.assert_awaited_once()
+    assert mock_to_thread.await_args.args[0] == _gate._predict_batch_sync
+    assert len(results) == 1
+
+
+async def test_predict_batch_empty_input_skips_thread(_gate: XGBoostGate) -> None:
+    """An empty batch returns [] without spawning a worker thread."""
+    with mock.patch(
+        "jobfeed.adapters.ml.xgboost_gate.asyncio.to_thread"
+    ) as mock_to_thread:
+        assert await _gate.predict_batch([]) == []
+    mock_to_thread.assert_not_awaited()
 
 
 async def test_hard_fail_skips_spans(_gate: XGBoostGate) -> None:

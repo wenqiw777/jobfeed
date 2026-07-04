@@ -8,24 +8,26 @@ import {
   YAxis,
 } from "recharts";
 
-import type { StepTimingRow } from "@/api/queries";
+import type { RunSummary } from "@/api/queries";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
 
 const INITIAL_DIMENSION = { width: 600, height: 200 };
 
-function aggregate(timings: StepTimingRow[]): { run: string; errors: number }[] {
-  const errorsOnly = timings.filter((t) => t.is_error);
-  const byRun = new Map<string, number>();
-  for (const row of errorsOnly) {
-    byRun.set(row.run_id, (byRun.get(row.run_id) ?? 0) + 1);
-  }
-  return [...byRun.entries()]
-    .map(([id, count]) => ({ run: id.slice(0, 8), errors: count }))
-    .slice(-20);
+/** Handled pipeline errors per run, from the runs' `errors` counter.
+ * (Step-timing `is_error` only marks timed blocks that raised, so it
+ * undercounts handled errors — the run counter is the honest source.)
+ * `runs` arrives newest-first from the API; reverse for a left-to-right
+ * timeline and keep the quiet zero-error runs off the chart. */
+function aggregate(runs: RunSummary[]): { run: string; errors: number }[] {
+  return runs
+    .filter((r) => r.errors > 0)
+    .slice(0, 20)
+    .reverse()
+    .map((r) => ({ run: r.run_id.slice(0, 8), errors: r.errors }));
 }
 
-export function ErrorsPerRun({ timings }: { timings: StepTimingRow[] }) {
-  const data = aggregate(timings);
+export function ErrorsPerRun({ runs }: { runs: RunSummary[] }) {
+  const data = aggregate(runs);
   if (data.length === 0) {
     return (
       <ChartCard title="Errors per run">

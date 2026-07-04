@@ -12,7 +12,7 @@ from jobfeed.domain.models_perf import (
     StepTiming,
     StepTimingSeries,
 )
-from jobfeed.observability import SpanWrapper
+from jobfeed.observability import SpanWrapper, get_logger
 from jobfeed.ports.store_perf import StorePerfMixin
 
 if TYPE_CHECKING:
@@ -56,7 +56,15 @@ class StepTimer:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool:
-        """Record elapsed time and close the span."""
+        """Record elapsed time and close the span.
+
+        The store write is best-effort: timing is observability data, so a
+        failed INSERT is logged and swallowed rather than allowed to fail
+        the business work it wraps (the pipeline isolates even source and
+        scoring errors — a metrics write must not be the thing that marks
+        a successful run as failed). The span always closes, and a block
+        exception propagates unchanged (returns False).
+        """
         elapsed_ms = (time.monotonic() - self._start) * 1000
         is_error = exc_type is not None
         timing = StepTiming(
@@ -66,10 +74,20 @@ class StepTimer:
             elapsed_ms=elapsed_ms,
             is_error=is_error,
         )
-        await self._store.record_step_timing(timing)
-        if self._span_cm is not None:
-            self._span_cm.__exit__(exc_type, exc_val, exc_tb)
-        return False  # never swallow exceptions
+        try:
+            await self._store.record_step_timing(timing)
+        except Exception as exc:
+            get_logger().warning(
+                "step_timing_write_failed",
+                run_id=self._run_id,
+                step_type=self._step_type,
+                step_name=self._step_name,
+                error=str(exc),
+            )
+        finally:
+            if self._span_cm is not None:
+                self._span_cm.__exit__(exc_type, exc_val, exc_tb)
+        return False  # never swallow block exceptions
 
 
 class _NullPerfStore:

@@ -83,8 +83,9 @@ class StoreViewsMixin(Protocol):
         *,
         limit: int = 50,
         offset: int = 0,
+        days: int | None = None,
     ) -> tuple[list[PipelineRun], int]:
-        """List pipeline runs, newest first, with the all-time total.
+        """List pipeline runs, newest first, with the matching total.
 
         Ordered by ``started_at`` descending with ``run_id`` descending as a
         deterministic tiebreak.
@@ -92,9 +93,11 @@ class StoreViewsMixin(Protocol):
         Args:
             limit: Maximum runs returned.
             offset: Runs to skip before the returned window.
+            days: Optional look-back window in days; None means all time.
 
         Returns:
-            Tuple of (runs window, total run count ignoring the window).
+            Tuple of (runs window, total count matching ``days`` ignoring
+            limit/offset).
         """
         ...
 

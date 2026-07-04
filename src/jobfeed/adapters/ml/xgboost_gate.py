@@ -24,6 +24,7 @@ injected (``FastEmbedEmbedder`` by default) and likewise lazy.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,6 +135,11 @@ class XGBoostGate:
     async def predict_batch(self, jobs: list[GateInput]) -> list[MLGateResult]:
         """Score a batch of jobs, one ordered result per input.
 
+        The CPU-bound work (feature extraction, embedding, booster) runs in
+        a worker thread so the caller's event loop stays responsive; the
+        async port contract is honored without the caller having to know
+        this implementation is synchronous inside.
+
         Args:
             jobs: Gate inputs to score; ``result[i]`` corresponds to ``jobs[i]``.
 
@@ -142,9 +148,13 @@ class XGBoostGate:
         """
         if not jobs:
             return []
-        rows = [
-            _RowState(extract_features(job.title, job.jd_text), job) for job in jobs
-        ]
+        return await asyncio.to_thread(self._predict_batch_sync, jobs)
+
+    def _predict_batch_sync(self, jobs: list[GateInput]) -> list[MLGateResult]:
+        with _tracer.start_as_current_span("extract_features"):
+            rows = [
+                _RowState(extract_features(job.title, job.jd_text), job) for job in jobs
+            ]
         survivors = [row for row in rows if row.hard_fail is None]
         self._score_survivors(survivors)
         return [row.to_result(self._version) for row in rows]
@@ -154,14 +164,14 @@ class XGBoostGate:
         if not survivors:
             return
         embedder = self._active_embedder
-        with _tracer.start_as_current_span("extract_features"):
+        with _tracer.start_as_current_span("format_input"):
             texts = [
                 embedder.format_input(row.job.title, row.job.jd_text)
                 for row in survivors
             ]
         with _tracer.start_as_current_span("embed"):
             embeddings = embedder.embed_batch(texts)
-        with _tracer.start_as_current_span("predict"):
+        with _tracer.start_as_current_span("featurize"):
             matrix = np.stack(
                 [
                     featurize(row.features, embeddings[i])
@@ -169,6 +179,7 @@ class XGBoostGate:
                 ],
                 axis=0,
             )
+        with _tracer.start_as_current_span("predict"):
             scores = self._predict(matrix)
         for row, score in zip(survivors, scores, strict=True):
             row.apply_model_score(float(score), self._threshold)

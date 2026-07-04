@@ -1,6 +1,6 @@
 import {
-  Area,
-  AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -8,42 +8,33 @@ import {
   YAxis,
 } from "recharts";
 
-import type { StepTimingRow } from "@/api/queries";
+import type { FunnelRow } from "@/api/queries";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
 
 const INITIAL_DIMENSION = { width: 600, height: 200 };
 
-interface GateDay {
-  day: string;
+interface GateRun {
+  run: string;
   pass: number;
   fail: number;
 }
 
-function dayTick(day: string): string {
-  const [, month, date] = day.split("-");
-  return `${Number(month)}/${Number(date)}`;
+/** ML-gate pass/fail per evaluate run, derived from the funnel snapshots:
+ * jobs enter the gate after the hard filter, so pass = after_gate and
+ * fail = after_filter − after_gate. (Step-timing `is_error` means a timed
+ * block raised — it never represents gate rejections.) */
+function aggregate(funnel: FunnelRow[]): GateRun[] {
+  return funnel
+    .map((row) => ({
+      run: row.run_id.slice(0, 8),
+      pass: row.after_gate,
+      fail: Math.max(0, row.after_filter - row.after_gate),
+    }))
+    .slice(-20);
 }
 
-function aggregate(timings: StepTimingRow[]): GateDay[] {
-  const gateSteps = timings.filter((t) => t.step_type === "gate");
-  const byDay = new Map<string, { pass: number; fail: number }>();
-  for (const row of gateSteps) {
-    const day = row.created_at.slice(0, 10);
-    if (!byDay.has(day)) byDay.set(day, { pass: 0, fail: 0 });
-    const entry = byDay.get(day)!;
-    if (row.is_error) {
-      entry.fail += 1;
-    } else {
-      entry.pass += 1;
-    }
-  }
-  return [...byDay.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, { pass, fail }]) => ({ day, pass, fail }));
-}
-
-export function GatePassFail({ timings }: { timings: StepTimingRow[] }) {
-  const data = aggregate(timings);
+export function GatePassFail({ funnel }: { funnel: FunnelRow[] }) {
+  const data = aggregate(funnel);
   if (data.length === 0) {
     return (
       <ChartCard title="Gate pass / fail">
@@ -55,14 +46,12 @@ export function GatePassFail({ timings }: { timings: StepTimingRow[] }) {
     <ChartCard title="Gate pass / fail">
       <div className="h-52" data-testid="gate-pass-fail">
         <ResponsiveContainer width="100%" height="100%" initialDimension={INITIAL_DIMENSION}>
-          <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
+          <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
             <CartesianGrid stroke="rgb(var(--hairline))" vertical={false} />
             <XAxis
-              dataKey="day"
-              tickFormatter={dayTick}
+              dataKey="run"
               axisLine={false}
               tickLine={false}
-              interval="preserveStartEnd"
               tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
             />
             <YAxis
@@ -72,25 +61,22 @@ export function GatePassFail({ timings }: { timings: StepTimingRow[] }) {
               tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
             />
             <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6 }} />
-            <Area
-              type="monotone"
+            <Bar
               dataKey="pass"
-              stackId="1"
+              stackId="gate"
               fill="rgb(var(--apply))"
-              stroke="rgb(var(--apply))"
-              fillOpacity={0.4}
+              barSize={16}
               isAnimationActive={false}
             />
-            <Area
-              type="monotone"
+            <Bar
               dataKey="fail"
-              stackId="1"
+              stackId="gate"
               fill="rgb(var(--danger))"
-              stroke="rgb(var(--danger))"
-              fillOpacity={0.4}
+              barSize={16}
+              radius={[3, 3, 0, 0]}
               isAnimationActive={false}
             />
-          </AreaChart>
+          </BarChart>
         </ResponsiveContainer>
       </div>
       <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">

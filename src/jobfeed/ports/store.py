@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import (
@@ -226,16 +225,12 @@ class JobStore(Protocol):
 
     async def update_pipeline_run_status(
         self,
-        run_id: str,
-        status: str,
-        finished_at: datetime | None = None,
+        run: PipelineRun,
     ) -> None:
-        """Update a pipeline run's status and optional finish time.
+        """Persist a pipeline run's current counters, status, and finish time.
 
         Args:
-            run_id: Run identity.
-            status: New status value (e.g. "succeeded", "failed").
-            finished_at: Optional completion timestamp.
+            run: Pipeline run with accumulated counters to persist.
         """
         ...
 

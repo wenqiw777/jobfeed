@@ -4,21 +4,25 @@ import {
   useFunnelStats,
   useLLMStats,
   usePerformanceOverview,
+  useRuns,
   useStepTimings,
 } from "@/api/queries";
-import { DailyCost } from "@/components/performance/DailyCost";
+import { DailyTokens } from "@/components/performance/DailyTokens";
 import { ErrorsPerRun } from "@/components/performance/ErrorsPerRun";
 import { EvaluateBreakdown } from "@/components/performance/EvaluateBreakdown";
 import { FunnelConversion } from "@/components/performance/FunnelConversion";
 import { GatePassFail } from "@/components/performance/GatePassFail";
-import { GateSubstep } from "@/components/performance/GateSubstep";
 import { KpiCards } from "@/components/performance/KpiCards";
 import { LlmLatency } from "@/components/performance/LlmLatency";
-import { PerSourceErrors } from "@/components/performance/PerSourceErrors";
 import { ScanSourceDuration } from "@/components/performance/ScanSourceDuration";
 import { TimeFilter } from "@/components/performance/TimeFilter";
 import { TokenUsage } from "@/components/performance/TokenUsage";
 import { Skeleton } from "@/components/ui/skeleton";
+
+/** Display cap for the per-run error chart (runs, not step timings,
+ * carry the handled-error counters); the runs query is additionally
+ * bounded to the page's time window via `days`. */
+const ERROR_RUNS_LIMIT = 20;
 
 /**
  * Performance zone: operational metrics and charts.
@@ -31,6 +35,10 @@ export default function PerformancePage() {
   const stepTimings = useStepTimings(windowDays);
   const llmStats = useLLMStats(windowDays);
   const funnel = useFunnelStats(windowDays);
+  // `days` keeps ErrorsPerRun on the same 7/30/90d window as the other
+  // panels; it lives in the query object (= the query key), so window
+  // switches refetch automatically.
+  const runs = useRuns({ limit: ERROR_RUNS_LIMIT, days: windowDays });
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
@@ -40,6 +48,7 @@ export default function PerformancePage() {
         stepTimings={stepTimings}
         llmStats={llmStats}
         funnel={funnel}
+        runs={runs}
       />
     </div>
   );
@@ -50,15 +59,22 @@ function Body({
   stepTimings,
   llmStats,
   funnel,
+  runs,
 }: {
   overview: ReturnType<typeof usePerformanceOverview>;
   stepTimings: ReturnType<typeof useStepTimings>;
   llmStats: ReturnType<typeof useLLMStats>;
   funnel: ReturnType<typeof useFunnelStats>;
+  runs: ReturnType<typeof useRuns>;
 }) {
   const isPending =
-    overview.isPending || stepTimings.isPending || llmStats.isPending || funnel.isPending;
-  const firstError = overview.error ?? stepTimings.error ?? llmStats.error ?? funnel.error;
+    overview.isPending ||
+    stepTimings.isPending ||
+    llmStats.isPending ||
+    funnel.isPending ||
+    runs.isPending;
+  const firstError =
+    overview.error ?? stepTimings.error ?? llmStats.error ?? funnel.error ?? runs.error;
 
   if (isPending) {
     return (
@@ -81,6 +97,7 @@ function Body({
   const timings = stepTimings.data!.timings;
   const stats = llmStats.data!.stats;
   const funnelData = funnel.data!.funnel;
+  const runRows = runs.data!.runs;
 
   return (
     <>
@@ -88,14 +105,12 @@ function Body({
       <div className="grid gap-3 lg:grid-cols-2">
         <ScanSourceDuration timings={timings} />
         <EvaluateBreakdown timings={timings} />
-        <GatePassFail timings={timings} />
-        <GateSubstep timings={timings} />
+        <GatePassFail funnel={funnelData} />
         <LlmLatency stats={stats} />
-        <DailyCost stats={stats} />
+        <DailyTokens stats={stats} />
         <TokenUsage stats={stats} />
         <FunnelConversion funnel={funnelData} />
-        <PerSourceErrors timings={timings} />
-        <ErrorsPerRun timings={timings} />
+        <ErrorsPerRun runs={runRows} />
       </div>
     </>
   );

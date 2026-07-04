@@ -29,6 +29,7 @@ class PipelineRun:
     jobs_updated: int = 0
     jobs_filtered: int = 0
     jobs_ml_gated: int = 0
+    jobs_gate_passed: int = 0
     stage_a_scored: int = 0
     stage_b_scored: int = 0
     jobs_scored: int = 0

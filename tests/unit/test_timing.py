@@ -67,9 +67,37 @@ class ScanRecordingStore:
         """Record the final pipeline run."""
         self.runs.append(run)
 
+    async def update_pipeline_run_status(self, _run: object) -> None:
+        """No-op status update."""
+
     async def record_step_timing(self, timing: StepTiming) -> None:
         """Record a step timing."""
         self.timings.append(timing)
+
+    # Remaining StorePerfMixin surface so the runtime_checkable isinstance
+    # in get_perf_store() recognizes this double (else scans silently
+    # degrade to the no-op perf store and record nothing).
+    async def record_step_timings(self, timings: list[StepTiming]) -> None:
+        """Record a batch of step timings."""
+        self.timings.extend(timings)
+
+    async def get_performance_overview(self, _window_days: int) -> object:
+        """Unused read surface."""
+        raise NotImplementedError
+
+    async def get_step_timings(
+        self, _window_days: int, _step_type: str | None = None
+    ) -> list[object]:
+        """Unused read surface."""
+        raise NotImplementedError
+
+    async def get_llm_daily_stats(self, _window_days: int) -> list[object]:
+        """Unused read surface."""
+        raise NotImplementedError
+
+    async def get_funnel_stats(self, _window_days: int) -> list[object]:
+        """Unused read surface."""
+        raise NotImplementedError
 
 
 class ScanRecordingLogger:
@@ -160,6 +188,38 @@ async def test_step_timer_works_with_noop_span_wrapper() -> None:
 
     assert len(store.timings) == 1
     assert store.timings[0].step_type == "digest"
+
+
+class _FailingPerfStore:
+    """Perf store whose timing INSERT always fails."""
+
+    async def record_step_timing(self, _timing: object) -> None:
+        """Simulate a transient DB failure on the timing write."""
+        raise RuntimeError("timing insert failed")
+
+
+@pytest.mark.asyncio
+async def test_step_timer_swallows_store_write_failure() -> None:
+    """A failed timing INSERT is logged, never raised into the block's caller.
+
+    Timing is observability data: it must not be the thing that marks an
+    otherwise-successful scan or evaluate run as failed.
+    """
+    ran = False
+    timer = StepTimer(_FailingPerfStore(), "run-4", "stage", "funnel", _NoOpTracer())
+    async with timer:
+        ran = True
+    assert ran  # no exception escaped the context manager
+
+
+@pytest.mark.asyncio
+async def test_step_timer_store_failure_keeps_block_exception() -> None:
+    """The block's own exception survives a simultaneous store-write failure."""
+    with pytest.raises(ValueError, match="boom"):
+        async with StepTimer(
+            _FailingPerfStore(), "run-5", "stage", "stage_a", _NoOpTracer()
+        ):
+            raise ValueError("boom")
 
 
 # ---------------------------------------------------------------------------

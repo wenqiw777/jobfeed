@@ -10,13 +10,9 @@ import {
 
 import type { LLMDailyStatsRow } from "@/api/queries";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
+import { dayTick } from "@/lib/dates";
 
 const INITIAL_DIMENSION = { width: 600, height: 200 };
-
-function dayTick(day: string): string {
-  const [, month, date] = day.split("-");
-  return `${Number(month)}/${Number(date)}`;
-}
 
 const SERIES = [
   { key: "avg_input_tokens", label: "avg input", color: "rgb(var(--accent))" },

@@ -14,7 +14,9 @@ function formatPct(rate: number): string {
 }
 
 /** Delta arrow with directional coloring. For cost and errors, down is
- * good (green) and up is bad (red). Duration is neutral (just show it). */
+ * good (green) and up is bad (red). Duration is neutral (just show it).
+ * The backend sends raw ratios ((cur − prev) / prev, e.g. -0.08 for an
+ * 8% drop), so scale to percent before formatting. */
 function DeltaArrow({
   delta,
   goodDirection,
@@ -25,7 +27,7 @@ function DeltaArrow({
   if (delta === null) return null;
   const isUp = delta > 0;
   const arrow = isUp ? "↑" : "↓";
-  const abs = Math.abs(delta);
+  const abs = Math.abs(delta) * 100;
   const pct = abs >= 1 ? `${Math.round(abs)}%` : `${abs.toFixed(1)}%`;
   let colorClass = "text-mute";
   if (goodDirection === "down") {

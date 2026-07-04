@@ -1,8 +1,7 @@
-"""Tests for EvaluateService on_progress callback and to_thread ML gate."""
+"""Tests for EvaluateService on_progress callback and ML-gate port usage."""
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -19,7 +18,7 @@ from jobfeed.domain.models import (
 )
 from jobfeed.ports.prompts import PromptBundle
 from jobfeed.ports.store_claims import GateCandidate
-from jobfeed.services._evaluate_gate import gate_unrated
+from jobfeed.services._evaluate_gate import gate_representatives, gate_unrated
 from jobfeed.services.evaluate import EvaluateService
 from jobfeed.services.evaluate_types import (
     EvaluateDependencies,
@@ -92,6 +91,9 @@ class FakeStore:
         pass
 
     async def record_pipeline_run(self, _run: PipelineRun) -> None:
+        pass
+
+    async def update_pipeline_run_status(self, _run: object) -> None:
         pass
 
     async def auto_decay(self, **_kw: object) -> AutoDecayResult:
@@ -172,7 +174,7 @@ def _job(job_id: str, *, title: str = "Software Engineer") -> JobPosting:
     )
 
 
-def _deps(store: FakeStore, *, gate: MockGate | None = None) -> EvaluateDependencies:
+def _deps(store: FakeStore, *, gate: object | None = None) -> EvaluateDependencies:
     return EvaluateDependencies(
         store=store,  # type: ignore[arg-type]
         store_ops=StubStoreOps(),  # type: ignore[arg-type]
@@ -180,7 +182,7 @@ def _deps(store: FakeStore, *, gate: MockGate | None = None) -> EvaluateDependen
         prompt_renderer=StubPromptRenderer(),  # type: ignore[arg-type]
         llm_stage_a=StageALLM(),  # type: ignore[arg-type]
         llm_stage_b=StageALLM(),  # type: ignore[arg-type]
-        ml_gate=gate,
+        ml_gate=gate,  # type: ignore[arg-type]
     )
 
 
@@ -222,7 +224,7 @@ async def test_on_progress_fires_per_stage() -> None:
 
 @pytest.mark.asyncio
 async def test_on_progress_fires_for_both_stages() -> None:
-    """stage='both' fires after stage_a, after stage_b, and at end."""
+    """stage='both' fires after funnel, stage_a, stage_b, and at end."""
     store = FakeStore([_job("a")])
     service = EvaluateService(
         deps=_deps(store),
@@ -231,8 +233,8 @@ async def test_on_progress_fires_for_both_stages() -> None:
     )
     calls: list[PipelineRun] = []
     await service.run(stage="both", corpus="unrated", on_progress=calls.append)
-    # 3 calls: after stage_a, after stage_b, and final.
-    assert len(calls) == 3  # noqa: PLR2004
+    # 4 calls: after funnel (before scoring starts), stage_a, stage_b, final.
+    assert len(calls) == 4  # noqa: PLR2004
 
 
 @pytest.mark.asyncio
@@ -249,24 +251,72 @@ async def test_on_progress_none_does_not_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# to_thread test
+# Gate port usage
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_gate_unrated_uses_to_thread() -> None:
-    """gate_unrated offloads predict_batch to a thread via asyncio.to_thread."""
+async def test_gate_unrated_awaits_the_port_directly() -> None:
+    """gate_unrated awaits MLGate.predict_batch on the caller's loop.
+
+    Threading is the adapter's concern (XGBoostGate offloads internally), so
+    the service must not wrap the port call in to_thread/asyncio.run — a
+    genuinely async gate implementation has to stay legal.
+    """
     gate = MockGate()
     store = FakeStore([_job("a")])
     deps = _deps(store, gate=gate)
     run = PipelineRun(run_id="run-1", started_at=RUN_AT, source="evaluate")
 
-    with patch(
-        "jobfeed.services._evaluate_gate.asyncio.to_thread",
-        wraps=asyncio.to_thread,
-    ) as mock_to_thread:
-        await gate_unrated(deps, gate, run, [_job("a")], dry_run=False)
-        assert mock_to_thread.called
-        # The first positional arg should be _predict_sync.
-        call_args = mock_to_thread.call_args
-        assert call_args is not None
+    with patch.object(gate, "predict_batch", wraps=gate.predict_batch) as mock_predict:
+        passed = await gate_unrated(deps, gate, run, [_job("a")], dry_run=False)
+
+    mock_predict.assert_awaited_once()
+    assert len(mock_predict.await_args.args[0]) == 1
+    assert store.gate_results  # results persisted 1:1
+    assert isinstance(passed, list)
+
+
+class _SplitGate:
+    """Gate double: passes jobs whose id is in the configured set."""
+
+    def __init__(self, pass_ids: set[str]) -> None:
+        self._pass_ids = pass_ids
+
+    async def predict_batch(self, jobs: list[object]) -> list[MLGateResult]:
+        """Return pass/fail per configured id set."""
+        return [
+            MLGateResult(
+                score=0.9 if job.job_id in self._pass_ids else 0.1,  # type: ignore[attr-defined]
+                result="pass" if job.job_id in self._pass_ids else "fail",  # type: ignore[attr-defined]
+            )
+            for job in jobs
+        ]
+
+
+@pytest.mark.asyncio
+async def test_gate_representatives_counts_gate_survivors() -> None:
+    """jobs_gate_passed counts already-pass reps plus newly passed ones.
+
+    The scored counters cannot stand in for this: Stage A limit/budget cap
+    them below the survivor count, which is exactly what the funnel's
+    "after gate" stage must report.
+    """
+    jobs = [_job("a"), _job("b"), _job("c")]
+    reps = [
+        GateCandidate(job=jobs[0], ml_gate_result="pass"),  # prior-run pass
+        GateCandidate(job=jobs[1], ml_gate_result=None),  # will pass
+        GateCandidate(job=jobs[2], ml_gate_result=None),  # will fail
+    ]
+    gate = _SplitGate(pass_ids={jobs[1].id or ""})
+    store = FakeStore(jobs)
+    deps = _deps(store, gate=gate)
+    run = PipelineRun(run_id="run-1", started_at=RUN_AT, source="evaluate")
+
+    survivors = await gate_representatives(
+        deps, _config(ml_gate_enabled=True), run, reps, dry_run=False
+    )
+
+    assert {j.id for j in survivors} == {jobs[0].id, jobs[1].id}
+    assert run.jobs_gate_passed == 2  # noqa: PLR2004 - already-pass + newly-passed
+    assert run.jobs_ml_gated == 1  # the gate-failed rep

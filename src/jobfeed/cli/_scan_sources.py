@@ -12,7 +12,6 @@ from __future__ import annotations
 import contextlib
 from typing import cast
 
-import click
 import httpx
 
 from jobfeed.adapters.sources._http import create_http_client
@@ -106,7 +105,7 @@ def _is_source_enabled(app: AppContext, source_name: str) -> bool:
 def _resolve_mock_source(app: AppContext) -> SourceSpec:
     mock_source = app["sources"].get("mock")
     if mock_source is None:
-        raise click.ClickException("Mock source not configured")
+        raise ValueError("Mock source not configured")
     return ("mock", mock_source, {})
 
 

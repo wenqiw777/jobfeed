@@ -15,6 +15,7 @@ import click
 
 from jobfeed.cli import AppContext
 from jobfeed.cli._evaluate_factory import EvalBuildParams, build_evaluate_service
+from jobfeed.domain.errors import ResumeNotConfiguredError
 from jobfeed.domain.models import PipelineRun
 
 
@@ -62,7 +63,7 @@ async def build_and_run(
     )
     try:
         service = build_evaluate_service(app, build_params)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ResumeNotConfiguredError) as exc:
         raise click.ClickException(str(exc)) from exc
     return await service.run(
         stage=params.stage,

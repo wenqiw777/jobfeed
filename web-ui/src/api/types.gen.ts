@@ -743,15 +743,16 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description List pipeline runs, newest first, with the all-time total.
+         * @description List pipeline runs, newest first, with the matching total.
          *
          *     Args:
          *         store: Shared job store.
          *         limit: Max runs returned.
          *         offset: Runs to skip.
+         *         days: Optional look-back window; omit for all time.
          *
          *     Returns:
-         *         Runs window plus the total.
+         *         Runs window plus the total count matching ``days``.
          */
         get: operations["list_runs_api_runs_get"];
         put?: never;
@@ -809,7 +810,8 @@ export interface paths {
          *         The new run's identity and initial status.
          *
          *     Raises:
-         *         ApiError: 409 when an evaluate is already running.
+         *         ApiError: 409 when an evaluate is already running, 400 when the
+         *             master resume file is not configured.
          */
         post: operations["trigger_evaluate_api_runs_evaluate_post"];
         delete?: never;
@@ -834,13 +836,13 @@ export interface paths {
          *     Args:
          *         body: Request body with source name.
          *         run_manager: Shared run manager.
-         *         request: Current request (for context access).
          *
          *     Returns:
          *         The new run's identity and initial status.
          *
          *     Raises:
-         *         ApiError: 409 when a scan is already running, 400 for unknown source.
+         *         ApiError: 409 when a scan is already running, 400 for an unknown
+         *             or disabled source.
          */
         post: operations["trigger_scan_api_runs_scan_post"];
         delete?: never;
@@ -2675,6 +2677,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                days?: number | null;
             };
             header?: never;
             path?: never;

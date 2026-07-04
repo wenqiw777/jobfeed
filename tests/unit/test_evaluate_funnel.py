@@ -180,6 +180,9 @@ class FakeStore:
         """Record the persisted pipeline run."""
         self.pipeline_runs.append(run)
 
+    async def update_pipeline_run_status(self, _run: object) -> None:
+        """No-op status update for testing."""
+
     async def auto_decay(
         self, *, ghost_days: int = 30, archive_ignored_days: int = 14
     ) -> AutoDecayResult:

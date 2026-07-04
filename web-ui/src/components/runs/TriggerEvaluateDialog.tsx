@@ -38,9 +38,11 @@ export function TriggerEvaluateButton() {
   const [limitText, setLimitText] = useState("");
   const trigger = useTriggerEvaluate();
 
+  const limit = limitText.trim() === "" ? null : Number(limitText);
+  const isLimitInvalid = limit !== null && (Number.isNaN(limit) || limit < 1);
+
   function submit(): void {
-    const limit = limitText.trim() === "" ? null : Number(limitText);
-    if (limit !== null && (Number.isNaN(limit) || limit < 1)) return;
+    if (isLimitInvalid) return;
 
     trigger.mutate(
       { stage, limit },
@@ -110,7 +112,13 @@ export function TriggerEvaluateButton() {
               value={limitText}
               onChange={(e) => setLimitText(e.target.value)}
               aria-label="Limit"
+              aria-invalid={isLimitInvalid}
             />
+            {isLimitInvalid && (
+              <p role="alert" className="text-micro text-danger">
+                Limit must be a number of at least 1.
+              </p>
+            )}
           </label>
         </div>
 
@@ -123,7 +131,7 @@ export function TriggerEvaluateButton() {
           <Button
             variant="primary"
             size="sm"
-            disabled={trigger.isPending}
+            disabled={trigger.isPending || isLimitInvalid}
             onClick={submit}
           >
             {trigger.isPending ? "Starting…" : "Start evaluate"}

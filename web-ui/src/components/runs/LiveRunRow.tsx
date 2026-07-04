@@ -46,17 +46,18 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
     `/api/runs/${run.run_id}/progress`,
   );
 
-  // Track the previous `isConnected` to detect done transitions.
-  const wasConnected = useRef(false);
+  // Fire the completion path exactly once, and only on a graceful
+  // `event: done` — a transport error also drops isConnected, but the
+  // hook keeps isDone false there (the stream will reconnect).
+  const hasFiredDone = useRef(false);
 
   useEffect(() => {
-    if (wasConnected.current && !sse.isConnected && sse.data !== null) {
-      // Stream ended with final data — the run finished.
+    if (sse.isDone && !hasFiredDone.current) {
+      hasFiredDone.current = true;
       void queryClient.invalidateQueries({ queryKey: runsKeys.list({}) });
       onDone?.();
     }
-    wasConnected.current = sse.isConnected;
-  }, [sse.isConnected, sse.data, queryClient, onDone]);
+  }, [sse.isDone, queryClient, onDone]);
 
   return (
     <li

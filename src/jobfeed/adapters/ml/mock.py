@@ -12,6 +12,7 @@ port), but is predict-only and never makes network or subprocess calls.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 from jobfeed.domain.ml_features import (
@@ -50,12 +51,22 @@ class MockGate:
     async def predict_batch(self, jobs: list[GateInput]) -> list[MLGateResult]:
         """Score a batch of jobs, one ordered result per input.
 
+        Like XGBoostGate, the regex-heavy feature extraction runs in a
+        worker thread so a large batch (the dev/test ``model_dir="mock"``
+        escape hatch is reachable from the live server) cannot block the
+        caller's event loop.
+
         Args:
             jobs: Gate inputs to score; ``result[i]`` corresponds to ``jobs[i]``.
 
         Returns:
             One ``MLGateResult`` per input, in the same order as ``jobs``.
         """
+        if not jobs:
+            return []
+        return await asyncio.to_thread(self._predict_batch_sync, jobs)
+
+    def _predict_batch_sync(self, jobs: list[GateInput]) -> list[MLGateResult]:
         return [self._predict_one(job) for job in jobs]
 
     def _predict_one(self, job: GateInput) -> MLGateResult:

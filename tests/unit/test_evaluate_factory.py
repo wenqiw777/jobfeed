@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from jobfeed.cli._evaluate_factory import EvalBuildParams, _load_resume_text
+from jobfeed.domain.errors import ResumeNotConfiguredError
 
 _SAMPLE_LIMIT = 10
 
@@ -62,6 +63,9 @@ def test_factory_module_has_no_click_imports() -> None:
         assert "import click" not in stripped, (
             f"Module-level click import found: {line}"
         )
+        assert not stripped.startswith("from click"), (
+            f"Module-level click import found: {line}"
+        )
 
 
 def test_load_resume_text_dry_run_returns_empty() -> None:
@@ -70,8 +74,8 @@ def test_load_resume_text_dry_run_returns_empty() -> None:
 
 
 def test_load_resume_text_missing_file_raises() -> None:
-    """_load_resume_text raises FileNotFoundError for missing resume."""
-    with pytest.raises(FileNotFoundError, match="Resume file not found"):
+    """_load_resume_text raises ResumeNotConfiguredError for missing resume."""
+    with pytest.raises(ResumeNotConfiguredError, match="Resume file not found"):
         _load_resume_text("/definitely/does/not/exist.md", is_dry_run=False)
 
 

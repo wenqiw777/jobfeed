@@ -75,12 +75,12 @@ class StorePerfMixin(Protocol):
         ...
 
     async def get_funnel_stats(self, window_days: int) -> list[FunnelStats]:
-        """Evaluation funnel snapshots from pipeline runs.
+        """Evaluation funnel snapshots from evaluate pipeline runs.
 
         Args:
             window_days: Look-back window in days.
 
         Returns:
-            Funnel stats per run, newest first.
+            Funnel stats per evaluate run, newest first.
         """
         ...

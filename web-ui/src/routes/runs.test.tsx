@@ -5,6 +5,23 @@ import type { RunSummary } from "@/api/queries";
 import { Toaster } from "@/components/ui/toaster";
 import RunsPage from "@/routes/runs";
 
+/** Minimal EventSource stub: LiveRunRow (rendered for active runs)
+ * opens an SSE connection on mount; happy-dom has no EventSource. */
+class StubEventSource {
+  onopen: (() => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  addEventListener(): void {
+    // Streaming frames aren't exercised by these tests.
+  }
+  removeEventListener(): void {
+    // Not needed for tests.
+  }
+  close(): void {
+    // Not needed for tests.
+  }
+}
+
 function runRow(id: string, over: Partial<RunSummary> = {}): RunSummary {
   return {
     run_id: id,
@@ -101,6 +118,7 @@ let state: ServerState;
 
 beforeEach(() => {
   calls.length = 0;
+  vi.stubGlobal("EventSource", StubEventSource);
   state = {
     runs: [
       runRow("r2", {
@@ -272,4 +290,45 @@ test("active runs query fetches GET /api/runs/active", async () => {
 
   // The active runs endpoint was called.
   expect(calls.some((c) => c.url === "/api/runs/active" && c.method === "GET")).toBe(true);
+});
+
+test("invalid limit disables submit, shows inline error, and blocks the POST", async () => {
+  renderRuns();
+  await screen.findByTestId("run-row-r2");
+
+  fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
+  await screen.findByText("Trigger Evaluate");
+
+  fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "0" } });
+  expect(screen.getByRole("alert")).toHaveTextContent(/at least 1/);
+  expect(screen.getByLabelText("Limit")).toHaveAttribute("aria-invalid", "true");
+
+  const submit = screen.getByRole("button", { name: "Start evaluate" });
+  expect(submit).toBeDisabled();
+  fireEvent.click(submit);
+  expect(calls.some((c) => c.method === "POST" && c.url === "/api/runs/evaluate")).toBe(false);
+
+  // Clearing the field recovers.
+  fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "5" } });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Start evaluate" })).toBeEnabled();
+});
+
+test("a running run renders only as a live row, not in history too", async () => {
+  // r2 is running: /api/runs/active serves it AND it still appears in
+  // the /api/runs history payload for its entire duration.
+  state.activeRuns = [
+    {
+      run_id: "r2",
+      source: "ats",
+      started_at: "2026-06-10T09:30:00Z",
+      counters: runRow("r2", { status: "running", finished_at: null }),
+    },
+  ];
+  renderRuns();
+
+  await screen.findByTestId("live-run-r2");
+  await screen.findByTestId("run-row-r1");
+  // Deduped: the running run stays out of the history list.
+  expect(screen.queryByTestId("run-row-r2")).toBeNull();
 });
