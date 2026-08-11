@@ -834,6 +834,36 @@ class TestApplicationAudit:
         assert await contract_store.get_resume_snapshot(RESUME_HASH_A) == snapshot
         assert await contract_store.get_application(job_id) is not None
 
+    async def test_get_application_round_trips_nullable_and_raw_text_fields(
+        self,
+        contract_store,
+    ):
+        """Application reads preserve SQL NULL and raw TEXT without JSON parsing."""
+        null_job_id, _ = await _insert_job(contract_store, "app-read-null")
+        null_record = ApplicationRecord(
+            job_id=null_job_id,
+            applied_at=FIXED_TIME,
+        )
+        assert await contract_store.record_application_with_snapshots(null_record)
+
+        text_job_id, _ = await _insert_job(contract_store, "app-read-text")
+        text_record = ApplicationRecord(
+            job_id=text_job_id,
+            applied_at=FIXED_TIME + timedelta(seconds=1),
+            master_resume_hash=RESUME_HASH_A,
+            tailored_resume_hash=RESUME_HASH_B,
+            cover_letter="Dear team,\nUnicode: café / 你好",
+            application_method="custom portal",
+            verdict_snapshot=' { "z": 1, "a": null } ',
+            fit_snapshot="intentionally-not-json",
+            hooks_snapshot='["first", "second"]\n',
+            notes="line one\nline two",
+        )
+        assert await contract_store.record_application_with_snapshots(text_record)
+
+        assert await contract_store.get_application(null_job_id) == null_record
+        assert await contract_store.get_application(text_job_id) == text_record
+
 
 # ===========================================================================
 # Group 5: Resume Snapshots
