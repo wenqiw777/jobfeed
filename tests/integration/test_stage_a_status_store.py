@@ -76,6 +76,16 @@ async def _scored_history_rows(store: PostgresStore, job_id: str) -> list:
         )
 
 
+async def _evaluation_count(store: PostgresStore, job_id: str) -> int:
+    """Count evaluation rows for one job."""
+    async with store._get_pool().acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM evaluations WHERE job_id = $1",
+            int(job_id),
+        )
+    return int(count)
+
+
 async def test_save_stage_a_advances_new_to_scored_with_history(
     store: PostgresStore,
 ) -> None:
@@ -124,5 +134,25 @@ async def test_save_stage_a_error_keeps_status_new(store: PostgresStore) -> None
 
     await store.save_stage_a_error(saved.job_id, "llm timeout")
 
+    assert await _current_status(store, saved.job_id) == "new"
+    assert await _scored_history_rows(store, saved.job_id) == []
+
+
+async def test_save_stage_a_rolls_back_evaluation_when_status_advance_fails(
+    store: PostgresStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Evaluation, status, and history remain atomic on an injected failure."""
+    saved = await store.save_job(make_job("sa-status-rollback"))
+
+    async def fail_status_advance(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected status advance failure")
+
+    monkeypatch.setattr(store, "_transition_status_in_tx", fail_status_advance)
+
+    with pytest.raises(RuntimeError, match="injected status advance failure"):
+        await store.save_stage_a(saved.job_id, _stage_a())
+
+    assert await _evaluation_count(store, saved.job_id) == 0
     assert await _current_status(store, saved.job_id) == "new"
     assert await _scored_history_rows(store, saved.job_id) == []
