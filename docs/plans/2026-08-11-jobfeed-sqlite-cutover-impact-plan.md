@@ -235,6 +235,7 @@ run_leases(
 - `renew_run_lease` 和 `finalize_run_with_lease` 必须同时匹配 `kind + run_id + owner_id + generation`；finalize 在一个事务中更新 run 终态并清空 lease owner 字段。
 - renew 失败意味着 lease 已丢失，旧 owner 必须停止调度新工作；旧 generation 不能 renew 或 finalize 新 owner 的 run，包括正常 finalize 后立即 reacquire 的情况。
 - CLI 和 Web 共用同一个 run orchestration helper，先原子 start run + lease，再启动 heartbeat，最后才调度任何外部 fetch/LLM 工作；进程内 lock 只作为快速 UX guard，不再是正确性边界。
+- evaluate dry-run 不 claim job、不产生付费写入，因此不获取 DB run lease、不持久化 `PipelineRun`；Web 可保留进程内 UX lock 和 SSE preview。
 
 - 同类 run 是否允许并行由 DB lease 决定，不只看当前 Python 进程。
 - 活跃 owner 定期刷新 heartbeat。

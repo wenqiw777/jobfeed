@@ -81,8 +81,8 @@
 | `list_upcoming_interviews` | merge | 与 `workflow_attention` 共用 upcoming query family，不保留无 caller 的 facade 方法。 |
 
 本 slice 的建议终态是 **18 个 retain operations + 2 个临时 wrappers**；5 个 merge、
-1 个 retire（`record_application` wrapper 最终再 retire）。这让全项目朝约 55–70 个
-public capability operations 收敛，同时 26 个既有行为仍有迁移期回归证据。
+1 个 retire（`record_application` wrapper 最终再 retire）。这为全项目经审计的
+78–82 个 public capability operations 目标贡献收缩，同时 26 个既有行为仍有迁移期回归证据。
 
 ## 2. 跨方法冻结规则
 
