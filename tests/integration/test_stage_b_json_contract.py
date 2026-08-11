@@ -64,6 +64,7 @@ def _canonical_json_bytes(value: object) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     ).encode()
 
 
@@ -154,6 +155,36 @@ async def test_postgres_rejects_invalid_json_without_damaging_saved_blocks(
             )
 
     assert await _json_text_columns(store, saved.job_id) == before
+
+
+@pytest.mark.parametrize(
+    "invalid_json",
+    (
+        '{"score": NaN}',
+        '{"score": Infinity}',
+        '{"score": -Infinity}',
+    ),
+)
+async def test_postgres_rejects_nonfinite_json_numbers(
+    store: PostgresStore,
+    invalid_json: str,
+) -> None:
+    """JSONB rejects non-finite numbers required to fail closed in SQLite."""
+    saved = await store.save_job(make_job(f"nonfinite-{invalid_json}"))
+    await store.save_stage_a(saved.job_id, _stage_a())
+    pool = store._get_pool()
+
+    async with pool.acquire() as conn:
+        with pytest.raises(asyncpg.InvalidTextRepresentationError):
+            await conn.execute(
+                """UPDATE evaluations
+                      SET stage_b_fit_json = $2::jsonb
+                    WHERE job_id = $1""",
+                int(saved.job_id),
+                invalid_json,
+            )
+
+    assert (await _json_text_columns(store, saved.job_id))["fit"] is None
 
 
 def test_corrupt_json_text_raises_decode_error() -> None:
