@@ -26,7 +26,17 @@ class PostgresStoreContractControl:
         occurrence: int,
         changed_at: datetime,
     ) -> None:
-        """Set one status occurrence's timestamp in append order."""
+        """Set one status occurrence's timestamp in append order.
+
+        Args:
+            job_id: Store-assigned job identity.
+            to_status: History status whose occurrence should change.
+            occurrence: Zero-based occurrence in append order.
+            changed_at: Replacement aware timestamp.
+
+        Raises:
+            AssertionError: If the requested history occurrence does not exist.
+        """
         conn = await asyncpg.connect(self._dsn)
         try:
             row = await conn.fetchrow(
@@ -55,7 +65,15 @@ class PostgresStoreContractControl:
         job_id: str,
         changed_at: datetime,
     ) -> None:
-        """Set the current status clock for decay-boundary tests."""
+        """Set the current status clock for decay-boundary tests.
+
+        Args:
+            job_id: Store-assigned job identity.
+            changed_at: Replacement aware timestamp.
+
+        Raises:
+            AssertionError: If the job has no current status row.
+        """
         conn = await asyncpg.connect(self._dsn)
         try:
             result = await conn.execute(
@@ -70,7 +88,11 @@ class PostgresStoreContractControl:
 
     @asynccontextmanager
     async def reject_ghost_history_inserts(self) -> AsyncIterator[None]:
-        """Reject ghosted history inserts until the context exits."""
+        """Reject ghosted history inserts until the context exits.
+
+        Returns:
+            Async context manager yielding while the rejection trigger is active.
+        """
         conn = await asyncpg.connect(self._dsn)
         try:
             await conn.execute(
@@ -100,7 +122,11 @@ class PostgresStoreContractControl:
 
     @asynccontextmanager
     async def delay_interview_completion_updates(self) -> AsyncIterator[None]:
-        """Delay completion updates so concurrent selectors overlap reliably."""
+        """Delay completion updates so concurrent selectors overlap reliably.
+
+        Returns:
+            Async context manager yielding while the delay trigger is active.
+        """
         conn = await asyncpg.connect(self._dsn)
         try:
             await conn.execute(
