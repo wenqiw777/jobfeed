@@ -96,7 +96,7 @@ Jobfeed 适合从 PostgreSQL 收敛为 SQLite，但这不是“小改连接串�
 
 数量大的原因是项目不用一个无类型的通用 `execute()`，而是把每个业务查询和原子命令显式放在 port 上；同时 Phase 1–9 的 jobs、evaluation queue、workflow、application 和 analytics 能力最终都由一个 concrete store 实现。显式合同本身保护了 service/adapter 边界，但单个 5,895 行实现已经形成维护热点。
 
-这 92 个是“必须解释的现有行为 inventory”，不是最终必须保留的 public method 数。Task 0 必须给每个行为标记 `retain`、`merge`、`compat-wrapper` 或 `retire`；只有证明无 production 调用、无 CLI/API 合同、无必要兼容用途的项才可退休。相同 eligibility、filter/sort、transaction 或 single/batch 语义应收敛到 typed command/query family。逐项调用与事务审计后，最终 runtime capability surface 的可执行目标收口为 **78 个 public operations**，而不是原样复制 92 个方法或为追求数字硬压到 60。另有 3 个可能把目标降到 75 的候选（Stage B candidate 内嵌 score、company discovery outcome、LLM accounting event），只在 call-site 迁移和 golden tests 证明后采用，不得作为当前实现的隐式删减。
+这 92 个是“必须解释的现有行为 inventory”，不是最终必须保留的 public method 数。Task 0 必须给每个行为标记 `retain`、`merge`、`compat-wrapper` 或 `retire`；只有证明无 production 调用、无 CLI/API 合同、无必要兼容用途的项才可退休。相同 eligibility、filter/sort、transaction 或 single/batch 语义应收敛到 typed command/query family。逐项调用与事务审计后，当前可执行 baseline 收口为 **78 个 public operations**，而不是原样复制 92 个方法或为追求数字硬压到 60。进一步的全调用链审计给出 **70 个的推荐终态**，但其中严格原子预算 reservation 是 material behavior change；在人类选择第 8.2 节方案前，78 仍是 implementation acceptance，不得把候选当作隐式删减。
 
 run lease 新增 `start_run_with_lease`、`renew_run_lease`、`finalize_run_with_lease` 3 个明确行为，因此完整 disposition 输入是 92 个既有行为加 3 个新行为，即 95 个。`start_run_with_lease` 将 lease acquire 和 running `PipelineRun` insert 放在同一事务，不允许产生“已领 lease 但没有 run”的半状态。18 个迁移专用方法单独归入 cutover/rollback tooling，不塞进 runtime facade。行为可以通过合并后的一个 typed operation 保留；合并不得把原子边界、输入类型、排序或错误语义藏进通用 `execute()`。
 
@@ -395,6 +395,24 @@ commit `49ac0c1` 曾包含 7 个 SQLite production 文件，共 1,094 LOC，以�
 不推荐为追求 2,000 LOC 引入万能 `execute(sql, params)` port、通用 CRUD repository、完整 ORM session/identity-map 模型或元编程 repository。它们会把类型、原子性、排序和 claim 规则从显式合同移到运行时约定，文件变短但系统更难验证。若实现只能通过这些手段命中 LOC 目标，应保留更多显式代码。
 
 78 个终态 operation 的对账为：Core/Claims/Runs 28，Status/Application/Interview 21，Ops/Views/Performance/Source lookup 29。旧 PostgreSQL 方法可在兼容期以 wrapper 留存，但不计入最终 SQLite port；每个 wrapper 必须有删除任务，不得变成永久双 surface。
+
+在 78 基线之上，production call-path 审计找到以下 typed 收敛；这不是把不同
+语义塞进 generic dispatcher：
+
+| Before | After | 净减少 | 关键门槛 |
+|---|---|---:|---|
+| `load_pending_stage_a`、`claim_pending_stage_a`、`load_pending_stage_b` | 强制 target store 实现 funnel claim、Stage B claim 与 dry-run preview，不再保留 optional-mixin fallback | 3 | gate 开/关、3 corpus、dry-run golden；fake stores 全部迁移 |
+| `claim_pending_stage_b` + `get_stage_a_scores` | `claim_stage_b -> StageBCandidate(job, stage_a_score)` | 1 | claim 与 score 同 snapshot；首轮与 sweep 不再二次读取 |
+| company failure bump/reset | `record_company_discovery_outcome(Failed | Succeeded)` | 1 | 并发 increment、unknown slug、success reset、removed flow |
+| cost read/reserve + completion accounting | `reserve_llm_budget` + `record_llm_completion` | 1 | 并发 limit、失败保留 attempt、跨午夜、completion 全成同败 |
+| apply aggregate + reapply notice query | `apply_job -> ApplyOutcome` | 1 | duplicate/no-op；notice 失败不得回滚已提交 application |
+| workflow + pipeline attention | `get_attention_report -> CombinedAttentionReport` | 1 | 六桶 cap/order/参数不变，仍不承诺跨桶 snapshot |
+
+全部采用时 `78 - 8 = 70`。其中前五类主要收敛调用入口；预算 reservation
+会把当前允许最多约 `max_concurrent` 次竞态超额的 best-effort gate 改成严格限额，
+必须单独批准。另有 `get_resume_snapshot` 和 `list_jobs` 两个仅剩间接/健康检查
+用途的条件退休项，可到 68，但会缩小现有 public library contract，当前不推荐。
+低于 68 不再有足够的实际重复证据，通常只会降低类型性和可读性。
 
 唯一已批准的事务语义收紧是把 Stage B threshold 的 skip/reopen 两次提交合成
 `sync_stage_b_threshold` 单事务。实现前必须先记录 PostgreSQL 当前分段提交的
