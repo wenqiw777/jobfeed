@@ -143,7 +143,7 @@ guarded and mutated, not the preselected candidates.
 |---|---|---|---|
 | `claim_pending_stage_a` (`store_claims.py:31-50`; `postgres.py:2707-2736`) | Stage A filters → claimed jobs; invalid corpus raises | **IMMEDIATE/TX**; non-idempotent claim. A fresh second claimant gets none | Under retry cap, open jobs, optional quality/freshness. `unrated` takes null/error plus stale `in_progress` only if score is null or error exists; `failed` takes error plus stale in-progress with error; `all` takes anything except fresh in-progress. Stale cutoff is strictly `updated_at < now-1h`. Order recency + ID. Evidence: `test_services.py:423-455`. Existing test is sequential, not cross-process. |
 | `preview_claimable_stage_a` (`store_claims.py:52-71`; `postgres.py:2738-2767`) | Same filters → jobs that a claim could take now | **R**, must not mutate | Same corpus/stale/retry/closed/order semantics as broad claim. It is advisory: a later real claim may lose a race. Direct uncontended parity and non-mutation evidence covers all corpora at `test_gate_candidates_query.py:584-620`. |
-| `load_gate_candidates` (`store_claims.py:73-100`; `postgres.py:2769-2820`) | Filters, gate flag, optional `(datetime,id)` cursor → `GateCandidate` page | **R**, must not create/update evaluation rows | Shared Stage A claim eligibility. When `exclude_gate_failed=True`, `fail` is excluded but NULL/pass survive. `unrated` additionally excludes completed rows and nonblank normalized twins of any completed cluster; `all` and `failed` do not. Cursor is strict tuple `<` in recency/ID order. Evidence: `test_gate_candidates_query.py:205-357,489-678`. Cursor/page continuity has no direct integration test. |
+| `load_gate_candidates` (`store_claims.py:73-100`; `postgres.py:2769-2820`) | Filters, gate flag, optional `(datetime,id)` cursor → `GateCandidate` page | **R**, must not create/update evaluation rows | Shared Stage A claim eligibility. When `exclude_gate_failed=True`, `fail` is excluded but NULL/pass survive. `unrated` additionally excludes completed rows and nonblank normalized twins of any completed cluster; `all` and `failed` do not. Cursor is strict tuple `<` in recency/ID order. Evidence: `test_gate_candidates_query.py:205-389,521-710`, including equal-time multi-page continuity. |
 | `claim_stage_a_by_ids` (`store_claims.py:102-123`; `postgres.py:2822-2863`) | String ID list + filters → eligible claimed subset | **IMMEDIATE/TX**. Empty/all-malformed input is a no-query no-op. Duplicate/replayed fresh IDs cannot be reclaimed | Non-numeric IDs are silently dropped; numeric IDs still pass the same closed/corpus/retry/stale/quality/freshness guards. Results are recency + ID, not caller input order. Evidence: `test_gate_candidates_query.py:360-487`. Duplicate IDs and two-process overlap need tests. |
 | `claim_pending_stage_b` (`store_claims.py:125-142`; `postgres.py:2893-2919`) | `limit`, optional freshness/Stage A threshold → claimed jobs | **IMMEDIATE/TX**; non-idempotent claim | Requires Stage A completed and under Stage B retry cap. Takes Stage B null/error, or stale `in_progress` only when verdict is null; strict one-hour cutoff. Order recency + ID. Evidence: `test_services.py:487-508,534-559`. Existing contention is sequential, not cross-process. |
 | `release_stage_a_claim` (`store_claims.py:144-150`; `postgres.py:2921-2939`) | Decimal job ID → `None`; malformed raises; missing/not-in-progress is no-op | **W**, idempotent after first release | Only `in_progress` changes. Restore `error` if error text exists, else `completed` if score exists, else NULL; update time. Evidence is embedded in `test_services.py:423-455`; each restoration branch lacks its own contract test. |
@@ -348,7 +348,7 @@ slice can claim behavioral parity:
 | C06 | Stage B canonical JSON bytes and malformed stored JSON behavior are not frozen | Add canonical-byte/round-trip tests and explicit corrupt-row failure behavior. |
 | C07 | `save_stage_b_error` repeat-count and release Stage A/B restoration branches are incomplete | Add per-branch direct contract tests, including missing and non-in-progress no-op. |
 | C08 | `preview_claimable_stage_a` equality/non-mutation coverage | **RESOLVED:** direct immediate-claim parity covers `unrated`, `failed`, and `all`, including fresh/stale claims. |
-| C09 | Gate-candidate keyset cursor lacks direct no-gap/no-duplicate page coverage | Add equal-timestamp multi-page test with strict ID tie-break. |
+| C09 | Gate-candidate keyset cursor page continuity | **RESOLVED:** equal-timestamp multi-page test proves strict ID order with no gaps or duplicates. |
 | C10 | Stage A/B claims are tested sequentially, not with independent processes | Add two-process contention, stale-boundary, reader-during-writer, and zero-duplicate-paid-work tests. |
 | C11 | `update_pipeline_run_status` can regress terminal runs and silently no-ops for missing IDs | Legacy behavior may remain for non-leased compatibility, but all production terminal paths must prove they use fenced finalize. Add a call-path test that stale owners cannot reach legacy finalization. |
 | C12 | All run-lease behaviors are new | Add the 11 cases in section 7.5 before implementation is accepted. |
@@ -364,7 +364,7 @@ them implicitly.
 ## 10. Public capability disposition
 
 The behavior contract and the future public API are different questions. These
-recommendations target the project-wide goal of roughly 55–70 public capability
+recommendations target the audited project-wide goal of roughly 78–82 public capability
 operations without hiding atomic behavior:
 
 - **RETAIN:** remains a first-class public capability operation.
@@ -383,13 +383,13 @@ operations without hiding atomic behavior:
 | `get_job` | RETAIN | Canonical job detail lookup. |
 | `list_jobs` | WRAPPER | Delegate to one shared job-list/query primitive with recency sort. |
 | `job_exists` | RETIRE | No production caller; natural-key upsert already answers insert/update. |
-| `save_stage_a` | MERGE | Typed `finish_stage_a(job_id, success | error)` owns completion/error and status transaction. |
-| `save_stage_a_error` | MERGE | Error variant of `finish_stage_a`; preserves non-idempotent error count. |
-| `save_stage_b` | MERGE | Typed `finish_stage_b(job_id, success | error | skipped)` owns terminal Stage B write. |
-| `save_stage_b_error` | MERGE | Error variant of `finish_stage_b`. |
-| `mark_stage_b_skipped` | WRAPPER | Delegate one ID to `mark_stage_b_skipped_batch`. |
+| `save_stage_a` | RETAIN | Typed Stage A success write has its own result and atomic job-status transition; it may share only private SQL/mapping helpers with the error path. |
+| `save_stage_a_error` | RETAIN | Typed, deliberately non-idempotent failure-count operation; a generic success/error sum command would obscure retry semantics. |
+| `save_stage_b` | RETAIN | Typed Stage B success write owns structured result persistence and first-completion time; it may share only private SQL/mapping helpers. |
+| `save_stage_b_error` | RETAIN | Typed, deliberately non-idempotent Stage B failure-count operation. |
+| `mark_stage_b_skipped` | RETAIN | Typed single-job skip remains public; implementation may share a private set-based helper with the batch operation. |
 | `load_pending_stage_a` | WRAPPER | Legacy non-claiming fallback over shared Stage A eligibility; remove after all stores support claims. |
-| `load_pending_stage_b` | WRAPPER | Delegate to shared Stage B eligibility/preview query. |
+| `load_pending_stage_b` | RETAIN | Its eligibility excludes `skipped` and stale `in_progress`; share only an internal predicate builder with preview, never delegate to preview semantics. |
 | `list_evaluated_jobs` | RETAIN | Digest read shape differs from job list/detail. |
 | `get_evaluation` | RETAIN | Canonical evaluation detail lookup. |
 | `top_evaluated_jobs` | RETIRE | No production caller; a scored sort belongs in the shared jobs/evaluations query. |
@@ -414,9 +414,9 @@ operations without hiding atomic behavior:
 | `renew_run_lease` | RETAIN | Full-token heartbeat/fencing command. |
 | `finalize_run_with_lease` | RETAIN | Atomic terminal snapshot plus lease release. |
 
-This slice therefore freezes 36 observable behaviors but recommends only 18
+This slice therefore freezes 36 observable behaviors and recommends 24
 first-class operations for this capability area, plus temporary wrappers during
-service migration. That reduction contributes to the 55–70 project-wide target;
+service migration. That reduction contributes to the 78–82 project-wide target;
 it does not delete behavior or replace typed operations with a generic executor.
 
 ## 11. Acceptance criteria for this slice

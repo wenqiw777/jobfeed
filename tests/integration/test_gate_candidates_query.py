@@ -357,6 +357,40 @@ async def test_load_gate_candidates_respects_limit(store: PostgresStore) -> None
     assert {c.job.canonical_id for c in limited} == {"job-0", "job-1", "job-2"}
 
 
+async def test_load_gate_candidates_keyset_pages_equal_timestamps_without_gaps(
+    store: PostgresStore,
+) -> None:
+    """The recency/id cursor visits equal-time rows exactly once in order."""
+    discovered_at = datetime.now(UTC)
+    expected: list[str] = []
+    for index in range(5):
+        canonical_id = f"cursor-{index}"
+        await store.save_job(
+            _make_job(canonical_id, discovered_at=discovered_at)
+        )
+        expected.insert(0, canonical_id)
+
+    seen: list[str] = []
+    after: tuple[datetime, int] | None = None
+    while True:
+        page = await store.load_gate_candidates(
+            corpus="all",
+            quality_bands=None,
+            max_days=None,
+            limit=2,
+            exclude_gate_failed=True,
+            after=after,
+        )
+        if not page:
+            break
+        seen.extend(candidate.job.canonical_id for candidate in page)
+        last = page[-1].job
+        after = (last.discovered_at, int(last.id))
+
+    assert seen == expected
+    assert len(seen) == len(set(seen))
+
+
 async def test_closed_at_row_excluded_from_load_and_claim(
     store: PostgresStore,
 ) -> None:
