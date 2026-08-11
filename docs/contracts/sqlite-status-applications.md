@@ -38,7 +38,8 @@
   单元；duplicate apply 是唯一特殊路径，详见 4.2。
 - bulk transition 是“每个 twin cluster 原子”，不是整批原子。
 - interview add/complete 与 `last_status_change_at` 更新同事务。
-- 4 个方法没有静态 production call site，但仍有测试或兼容价值；Task 0 不删除。
+- 4 个方法没有静态 production call site；Task 0 仍冻结其现有行为，但已批准在
+  replacement contracts 覆盖后从最终 SQLite port 退休。
 - `StoreEvaluationBatchMixin` 与 `StoreStageBPreviewMixin` 虽也位于
   `store_ext.py`，属于 evaluation/claim slice，不在本文 26 个方法内。
 
@@ -61,28 +62,29 @@
 | `append_note` | retain | Status aggregate command。 |
 | `set_followup` | retain | Status aggregate command。 |
 | `workflow_attention` | retain | 一个 attention projection；保留当前多查询弱一致性，不承诺跨 bucket snapshot。 |
-| `compute_reapply_notice` | merge | 并入 application projection/query family，不再属于通用 status facade。 |
+| `compute_reapply_notice` | retain | Application service 的独立 reapply projection；可共享 query builder，不改 public 合同。 |
 | `get_status_history` | retain | Restore 与 job detail 共用的 projection。 |
 | `expand_twin_ids` | merge | 变为 bulk transition/twin projection 共用的 adapter 内部 query。 |
 | `transition_status_bulk` | retain | Twin-cluster aggregate command。 |
-| `record_application` | wrapper | 旧无-snapshot入口薄转发到 aggregate apply；调用迁移完成后 retire。 |
+| `record_application` | retire | 无 production caller；权威入口是原子 apply aggregate。PG 兼容实现保留到测试迁移。 |
 | `record_application_with_snapshots` | retain | 重命名为唯一权威 application aggregate command。 |
 | `get_application` | retain | Application projection。 |
 | `list_applications` | retain | Application collection projection。 |
 | `application_stats` | retain | Application aggregate projection。 |
-| `save_resume_snapshot` | merge | 运行时写入并入 aggregate apply；独立导入写入属于 migration tooling。 |
+| `save_resume_snapshot` | retire | 无 production caller；runtime snapshot 写入只通过原子 apply aggregate，导入属于 migration tooling。 |
 | `get_resume_snapshot` | retain | 精确 identity projection。 |
-| `get_resume_snapshot_by_prefix` | wrapper | 薄转发到统一 snapshot resolver；保留 distinct not-found/ambiguous errors。 |
+| `get_resume_snapshot_by_prefix` | retain | CLI/service 依赖 distinct not-found/ambiguous errors 的 typed resolver。 |
 | `list_resume_snapshots` | retain | Snapshot collection projection。 |
-| `register_resume_variant` | merge | 并入 transition/apply aggregate transaction，避免 caller 预注册。 |
+| `register_resume_variant` | retain | WorkflowService 有直接 caller；保持“先独立 commit，transition 可后续失败”语义。Apply aggregate 可共享 private insert helper。 |
 | `add_interview_round` | retain | Interview aggregate command。 |
 | `list_interview_rounds` | retain | Interview projection。 |
 | `complete_interview_round` | retain | Guarded interview aggregate command。 |
-| `list_upcoming_interviews` | merge | 与 `workflow_attention` 共用 upcoming query family，不保留无 caller 的 facade 方法。 |
+| `list_upcoming_interviews` | retire | 无 production caller；`workflow_attention` 保留 live upcoming projection，PG 方法保留到测试迁移。 |
 
-本 slice 的建议终态是 **18 个 retain operations + 2 个临时 wrappers**；5 个 merge、
-1 个 retire（`record_application` wrapper 最终再 retire）。这为全项目经审计的
-78–82 个 public capability operations 目标贡献收缩，同时 26 个既有行为仍有迁移期回归证据。
+本 slice 的建议终态是 **21 个 public operations**：21 个 retain、
+1 个并入 bulk/twin 内部实现的 `expand_twin_ids`、4 个 retire。旧 PG
+方法可在兼容期留存，但不进入最终 SQLite port。这为全项目精确的
+78 个 public capability operations 目标贡献 21 个，同时 26 个既有行为仍有迁移期回归证据。
 
 ## 2. 跨方法冻结规则
 
@@ -238,13 +240,14 @@ application/status 没写”的部分提交。
 
 | 方法 | 静态 production 调用 | 仍存在的价值/证据 | Task 0 处置 |
 |---|---:|---|---|
-| `restore_from_archived` | 0 | PG contract test；但 WorkflowService 使用 `get_status + get_status_history + transition_status`，且语义不同。 | 保留；先决定统一到 service restore 还是兼容旧 port。 |
-| `record_application` | 0 | 大量 shared contract/persistence tests；旧兼容入口。Production apply 使用 `record_application_with_snapshots`。 | 保留；SQLite 首轮需通过合同，退休另行审批。 |
-| `save_resume_snapshot` | 0 | snapshot lookup/integration tests与独立维护用途。Production apply 在组合事务内写 snapshots。 | 保留；不得用它拆开 production apply 事务。 |
-| `list_upcoming_interviews` | 0 | integration tests；`workflow_attention` 自己实现相邻但不同的 scheduled query。 | 保留；后续可评估由统一 query family 复用。 |
+| `restore_from_archived` | 0 | PG contract test；但 WorkflowService 使用 `get_status + get_status_history + transition_status`，且语义不同。 | **retire**：迁移测试到 service restore 权威行为。 |
+| `record_application` | 0 | 大量 shared contract/persistence tests；旧兼容入口。Production apply 使用 `record_application_with_snapshots`。 | **retire**：迁移合同到原子 apply aggregate。 |
+| `save_resume_snapshot` | 0 | snapshot lookup/integration tests。Production apply 在组合事务内写 snapshots。 | **retire**：runtime 不再提供拆开 apply 事务的写入口。 |
+| `list_upcoming_interviews` | 0 | integration tests；`workflow_attention` 是已在使用的 scheduled projection。 | **retire**：迁移测试到 live attention projection。 |
 
 “0”来自对 `src/jobfeed` 排除 port 与 concrete method definition 后的静态直接调用
-搜索；不证明没有动态调用、第三方使用或 CLI/API 兼容要求。
+搜索；不单独证明没有动态调用、第三方使用或 CLI/API 兼容要求。这里的退休决定还
+要求迁移现有测试，并在删除时重跑 CLI/API call-path audit。
 
 ### 7.2 SQLite 实现前应补的 golden coverage
 

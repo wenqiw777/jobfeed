@@ -359,14 +359,14 @@ slice can claim behavioral parity:
 
 Non-blocking production-call observation: `job_exists` and
 `top_evaluated_jobs` have no direct `src/` call site today. They remain in this
-contract because they are public port methods with tests. Retirement requires a
-separate approved surface-change decision; the SQLite implementation must not drop
-them implicitly.
+contract because they are public port methods with tests. The approved target retires
+them only after those tests move to the replacement capability; the SQLite
+implementation must not silently omit their behavior during migration.
 
 ## 10. Public capability disposition
 
 The behavior contract and the future public API are different questions. These
-recommendations target the audited project-wide goal of roughly 78–82 public capability
+recommendations target the audited project-wide goal of exactly 78 public capability
 operations without hiding atomic behavior:
 
 - **RETAIN:** remains a first-class public capability operation.
@@ -383,23 +383,23 @@ operations without hiding atomic behavior:
 | `close` | RETAIN | Store lifecycle boundary. |
 | `save_job` | RETAIN | Distinct natural-key, quality-aware atomic upsert. |
 | `get_job` | RETAIN | Canonical job detail lookup. |
-| `list_jobs` | WRAPPER | Delegate to one shared job-list/query primitive with recency sort. |
+| `list_jobs` | RETAIN | Public recency listing; implementation shares the jobs query builder. |
 | `job_exists` | RETIRE | No production caller; natural-key upsert already answers insert/update. |
 | `save_stage_a` | RETAIN | Typed Stage A success write has its own result and atomic job-status transition; it may share only private SQL/mapping helpers with the error path. |
 | `save_stage_a_error` | RETAIN | Typed, deliberately non-idempotent failure-count operation; a generic success/error sum command would obscure retry semantics. |
 | `save_stage_b` | RETAIN | Typed Stage B success write owns structured result persistence and first-completion time; it may share only private SQL/mapping helpers. |
 | `save_stage_b_error` | RETAIN | Typed, deliberately non-idempotent Stage B failure-count operation. |
 | `mark_stage_b_skipped` | RETAIN | Typed single-job skip remains public; implementation may share a private set-based helper with the batch operation. |
-| `load_pending_stage_a` | WRAPPER | Legacy non-claiming fallback over shared Stage A eligibility; remove after all stores support claims. |
+| `load_pending_stage_a` | RETAIN | Dry-run and funnel paths require non-claiming Stage A eligibility. |
 | `load_pending_stage_b` | RETAIN | Its eligibility excludes `skipped` and stale `in_progress`; share only an internal predicate builder with preview, never delegate to preview semantics. |
 | `list_evaluated_jobs` | RETAIN | Digest read shape differs from job list/detail. |
 | `get_evaluation` | RETAIN | Canonical evaluation detail lookup. |
 | `top_evaluated_jobs` | RETIRE | No production caller; a scored sort belongs in the shared jobs/evaluations query. |
 | `save_ml_gate_result` | RETAIN | Distinct persisted gate decision and features. |
-| `record_pipeline_run` | WRAPPER | Non-leased compatibility only; production start moves to `start_run_with_lease`. |
-| `update_pipeline_run_status` | WRAPPER | Non-leased compatibility only; production terminal write moves to fenced finalize. |
+| `record_pipeline_run` | RETIRE | Production real-run start moves to atomic `start_run_with_lease`; dry-run persists no run. Keep only as a PG compatibility wrapper until call-site migration. |
+| `update_pipeline_run_status` | RETIRE | Production terminal writes move to fenced finalize. Keep only as a PG compatibility wrapper until call-site migration. |
 | `get_pipeline_run` | RETAIN | Run detail/SSE lookup. |
-| `claim_pending_stage_a` | WRAPPER | Broad legacy claim; funnel path retains `load_gate_candidates` + `claim_stage_a_by_ids`. |
+| `claim_pending_stage_a` | RETAIN | Live non-gate Stage A claim path with distinct corpus semantics. |
 | `preview_claimable_stage_a` | RETIRE | No production caller; shared Stage A eligibility can provide preview mode. |
 | `load_gate_candidates` | RETAIN | Distinct gate state, twin suppression, and keyset behavior. |
 | `claim_stage_a_by_ids` | RETAIN | Atomic paid-work claim after funnel selection. |
@@ -408,7 +408,7 @@ operations without hiding atomic behavior:
 | `release_stage_b_claim` | MERGE | Same shared release command with Stage B restoration rules. |
 | `refresh_stage_b_claim` | RETAIN | Stage B job-level heartbeat has distinct active-claim semantics. |
 | `get_stage_a_scores` | RETAIN | Efficient batch input for Stage B prompts. |
-| `mark_stage_b_skipped_batch` | RETAIN | One set-based skip command; single-ID call delegates here. |
+| `mark_stage_b_skipped_batch` | RETIRE | No production caller; keep its set-based SQL as a private helper for the retained single-ID command until tests migrate. |
 | `mark_stage_b_below_threshold` | MERGE | One `sync_stage_b_threshold` transaction returns skipped/reopened counts. |
 | `reopen_stage_b_at_or_above_threshold` | MERGE | Paired half of `sync_stage_b_threshold`; current service always calls the pair. |
 | `preview_pending_stage_b_after_threshold_sync` | RETAIN | Read-only post-sync view shares eligibility builder but not mutation. |
@@ -416,10 +416,20 @@ operations without hiding atomic behavior:
 | `renew_run_lease` | RETAIN | Full-token heartbeat/fencing command. |
 | `finalize_run_with_lease` | RETAIN | Atomic terminal snapshot plus lease release. |
 
-This slice therefore freezes 36 observable behaviors and recommends 24
-first-class operations for this capability area, plus temporary wrappers during
-service migration. That reduction contributes to the 78–82 project-wide target;
-it does not delete behavior or replace typed operations with a generic executor.
+This slice therefore freezes 36 observable behaviors and maps them to **28 final
+public operations**: 26 retained operations plus the two typed merged operations
+`release_evaluation_claim` and `sync_stage_b_threshold`. Six old methods retire
+after call-site/test migration; temporary PostgreSQL wrappers are not part of the
+final SQLite port. This is the core contribution to the exact 78-operation
+project target; it does not delete behavior or replace typed operations with a
+generic executor.
+
+`sync_stage_b_threshold` is one intentional behavior tightening, not a cosmetic
+wrapper: the current PostgreSQL service commits the skip and reopen halves
+separately, while the target commits both or neither. Before replacing those two
+methods, a PostgreSQL characterization must show the current split behavior and a
+target-port failure-injection test must prove rollback of both halves. No other
+`MERGE` row may silently change its transaction boundary.
 
 ## 11. Acceptance criteria for this slice
 

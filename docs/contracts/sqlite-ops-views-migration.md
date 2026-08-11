@@ -73,7 +73,7 @@ The two source lookup callers are live and cannot be omitted:
 
 ### Runtime surface disposition
 
-The project target is **78–82 runtime public methods**, down from the corrected
+The project target is **78 runtime public methods**, down from the corrected
 current count of 92. This slice classifies all 33 behaviors it owns. The four
 `retire` rows below are candidates only: removal occurs in the task that first
 migrates their remaining tests and proves no dynamic/user contract depends on
@@ -119,10 +119,9 @@ to hit the LOC or method-count target.
 | 33 | `get_funnel_stats` | retain | Live run-level funnel with 0008 fallback rules. |
 
 This slice therefore proposes **29 retained runtime methods and 4 retirements**.
-It contributes four of the project-wide required 10–14 retirements. The other
-capability slices must independently justify another 6–10; this document does
-not pre-authorize them. Wrapper/internal-merge rows still count as public when
-calculating the 78–82 target.
+Together with the independently audited core and business dispositions, this
+contributes to the exact 78-operation target. Wrapper/internal-merge rows still
+count as public when calculating that target.
 
 ## Shared representation and query rules
 
