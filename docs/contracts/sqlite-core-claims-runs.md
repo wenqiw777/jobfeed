@@ -39,7 +39,9 @@ Notation used in the matrices:
 - Store identities are decimal integer database keys exposed as `str`.
 - Unless a row says otherwise, a malformed `job_id` currently fails during
   `int(job_id)` conversion with `ValueError`; a missing numeric row is `None` for
-  getters and a no-op for guarded updates.
+  getters and a no-op for guarded updates. Representative read/write/claim and
+  strict-batch evidence is in `test_core_store_input_contract.py`; only
+  `claim_stage_a_by_ids` deliberately drops malformed members.
 - The target adapter must normalize persisted datetimes to UTC ISO-8601 text with
   six microseconds and `Z`. Read DTOs still receive aware `datetime` values.
 - Stage B JSON is decoded to Python objects on read. Target writes use canonical
@@ -154,7 +156,7 @@ guarded and mutated, not the preselected candidates.
 
 | Method and evidence | Input → output/error | Transaction and idempotency | Eligibility, order, NULL/time, concurrency |
 |---|---|---|---|
-| `get_stage_a_scores` (`store_ext.py:19-29`; `postgres.py:3072-3094`) | ID list → mapping only for evaluation rows found; empty list → `{}`; malformed ID raises | **R**, no mutation | Values may be NULL. Missing jobs and jobs without evaluation rows are absent rather than mapped to NULL. Evidence: `test_store_contract.py:1449-1464`. Duplicate-ID and malformed-ID contracts are missing. |
+| `get_stage_a_scores` (`store_ext.py:19-29`; `postgres.py:3072-3094`) | ID list → mapping only for evaluation rows found; empty list → `{}`; any malformed ID aborts before SQL | **R**, no mutation | Values may be NULL. Missing jobs and jobs without evaluation rows are absent rather than mapped to NULL. Evidence: `test_store_contract.py:1449-1464`; strict malformed-batch behavior: `test_core_store_input_contract.py`. Duplicate-ID output naturally collapses to one mapping key. |
 | `mark_stage_b_skipped_batch` (`store_ext.py:31-38`; `postgres.py:2577-2595`) | ID list → `None`; empty is no-op; any malformed ID aborts before SQL | **W** single statement; replay is state-idempotent but advances `updated_at` | Marks every matching evaluation except rows already `completed`; absent IDs and jobs without evaluations are no-ops. Direct mixed/empty/malformed-input atomicity evidence: `test_stage_b_threshold_contract.py`. |
 | `mark_stage_b_below_threshold` (`store_ext.py:40-55`; `postgres.py:2597-2638`) | Threshold plus optional freshness → changed-row count | **W** single statement; second replay returns 0 | Stage A must be completed and score below threshold. Stage B must be NULL/error, or stale `in_progress` with NULL verdict; error retry cap applies. Fresh in-progress/completed/over-cap/out-of-freshness rows stay unchanged. Time is application UTC; stale is strict one-hour cutoff. Evidence: `test_store_contract.py:1466-1479`; all listed guard branches at `test_stage_b_threshold_contract.py`. |
 | `reopen_stage_b_at_or_above_threshold` (`store_ext.py:57-72`; `postgres.py:2640-2674`) | Threshold plus optional freshness → changed-row count | **W** single statement; second replay returns 0 | Only Stage A completed, score at/above threshold, and Stage B exactly `skipped_below_threshold`; clears Stage B status and error. Evidence: `test_store_contract.py:1481-1498` and service threshold tests `test_services.py:875-989`. |
@@ -352,7 +354,7 @@ slice can claim behavioral parity:
 | C10 | Stage A/B claims are tested sequentially, not with independent processes | Add two-process contention, stale-boundary, reader-during-writer, and zero-duplicate-paid-work tests. |
 | C11 | `update_pipeline_run_status` can regress terminal runs and silently no-ops for missing IDs | Legacy behavior may remain for non-leased compatibility, but all production terminal paths must prove they use fenced finalize. Add a call-path test that stale owners cannot reach legacy finalization. |
 | C12 | All run-lease behaviors are new | Add the 11 cases in section 7.5 before implementation is accepted. |
-| C13 | Invalid ID, negative limit, naive datetime, and backend exception behavior is unevenly specified/tested | Freeze valid-input preconditions in the new port and add representative error tests; do not silently coerce malformed values except `claim_stage_a_by_ids`, whose skip behavior is explicit. |
+| C13 | Invalid ID, negative limit, naive datetime, and backend exception behavior was unevenly specified/tested | **PARTIAL:** representative malformed single/batch ID tests now freeze strict `ValueError` behavior and the `claim_stage_a_by_ids` skip exception. Target-port negative-limit and new lease aware-datetime tests remain open for Task 2. |
 | C14 | Evaluation batch/preview methods had partial or incidental coverage | **RESOLVED:** direct tests cover skip-batch atomic validation, threshold stale/fresh/retry/freshness guards, and ordered non-mutating Stage B preview parity with actual sync plus claim. |
 
 Non-blocking production-call observation: `job_exists` and
