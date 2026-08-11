@@ -1,0 +1,43 @@
+{
+  "codec_version": "jobfeed-canonical-row-v1",
+  "schema": {
+    "name": "mixed_types_v1",
+    "primary_key": ["id"],
+    "columns": [
+      {"name": "id", "kind": "int", "nullable": false},
+      {"name": "nullable_text", "kind": "text", "nullable": true},
+      {"name": "flag", "kind": "bool", "nullable": false},
+      {"name": "count", "kind": "int", "nullable": false},
+      {"name": "amount", "kind": "decimal", "nullable": false},
+      {"name": "ratio", "kind": "float", "nullable": false},
+      {"name": "occurred_at", "kind": "timestamp", "nullable": false},
+      {"name": "raw_text", "kind": "text", "nullable": false},
+      {"name": "payload", "kind": "json", "nullable": false}
+    ]
+  },
+  "rows": [
+    {
+      "id": 10,
+      "nullable_text": "",
+      "flag": true,
+      "count": 42,
+      "amount": "123.4500",
+      "ratio": 1.5,
+      "occurred_at": "2026-08-11T05:02:03.123456Z",
+      "raw_text": "{\"a\":1}",
+      "payload": {"z": [true, null], "a": "雪"}
+    },
+    {
+      "id": 2,
+      "nullable_text": null,
+      "flag": false,
+      "count": -7,
+      "amount": "-0.00",
+      "ratio": -0.0,
+      "occurred_at": "2026-08-11T01:02:03.123456-04:00",
+      "raw_text": "é|%_\\\n",
+      "payload": "null"
+    }
+  ],
+  "expected_sha256": "b72e167b5718d4d1843696d8d0e19a08cebeeb180083ba74cda413afbff85d3f"
+}
