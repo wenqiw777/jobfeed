@@ -267,6 +267,9 @@ def test_stage_b_result_field_set_is_frozen() -> None:
 _GATE_SQL = inspect.getsource(PostgresStore.save_ml_gate_result)
 _STAGE_A_SQL = inspect.getsource(PostgresStore.save_stage_a)
 _STAGE_B_SQL = inspect.getsource(PostgresStore.save_stage_b)
+_TOP_EVALUATED_SQL = " ".join(
+    inspect.getsource(PostgresStore.top_evaluated_jobs).split()
+)
 
 
 def test_persisted_ml_gate_columns_are_pinned() -> None:
@@ -324,3 +327,11 @@ def test_persisted_stage_b_columns_are_pinned() -> None:
         "stage_b_resume_hash",
     ):
         assert column in _STAGE_B_SQL, f"persisted Stage B column renamed: {column}"
+
+
+def test_top_evaluated_jobs_has_stable_tie_break() -> None:
+    """Equal scores must use discovery recency and identity deterministically."""
+    assert (
+        "ORDER BY evaluations.stage_a_score DESC, "
+        "jobs.discovered_at DESC, jobs.id DESC" in _TOP_EVALUATED_SQL
+    )

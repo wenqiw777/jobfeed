@@ -313,6 +313,17 @@ class TestJobCRUD:
         ids = {j.canonical_id for j in jobs}
         assert ids == {"list-1", "list-2"}
 
+    async def test_list_jobs_uses_id_desc_for_equal_discovery_time(
+        self, contract_store
+    ):
+        """Equal discovery times use descending store identity as the tie-break."""
+        first = await contract_store.save_job(make_job("list-tie-first"))
+        second = await contract_store.save_job(make_job("list-tie-second"))
+
+        jobs = await contract_store.list_jobs()
+
+        assert [job.id for job in jobs] == [second.job_id, first.job_id]
+
     async def test_job_exists_true_and_false(self, contract_store):
         """job_exists should return True for saved jobs, False otherwise."""
         await contract_store.save_job(make_job("exists-1"))
@@ -1421,6 +1432,20 @@ class TestEvaluationReads:
         assert ev.stage_a is None
         assert ev.stage_b is None
 
+    async def test_list_evaluated_jobs_uses_id_desc_for_equal_discovery_time(
+        self, contract_store
+    ):
+        """Evaluation listing has a stable descending-ID recency tie-break."""
+        first_id = await _insert_scored_job(contract_store, "eval-tie-first")
+        second_id = await _insert_scored_job(contract_store, "eval-tie-second")
+
+        evaluations = await contract_store.list_evaluated_jobs()
+
+        assert [evaluation.job.id for evaluation in evaluations] == [
+            second_id,
+            first_id,
+        ]
+
     async def test_get_stage_a_scores_batch(self, contract_store):
         """get_stage_a_scores returns scores for evaluated jobs, None for others."""
         scored_id, _ = await _insert_job(contract_store, "scored-batch")
@@ -1499,6 +1524,32 @@ class TestEvaluationReads:
         results = await contract_store.top_evaluated_jobs()
         scores = [e.stage_a.score for e in results if e.stage_a is not None]
         assert scores == sorted(scores, reverse=True)
+
+    async def test_top_evaluated_uses_recency_and_id_tie_break(self, contract_store):
+        """Equal scores use discovery recency then descending ID deterministically."""
+        older_id = await _insert_scored_job(
+            contract_store,
+            "top-tie-older",
+            discovered_at=FIXED_TIME - timedelta(days=1),
+        )
+        newer_first_id = await _insert_scored_job(
+            contract_store,
+            "top-tie-newer-first",
+        )
+        newer_second_id = await _insert_scored_job(
+            contract_store,
+            "top-tie-newer-second",
+        )
+        for job_id in (older_id, newer_first_id, newer_second_id):
+            await contract_store.save_stage_b(job_id, _make_stage_b())
+
+        results = await contract_store.top_evaluated_jobs()
+
+        assert [evaluation.job.id for evaluation in results] == [
+            newer_second_id,
+            newer_first_id,
+            older_id,
+        ]
 
     async def test_digest_stats_structure(self, contract_store):
         """digest_stats should return a complete DigestStats object."""

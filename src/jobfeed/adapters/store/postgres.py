@@ -3128,7 +3128,8 @@ class PostgresStore:
                    JOIN evaluations ON evaluations.job_id = jobs.id
                    WHERE evaluations.stage_b_status = 'completed'
                      AND evaluations.stage_a_score >= $1
-                   ORDER BY evaluations.stage_a_score DESC
+                   ORDER BY evaluations.stage_a_score DESC,
+                            jobs.discovered_at DESC, jobs.id DESC
                    LIMIT $2""",
                 min_score,
                 limit,
