@@ -4,8 +4,8 @@
 
 **验证日期：** 2026-08-11
 
-**范围：** `StoreStatusMixin`、`StoreApplicationMixin`、`StoreInterviewMixin`，共
-26 个公开方法
+**范围：** 当前 `StoreStatusMixin`、`StoreApplicationMixin`、
+`StoreInterviewMixin` 的 26 个公开方法；SQLite 目标 API 不要求保留相同方法数
 
 **目的：** 在 PostgreSQL → SQLite 重写前冻结用户可观察行为、原子性和兼容
 边界
@@ -31,7 +31,8 @@
 
 审计结果：
 
-- Status 12 个、Application 10 个、Interview 4 个，共 26 个公开方法。
+- 当前 Status 12 个、Application 10 个、Interview 4 个，共 26 个公开方法；它们是
+  行为审计输入，不是 SQLite facade 的目标 method count。
 - `status row + history row` 是不可分割写入单元。
 - `variant + snapshots + applied row + status + history` 是 apply 的不可分割写入
   单元；duplicate apply 是唯一特殊路径，详见 4.2。
@@ -40,6 +41,48 @@
 - 4 个方法没有静态 production call site，但仍有测试或兼容价值；Task 0 不删除。
 - `StoreEvaluationBatchMixin` 与 `StoreStageBPreviewMixin` 虽也位于
   `store_ext.py`，属于 evaluation/claim slice，不在本文 26 个方法内。
+
+### 1.1 API 收敛 disposition
+
+合同测试锁定行为，不强迫 SQLite 继续暴露每个旧入口。本文使用四种处置：
+
+- **retain：** 继续作为 typed public capability operation。
+- **merge：** 行为并入更高层 aggregate/query family，旧方法不进入最终 facade。
+- **wrapper：** 迁移期保留薄兼容入口，最终不计入 public target。
+- **retire：** 没有 production caller 且已有权威替代，完成调用审计后删除。
+
+| 当前方法 | disposition | SQLite 目标 |
+|---|---|---|
+| `transition_status` | retain | Status aggregate 的单条原子 command。 |
+| `get_status` | retain | Status projection 单条读取。 |
+| `restore_from_archived` | retire | 由现有 `WorkflowService.restore` 的 get-history-transition 流程取代，统一支持 ghosted/archived。 |
+| `auto_decay` | retain | 一次 sweep aggregate command。 |
+| `list_statuses` | retain | 一个 typed status query，不拆 filter 方法。 |
+| `append_note` | retain | Status aggregate command。 |
+| `set_followup` | retain | Status aggregate command。 |
+| `workflow_attention` | retain | 一个 attention projection；保留当前多查询弱一致性，不承诺跨 bucket snapshot。 |
+| `compute_reapply_notice` | merge | 并入 application projection/query family，不再属于通用 status facade。 |
+| `get_status_history` | retain | Restore 与 job detail 共用的 projection。 |
+| `expand_twin_ids` | merge | 变为 bulk transition/twin projection 共用的 adapter 内部 query。 |
+| `transition_status_bulk` | retain | Twin-cluster aggregate command。 |
+| `record_application` | wrapper | 旧无-snapshot入口薄转发到 aggregate apply；调用迁移完成后 retire。 |
+| `record_application_with_snapshots` | retain | 重命名为唯一权威 application aggregate command。 |
+| `get_application` | retain | Application projection。 |
+| `list_applications` | retain | Application collection projection。 |
+| `application_stats` | retain | Application aggregate projection。 |
+| `save_resume_snapshot` | merge | 运行时写入并入 aggregate apply；独立导入写入属于 migration tooling。 |
+| `get_resume_snapshot` | retain | 精确 identity projection。 |
+| `get_resume_snapshot_by_prefix` | wrapper | 薄转发到统一 snapshot resolver；保留 distinct not-found/ambiguous errors。 |
+| `list_resume_snapshots` | retain | Snapshot collection projection。 |
+| `register_resume_variant` | merge | 并入 transition/apply aggregate transaction，避免 caller 预注册。 |
+| `add_interview_round` | retain | Interview aggregate command。 |
+| `list_interview_rounds` | retain | Interview projection。 |
+| `complete_interview_round` | retain | Guarded interview aggregate command。 |
+| `list_upcoming_interviews` | merge | 与 `workflow_attention` 共用 upcoming query family，不保留无 caller 的 facade 方法。 |
+
+本 slice 的建议终态是 **18 个 retain operations + 2 个临时 wrappers**；5 个 merge、
+1 个 retire（`record_application` wrapper 最终再 retire）。这让全项目朝约 55–70 个
+public capability operations 收敛，同时 26 个既有行为仍有迁移期回归证据。
 
 ## 2. 跨方法冻结规则
 
@@ -205,15 +248,13 @@ application/status 没写”的部分提交。
 
 ### 7.2 SQLite 实现前应补的 golden coverage
 
-- `record_application_with_snapshots` 在 current status 已是 applied/interviewing、但
-  applied row 缺失时的 no-regression path。
-- `workflow_attention` 的 past-due open round、far-future-only round、unscheduled
-  round、同 job 多 round排序，以及多 SELECT 非快照读是否需要收紧。
-- `get_application` 的全 nullable/TEXT 字段 round-trip。
-- `list_statuses(notes_contain)` 对 `%`、`_` 的 wildcard 语义；当前 method 名更像
-  literal contains，但 PG 实现会把它们当 pattern。
 - status/bulk/apply 的其余双 writer contention tests；complete-round 已冻结为单
   winner。
+
+本轮已补 active-status apply no-regression、application NULL/TEXT round-trip、
+notes wildcard、upcoming boundaries、application stats median/variant/order、
+auto-decay rollback 与 concurrent complete-round。`workflow_attention` 的多 SELECT
+弱一致性已明确 disposition 为 retain，不把它误写成 snapshot guarantee。
 
 这些 gap 不否定现有合同；它们阻止实现者把未定义细节误当成可自由改变的行为。
 
@@ -259,10 +300,12 @@ application/status 没写”的部分提交。
 
 ## 9. 本 slice 验收标准
 
-- [x] 26/26 个公开方法均有输入、输出、error、事务与幂等描述。
+- [x] 当前 26/26 个公开方法均有输入、输出、error、事务与幂等描述。
 - [x] 所有适用的排序、tie、NULL、UTC/time、TEXT/JSON 规则已列出。
 - [x] status+history 与 apply+snapshots 原子边界已明确冻结。
 - [x] 每个方法映射到现有测试证据或明确标注 coverage gap。
 - [x] 静态无 production 调用候选只登记、未删除。
+- [x] 每个当前方法已标为 retain/merge/wrapper/retire；SQLite 不复制 26-method
+  facade。
 - [ ] 对应 SQLite slice 验收前，把 7.2 的并发与 failure-injection blockers 转为
   跨后端 golden contract tests。
