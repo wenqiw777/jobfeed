@@ -12,6 +12,8 @@ import asyncpg
 class PostgresStoreContractControl:
     """PostgreSQL setup controls paired with the backend-neutral store contract."""
 
+    injected_error = asyncpg.RaiseError
+
     def __init__(self, dsn: str) -> None:
         """Create controls for the PostgreSQL contract database."""
         self._dsn = dsn

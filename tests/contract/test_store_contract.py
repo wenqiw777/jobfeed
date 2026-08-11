@@ -617,6 +617,42 @@ class TestStatusLifecycle:
         assert status is not None
         assert status.status == "ignored"
 
+    async def test_auto_decay_rolls_back_entire_sweep_on_history_failure(
+        self,
+        contract_store,
+        contract_control,
+    ):
+        """A history failure rolls back every status selected by the sweep."""
+        job_ids: list[str] = []
+        stale_at = datetime.now(UTC) - timedelta(days=2)
+        for index in range(2):
+            job_id, _ = await _insert_job(contract_store, f"decay-rollback-{index}")
+            job_ids.append(job_id)
+            await contract_store.transition_status(
+                TransitionRequest(job_id=job_id, new_status="applied", force=True)
+            )
+            await contract_control.set_current_status_time(
+                job_id=job_id,
+                changed_at=stale_at,
+            )
+
+        async with contract_control.reject_ghost_history_inserts():
+            with pytest.raises(
+                contract_control.injected_error,
+                match="contract injected history failure",
+            ):
+                await contract_store.auto_decay(
+                    ghost_days=1,
+                    archive_ignored_days=NO_DECAY_THRESHOLD,
+                )
+
+        for job_id in job_ids:
+            status = await contract_store.get_status(job_id)
+            history = await contract_store.get_status_history(job_id)
+            assert status is not None
+            assert status.status == "applied"
+            assert "ghosted" not in history
+
     async def test_append_note(self, contract_store):
         """append_note should add timestamped text to notes."""
         job_id, _ = await _insert_job(contract_store, "note-1")

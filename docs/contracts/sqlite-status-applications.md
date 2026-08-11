@@ -118,7 +118,7 @@
 
 | 方法 | 输入、输出与 error | 事务与幂等 | 排序、NULL、时间及其他规则 | 现有证据 |
 |---|---|---|---|---|
-| `auto_decay(ghost_days, archive_ignored_days)` | 返回被选择并转换的 ghosted/archived 数量。 | 两批 select 与逐行 status+history 写入在一个事务；任一行失败整个 sweep rollback。已转换行下次不再匹配，结果意义上幂等。 | active statuses 严格早于 ghost cutoff → ghosted；ignored 严格早于 archive cutoff → archived；reason `auto_decay`、force=True。row 处理顺序当前未定义。 | `tests/contract/test_store_contract.py::TestStatusLifecycle`；`tests/contract/test_status_apply_persistence.py::TestEdgeCases`；`tests/unit/test_evaluate_funnel.py`。缺少真实 aged-row rollback injection，见 7.2。 |
+| `auto_decay(ghost_days, archive_ignored_days)` | 返回被选择并转换的 ghosted/archived 数量。 | 两批 select 与逐行 status+history 写入在一个事务；任一行失败整个 sweep rollback。已转换行下次不再匹配，结果意义上幂等。 | active statuses 严格早于 ghost cutoff → ghosted；ignored 严格早于 archive cutoff → archived；reason `auto_decay`、force=True。row 处理顺序当前未定义。 | `tests/contract/test_store_contract.py::TestStatusLifecycle`，包含 aged-row whole-sweep rollback injection；`tests/contract/test_status_apply_persistence.py::TestEdgeCases`；`tests/unit/test_evaluate_funnel.py`。 |
 | `expand_twin_ids(job_ids)` | 返回每个输入 int ID → cluster IDs。空输入 `{}`；不存在或任一 norm 为空则 singleton `[id]`。 | 多条只读，无 snapshot transaction。输入重复最终只有一个 dict key。 | twin key 是同 `company_norm + title_norm`；cluster list 无 ORDER，顺序未定义。 | `tests/integration/test_twin_cascade_store.py::test_expand_twin_ids_*`；domain twin contract。 |
 | `transition_status_bulk(request)` | 返回 `BulkResult(succeeded, failed, skipped, cascaded)`；selected job 失败记录 `(job_id, str(error))`，其他 cluster 继续。 | 每个 cluster 独立事务；整批非原子。同一成功 cluster 后续重复 selected ID 被跳过。selected 总是尝试；terminal twin 只计 skipped。 | selected history reason=`reason_selected`；非terminal twin reason=`reason_cascade`。一个 cluster 任何 transition 失败，该 cluster 全 rollback且不增加 counts。cluster/item 处理按请求顺序；cluster member 顺序未定义。 | `tests/integration/test_twin_cascade_store.py`；`tests/contract/test_status_apply_persistence.py::TestRowShapeAssertions::test_bulk_twin_cascade_reasons`；Web bulk tests。 |
 
@@ -211,7 +211,6 @@ application/status 没写”的部分提交。
 - `workflow_attention` 的 past-due open round、far-future-only round、unscheduled
   round、同 job 多 round排序，以及多 SELECT 非快照读是否需要收紧。
 - `get_application` 的全 nullable/TEXT 字段 round-trip。
-- `auto_decay` 的 aged-row happy path 和 mid-sweep rollback injection。
 - `list_statuses(notes_contain)` 对 `%`、`_` 的 wildcard 语义；当前 method 名更像
   literal contains，但 PG 实现会把它们当 pattern。
 - status/bulk/apply/interview 的双 writer contention tests；尤其需要决定 concurrent
