@@ -161,12 +161,13 @@ class StoreInterviewMixin(Protocol):
         *,
         within_days: int = 7,
     ) -> list[InterviewRound]:
-        """List scheduled but not-yet-completed interviews within a time window.
+        """List future scheduled, incomplete interviews within a time window.
 
         Args:
             within_days: Number of days ahead to look.
 
         Returns:
-            Upcoming interview rounds ordered by scheduled_at.
+            Upcoming interview rounds whose parent job is interviewing,
+            ordered by scheduled_at.
         """
         ...

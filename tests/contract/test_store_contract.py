@@ -1265,7 +1265,54 @@ class TestWorkflowQueries:
 
 
 # ===========================================================================
-# Group 10: Status Listing + Filtering
+# Group 10: Interview Round Queries
+# ===========================================================================
+
+
+class TestInterviewRoundQueries:
+    """Contract tests for user-visible interview round selection."""
+
+    async def test_upcoming_requires_future_round_and_interviewing_parent(
+        self,
+        contract_store,
+    ):
+        """Upcoming rounds exclude past times and non-interviewing jobs."""
+        now = datetime.now(UTC)
+        included_id, _ = await _insert_job(contract_store, "round-upcoming")
+        past_id, _ = await _insert_job(contract_store, "round-past")
+        inactive_id, _ = await _insert_job(contract_store, "round-inactive")
+        for job_id in (included_id, past_id):
+            await contract_store.transition_status(
+                TransitionRequest(
+                    job_id=job_id,
+                    new_status="interviewing",
+                    force=True,
+                )
+            )
+
+        await contract_store.add_interview_round(
+            job_id=included_id,
+            label="Future and active",
+            scheduled_at=now + timedelta(days=1),
+        )
+        await contract_store.add_interview_round(
+            job_id=past_id,
+            label="Past and active",
+            scheduled_at=now - timedelta(days=1),
+        )
+        await contract_store.add_interview_round(
+            job_id=inactive_id,
+            label="Future but inactive",
+            scheduled_at=now + timedelta(days=1),
+        )
+
+        rounds = await contract_store.list_upcoming_interviews(within_days=7)
+
+        assert [round_.label for round_ in rounds] == ["Future and active"]
+
+
+# ===========================================================================
+# Group 11: Status Listing + Filtering
 # ===========================================================================
 
 
@@ -1371,7 +1418,7 @@ class TestStatusListing:
 
 
 # ===========================================================================
-# Group 11: Pending Load Refinements
+# Group 12: Pending Load Refinements
 # ===========================================================================
 
 

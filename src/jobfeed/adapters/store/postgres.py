@@ -5185,7 +5185,7 @@ class PostgresStore:
         *,
         within_days: int = 7,
     ) -> list[InterviewRound]:
-        """List scheduled but not-yet-completed interviews within a time window.
+        """List future scheduled, incomplete interviews within a time window.
 
         Only returns rounds whose parent job is currently in 'interviewing'
         status, so rounds for rejected/ghosted/offered jobs are excluded.
@@ -5202,6 +5202,7 @@ class PostgresStore:
                 "SELECT ir.* FROM interview_rounds ir"
                 " JOIN job_status js ON js.job_id = ir.job_id"
                 " WHERE ir.scheduled_at IS NOT NULL"
+                " AND ir.scheduled_at >= now()"
                 " AND ir.scheduled_at <= now() + interval '1 day' * $1"
                 " AND ir.completed_at IS NULL"
                 " AND js.status = 'interviewing'"
