@@ -25,6 +25,7 @@ import pytest_asyncio
 import structlog
 
 from jobfeed.adapters.store.postgres import PostgresStore
+from tests.support.store_contract_control import PostgresStoreContractControl
 
 
 def _alembic_upgrade(url: str) -> None:
@@ -222,6 +223,12 @@ async def contract_store(migrated_pg_url: str) -> AsyncIterator[PostgresStore]:
         yield s
     finally:
         await s.close()
+
+
+@pytest.fixture
+def contract_control(migrated_pg_url: str) -> PostgresStoreContractControl:
+    """Yield backend setup controls for the shared store contract."""
+    return PostgresStoreContractControl(migrated_pg_url)
 
 
 @pytest.fixture

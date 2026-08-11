@@ -53,6 +53,8 @@ PENDING_LIMIT = 100
 EXPECTED_JOB_PAIR = 2
 BUMP_SECOND_COUNT = 2
 FLOAT_TOLERANCE = 1e-6
+POST_APPLY_RESPONSE_COUNT = 2
+MEDIAN_RESPONSE_DAYS = 3.0
 RUN_STAGE_A_COUNT = 3
 RUN_STAGE_B_COUNT = 2
 NO_DECAY_THRESHOLD = 9999
@@ -802,6 +804,56 @@ class TestApplicationAudit:
         assert stats.by_resume is not None
         assert stats.by_resume["first-variant"].sent == 1
         assert "later-variant" not in stats.by_resume
+
+    async def test_application_stats_uses_later_responses_and_exact_median(
+        self,
+        contract_store,
+        contract_control,
+    ):
+        """Only post-apply responses count, with an exact whole-day median."""
+        base = datetime.now(UTC) - timedelta(days=20)
+        response_offsets = (2, 4, -2)
+        response_statuses = ("interviewing", "rejected", "offer")
+        job_ids: list[str] = []
+        for index, (offset, response_status) in enumerate(
+            zip(response_offsets, response_statuses, strict=True)
+        ):
+            job_id, _ = await _insert_job(
+                contract_store,
+                f"stats-median-{index}",
+            )
+            job_ids.append(job_id)
+            await contract_store.transition_status(
+                TransitionRequest(job_id=job_id, new_status="applied", force=True)
+            )
+            await contract_store.transition_status(
+                TransitionRequest(
+                    job_id=job_id,
+                    new_status=response_status,
+                    force=True,
+                )
+            )
+            await contract_control.set_history_time(
+                job_id=job_id,
+                to_status="applied",
+                occurrence=0,
+                changed_at=base,
+            )
+            await contract_control.set_history_time(
+                job_id=job_id,
+                to_status=response_status,
+                occurrence=0,
+                changed_at=base + timedelta(days=offset),
+            )
+
+        stats = await contract_store.application_stats(since_days_ago=30)
+
+        assert stats.applied_count == len(job_ids)
+        assert stats.response_count == POST_APPLY_RESPONSE_COUNT
+        assert stats.interview_count == 1
+        assert stats.offer_count == 0
+        assert stats.rejection_count == 1
+        assert stats.median_days_to_response == MEDIAN_RESPONSE_DAYS
 
     async def test_duplicate_application_after_terminal_is_noop(self, contract_store):
         """A duplicate record_application after a terminal status stays a no-op.

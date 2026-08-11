@@ -4810,10 +4810,17 @@ class PostgresStore:
             )
             # 2. Response statuses reached
             response_rows = await conn.fetch(
-                f"""SELECT DISTINCT job_id, to_status
-                    FROM job_status_history
-                    WHERE job_id IN ({id_ph})
-                      AND to_status IN ({resp_ph})""",
+                f"""WITH applied_ts AS (
+                        SELECT job_id, MIN(changed_at) AS applied_at
+                        FROM job_status_history
+                        WHERE job_id IN ({id_ph}) AND to_status = 'applied'
+                        GROUP BY job_id
+                    )
+                    SELECT DISTINCT h.job_id, h.to_status
+                    FROM job_status_history h
+                    JOIN applied_ts a ON a.job_id = h.job_id
+                    WHERE h.to_status IN ({resp_ph})
+                      AND h.changed_at > a.applied_at""",
                 *id_list,
                 *resp_sorted,
             )
@@ -4832,11 +4839,14 @@ class PostgresStore:
                        FROM job_status_history
                        WHERE job_id = ANY($1) AND to_status = 'applied'
                        GROUP BY job_id
-                   ), resp_ts AS (
-                       SELECT job_id, MIN(changed_at) AS resp_at
-                       FROM job_status_history
-                       WHERE job_id = ANY($1) AND to_status = ANY($2)
-                       GROUP BY job_id
+                ), resp_ts AS (
+                       SELECT h.job_id, MIN(h.changed_at) AS resp_at
+                       FROM job_status_history h
+                       JOIN applied_ts a ON a.job_id = h.job_id
+                       WHERE h.job_id = ANY($1)
+                         AND h.to_status = ANY($2)
+                         AND h.changed_at > a.applied_at
+                       GROUP BY h.job_id
                    )
                    SELECT EXTRACT(DAY FROM r.resp_at - a.applied_at)::integer AS days
                    FROM applied_ts a
