@@ -365,9 +365,7 @@ async def test_load_gate_candidates_keyset_pages_equal_timestamps_without_gaps(
     expected: list[str] = []
     for index in range(5):
         canonical_id = f"cursor-{index}"
-        await store.save_job(
-            _make_job(canonical_id, discovered_at=discovered_at)
-        )
+        await store.save_job(_make_job(canonical_id, discovered_at=discovered_at))
         expected.insert(0, canonical_id)
 
     seen: list[str] = []
