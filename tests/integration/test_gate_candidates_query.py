@@ -573,6 +573,42 @@ async def _set_error(store: PostgresStore, job_id: str) -> None:
         await store._get_pool().release(conn)  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize(
+    ("corpus", "expected"),
+    [
+        ("unrated", {"pending", "failed", "stale-error"}),
+        ("failed", {"failed", "stale-error"}),
+        ("all", {"pending", "failed", "completed", "stale-error"}),
+    ],
+)
+async def test_preview_claimable_stage_a_matches_uncontended_claim(
+    store: PostgresStore,
+    corpus: str,
+    expected: set[str],
+) -> None:
+    """Preview and immediate claim expose the same ordered eligible set."""
+    await store.save_job(_make_job("pending"))
+    failed = await store.save_job(_make_job("failed"))
+    completed = await store.save_job(_make_job("completed"))
+    fresh = await store.save_job(_make_job("fresh-in-progress"))
+    stale_error = await store.save_job(_make_job("stale-error"))
+    await _set_error(store, failed.job_id)
+    await store.save_stage_a(completed.job_id, _stage_a())
+    await _set_in_progress(store, fresh.job_id, age=timedelta(minutes=5))
+    await _set_error(store, stale_error.job_id)
+    await _set_in_progress(store, stale_error.job_id, age=timedelta(hours=2))
+    count_before = await _evaluations_count(store)
+
+    preview = await store.preview_claimable_stage_a(corpus=corpus)
+
+    assert await _evaluations_count(store) == count_before
+    claimed = await store.claim_pending_stage_a(corpus=corpus)
+    preview_ids = [job.canonical_id for job in preview]
+    claimed_ids = [job.canonical_id for job in claimed]
+    assert preview_ids == claimed_ids
+    assert set(claimed_ids) == expected
+
+
 async def test_load_gate_candidates_all_corpus_readmits_completed_row(
     store: PostgresStore,
 ) -> None:
