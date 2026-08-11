@@ -655,7 +655,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 ## 15. Readiness 状态
 
-独立 agent 共做了三轮 readiness review：第一轮发现 7 个阻塞项，第二轮发现 5 个残留阻塞项，第三轮结论为 **READY_CONDITIONAL**。用户已选择第 14 节方案 1，条件解除。
+独立 agent 共做了三轮 readiness review：第一轮发现 7 个阻塞项，第二轮发现 5 个残留阻塞项，第三轮确认行为 ledger、codec、schema registry 和 rollback trigger 合同闭合。用户已选择第 14 节方案 1。当前状态是 **Task 0 IN PROGRESS**：计划获准执行，但真实 0008 snapshot manifest 与同机 benchmark 证据仍是 Task 1–3 的硬前置。
 
 | 检查 | 状态 |
 |---|---|
@@ -667,13 +667,17 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 | 任务依赖与独立验收结果 | 已定义 |
 | 代码量与工时 | 已估算并标注误差 |
 | 最终回滚等级 | **已选择 1：无损 SQLite → PostgreSQL 回灌** |
+| 14 表可执行 schema registry | 已冻结 14 表 / 153 列并通过 Alembic 0008 独立推导测试 |
+| 真实 0008 snapshot manifest | **进行中；正式源仍为 0007，只允许升级隔离备份** |
+| 同机 PG benchmark | **待 0008 隔离备份 manifest 完成后采集** |
 
-本计划现为 **APPROVED / IMPLEMENTATION-READY**。执行保留 Task 5–8 和 194–292h 预算；任何改为 snapshot-only rollback 或长期双写的要求都属于 material plan drift，必须返回设计。
+本计划现为 **APPROVED FOR TASK 0**，不是 Task 0 已完成。Task 1–3 在真实 manifest 与 benchmark artifact 评审通过前保持 blocked。执行保留 Task 5–8 和 194–292h 预算；任何改为 snapshot-only rollback 或长期双写的要求都属于 material plan drift，必须返回设计。
 
 ## 16. 本文档变更的验证证据
 
 - 三个独立只读 agent 分别审计 store surface、实际运行并发、迁移/工时。
-- 一个独立 readiness reviewer 完成三轮审查，最终为 `READY_CONDITIONAL`。
+- 独立 reviewer 证明 95 项 ledger 无重复/遗漏，`28 + 21 + 29 = 78`，并关闭 codec precision、复合 PK、claim concurrency、JSON、release 和 exact-trigger 合同 findings。
 - `git diff --check` 通过。
-- 使用仓库 `.venv/bin` 运行 `make quality`：Ruff、format、mypy 全通过；pytest **1,438 passed、447 deselected**。
-- 进入执行前的 baseline 只新增本计划文档，没有修改 production code、schema、配置或数据；后续每个 task 的代码、测试和证据继续追加到本文档。
+- 使用仓库 `.venv/bin` 运行 `make quality`：Ruff、format、mypy 全通过；pytest **1,479 passed、482 deselected**。
+- Codec/manifest/hygiene 定向测试 **54 passed**；PG process/JSON/release 定向测试 **14 passed**。
+- Task 0 已新增行为合同、PostgreSQL characterization tests、versioned canonical codec 与 14 表/153 列 executable registry；尚未新增 SQLite runtime adapter 或修改正式 PostgreSQL 数据。
