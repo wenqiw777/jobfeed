@@ -37,7 +37,7 @@ Jobfeed 适合从 PostgreSQL 收敛为 SQLite，但这不是“小改连接串�
 2. 删除 CLI 容器后数据仍存在；重复启动看到同一份数据。
 3. fetch 和 LLM 并发度不降低。
 4. Web 与 CLI 同时运行时，不重复领取付费 evaluation job。
-5. 现有 90 个 store port 操作保持业务行为等价。
+5. 现有 90 个 store port 操作和 2 个由 store 实现的 source lookup 操作保持业务行为等价。
 6. 当前 PostgreSQL 数据完整迁移，失败时不会替换正式 SQLite 文件。
 
 ### 2.2 约束
@@ -69,10 +69,11 @@ Jobfeed 适合从 PostgreSQL 收敛为 SQLite，但这不是“小改连接串�
 |---|---:|---|
 | `src/jobfeed/adapters/store/postgres.py` | 5,895 LOC | 当前唯一数据库实现 |
 | Store ports | 8 文件、1,451 LOC、90 个协议方法 | SQLite 必须覆盖的正式行为合同 |
+| Store-backed source lookups | `EnrichmentLookup` + `ClosedJobLookup`、2 个协议方法 | 同样是 SQLite runtime 合同，不得被 store-only 口径漏掉 |
 | PostgreSQL migrations | 0001–0008、742 LOC | PG 原生 DDL，不能原样重放到 SQLite |
 | `legacy_import.py` + `parity.py` | 1,323 LOC | 方向是旧 SQLite → PG，不是本次迁移方向 |
 | 核心数据层 | 9,425 LOC | 不含 CLI、配置、部署和测试 |
-| `PostgresStore` | 110 个 public 方法、119 个总方法 | 90 个 port 方法外还有迁移/兼容能力 |
+| `PostgresStore` | 110 个 public 方法、119 个总方法 | 90 个 store port + 2 个 source lookup 外还有 18 个迁移专用能力 |
 | PostgreSQL 测试选择集 | 433 / 1,885 tests，约 23% | `pytest --collect-only -m postgres` 实测 |
 | 显式 PG 测试影响面 | 35–38 文件、约 14.9k–15.0k LOC | 口径差异来自 marker 与直接引用统计 |
 | 直接 import `PostgresStore` 的测试 | 31 文件 | 不只是替换一个 fixture |
@@ -80,7 +81,7 @@ Jobfeed 适合从 PostgreSQL 收敛为 SQLite，但这不是“小改连接串�
 
 当前 store 依赖 [postgres.py](/Users/wenqiwang/wwq/jobfeed/src/jobfeed/adapters/store/postgres.py)、[store ports](/Users/wenqiwang/wwq/jobfeed/src/jobfeed/ports/store.py)、[config.py](/Users/wenqiwang/wwq/jobfeed/src/jobfeed/config.py)、[CLI wiring](/Users/wenqiwang/wwq/jobfeed/src/jobfeed/cli/__init__.py)、[docker-compose.yml](/Users/wenqiwang/wwq/jobfeed/docker-compose.yml)、[CI](/Users/wenqiwang/wwq/jobfeed/.github/workflows/ci.yml) 和 [test fixtures](/Users/wenqiwang/wwq/jobfeed/tests/conftest.py)。
 
-这里的“90 个 store 行为”是 8 个 capability protocol 中定义的 90 个持久化方法，不是 90 张表或 90 个用户功能。它们按职责分布为：
+这里的“90 个 store 行为”是 8 个 capability protocol 中定义的 90 个持久化方法，不是 90 张表或 90 个用户功能。另有 `EnrichmentLookup.get_enrichment` 和 `ClosedJobLookup.get_closed_canonical_ids` 两个由 store 承担的 runtime source 行为，所以现有 runtime 持久化合同实际是 92 个。90 个 store 方法按职责分布为：
 
 | Capability | 方法数 | 典型职责 |
 |---|---:|---|
@@ -95,7 +96,7 @@ Jobfeed 适合从 PostgreSQL 收敛为 SQLite，但这不是“小改连接串�
 
 数量大的原因是项目不用一个无类型的通用 `execute()`，而是把每个业务查询和原子命令显式放在 port 上；同时 Phase 1–9 的 jobs、evaluation queue、workflow、application 和 analytics 能力最终都由一个 concrete store 实现。显式合同本身保护了 service/adapter 边界，但单个 5,895 行实现已经形成维护热点。
 
-本重构不以“减少方法数”为目标。推荐在不改变上层 90 个现有 port 行为的前提下，把 SQLite 实现按 core、claims、workflow、applications、views/performance 等 capability 拆成内部模块，再由一个 `SQLiteStore` facade 组合。run lease 新增 `acquire_run_lease`、`renew_run_lease`、`finalize_run_with_lease` 3 个明确操作，因此目标合同是 90 个既有行为加 3 个新行为。这样减少单文件职责，不牺牲原子事务或类型化行为。
+本重构不以“减少方法数”为目标。推荐在不改变上层 92 个现有 runtime 持久化行为的前提下，把 SQLite 实现按 core、claims、workflow、applications、views/performance 等 capability 拆成内部模块，再由一个 `SQLiteStore` facade 组合。run lease 新增 `acquire_run_lease`、`renew_run_lease`、`finalize_run_with_lease` 3 个明确操作，因此目标 runtime 合同是 92 个既有行为加 3 个新行为，即 95 个。18 个迁移专用方法单独归入 cutover/rollback tooling，不塞进 runtime facade。这样减少单文件职责，不牺牲原子事务或类型化行为。
 
 ### 3.2 当前本地数据快照
 
@@ -349,7 +350,7 @@ PG backup
 
 ### 8.1 历史 SQLite 实现不能直接恢复
 
-commit `49ac0c1` 曾包含 7 个 SQLite production 文件，共 1,094 LOC，以及 518 LOC 的集成测试。adapter 只有约 14 个 public store 操作，而当前正式合同有 90 个。commit `e762d30` 随后明确删除该实现并收敛为 PostgreSQL-only。
+commit `49ac0c1` 曾包含 7 个 SQLite production 文件，共 1,094 LOC，以及 518 LOC 的集成测试。adapter 只有约 14 个 public store 操作，而当前 runtime 正式合同有 92 个。commit `e762d30` 随后明确删除该实现并收敛为 PostgreSQL-only。
 
 可复用的只有思路：异步连接、单连接锁、`BEGIN IMMEDIATE`、row mapping 和 SQL/参数拆分。旧 schema、旧 API、旧测试、claim/status/apply/views/performance 和迁移方向都不能复用。
 
@@ -382,11 +383,11 @@ commit `49ac0c1` 曾包含 7 个 SQLite production 文件，共 1,094 LOC，以�
 |---|---:|---:|
 | 单个 store 文件 | 5,895 LOC | facade ≤250 LOC；capability 文件通常 300–800 LOC |
 | Runtime storage 总 LOC | 5,895 | **3,200–3,800**；中心目标约 3,500 |
-| Runtime store public surface | 110 public methods | 默认保留 90 个现有合同并加 3 个 lease 操作；退休项另行批准 |
+| Runtime store public surface | 110 public methods | 保留 92 个现有 runtime 合同并加 3 个 lease 操作；18 个迁移方法移出 facade，退休项另行批准 |
 | Import/parity 方法位置 | 18 个混在 `PostgresStore` | 独立 migration adapter |
 | 重复 transaction/query family | 多处手写 | 每个 family 一个内部实现 |
 
-3,200–3,800 LOC 是架构目标，不是允许删除 docstring、压缩 SQL 排版或制造抽象的硬门槛。如果全部 90 个现有合同最终都必须保留，允许评审后的上界扩大到 4,200 LOC；超出时必须说明是不可合并的业务语义，而不是重复 ceremony。
+3,200–3,800 LOC 是架构目标，不是允许删除 docstring、压缩 SQL 排版或制造抽象的硬门槛。如果全部 92 个现有 runtime 合同最终都必须保留，允许评审后的上界扩大到 4,200 LOC；超出时必须说明是不可合并的业务语义，而不是重复 ceremony。
 
 不推荐为追求 2,000 LOC 引入万能 `execute(sql, params)` port、通用 CRUD repository、完整 ORM session/identity-map 模型或元编程 repository。它们会把类型、原子性、排序和 claim 规则从显式合同移到运行时约定，文件变短但系统更难验证。若实现只能通过这些手段命中 LOC 目标，应保留更多显式代码。
 
@@ -460,7 +461,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 ### Task 0：冻结行为合同
 
-- **结果：** 所有 90 个现有 store 操作和 3 个新 run-lease 操作映射到现有测试或新增 golden contract，并形成经 review 的逐方法矩阵。每一行必须写明输入/输出/error、事务边界、幂等性、排序/tie-break、NULL、casefold、时间、JSON 和 percentile 规则中适用的项目。
+- **结果：** 所有 92 个现有 runtime 持久化操作和 3 个新 run-lease 操作映射到现有测试或新增 golden contract，并形成经 review 的逐方法矩阵。18 个迁移专用方法也必须有 cutover/rollback 合同，但不进入 runtime facade。每一行必须写明输入/输出/error、事务边界、幂等性、排序/tie-break、NULL、casefold、时间、JSON 和 percentile 规则中适用的项目。
 - **边界：** 不写 SQLite production adapter。
 - **证据：** PG baseline 测试清单、snapshot manifest、采集命令与 hash、逐方法行为矩阵、第 9.1 节 benchmark 报告、最低 SQLite 版本和回滚选择被记录并评审通过。矩阵未通过前 Task 1–3 不得启动并行实现。
 - **返回设计：** 若发现业务依赖真正需要多个独立 DB writer 或远程 DB 访问，停止并重评 SQLite。
@@ -545,7 +546,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 ## 12. 验收标准
 
-1. 90 个现有 store port operations 和 3 个新 run-lease operations 全部有 SQLite contract coverage。
+1. 92 个现有 runtime persistence operations 和 3 个新 run-lease operations 全部有 SQLite contract coverage；18 个迁移专用 operations 有双向迁移 contract coverage。
 2. PostgreSQL 与 SQLite golden behavior 对齐，不靠删测试或放宽断言通过。
 3. 14 张迁移表的 row count、PK、FK、JSON/checksum 和关键聚合全部通过；新增 `run_leases` 只有两个空闲 seed row 且约束有效。
 4. 第 9.1 节的双进程 contention workload 中，同一 evaluation job 最多被领取一次，且 0 次 retry 用尽后的 `SQLITE_BUSY`。
@@ -610,7 +611,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 所有写操作同时写 PG 和 SQLite。
 
 - 优点：理论上两个后端一直最新。
-- 缺点：90 个 store 操作形成长期双实现、部分失败和顺序一致性问题，复杂度最高。
+- 缺点：92 个 runtime 持久化操作形成长期双实现、部分失败和顺序一致性问题，复杂度最高。
 - 总工程预算：当前无法沿用本计划；必须重新设计双写顺序、一致性、修复队列、切读和对账，预计至少 260–380h。
 - 完整度：8/10，但不符合“小而可靠”的目标。
 
@@ -624,7 +625,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 |---|---|
 | 目标与用户行为 | 已定义 |
 | 非目标与架构边界 | 已定义 |
-| 90 个 store 行为范围 | 已量化 |
+| 92 个 runtime 持久化行为 + 18 个迁移方法范围 | 已量化 |
 | schema/data migration 范围 | 已定义为 14 张迁移表 + 1 张新 lease 表 |
 | 并发、claim、lease、recovery | 已定义 |
 | 任务依赖与独立验收结果 | 已定义 |
