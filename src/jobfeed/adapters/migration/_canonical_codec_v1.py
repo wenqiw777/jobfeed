@@ -65,15 +65,15 @@ def _timestamp(value: object) -> datetime:
 def _json_bytes(value: object) -> bytes:
     try:
         parsed = (
-            json.loads(value) if isinstance(value, (str, bytes, bytearray)) else value
+            json.loads(
+                value,
+                parse_float=Decimal,
+                parse_constant=_reject_json_constant,
+            )
+            if isinstance(value, (str, bytes, bytearray))
+            else value
         )
-        encoded = json.dumps(
-            _normalize_json_numbers(parsed),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
+        encoded = _canonical_json(parsed)
     except ValueError as exc:
         raise ValueError(
             "JSON numeric values must be finite and JSON must be valid"
@@ -83,18 +83,61 @@ def _json_bytes(value: object) -> bytes:
     return encoded.encode("utf-8")
 
 
-def _normalize_json_numbers(value: object) -> object:
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"JSON numeric values must be finite: {value}")
+
+
+def _json_decimal(value: Decimal) -> str:
+    if not value.is_finite():
+        raise ValueError("JSON numeric values must be finite")
+    sign, raw_digits, raw_exponent = value.as_tuple()
+    if not isinstance(raw_exponent, int):
+        raise ValueError("JSON numeric values must be finite")
+    digits = list(raw_digits)
+    if not any(digits):
+        return "0.0e0"
+    exponent = raw_exponent
+    while digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    coefficient = "".join(str(digit) for digit in digits)
+    mantissa = f"{coefficient[0]}.{coefficient[1:] or '0'}"
+    scientific_exponent = exponent + len(coefficient) - 1
+    prefix = "-" if sign else ""
+    return f"{prefix}{mantissa}e{scientific_exponent}"
+
+
+def _canonical_json_object(value: dict[object, object]) -> str:
+    if not all(isinstance(key, str) for key in value):
+        raise TypeError("JSON object keys must be strings")
+    keys = (key for key in value if isinstance(key, str))
+    items = (
+        f"{json.dumps(key, ensure_ascii=False)}:{_canonical_json(value[key])}"
+        for key in sorted(keys)
+    )
+    return "{" + ",".join(items) + "}"
+
+
+def _canonical_json(value: object) -> str:
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is int:
+        return str(value)
+    if isinstance(value, Decimal):
+        return _json_decimal(value)
     if type(value) is float:
         if not math.isfinite(value):
             raise ValueError("JSON numeric values must be finite")
-        return 0.0 if value == 0.0 else value
-    if isinstance(value, list):
-        return [_normalize_json_numbers(item) for item in value]
-    if isinstance(value, tuple):
-        return [_normalize_json_numbers(item) for item in value]
+        return _json_decimal(Decimal(str(value)))
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_canonical_json(item) for item in value) + "]"
     if isinstance(value, dict):
-        return {key: _normalize_json_numbers(item) for key, item in value.items()}
-    return value
+        return _canonical_json_object(value)
+    raise TypeError(f"unsupported JSON value type: {type(value).__name__}")
 
 
 def _bool_bytes(value: object) -> bytes:

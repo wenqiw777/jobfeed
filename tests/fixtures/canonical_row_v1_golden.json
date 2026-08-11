@@ -2,8 +2,9 @@
   "codec_version": "jobfeed-canonical-row-v1",
   "schema": {
     "name": "mixed_types_v1",
-    "primary_key": ["id"],
+    "primary_key": ["tenant", "id"],
     "columns": [
+      {"name": "tenant", "kind": "text", "nullable": false},
       {"name": "id", "kind": "int", "nullable": false},
       {"name": "nullable_text", "kind": "text", "nullable": true},
       {"name": "flag", "kind": "bool", "nullable": false},
@@ -17,6 +18,7 @@
   },
   "rows": [
     {
+      "tenant": "b",
       "id": 10,
       "nullable_text": "",
       "flag": true,
@@ -32,6 +34,7 @@
       }
     },
     {
+      "tenant": "a",
       "id": 2,
       "nullable_text": null,
       "flag": false,
@@ -41,7 +44,19 @@
       "occurred_at": "2026-08-11T01:02:03.123456-04:00",
       "raw_text": "é|%_\\\n",
       "payload": "null"
+    },
+    {
+      "tenant": "a",
+      "id": 11,
+      "nullable_text": "组合键",
+      "flag": true,
+      "count": 0,
+      "amount": "0.1000",
+      "ratio": 0.1,
+      "occurred_at": "2026-08-11T05:02:04.000000Z",
+      "raw_text": "decimal-literal",
+      "payload": "{\"precise\":0.10000000000000001,\"nested\":[1,1.00]}"
     }
   ],
-  "expected_sha256": "a278e4605b08f9eaf95181974771953a41309ba370d288cc443b8dae90d978d8"
+  "expected_sha256": "87a0778e5980b4753c1d8c1df69fab0efd35bd3c88b8b3948555e49c602e6e3a"
 }

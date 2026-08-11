@@ -141,11 +141,18 @@ count as public when calculating that target.
 ### JSON
 
 - Canonical JSON is UTF-8, sorted-key, compact JSON with `ensure_ascii=false`.
-- NaN and Infinity are rejected. JSON number, bool, null, list, and object types
-  must round-trip as those types, not strings.
-- At every array/object depth, JSON floating `-0.0` canonicalizes to floating
-  `0.0`. This matches the target backend's loss of signed-zero information.
-  Integer `0` remains an integer and is not collapsed with floating `0.0`.
+- Raw JSON is parsed with arbitrary-precision `Decimal` for every token that has
+  a fraction or exponent. It never passes through binary float first: literals
+  `0.1` and `0.10000000000000001` remain distinct.
+- JSON integers emit as base-10 integers. Decimal/Python-float values form a
+  separate category and emit as exact normalized scientific JSON numbers:
+  one coefficient digit, `.`, remaining digits (or `0`), `e`, and a base-10
+  exponent. Thus integer `1` differs from decimal `1.0`, while `1.0`, `1.00`,
+  and `1e0` converge. Python floats enter through their shortest `str` form.
+- NaN and Infinity are rejected at any nesting depth. JSON number, bool, null,
+  string, list, and object types remain those types, not quoted stand-ins.
+- At every array/object depth, JSON decimal/float `-0.0` canonicalizes to decimal
+  `0.0e0`. Integer `0` remains an integer and is not collapsed with decimal zero.
 - `stage_b_fit_json.score_0_100` is nullable. Missing JSON, JSON null, missing key,
   or a null key maps to a NULL score and follows the method's NULL ordering.
 
@@ -160,12 +167,32 @@ count as public when calculating that target.
   non-finite floats fail closed.
 - JSON signed-zero normalization is recursive because PostgreSQL JSON/JSONB and
   SQLite text round-trips may choose different zero signs. This is the only JSON
-  numeric equivalence added by codec v1; integer/float distinctions remain.
+  numeric equivalence beyond removal of insignificant decimal trailing zeros;
+  integer versus decimal/float remains distinct.
 - Codec v1 is pinned by `tests/fixtures/canonical_row_v1_golden.json` to mixed
   literal SHA-256
-  `a278e4605b08f9eaf95181974771953a41309ba370d288cc443b8dae90d978d8`.
+  `87a0778e5980b4753c1d8c1df69fab0efd35bd3c88b8b3948555e49c602e6e3a`.
+  The fixture uses composite primary key `tenant, id`, including two rows with
+  the same tenant, so both key position and numeric ordering are exercised.
   A later byte-level semantic change requires a new codec version and manifest,
   not an in-place rewrite of a completed cutover's v1 digest.
+
+### Codec v1 framing
+
+Every frame is exactly `tag || uint64_be(payload_length) || payload`: a one-byte
+tag, an unsigned eight-byte big-endian payload length, then that many payload
+bytes. Length is never ASCII. Schema frames are `M` magic, `V` version, `S`
+schema name, repeated `C` column declarations (nested `n` name, `k` kind, `q`
+nullable), then repeated `P` primary-key names. Each row is one `R` frame whose
+payload is its declared-column value frames; final row count is an ASCII integer
+inside a `Z` frame. Value tags are `N` SQL NULL, `B` bool, `I` integer, `D` SQL
+Decimal, `F` float, `T` UTC timestamp, `S` raw text, and `J` canonical JSON.
+
+Scalar payloads also match the implementation exactly: integers use base-10
+ASCII; SQL Decimal uses signed coefficient plus colon/exponent (`0:0` for any
+zero); float uses `float.hex()` after collapsing both signed zeros to positive
+zero; timestamps use six-digit UTC `...Z`; text and JSON use UTF-8. Framing, tags,
+schema/column order, and primary-key order are all digest inputs.
 
 ### Unicode search
 

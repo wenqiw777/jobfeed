@@ -23,6 +23,7 @@ from jobfeed.adapters.migration.canonical_row import (
 _FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "canonical_row_v1_golden.json"
 )
+_GOLDEN_ROW_COUNT = 3
 
 
 def _load_golden() -> tuple[CanonicalSchema, list[dict[str, object]], str]:
@@ -60,6 +61,8 @@ def test_mixed_type_golden_sha_is_stable() -> None:
     """Fixture order does not affect the versioned, PK-ordered golden digest."""
     schema, rows, expected = _load_golden()
 
+    assert schema.primary_key == ("tenant", "id")
+    assert len(rows) == _GOLDEN_ROW_COUNT
     assert canonical_rows_sha256(schema, rows) == expected
     assert canonical_rows_sha256(schema, reversed(rows)) == expected
 
@@ -67,7 +70,9 @@ def test_mixed_type_golden_sha_is_stable() -> None:
 def test_ordered_chunk_boundaries_do_not_change_digest() -> None:
     """The same globally PK-ordered rows hash identically across chunk splits."""
     schema, rows, expected = _load_golden()
-    ordered = sorted(rows, key=lambda row: int(row["id"]))
+    ordered = sorted(
+        rows, key=lambda row: (str(row["tenant"]).encode("utf-8"), int(row["id"]))
+    )
 
     one_by_one = CanonicalRowHasher(schema)
     for row in ordered:
@@ -199,6 +204,30 @@ def test_json_signed_zero_is_recursively_canonical() -> None:
     )
 
 
+def test_json_high_precision_decimal_literals_do_not_collide() -> None:
+    """Binary-float parsing cannot erase a significant JSON literal digit."""
+    schema = _value_schema("json")
+
+    assert canonical_rows_sha256(schema, [{"id": 1, "value": '{"x":0.1}'}]) != (
+        canonical_rows_sha256(schema, [{"id": 1, "value": '{"x":0.10000000000000001}'}])
+    )
+
+
+def test_json_integer_and_decimal_categories_are_explicit_and_nested() -> None:
+    """Integers differ from decimals while equivalent decimal spellings converge."""
+    schema = _value_schema("json")
+    integer = {"outer": [{"value": 1}]}
+    decimal = {"outer": [{"value": Decimal("1.0")}]}
+    equivalent_decimal = '{"outer":[{"value":1.00e0}]}'
+
+    assert canonical_rows_sha256(schema, [{"id": 1, "value": integer}]) != (
+        canonical_rows_sha256(schema, [{"id": 1, "value": decimal}])
+    )
+    assert canonical_rows_sha256(schema, [{"id": 1, "value": decimal}]) == (
+        canonical_rows_sha256(schema, [{"id": 1, "value": equivalent_decimal}])
+    )
+
+
 @pytest.mark.parametrize(
     ("kind", "value"),
     [
@@ -208,6 +237,8 @@ def test_json_signed_zero_is_recursively_canonical() -> None:
         ("decimal", Decimal("NaN")),
         ("decimal", Decimal("Infinity")),
         ("json", {"bad": float("nan")}),
+        ("json", '{"outer":[{"bad":NaN}]}'),
+        ("json", {"outer": [{"bad": Decimal("Infinity")}]}),
     ],
 )
 def test_nonfinite_values_fail_closed(kind: str, value: object) -> None:
