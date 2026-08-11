@@ -1321,6 +1321,27 @@ class TestStatusListing:
         job_ids = {r.job_id for r in results}
         assert job_id not in job_ids
 
+    async def test_filter_notes_contain_preserves_sql_wildcards(
+        self,
+        contract_store,
+    ):
+        """Percent and underscore retain the shipped ILIKE pattern semantics."""
+        noted_id, _ = await _insert_job(contract_store, "ls-pattern-noted")
+        empty_id, _ = await _insert_job(contract_store, "ls-pattern-empty")
+        await contract_store.append_note(job_id=noted_id, text="ordinary note")
+
+        percent_results = await contract_store.list_statuses(
+            StatusFilter(notes_contain="%")
+        )
+        underscore_results = await contract_store.list_statuses(
+            StatusFilter(notes_contain="_")
+        )
+
+        assert noted_id in {row.job_id for row in percent_results}
+        assert noted_id in {row.job_id for row in underscore_results}
+        assert empty_id not in {row.job_id for row in percent_results}
+        assert empty_id not in {row.job_id for row in underscore_results}
+
     async def test_filter_limit(self, contract_store):
         """list_statuses(limit=N) should cap result count."""
         for i in range(LIST_LIMIT_SMALL + 2):
