@@ -71,6 +71,59 @@ The two source lookup callers are live and cannot be omitted:
 - SpeedyApply liveness calls `get_closed_canonical_ids` from
   `adapters/sources/speedyapply.py`.
 
+### Runtime surface disposition
+
+The project target is **78–82 runtime public methods**, down from the corrected
+current count of 92. This slice classifies all 33 behaviors it owns. The four
+`retire` rows below are candidates only: removal occurs in the task that first
+migrates their remaining tests and proves no dynamic/user contract depends on
+them. `wrapper` means a meaningful public workflow remains while delegating to a
+single internal kernel. `merge-internal` removes duplicate implementation, not a
+public operation. Semantically different reads/writes are not collapsed merely
+to hit the LOC or method-count target.
+
+| # | Runtime behavior | Disposition | Public-surface result and reason |
+|---:|---|---|---|
+| 1 | `upsert_company` | retain, merge-internal | Keep public upsert semantics; share company row codec only. It is not equivalent to get/list/remove. |
+| 2 | `get_company` | retain | Live ATS freshness lookup; distinct optional single-row result. |
+| 3 | `list_companies` | retain | Live CLI/Web/ATS filtered ordered collection. |
+| 4 | `mark_company_removed` | retain | Live idempotent soft-delete command with boolean result. |
+| 5 | `bump_discover_failure` | retain | Live atomic increment-and-return; cannot merge with reset. |
+| 6 | `reset_discover_failures` | retain | Live unconditional zeroing; different result and concurrency semantics from bump. |
+| 7 | `record_enrichment` | retain, merge-internal | Canonical persisted-enrichment write; share the enrichment update kernel with the paste wrapper. |
+| 8 | `list_unenriched_jobs` | retain | Live bounded source queue with frozen ordering. |
+| 9 | `mark_job_closed` | retain | Live liveness write with reason-preservation semantics. |
+| 10 | `enrich_paste` | wrapper | Keep public CLI/Web workflow; delegate exact-key lookup, quality assessment, and canonical enrichment write. |
+| 11 | `get_state` | retain | Live digest cutoff read. |
+| 12 | `set_state` | retain | Live exact-key upsert; not interchangeable with get. |
+| 13 | `record_cost` | retain, merge-internal | Live budget attempt ledger; share atomic ledger-delta helper with usage+cost. |
+| 14 | `get_cost` | retain | Live budget guard single-day read. |
+| 15 | `record_llm_usage` | retire | No production caller. Tests must seed through migration fixtures or the combined live write before removal. |
+| 16 | `record_llm_usage_with_cost` | retain, merge-internal | Live paid-call audit; its atomic two-table transaction is not replaceable by two public calls. |
+| 17 | `get_cost_range` | retire | No production caller or user-facing path; preserve only until contract retirement review. |
+| 18 | `digest_stats` | retire | Digest currently derives stats from evaluations and does not call this method. |
+| 19 | `needs_attention` | retain | Live digest and `/attention` aggregate with three independently capped buckets. |
+| 20 | `mark_stale_jobs_closed` | retain | Live maintenance command with dry-run/write parity. |
+| 21 | `get_enrichment` | retain | Live `EnrichmentLookup` source port; previously omitted from the 90-method accounting. |
+| 22 | `get_closed_canonical_ids` | retain | Live `ClosedJobLookup` source port with stale-marker exclusion. |
+| 23 | `query_jobs_view` | retain, merge-internal | Main Web listing primitive; row/total/tab-count statements share one filter builder but remain one public workflow. |
+| 24 | `list_twin_rows_by_status` | retain | Display-fold corpus expansion; not equivalent to detail twin status. |
+| 25 | `list_twin_statuses` | retain | Detail-view lookup with self exclusion and a different DTO/order. |
+| 26 | `list_pipeline_runs` | retain | Live paginated Runs API with total count. |
+| 27 | `insights_overview` | retain | Live multi-aggregate Insights API. It cannot merge with performance overview without changing DTO/window semantics. |
+| 28 | `record_step_timing` | retain | Live best-effort single timing write used by `StepTimer`. |
+| 29 | `record_step_timings` | retire | No production caller. Atomic batch semantics remain tested until explicit removal. |
+| 30 | `get_performance_overview` | retain | Live performance overview with previous-period deltas. |
+| 31 | `get_step_timings` | retain | Live ordered raw timing series. |
+| 32 | `get_llm_daily_stats` | retain | Live interpolated percentile/token aggregate. |
+| 33 | `get_funnel_stats` | retain | Live run-level funnel with 0008 fallback rules. |
+
+This slice therefore proposes **29 retained runtime methods and 4 retirements**.
+It contributes four of the project-wide required 10–14 retirements. The other
+capability slices must independently justify another 6–10; this document does
+not pre-authorize them. Wrapper/internal-merge rows still count as public when
+calculating the 78–82 target.
+
 ## Shared representation and query rules
 
 ### Time
