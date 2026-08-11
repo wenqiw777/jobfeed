@@ -25,7 +25,11 @@
       "ratio": 1.5,
       "occurred_at": "2026-08-11T05:02:03.123456Z",
       "raw_text": "{\"a\":1}",
-      "payload": {"z": [true, null], "a": "雪"}
+      "payload": {
+        "z": [true, null],
+        "a": "雪",
+        "signed_zero": [-0.0, {"nested": -0.0}]
+      }
     },
     {
       "id": 2,
@@ -39,5 +43,5 @@
       "payload": "null"
     }
   ],
-  "expected_sha256": "b72e167b5718d4d1843696d8d0e19a08cebeeb180083ba74cda413afbff85d3f"
+  "expected_sha256": "a278e4605b08f9eaf95181974771953a41309ba370d288cc443b8dae90d978d8"
 }

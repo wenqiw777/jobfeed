@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import sqlite3
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -135,6 +137,65 @@ def test_backend_representations_have_one_semantic_encoding(
 
     assert canonical_rows_sha256(schema, [{"id": 1, "value": left}]) == (
         canonical_rows_sha256(schema, [{"id": 1, "value": right}])
+    )
+
+
+def test_sqlite_real_round_trip_preserves_canonical_zero_digest() -> None:
+    """SQLite losing the sign of REAL zero must not create a parity failure."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value REAL)")
+        connection.execute("INSERT INTO sample VALUES (?, ?)", (1, -0.0))
+        sqlite_value = connection.execute(
+            "SELECT value FROM sample WHERE id = 1"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    assert math.copysign(1.0, sqlite_value) == 1.0
+    schema = _value_schema("float")
+    assert canonical_rows_sha256(schema, [{"id": 1, "value": -0.0}]) == (
+        canonical_rows_sha256(schema, [{"id": 1, "value": sqlite_value}])
+    )
+
+
+@pytest.mark.parametrize("value", [False, True])
+def test_sqlite_boolean_round_trip_preserves_canonical_digest(value: bool) -> None:
+    """SQLite's exact integer BOOLEAN representation hashes like PG bool."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute(
+            "CREATE TABLE sample (id INTEGER PRIMARY KEY, value BOOLEAN)"
+        )
+        connection.execute("INSERT INTO sample VALUES (?, ?)", (1, value))
+        sqlite_value = connection.execute(
+            "SELECT value FROM sample WHERE id = 1"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    assert type(sqlite_value) is int
+    schema = _value_schema("bool")
+    assert canonical_rows_sha256(schema, [{"id": 1, "value": value}]) == (
+        canonical_rows_sha256(schema, [{"id": 1, "value": sqlite_value}])
+    )
+
+
+@pytest.mark.parametrize("value", [-1, 2, 42])
+def test_boolean_codec_rejects_non_boolean_integers(value: int) -> None:
+    """Only exact SQLite BOOLEAN integers zero and one are accepted."""
+    with pytest.raises(TypeError, match="bool"):
+        canonical_rows_sha256(_value_schema("bool"), [{"id": 1, "value": value}])
+
+
+def test_json_signed_zero_is_recursively_canonical() -> None:
+    """JSON numeric negative zero hashes like backend-normalized positive zero."""
+    schema = _value_schema("json")
+    negative = {"outer": [-0.0, {"nested": -0.0}]}
+    positive = {"outer": [0.0, {"nested": 0.0}]}
+
+    assert canonical_rows_sha256(schema, [{"id": 1, "value": negative}]) == (
+        canonical_rows_sha256(schema, [{"id": 1, "value": positive}])
     )
 
 

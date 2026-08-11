@@ -68,7 +68,7 @@ def _json_bytes(value: object) -> bytes:
             json.loads(value) if isinstance(value, (str, bytes, bytearray)) else value
         )
         encoded = json.dumps(
-            parsed,
+            _normalize_json_numbers(parsed),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
@@ -83,10 +83,26 @@ def _json_bytes(value: object) -> bytes:
     return encoded.encode("utf-8")
 
 
+def _normalize_json_numbers(value: object) -> object:
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("JSON numeric values must be finite")
+        return 0.0 if value == 0.0 else value
+    if isinstance(value, list):
+        return [_normalize_json_numbers(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_json_numbers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_json_numbers(item) for key, item in value.items()}
+    return value
+
+
 def _bool_bytes(value: object) -> bytes:
-    if type(value) is not bool:
-        raise TypeError("bool column requires bool")
-    return b"1" if value else b"0"
+    if type(value) is bool:
+        return b"1" if value else b"0"
+    if type(value) is int and value in (0, 1):
+        return str(value).encode("ascii")
+    raise TypeError("bool column requires bool or exact SQLite integer 0/1")
 
 
 def _int_bytes(value: object) -> bytes:
@@ -100,7 +116,8 @@ def _float_bytes(value: object) -> bytes:
         raise TypeError("float column requires float")
     if not math.isfinite(value):
         raise ValueError("float values must be finite")
-    return value.hex().encode("ascii")
+    canonical = 0.0 if value == 0.0 else value
+    return canonical.hex().encode("ascii")
 
 
 def _timestamp_bytes(value: object) -> bytes:
