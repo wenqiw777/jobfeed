@@ -136,7 +136,7 @@ The two source lookup callers are live and cannot be omitted:
 | `record_llm_usage` | `LLMUsage -> None` | Appends exactly one row. Nullable job/stage/run remain NULL. Missing referenced non-NULL job fails FK. Negative token/cost/latency and invalid stage fail CHECK. |
 | `record_llm_usage_with_cost` | day, spend, usage -> None | One transaction: append usage and add spend to ledger with `calls=0`. Either both commit or neither does. This method must not double-count the attempted-call counter already recorded by the budget path. |
 | `get_cost_range` | `since_days=30`; list | UTC date cutoff is `today - since_days`, inclusive. Ordered `day DESC`. Empty result is `[]`. Caller currently absent; retain contract. |
-| `digest_stats` | threshold=60 -> `DigestStats` | All-time jobs; jobs discovered during current UTC day; all-time completed Stage B; completed Stage B with JSON fit score `>= threshold`; today's cost/calls or zeros. Missing/malformed/null fit score does not count. Caller currently absent. |
+| `digest_stats` | threshold=60 -> `DigestStats` | All-time jobs; jobs discovered during current UTC day; all-time completed Stage B; completed Stage B with JSON fit score `>= threshold`; today's cost/calls or zeros. Missing/null fit score does not count. A present non-numeric score currently fails PostgreSQL's integer cast and must raise rather than silently disappear. Caller currently absent. |
 | `needs_attention` | days=7, max/category=10 -> report | Three independent lists: recent non-NULL enrich errors; recent stub/partial jobs with completed Stage A; any-age rows at retry cap. Each list is independently capped. Existing SQL has no ordering, so row order is currently unspecified and must not be exposed as a semantic sort. |
 | `mark_stale_jobs_closed` | days, dry-run -> count | `days < 1` raises `ValueError`. Match quality NULL/missing/abandoned, `discovered_at < now-days`, and open rows only. Dry-run writes nothing and returns matches. Write stamps one method-entry UTC time and the stale marker. Repeating returns zero. |
 
@@ -185,7 +185,7 @@ Sorts are stable:
 |---|---|---|
 | `record_step_timing` | `StepTiming -> None` | Appends one row. DB generates UTC `created_at`; input `created_at` is currently ignored. Missing run id fails FK. `StepTimer` treats this write as best-effort and swallows/logs failures outside the store. |
 | `record_step_timings` | list -> None | Empty list is no-op. Non-empty batch preserves input insertion order through generated ids. Batch is one atomic write unit. Caller currently absent. |
-| `get_performance_overview` | window days -> overview | Uses completed runs only. Current window is `started_at >= now-window`; previous is `[now-2*window, now-window)`. Scan is exact source not equal to `evaluate`; eval is Unicode-case-insensitive source containing `evaluate` under current PG query. Empty current values are zero. A delta is `(current-previous)/previous` only when previous window has rows and the specific previous metric is >0; otherwise NULL. Error rate is runs with `errors>0` divided by completed runs. |
+| `get_performance_overview` | window days -> overview | Uses completed runs only. Current window is `started_at >= now-window`; previous is `[now-2*window, now-window)`. Scan is exact source not equal to `evaluate`; eval is case-insensitive source matching PostgreSQL `ILIKE '%evaluat%'` (for example evaluate/evaluation/evaluating). Empty current values are zero. A delta is `(current-previous)/previous` only when previous window has rows and the specific previous metric is >0; otherwise NULL. Error rate is runs with `errors>0` divided by completed runs. |
 | `get_step_timings` | window, optional exact type -> list | Inclusive cutoff on `created_at`; exact step type when supplied. Ordered `created_at ASC, id ASC`; empty is `[]`. Boolean and timestamps hydrate to bool and aware UTC datetime. |
 | `get_llm_daily_stats` | window -> list | Inclusive timestamp cutoff; UTC day buckets; only days with rows; day ASC. Token values are arithmetic means. P50/P95 use PostgreSQL continuous percentile: sort, `h=(n-1)*p`, linearly interpolate floor/ceil. Empty is `[]`. |
 | `get_funnel_stats` | window -> list | Only exact source `evaluate`, inclusive start cutoff. `after_gate=max(jobs_gate_passed,stage_a_scored,stage_b_scored)`; `scored=max(stage_a_scored,stage_b_scored)`; add gated/filtered counts as current formulas do. Ordered started time DESC; equal-time ordering is currently unspecified. Scan-only window returns `[]`. |
@@ -288,9 +288,31 @@ fields are:
 ```
 
 `tables` must contain all 14 names and each table's row count, ordered canonical
-checksum, PK columns, and max generated integer id when applicable. Canonical
-checksums normalize timestamps, booleans, floats, and JSON before hashing and are
-computed in ordered chunks rather than by loading an entire table.
+checksum, PK columns, and max generated integer id when applicable. The manifest
+also records `canonical_row_codec_version=1`; an unknown codec version fails
+closed.
+
+Codec v1 freezes byte identity rather than merely saying "normalize":
+
+- table columns follow the versioned migration manifest, never driver-returned
+  dictionary order; rows sort by the full declared primary-key tuple ascending;
+- the table name, column names, declared logical type, and every value are framed
+  as `type-tag + ASCII byte-length + ':' + payload`, so adjacent values cannot
+  collide;
+- NULL, bool, integer, decimal/float, UTC datetime, raw UTF-8 text/bytes, and JSON
+  use distinct type tags; raw TEXT is never parsed as JSON;
+- datetime payload is UTC `YYYY-MM-DDTHH:MM:SS.ffffffZ`; integers are minimal
+  base-10; finite numeric values use the codec's canonical decimal form and
+  NaN/Infinity are rejected; JSON is parsed then emitted as sorted-key compact
+  UTF-8 with `ensure_ascii=false` and the same finite-number rule;
+- SHA-256 streams the framed schema header followed by framed rows in fixed-size
+  ordered chunks. Chunk size cannot change the digest.
+
+Task 0 must add one mixed-type golden fixture (including NULL/empty, Unicode,
+delimiter-like text, timezone offsets, numeric edges, JSON key order, and
+multi-column PK order) with one literal expected SHA-256 consumed by both PG and
+SQLite migration paths. A round-trip test must prove different row boundaries do
+not produce the same byte stream.
 
 ## Command contract and metric reproduction
 
@@ -375,18 +397,22 @@ upgraded to 0008.
 SQLite-to-PostgreSQL rollback is allowed only when all conditions hold:
 
 1. All SQLite Web/CLI writers are stopped and writer quiescence is recorded.
-2. The rollback PG target is revision 0008 and was restored from the exact
+2. The source SQLite has the exact supported schema version, exact 15-table set,
+   and exact per-table column/type manifest recorded at cutover. The schema is
+   frozen throughout soak; any unknown version, extra/missing table, or
+   extra/missing/changed column fails closed before reading rows.
+3. The rollback PG target is revision 0008 and was restored from the exact
    cutover snapshot identified by the manifest.
-3. Target PG canonical checksums still match that cutover snapshot. Any target-side
+4. Target PG canonical checksums still match that cutover snapshot. Any target-side
    insert, update, delete, or unknown divergence fails closed.
-4. A final consistent SQLite backup and manifest are created before rollback.
-5. All 14 tables are replayed in FK-safe order inside an all-or-nothing migration
+5. A final consistent SQLite backup and manifest are created before rollback.
+6. All 14 tables are replayed in FK-safe order inside an all-or-nothing migration
    boundary; deletes as well as inserts/updates are represented.
-6. Conflicts are detected; there is no last-write-wins merge.
-7. PG sequences are reset for every generated integer identity.
-8. Reverse row/PK/FK/JSON/checksum/business parity reaches 100%, then CLI/API smoke
+7. Conflicts are detected; there is no last-write-wins merge.
+8. PG sequences are reset for every generated integer identity.
+9. Reverse row/PK/FK/JSON/checksum/business parity reaches 100%, then CLI/API smoke
    passes before traffic switches.
-9. On any failure, rollback import itself rolls back and SQLite remains the formal
+10. On any failure, rollback import itself rolls back and SQLite remains the formal
    source of truth.
 
 ## Evidence gaps and owner tasks
@@ -403,7 +429,7 @@ contract:
 | `needs_attention` and equal-time funnel ordering are unspecified today | Preserve unordered semantics in APIs/tests, or return to design before introducing a user-visible order |
 | Legacy parity covers ten tables and excludes current Phase 3/6/9 data | Task 4 replaces it for cutover with all-14-table chunked parity |
 | Four port methods have no direct production caller | Retain and test until a separately reviewed surface-retirement decision |
-| Main plan's 90+3 runtime count omits two live source lookup methods | Integration owner updates total-plan accounting to 92+3 before assigning implementation slices |
+| Main plan originally omitted two live source lookup methods | Resolved by plan commit `d6565c3`: total accounting is now 92 existing + 3 lease runtime methods |
 
 ## Completion evidence for this document
 

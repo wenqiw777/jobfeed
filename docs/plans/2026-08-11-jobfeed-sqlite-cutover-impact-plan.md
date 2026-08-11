@@ -96,7 +96,9 @@ Jobfeed 适合从 PostgreSQL 收敛为 SQLite，但这不是“小改连接串�
 
 数量大的原因是项目不用一个无类型的通用 `execute()`，而是把每个业务查询和原子命令显式放在 port 上；同时 Phase 1–9 的 jobs、evaluation queue、workflow、application 和 analytics 能力最终都由一个 concrete store 实现。显式合同本身保护了 service/adapter 边界，但单个 5,895 行实现已经形成维护热点。
 
-本重构不以“减少方法数”为目标。推荐在不改变上层 92 个现有 runtime 持久化行为的前提下，把 SQLite 实现按 core、claims、workflow、applications、views/performance 等 capability 拆成内部模块，再由一个 `SQLiteStore` facade 组合。run lease 新增 `acquire_run_lease`、`renew_run_lease`、`finalize_run_with_lease` 3 个明确操作，因此目标 runtime 合同是 92 个既有行为加 3 个新行为，即 95 个。18 个迁移专用方法单独归入 cutover/rollback tooling，不塞进 runtime facade。这样减少单文件职责，不牺牲原子事务或类型化行为。
+这 92 个是“必须解释的现有行为 inventory”，不是最终必须保留的 public method 数。Task 0 必须给每个行为标记 `retain`、`merge`、`compat-wrapper` 或 `retire`；只有证明无 production 调用、无 CLI/API 合同、无必要兼容用途的项才可退休。相同 eligibility、filter/sort、transaction 或 single/batch 语义应收敛到 typed command/query family。AST 静态审计只找到 12 个无直接 production caller 候选，再加上约 4–6 个安全 fold，因此最终 runtime capability surface 的证据型目标是 **78–82 个 public operations**（中心约 80），而不是原样复制 92 个方法或为追求数字硬压到 60。
+
+run lease 新增 `start_run_with_lease`、`renew_run_lease`、`finalize_run_with_lease` 3 个明确行为，因此完整 disposition 输入是 92 个既有行为加 3 个新行为，即 95 个。`start_run_with_lease` 将 lease acquire 和 running `PipelineRun` insert 放在同一事务，不允许产生“已领 lease 但没有 run”的半状态。18 个迁移专用方法单独归入 cutover/rollback tooling，不塞进 runtime facade。行为可以通过合并后的一个 typed operation 保留；合并不得把原子边界、输入类型、排序或错误语义藏进通用 `execute()`。
 
 ### 3.2 当前本地数据快照
 
@@ -229,14 +231,14 @@ run_leases(
 - 两行 lease 记录在 schema 创建时以 `generation=0` 永久存在；finalize 只清空 owner/run/timestamps，不删除行，不重置 generation。
 - 每次 run 使用不可复用 UUID 作为 `owner_id`，`run_id` 也不可复用。
 - heartbeat interval 为 30 秒，TTL 为 180 秒，全部使用应用提供的 UTC 时间。
-- `acquire_run_lease(kind, owner_id, run_id)` 在 `BEGIN IMMEDIATE` 中领取空闲或过期 lease；每次 acquire 都将 `generation + 1` 并返回 generation。
+- `start_run_with_lease(run, kind, owner_id, now)` 在同一个 `BEGIN IMMEDIATE` 中领取空闲/过期 lease、将 `generation + 1` 并插入 status=`running`/`finished_at=NULL` 的 `PipelineRun`；任一步失败全部 rollback，活跃 lease 冲突返回 `None` 且不插入 run。
 - `renew_run_lease` 和 `finalize_run_with_lease` 必须同时匹配 `kind + run_id + owner_id + generation`；finalize 在一个事务中更新 run 终态并清空 lease owner 字段。
 - renew 失败意味着 lease 已丢失，旧 owner 必须停止调度新工作；旧 generation 不能 renew 或 finalize 新 owner 的 run，包括正常 finalize 后立即 reacquire 的情况。
-- CLI 和 Web 都必须先 acquire lease，再创建/启动对应 run；进程内 lock 只作为快速 UX guard，不再是正确性边界。
+- CLI 和 Web 共用同一个 run orchestration helper，先原子 start run + lease，再启动 heartbeat，最后才调度任何外部 fetch/LLM 工作；进程内 lock 只作为快速 UX guard，不再是正确性边界。
 
 - 同类 run 是否允许并行由 DB lease 决定，不只看当前 Python 进程。
 - 活跃 owner 定期刷新 heartbeat。
-- startup recovery 只回收已过 TTL 的 owner。
+- startup recovery 作为 store lifecycle 内部事务，只将已过 TTL 的 occupied lease 对应 running run 标记 failed 并清空 owner/run/timestamps，保留 generation；未过期 lease 完全不动。
 - 该修正属于数据库切换的必要兼容工作，因为 SQLite 会让 CLI/Web 共享同一文件；不是引入分布式 worker。
 
 ## 6. PostgreSQL 专有行为翻译
@@ -336,7 +338,7 @@ PG backup
 | 子系统 | 主要文件/目录 | 变更类型 | 风险 |
 |---|---|---|---|
 | Store adapter | `src/jobfeed/adapters/store/postgres.py` | 新 SQLite 实现，切换后删除 PG 实现 | 最高 |
-| Store ports | `src/jobfeed/ports/store*.py` | 原则上保持接口；仅为 run lease 增加最小能力 | 高 |
+| Store ports | `src/jobfeed/ports/store*.py` | 95 个行为逐项 disposition；合并为 78–82 个 typed operations，并增加最小 run-lease 能力 | 高 |
 | Schema/migrations | `migrations/`, 新 SQLite schema/migrator | 新 baseline、版本升级和恢复 | 最高 |
 | Import/parity | `legacy_import.py`, `parity.py`, `cli/migrate.py` | 新 PG→SQLite 路径并扩展到 14 表 | 最高 |
 | Runtime wiring | `config.py`, `cli/__init__.py`, `web/app.py` | 默认 backend、路径、lifecycle | 高 |
@@ -382,12 +384,12 @@ commit `49ac0c1` 曾包含 7 个 SQLite production 文件，共 1,094 LOC，以�
 | 指标 | Before | After target |
 |---|---:|---:|
 | 单个 store 文件 | 5,895 LOC | facade ≤250 LOC；capability 文件通常 300–800 LOC |
-| Runtime storage 总 LOC | 5,895 | **3,200–3,800**；中心目标约 3,500 |
-| Runtime store public surface | 110 public methods | 保留 92 个现有 runtime 合同并加 3 个 lease 操作；18 个迁移方法移出 facade，退休项另行批准 |
+| Runtime storage 总 LOC | 5,895 | **2,800–3,500**；评审上界 3,800 |
+| Runtime store public surface | 110 public methods | 95 个行为全部 disposition；合并/退休后保留 **78–82** 个 typed public operations；18 个迁移方法移出 facade |
 | Import/parity 方法位置 | 18 个混在 `PostgresStore` | 独立 migration adapter |
 | 重复 transaction/query family | 多处手写 | 每个 family 一个内部实现 |
 
-3,200–3,800 LOC 是架构目标，不是允许删除 docstring、压缩 SQL 排版或制造抽象的硬门槛。如果全部 92 个现有 runtime 合同最终都必须保留，允许评审后的上界扩大到 4,200 LOC；超出时必须说明是不可合并的业务语义，而不是重复 ceremony。
+2,800–3,500 LOC 是架构目标，不是允许删除 docstring、压缩 SQL 排版或制造抽象的硬门槛。如果 disposition 证明更多行为确实不可合并，允许评审后至 3,800 LOC；超出时必须说明是不可合并的业务语义，而不是重复 ceremony。
 
 不推荐为追求 2,000 LOC 引入万能 `execute(sql, params)` port、通用 CRUD repository、完整 ORM session/identity-map 模型或元编程 repository。它们会把类型、原子性、排序和 claim 规则从显式合同移到运行时约定，文件变短但系统更难验证。若实现只能通过这些手段命中 LOC 目标，应保留更多显式代码。
 
@@ -397,7 +399,7 @@ commit `49ac0c1` 曾包含 7 个 SQLite production 文件，共 1,094 LOC，以�
 
 | 变更 | 预计 LOC |
 |---|---:|
-| SQLite runtime adapter | 3,200–3,800；全部旧合同保留时上界 4,200 |
+| SQLite runtime adapter | 2,800–3,500；经 disposition review 的上界 3,800 |
 | SQLite schema、migrator、backup lifecycle | 700–1,200 |
 | PG export、14 表 parity、回滚 importer | 1,200–2,000 |
 | Config、Docker、CI、CLI wiring | 400–800 |
@@ -461,7 +463,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 ### Task 0：冻结行为合同
 
-- **结果：** 所有 92 个现有 runtime 持久化操作和 3 个新 run-lease 操作映射到现有测试或新增 golden contract，并形成经 review 的逐方法矩阵。18 个迁移专用方法也必须有 cutover/rollback 合同，但不进入 runtime facade。每一行必须写明输入/输出/error、事务边界、幂等性、排序/tie-break、NULL、casefold、时间、JSON 和 percentile 规则中适用的项目。
+- **结果：** 所有 92 个现有 runtime 持久化行为和 3 个新 run-lease 行为映射到现有测试或新增 golden contract，并逐项得到 `retain/merge/compat-wrapper/retire` disposition。最终 port 设计目标为 78–82 个 typed public operations；行为合并后仍由原 golden contract 验证。18 个迁移专用方法也必须有 cutover/rollback 合同，但不进入 runtime facade。每一行必须写明输入/输出/error、事务边界、幂等性、排序/tie-break、NULL、casefold、时间、JSON 和 percentile 规则中适用的项目。
 - **边界：** 不写 SQLite production adapter。
 - **证据：** PG baseline 测试清单、snapshot manifest、采集命令与 hash、逐方法行为矩阵、第 9.1 节 benchmark 报告、最低 SQLite 版本和回滚选择被记录并评审通过。矩阵未通过前 Task 1–3 不得启动并行实现。
 - **返回设计：** 若发现业务依赖真正需要多个独立 DB writer 或远程 DB 访问，停止并重评 SQLite。
@@ -546,7 +548,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 ## 12. 验收标准
 
-1. 92 个现有 runtime persistence operations 和 3 个新 run-lease operations 全部有 SQLite contract coverage；18 个迁移专用 operations 有双向迁移 contract coverage。
+1. 92 个现有 runtime persistence behaviors 和 3 个新 run-lease behaviors 全部有 disposition 与 contract coverage；最终 runtime port 为 78–82 个 typed public operations；18 个迁移专用 operations 有双向迁移 contract coverage。
 2. PostgreSQL 与 SQLite golden behavior 对齐，不靠删测试或放宽断言通过。
 3. 14 张迁移表的 row count、PK、FK、JSON/checksum 和关键聚合全部通过；新增 `run_leases` 只有两个空闲 seed row 且约束有效。
 4. 第 9.1 节的双进程 contention workload 中，同一 evaluation job 最多被领取一次，且 0 次 retry 用尽后的 `SQLITE_BUSY`。
@@ -566,7 +568,8 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 18. Task 8 完成时，普通 runtime 中 PG service、`PostgresStore`、asyncpg/Alembic、PG testcontainers lane 和过时文档引用清零，正式 Docker CLI smoke 与全 CI 通过。
 19. `SQLiteStore` facade 不超过 250 LOC；capability 文件通常为 300–800 LOC，超出必须有明确职责和 review 说明。
 20. SQLAlchemy 不得出现在 domain/services；不得引入 ORM `Session`、identity map 或把 domain dataclass 改成 ORM entity。
-21. Runtime storage 以 3,200–3,800 LOC 为 review target；全部既有合同均需保留时允许至 4,200 LOC。LOC 不能通过删除必要文档、压缩 SQL 或引入万能动态接口达标。
+21. Runtime storage 以 2,800–3,500 LOC 为 review target，经 disposition review 最多 3,800 LOC。LOC 不能通过删除必要文档、压缩 SQL 或引入万能动态接口达标。
+22. 任何 `merge` 必须有 typed command/query 边界和唯一内部 source of truth；任何 `retire` 必须有 production/CLI/API call-site 为零的证据和明确评审记录。
 
 ## 13. 失败模式与控制
 
