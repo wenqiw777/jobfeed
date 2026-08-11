@@ -82,6 +82,9 @@ jobfeed = "jobfeed.cli:cli"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"jobfeed.adapters.migration" = ["canonical_schema_manifest_v1.json"]
+
 [tool.ruff]
 line-length = 88
 target-version = "py311"
