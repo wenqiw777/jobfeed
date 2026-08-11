@@ -443,21 +443,10 @@ missing, extra, duplicate, or reordered tables/columns; or any source type,
 target type, codec kind, nullability, or primary-key mismatch. They never infer a
 replacement mapping.
 
-Codec v1 freezes byte identity rather than merely saying "normalize":
-
-- table columns follow the versioned migration manifest, never driver-returned
-  dictionary order; rows sort by the full declared primary-key tuple ascending;
-- the table name, column names, declared logical type, and every value are framed
-  as `type-tag + ASCII byte-length + ':' + payload`, so adjacent values cannot
-  collide;
-- NULL, bool, integer, decimal/float, UTC datetime, raw UTF-8 text/bytes, and JSON
-  use distinct type tags; raw TEXT is never parsed as JSON;
-- datetime payload is UTC `YYYY-MM-DDTHH:MM:SS.ffffffZ`; integers are minimal
-  base-10; finite numeric values use the codec's canonical decimal form and
-  NaN/Infinity are rejected; JSON is parsed then emitted as sorted-key compact
-  UTF-8 with `ensure_ascii=false` and the same finite-number rule;
-- SHA-256 streams the framed schema header followed by framed rows in fixed-size
-  ordered chunks. Chunk size cannot change the digest.
+Codec v1 follows the exact tags, uint64 framing, scalar payloads, JSON numeric
+rules, schema order, and primary-key order frozen in **Codec v1 framing** above.
+Rows stream in full primary-key order and SHA-256 consumes fixed-size ordered
+chunks; chunk size cannot change the digest. Raw TEXT is never parsed as JSON.
 
 Task 0's mixed-type golden fixture covers NULL/empty, Unicode, delimiter-like
 text, timezone offsets, signed zero, JSON key order, nested JSON signed zero, and
