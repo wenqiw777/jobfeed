@@ -4851,11 +4851,13 @@ class PostgresStore:
             by_resume_dict: dict[str, ResumeVariantStats] | None = None
             if by_resume:
                 vrows = await conn.fetch(
-                    f"""SELECT job_id, resume_variant_at_change
+                    f"""SELECT DISTINCT ON (job_id)
+                               job_id, resume_variant_at_change
                         FROM job_status_history
                         WHERE job_id IN ({id_ph})
                           AND to_status = 'applied'
-                          AND changed_at >= ${len(id_list) + 1}""",
+                          AND changed_at >= ${len(id_list) + 1}
+                        ORDER BY job_id, id ASC""",
                     *id_list,
                     cutoff,
                 )

@@ -772,6 +772,37 @@ class TestApplicationAudit:
         assert stats.by_resume is not None
         assert sum(v.sent for v in stats.by_resume.values()) >= TWO_APPLIED_JOBS
 
+    async def test_application_stats_uses_first_apply_variant(self, contract_store):
+        """Later same-status history must not replace the apply-time variant."""
+        job_id, _ = await _insert_job(contract_store, "stats-first-variant")
+        await contract_store.register_resume_variant(name="first-variant")
+        await contract_store.register_resume_variant(name="later-variant")
+        await contract_store.transition_status(
+            TransitionRequest(
+                job_id=job_id,
+                new_status="applied",
+                resume_variant="first-variant",
+                force=True,
+            )
+        )
+        await contract_store.transition_status(
+            TransitionRequest(
+                job_id=job_id,
+                new_status="applied",
+                resume_variant="later-variant",
+                force=True,
+            )
+        )
+
+        stats = await contract_store.application_stats(
+            since_days_ago=1,
+            by_resume=True,
+        )
+
+        assert stats.by_resume is not None
+        assert stats.by_resume["first-variant"].sent == 1
+        assert "later-variant" not in stats.by_resume
+
     async def test_duplicate_application_after_terminal_is_noop(self, contract_store):
         """A duplicate record_application after a terminal status stays a no-op.
 
