@@ -143,8 +143,29 @@ count as public when calculating that target.
 - Canonical JSON is UTF-8, sorted-key, compact JSON with `ensure_ascii=false`.
 - NaN and Infinity are rejected. JSON number, bool, null, list, and object types
   must round-trip as those types, not strings.
+- At every array/object depth, JSON floating `-0.0` canonicalizes to floating
+  `0.0`. This matches the target backend's loss of signed-zero information.
+  Integer `0` remains an integer and is not collapsed with floating `0.0`.
 - `stage_b_fit_json.score_0_100` is nullable. Missing JSON, JSON null, missing key,
   or a null key maps to a NULL score and follows the method's NULL ordering.
+
+### Backend scalar canonicalization
+
+- A `bool` column accepts a PostgreSQL/Python boolean or the exact SQLite
+  integers `0` and `1`; both encode with the same boolean tag. Any other integer
+  fails closed instead of being treated as truthy.
+- A finite SQL floating `-0.0` and `+0.0` use the same positive-zero encoding.
+  SQLite `REAL` does not preserve the sign on round-trip, and no frozen product
+  behavior observes it. Other finite floats retain their exact hexadecimal value;
+  non-finite floats fail closed.
+- JSON signed-zero normalization is recursive because PostgreSQL JSON/JSONB and
+  SQLite text round-trips may choose different zero signs. This is the only JSON
+  numeric equivalence added by codec v1; integer/float distinctions remain.
+- Codec v1 is pinned by `tests/fixtures/canonical_row_v1_golden.json` to mixed
+  literal SHA-256
+  `a278e4605b08f9eaf95181974771953a41309ba370d288cc443b8dae90d978d8`.
+  A later byte-level semantic change requires a new codec version and manifest,
+  not an in-place rewrite of a completed cutover's v1 digest.
 
 ### Unicode search
 
@@ -294,8 +315,14 @@ fields are:
 ```json
 {
   "format_version": 1,
+  "canonical_row_codec_version": "jobfeed-canonical-row-v1",
   "created_at_utc": "2026-08-11T00:00:00.000000Z",
   "git_commit": "full-sha",
+  "migrated_table_order": [
+    "jobs", "evaluations", "pipeline_runs", "resume_variants", "job_status",
+    "job_status_history", "applied", "resume_snapshots", "companies",
+    "cost_ledger", "state", "llm_usage", "interview_rounds", "step_timings"
+  ],
   "source": {
     "backend": "postgresql",
     "alembic_revision": "0008",
@@ -314,7 +341,48 @@ fields are:
       "row_count": 0,
       "primary_key": ["id"],
       "max_identity": 0,
-      "canonical_sha256": "sha256"
+      "canonical_sha256": "sha256",
+      "canonical_schema": {
+        "name": "jobs-v1",
+        "columns": [
+          {"name": "id", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false},
+          {"name": "platform", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
+          {"name": "canonical_id", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
+          {"name": "url", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
+          {"name": "title", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
+          {"name": "company", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
+          {"name": "location", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
+          {"name": "jd_text", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "jd_quality", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "posted_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
+          {"name": "discovered_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": false},
+          {"name": "enriched_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
+          {"name": "enrich_source", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "company_norm", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "title_norm", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "location_norm", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "jd_lang", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "enrich_error", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "quality_rubric_version", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": true},
+          {"name": "reapply_notice", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "hard_filter", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "seniority_level", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "degree_required", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "clearance_required", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "bool", "nullable": true},
+          {"name": "school_restricted", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "bool", "nullable": true},
+          {"name": "domain_tags", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "json", "nullable": true},
+          {"name": "tech_required", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "json", "nullable": true},
+          {"name": "role_type", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "yoe_min", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": true},
+          {"name": "ml_gate_score", "source_sql_type": "double precision", "target_sqlite_type": "REAL", "codec_kind": "float", "nullable": true},
+          {"name": "ml_gate_result", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "ml_gate_fail_reason", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "ml_gate_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
+          {"name": "ml_gate_version", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+          {"name": "is_swe_role", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "bool", "nullable": true},
+          {"name": "closed_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true}
+        ]
+      }
     }
   },
   "aggregates": {
@@ -339,10 +407,14 @@ fields are:
 }
 ```
 
-`tables` must contain all 14 names and each table's row count, ordered canonical
-checksum, PK columns, and max generated integer id when applicable. The manifest
-also records `canonical_row_codec_version=1`; an unknown codec version fails
-closed.
+The example expands the complete 0008 `jobs` schema. A real manifest must use
+the same `canonical_schema` structure for every column of all 14 names in
+`migrated_table_order`, in exact table and column order, plus each table's row
+count, ordered canonical checksum, PK columns, and max generated integer id when
+applicable. The importer and verifier fail closed on an unknown codec version;
+missing, extra, duplicate, or reordered tables/columns; or any source type,
+target type, codec kind, nullability, or primary-key mismatch. They never infer a
+replacement mapping.
 
 Codec v1 freezes byte identity rather than merely saying "normalize":
 
@@ -360,11 +432,12 @@ Codec v1 freezes byte identity rather than merely saying "normalize":
 - SHA-256 streams the framed schema header followed by framed rows in fixed-size
   ordered chunks. Chunk size cannot change the digest.
 
-Task 0 must add one mixed-type golden fixture (including NULL/empty, Unicode,
-delimiter-like text, timezone offsets, numeric edges, JSON key order, and
-multi-column PK order) with one literal expected SHA-256 consumed by both PG and
-SQLite migration paths. A round-trip test must prove different row boundaries do
-not produce the same byte stream.
+Task 0's mixed-type golden fixture covers NULL/empty, Unicode, delimiter-like
+text, timezone offsets, signed zero, JSON key order, nested JSON signed zero, and
+multi-column PK order. Its literal SHA-256 is consumed by backend-neutral tests;
+SQLite in-memory round trips additionally prove REAL signed-zero and BOOLEAN
+integer representations normalize to the same bytes. Boundary-framing tests
+prove different row boundaries cannot collide.
 
 ## Command contract and metric reproduction
 
