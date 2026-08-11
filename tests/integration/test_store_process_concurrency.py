@@ -181,8 +181,11 @@ async def test_process_claims_respect_stage_a_and_b_stale_boundaries(
         ],
         sync_dir=tmp_path / "stage-a-stale-boundary",
     )
-    stage_a_ids = set().union(*(_claimed_ids(result) for result in stage_a_results))
-    assert stage_a_ids == {stage_a_stale.job_id}
+    stage_a_claimed_sets = [_claimed_ids(result) for result in stage_a_results]
+    assert stage_a_claimed_sets[0].isdisjoint(stage_a_claimed_sets[1])
+    assert stage_a_claimed_sets[0] | stage_a_claimed_sets[1] == {
+        stage_a_stale.job_id
+    }
 
     stage_b_stale_id = await store.save_job(_job("stage-b-stale"))
     stage_b_fresh_id = await store.save_job(_job("stage-b-fresh"))
@@ -208,8 +211,11 @@ async def test_process_claims_respect_stage_a_and_b_stale_boundaries(
         ],
         sync_dir=tmp_path / "stage-b-stale-boundary",
     )
-    stage_b_ids = set().union(*(_claimed_ids(result) for result in stage_b_results))
-    assert stage_b_ids == {stage_b_stale_id.job_id}
+    stage_b_claimed_sets = [_claimed_ids(result) for result in stage_b_results]
+    assert stage_b_claimed_sets[0].isdisjoint(stage_b_claimed_sets[1])
+    assert stage_b_claimed_sets[0] | stage_b_claimed_sets[1] == {
+        stage_b_stale_id.job_id
+    }
 
 
 async def test_reader_observes_committed_state_while_process_writer_is_open(
