@@ -4,6 +4,7 @@ Every test uses the ``contract_store`` fixture defined in ``tests/conftest.py``.
 Tests exercise **Protocol methods only** — no adapter-specific SQL.
 """
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -55,6 +56,7 @@ BUMP_SECOND_COUNT = 2
 FLOAT_TOLERANCE = 1e-6
 POST_APPLY_RESPONSE_COUNT = 2
 MEDIAN_RESPONSE_DAYS = 3.0
+SINGLE_COMPLETION_COUNT = 1
 RUN_STAGE_A_COUNT = 3
 RUN_STAGE_B_COUNT = 2
 NO_DECAY_THRESHOLD = 9999
@@ -1428,6 +1430,31 @@ class TestInterviewRoundQueries:
         rounds = await contract_store.list_upcoming_interviews(within_days=7)
 
         assert [round_.label for round_ in rounds] == ["Future and active"]
+
+    async def test_concurrent_completion_has_exactly_one_winner(
+        self,
+        contract_store,
+        contract_control,
+    ):
+        """Two writers cannot both complete the same open interview round."""
+        job_id, _ = await _insert_job(contract_store, "round-complete-race")
+        await contract_store.add_interview_round(
+            job_id=job_id,
+            label="Concurrent completion",
+        )
+
+        async with contract_control.delay_interview_completion_updates():
+            results = await asyncio.gather(
+                contract_store.complete_interview_round(job_id=job_id),
+                contract_store.complete_interview_round(job_id=job_id),
+                return_exceptions=True,
+            )
+
+        successes = [result for result in results if not isinstance(result, Exception)]
+        failures = [result for result in results if isinstance(result, Exception)]
+        assert len(successes) == SINGLE_COMPLETION_COUNT
+        assert len(failures) == SINGLE_COMPLETION_COUNT
+        assert isinstance(failures[0], ValueError)
 
 
 # ===========================================================================

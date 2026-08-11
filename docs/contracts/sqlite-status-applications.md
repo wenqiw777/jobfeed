@@ -167,7 +167,7 @@ application/status 没写”的部分提交。
 |---|---|---|---|---|
 | `add_interview_round(job_id, label, scheduled_at)` | 返回新 `InterviewRound`；missing/non-numeric job 分别 FK error/`ValueError`。 | `MAX(round_index)+1` insert 与 status clock bump 同事务。PG 对 unique race 用 savepoint 后重试一次；SQLite 必须通过 serialized write 保留唯一、单调递增的 assignment。重复调用会新增 round，不幂等。 | index 为该 job 当前 max+1，从 1 开始；label 必填但 store 不拒绝空串；scheduled_at nullable；created_at DB now。 | `tests/integration/test_interview_rounds_store.py::test_add_rounds_sequential_index`、scheduled、clock、cascade；workflow/web auto-transition tests。 |
 | `list_interview_rounds(job_id)` | 返回该 job rounds；无 row/不存在 job 都返回 `[]`；非数字 ID 抛 `ValueError`。 | 单条只读。 | 严格 `round_index ASC`；字段 NULL 原样返回。 | `tests/integration/test_interview_rounds_store.py::test_list_interview_rounds_ordered`、`test_list_empty_rounds`；web job-detail test。 |
-| `complete_interview_round(job_id, round_index, notes)` | 指定 index 时完成该 open round；None 时完成最大 index 的 open round。无匹配、已完成或不存在均抛 `ValueError("no open interview round...")`。 | target select、round update、status clock bump 同事务；成功后同一 round 再调用失败。SQLite 必须防止并发双完成。 | completed_at DB now。`notes is None` 保留旧 notes；非-None（包括空串）覆盖。未指定时按 `round_index DESC LIMIT 1`。 | `tests/integration/test_interview_rounds_store.py::test_complete_*`、clock/notes tests；web complete tests。 |
+| `complete_interview_round(job_id, round_index, notes)` | 指定 index 时完成该 open round；None 时完成最大 index 的 open round。无匹配、已完成、不存在或并发 loser 均抛 `ValueError("no open interview round...")`。 | target select、guarded update (`completed_at IS NULL`)、status clock bump 同事务；同一 round 的并发完成恰好一个成功。 | completed_at DB now。`notes is None` 保留旧 notes；非-None（包括空串）覆盖。未指定时按 `round_index DESC LIMIT 1`。 | `tests/contract/test_store_contract.py::TestInterviewRoundQueries::test_concurrent_completion_has_exactly_one_winner`；`tests/integration/test_interview_rounds_store.py::test_complete_*`、clock/notes tests；web complete tests。 |
 | `list_upcoming_interviews(within_days)` | 返回 future scheduled、open 且 parent status 正为 interviewing 的 rounds。 | 单条只读。 | `now <= scheduled_at <= now + within_days`；NULL scheduled、past、completed 与 non-interviewing parent 均排除。排序 `scheduled_at ASC`，tie 未定义。 | `tests/contract/test_store_contract.py::TestInterviewRoundQueries::test_upcoming_requires_future_round_and_interviewing_parent`；`tests/integration/test_interview_rounds_store.py::test_list_upcoming_interviews` 与 `test_upcoming_excludes_completed`。无 production call site，见 7。 |
 
 ## 6. SQLite 实现必须保持的原子失败场景
@@ -186,9 +186,8 @@ application/status 没写”的部分提交。
 6. add interview round 后 status clock update 故障：round insert rollback。
 7. complete round 后 status clock update 故障：completed_at/notes update rollback。
 8. 两个 writer 同时 add round：`(job_id, round_index)` 不重复、不丢 round。
-9. 两个 writer 同时 complete 同一 open round：当前 PG 没有显式 row lock，且没有
-   并发 golden test；SQLite slice 接受前必须决定是保留“未定义”还是冻结为只有一
-   个成功。
+9. 两个 writer 同时 complete 同一 open round：恰好一个成功，另一个得到 no-open
+   `ValueError`；不得产生两次成功响应。
 
 ## 7. 静态无生产调用候选与未覆盖行为
 
@@ -213,8 +212,8 @@ application/status 没写”的部分提交。
 - `get_application` 的全 nullable/TEXT 字段 round-trip。
 - `list_statuses(notes_contain)` 对 `%`、`_` 的 wildcard 语义；当前 method 名更像
   literal contains，但 PG 实现会把它们当 pattern。
-- status/bulk/apply/interview 的双 writer contention tests；尤其需要决定 concurrent
-  complete-round 的目标语义。
+- status/bulk/apply 的其余双 writer contention tests；complete-round 已冻结为单
+  winner。
 
 这些 gap 不否定现有合同；它们阻止实现者把未定义细节误当成可自由改变的行为。
 

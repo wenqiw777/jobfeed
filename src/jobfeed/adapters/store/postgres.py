@@ -5178,18 +5178,19 @@ class PostgresStore:
                     "UPDATE interview_rounds"
                     " SET completed_at = now(),"
                     " notes = COALESCE($1, notes)"
-                    " WHERE id = $2"
+                    " WHERE id = $2 AND completed_at IS NULL"
                     " RETURNING *",
                     notes,
                     target["id"],
                 )
+                if row is None:
+                    raise ValueError(f"no open interview round for job_id={job_id}")
                 await conn.execute(
                     "UPDATE job_status"
                     " SET last_status_change_at = now()"
                     " WHERE job_id = $1",
                     jid,
                 )
-        assert row is not None
         return _row_to_interview_round(row)
 
     async def list_upcoming_interviews(

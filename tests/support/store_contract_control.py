@@ -98,5 +98,39 @@ class PostgresStoreContractControl:
             )
             await conn.close()
 
+    @asynccontextmanager
+    async def delay_interview_completion_updates(self) -> AsyncIterator[None]:
+        """Delay completion updates so concurrent selectors overlap reliably."""
+        conn = await asyncpg.connect(self._dsn)
+        try:
+            await conn.execute(
+                """CREATE FUNCTION contract_delay_interview_completion_fn()
+                   RETURNS TRIGGER AS $$
+                   BEGIN
+                       PERFORM pg_sleep(0.2);
+                       RETURN NEW;
+                   END;
+                   $$ LANGUAGE plpgsql"""
+            )
+            await conn.execute(
+                """CREATE TRIGGER contract_delay_interview_completion
+                   BEFORE UPDATE OF completed_at ON interview_rounds
+                   FOR EACH ROW WHEN (
+                       OLD.completed_at IS NULL
+                       AND NEW.completed_at IS NOT NULL
+                   )
+                   EXECUTE FUNCTION contract_delay_interview_completion_fn()"""
+            )
+            yield
+        finally:
+            await conn.execute(
+                "DROP TRIGGER IF EXISTS contract_delay_interview_completion "
+                "ON interview_rounds"
+            )
+            await conn.execute(
+                "DROP FUNCTION IF EXISTS contract_delay_interview_completion_fn()"
+            )
+            await conn.close()
+
 
 __all__ = ["PostgresStoreContractControl"]
