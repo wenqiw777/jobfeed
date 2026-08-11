@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import click
 
+from jobfeed.adapters.migration._baseline_workload import artifact_sha256
+from jobfeed.adapters.migration.pg_baseline import capture_pg_baseline
 from jobfeed.adapters.store.legacy_import import ImportReport, import_legacy_sqlite
 from jobfeed.adapters.store.parity import verify_import_parity
 from jobfeed.adapters.store.postgres import PostgresStore
@@ -144,6 +149,97 @@ def _check_fk_table(
 @click.group(name="migrate", help="Legacy database migration commands.")
 def migrate() -> None:
     """Legacy database migration commands."""
+
+
+def _write_new_json(path: Path, document: object) -> None:
+    """Atomically create one canonical JSON artifact without overwriting.
+
+    Args:
+        path: Explicit artifact destination.
+        document: JSON-serializable artifact.
+
+    Raises:
+        click.ClickException: If the output exists or cannot be created.
+    """
+    if path.exists():
+        raise click.ClickException(f"Refusing to overwrite artifact: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        + "\n"
+    )
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, delete=False
+        ) as handle:
+            handle.write(payload)
+            temporary = Path(handle.name)
+        temporary.replace(path)
+    except OSError as exc:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise click.ClickException(f"Cannot write artifact {path}: {exc}") from exc
+
+
+@migrate.command(
+    name="capture-pg-baseline",
+    help="Capture a gated PostgreSQL-0008 manifest and benchmark.",
+)
+@click.option("--dsn-env", required=True, help="Environment variable containing DSN.")
+@click.option(
+    "--workload",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--manifest-output", required=True, type=click.Path(dir_okay=False, path_type=Path)
+)
+@click.option(
+    "--benchmark-output",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+)
+def capture_pg_baseline_command(
+    dsn_env: str,
+    workload: Path,
+    manifest_output: Path,
+    benchmark_output: Path,
+) -> None:
+    """Capture canonical evidence without writing to the PostgreSQL source.
+
+    Args:
+        dsn_env: Name of the environment variable containing the source DSN.
+        workload: Frozen backend-neutral workload descriptor.
+        manifest_output: New snapshot manifest destination.
+        benchmark_output: New benchmark report destination.
+
+    Raises:
+        click.ClickException: If gates fail or an artifact cannot be created.
+    """
+    dsn = os.environ.get(dsn_env)
+    if not dsn:
+        raise click.ClickException(f"DSN environment variable is empty: {dsn_env}")
+    for output in (manifest_output, benchmark_output):
+        if output.exists():
+            raise click.ClickException(f"Refusing to overwrite artifact: {output}")
+    try:
+        workload_document = json.loads(workload.read_text("utf-8"))
+        git_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        manifest, benchmark = capture_pg_baseline(
+            dsn, workload_document, git_commit=git_commit
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    _write_new_json(manifest_output, manifest)
+    _write_new_json(benchmark_output, benchmark)
+    click.echo(f"Manifest: {manifest_output} sha256={artifact_sha256(manifest)}")
+    click.echo(f"Benchmark: {benchmark_output} sha256={artifact_sha256(benchmark)}")
 
 
 @migrate.command(name="inspect-sqlite", help="Inspect a legacy SQLite v16 database.")

@@ -1,0 +1,28 @@
+{
+  "workload_version": 1,
+  "warmup_count": 1,
+  "sample_count": 5,
+  "operations": [
+    {"name": "list_jobs", "coverage": "hot.list", "operation": "jobs_view_list", "params": {"limit": 100}},
+    {"name": "job_detail", "coverage": "hot.detail", "operation": "job_detail", "params": {}},
+    {"name": "status_queue", "coverage": "hot.status", "operation": "status_queue", "params": {"limit": 100}},
+    {"name": "jobs_view", "coverage": "views.query_jobs", "operation": "query_jobs_view", "params": {"limit": 100}},
+    {"name": "twin_rows", "coverage": "views.twin_rows", "operation": "list_twin_rows_by_status", "params": {"limit": 100}},
+    {"name": "twin_statuses", "coverage": "views.twin_statuses", "operation": "list_twin_statuses", "params": {}},
+    {"name": "pipeline_runs_view", "coverage": "views.pipeline_runs", "operation": "list_pipeline_runs", "params": {"limit": 100}},
+    {"name": "insights_overview", "coverage": "views.insights", "operation": "insights_overview", "params": {"window_days": 30}},
+    {"name": "performance_overview", "coverage": "perf.overview", "operation": "get_performance_overview", "params": {"window_days": 30}},
+    {"name": "step_timings", "coverage": "perf.step_timings", "operation": "get_step_timings", "params": {"window_days": 30}},
+    {"name": "llm_daily", "coverage": "perf.llm_daily", "operation": "get_llm_daily_stats", "params": {"window_days": 30}},
+    {"name": "funnel", "coverage": "perf.funnel", "operation": "get_funnel_stats", "params": {"window_days": 30}},
+    {"name": "scan_db_only", "coverage": "overhead.scan", "operation": "scan_upsert_lookup", "params": {"limit": 100}},
+    {"name": "evaluate_db_only", "coverage": "overhead.evaluate", "operation": "evaluate_pending_claim_candidates", "params": {"limit": 100}}
+  ],
+  "contention": {
+    "operation": "two_client_write_lock",
+    "clients": 2,
+    "samples": 3,
+    "hold_ms": 50,
+    "lock_key": 90422117
+  }
+}

@@ -41,6 +41,7 @@ services:
     working_dir: /app
     environment:
       JOBFEED_DB_URL: "postgresql://jobfeed:jobfeed_dev@postgres:5432/jobfeed_dev"
+      JOBFEED_MIGRATION_PG_URL: "${JOBFEED_MIGRATION_PG_URL:-}"
       # Resolve the fastembed ONNX weight cache to the path the image BAKES the
       # weights into at build time, so the canonical `docker compose run --rm`
       # path does zero runtime download and works offline. Reasserts the
