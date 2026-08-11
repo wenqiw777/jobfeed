@@ -793,6 +793,47 @@ class TestApplicationAudit:
         )
         assert again is False
 
+    async def test_apply_from_interviewing_records_without_status_regression(
+        self,
+        contract_store,
+    ):
+        """A first audit insert for an interviewing job keeps its progress."""
+        job_id, _ = await _insert_job(contract_store, "app-active-noop")
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="applied", force=True)
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=job_id, new_status="interviewing")
+        )
+        before = await contract_store.get_status(job_id)
+        assert before is not None
+
+        snapshot = ResumeSnapshot(
+            resume_hash=RESUME_HASH_A,
+            captured_at=FIXED_TIME,
+            source="master",
+            content="active application resume",
+        )
+        was_recorded = await contract_store.record_application_with_snapshots(
+            ApplicationRecord(
+                job_id=job_id,
+                applied_at=FIXED_TIME,
+                master_resume_hash=RESUME_HASH_A,
+            ),
+            snapshots=[snapshot],
+            resume_variant="active-progress",
+        )
+
+        after = await contract_store.get_status(job_id)
+        assert was_recorded is True
+        assert after is not None
+        assert after.status == "interviewing"
+        assert after.next_followup_at == before.next_followup_at
+        assert after.last_status_change_at == before.last_status_change_at
+        assert after.resume_variant == "active-progress"
+        assert await contract_store.get_resume_snapshot(RESUME_HASH_A) == snapshot
+        assert await contract_store.get_application(job_id) is not None
+
 
 # ===========================================================================
 # Group 5: Resume Snapshots
