@@ -304,7 +304,7 @@ while the new cutover tooling uses dedicated migration adapters.
 | Methods | Current contract | Target disposition |
 |---|---|---|
 | `begin_import_transaction`, `commit_import_transaction`, `rollback_import_transaction` | One dedicated connection spans all bulk calls; commit/rollback without an active transaction is a no-op | Private migration-adapter transaction context; failure rolls back the whole import |
-| `disable_triggers`, `enable_triggers` | Disable/re-enable jobs status seed trigger | New PG snapshot export never disables source triggers; SQLite temporary import creates seed/status rows explicitly and installs triggers after data load |
+| `disable_triggers`, `enable_triggers` | Disable/re-enable jobs status seed trigger | New PG snapshot export never disables source triggers. SQLite temporary import creates seed/status rows explicitly and installs triggers after data load. SQLite→PG rollback uses a private, transaction-scoped control for the single named `trg_jobs_seed_status`; it never disables all triggers. |
 | `reset_sequences` | Reset jobs and status-history serial ids beyond preserved ids | PG rollback resets every serial identity table represented in 0008; SQLite preserves integer ids and validates next generated ids |
 | ten `bulk_insert_*` methods | Empty list returns 0; otherwise insert exact typed rows and return input length; calls require active import transaction | Keep only for legacy-v16 path. New bidirectional migration covers all 14 tables, including pipeline runs, LLM usage, interview rounds, and step timings |
 | `read_all_rows`, `count_rows` | Allowlisted table only; unknown table raises `ValueError` | Replace all-row memory loading with ordered/chunked migration reads; parity allowlist is exactly the 14 migrated tables |
@@ -547,14 +547,25 @@ SQLite-to-PostgreSQL rollback is allowed only when all conditions hold:
 4. Target PG canonical checksums still match that cutover snapshot. Any target-side
    insert, update, delete, or unknown divergence fails closed.
 5. A final consistent SQLite backup and manifest are created before rollback.
-6. All 14 tables are replayed in FK-safe order inside an all-or-nothing migration
-   boundary; deletes as well as inserts/updates are represented.
+6. Before replay, the target must prove the exact `trg_jobs_seed_status` trigger
+   exists and is enabled. Inside the same all-or-nothing transaction, rollback
+   tooling disables only that named trigger, replays all 14 tables in FK-safe
+   order, resets every represented sequence, re-enables the trigger, and proves
+   it is enabled before commit. This prevents jobs inserts from synthesizing
+   duplicate status/history while preserved rows are replayed. Never use
+   `DISABLE TRIGGER ALL` or leave trigger state to an out-of-transaction cleanup.
+   Deletes as well as inserts/updates are represented.
 7. Conflicts are detected; there is no last-write-wins merge.
-8. PG sequences are reset for every generated integer identity.
+8. PG sequences are reset for every generated integer identity within the same
+   transaction described above.
 9. Reverse row/PK/FK/JSON/checksum/business parity reaches 100%, then CLI/API smoke
    passes before traffic switches.
-10. On any failure, rollback import itself rolls back and SQLite remains the formal
-   source of truth.
+10. On any failure—including immediately after trigger disable, during row
+    replay, or before re-enable—the import transaction rolls back all data,
+    sequence, and trigger-state changes; SQLite remains the formal source of
+    truth. Contract tests must inject all three failures and then prove the
+    trigger is enabled, no synthetic history survived, and a normal post-failure
+    job insert still seeds exactly one status and one history row.
 
 ## Evidence gaps and owner tasks
 

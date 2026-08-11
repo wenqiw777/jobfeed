@@ -290,6 +290,13 @@ run_leases(
 
 目标 SQLite baseline 共 15 张表：以上 14 张需要从 PG 迁移，新增的 `run_leases` 只保留 `scan`/`evaluate` 两个 `generation=0` 的空闲 seed row，不从历史 `pipeline_runs` 伪造活跃 lease。cutover 前若仍有实际 Web/CLI writer 则拒绝继续；确认进程已停止后，遗留的历史 `running` run 在 PG 中以明确 cutover recovery reason 标为 failed，再导出。
 
+反向 SQLite→PG rollback 还有一个非对称约束：0008 PostgreSQL 的
+`trg_jobs_seed_status` 会在 jobs insert 后自动写 status/history。rollback importer
+必须先验证该 named trigger 正常启用，再在同一个全局 transaction 内只禁用它、
+回放 14 表、reset sequences、重新启用并验证，然后 commit。禁止
+`DISABLE TRIGGER ALL`。在 disable 后、回放中、re-enable 前任一点失败，都必须
+通过 transaction rollback 同时恢复数据、sequence 与 trigger 状态。
+
 ### 7.2 Cutover 顺序
 
 ```text
