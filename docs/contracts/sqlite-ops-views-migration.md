@@ -434,11 +434,15 @@ fields are:
 }
 ```
 
-The example expands the complete 0008 `jobs` schema. A real manifest must use
-the same `canonical_schema` structure for every column of all 14 names in
-`migrated_table_order`, in exact table and column order, plus each table's row
-count, ordered canonical checksum, PK columns, and max generated integer id when
-applicable. The importer and verifier fail closed on an unknown codec version;
+The example expands the complete 0008 `jobs` schema. The executable source of
+truth for all 14 tables and 153 columns is
+`src/jobfeed/adapters/migration/canonical_schema_manifest_v1.json`, loaded as
+immutable `CANONICAL_SCHEMA_MANIFEST_V1` and `CANONICAL_ROW_SCHEMAS_V1` by
+`canonical_schema_manifest.py`. A real snapshot copies that registry structure
+for every table in exact order and adds row count, ordered canonical checksum,
+and max generated integer id when applicable.
+
+The importer and verifier fail closed on an unknown manifest/codec/revision;
 missing, extra, duplicate, or reordered tables/columns; or any source type,
 target type, codec kind, nullability, or primary-key mismatch. They never infer a
 replacement mapping.
@@ -454,6 +458,13 @@ multi-column PK order. Its literal SHA-256 is consumed by backend-neutral tests;
 SQLite in-memory round trips additionally prove REAL signed-zero and BOOLEAN
 integer representations normalize to the same bytes. Boundary-framing tests
 prove different row boundaries cannot collide.
+
+`test_canonical_schema_manifest.py` independently derives
+the 0008 CREATE/ALTER column surface from Alembic and verifies every registry
+field. Canonical checksums normalize timestamps, booleans, floats, and declared
+JSON fields before hashing and are computed in ordered chunks rather than by
+loading an entire table. Raw-text fields such as the three application snapshots
+remain `text` and are never parsed or reordered as JSON.
 
 ## Command contract and metric reproduction
 
@@ -548,24 +559,27 @@ SQLite-to-PostgreSQL rollback is allowed only when all conditions hold:
    insert, update, delete, or unknown divergence fails closed.
 5. A final consistent SQLite backup and manifest are created before rollback.
 6. Before replay, the target must prove the exact `trg_jobs_seed_status` trigger
-   exists and is enabled. Inside the same all-or-nothing transaction, rollback
-   tooling disables only that named trigger, replays all 14 tables in FK-safe
+   exists and is enabled. On one dedicated connection and inside the same
+   all-or-nothing transaction, rollback tooling records the original trigger
+   state, disables only that named trigger, replays all 14 tables in FK-safe
    order, resets every represented sequence, re-enables the trigger, and proves
    it is enabled before commit. This prevents jobs inserts from synthesizing
-   duplicate status/history while preserved rows are replayed. Never use
-   `DISABLE TRIGGER ALL` or leave trigger state to an out-of-transaction cleanup.
-   Deletes as well as inserts/updates are represented.
+   duplicate status/history while preserved rows are replayed. Disabling on a
+   separate pooled connection is forbidden. Never use `DISABLE TRIGGER ALL` or
+   `DISABLE TRIGGER USER`, and never leave trigger state to an
+   out-of-transaction cleanup. Deletes as well as inserts/updates are represented.
 7. Conflicts are detected; there is no last-write-wins merge.
 8. PG sequences are reset for every generated integer identity within the same
    transaction described above.
 9. Reverse row/PK/FK/JSON/checksum/business parity reaches 100%, then CLI/API smoke
    passes before traffic switches.
-10. On any failure—including immediately after trigger disable, during row
-    replay, or before re-enable—the import transaction rolls back all data,
-    sequence, and trigger-state changes; SQLite remains the formal source of
-    truth. Contract tests must inject all three failures and then prove the
-    trigger is enabled, no synthetic history survived, and a normal post-failure
-    job insert still seeds exactly one status and one history row.
+10. On any failure, the import transaction rolls back all data, sequence, and
+    trigger-state changes; a `finally` path verifies the original enabled state
+    before releasing the connection, and SQLite remains the formal source of
+    truth. Fault-injection tests interrupt after trigger disable/`jobs`, during
+    replay, after sequence reset, and before trigger re-enable. Every case proves
+    no partial rows, no seeded extras, the trigger enabled, and a normal
+    post-failure job insert seeding exactly one status and one history row.
 
 ## Evidence gaps and owner tasks
 
@@ -589,6 +603,8 @@ contract:
   ordering, idempotency, and transaction behavior where applicable.
 - 2 live source lookup methods mapped and tied to actual production callers.
 - 18 migration/parity public methods inventoried with target disposition.
+- Executable v1 registry covers all 14 Alembic-0008 tables and 153 ordered
+  columns, with exact PK/source type/target type/codec kind/nullability checks.
 - 0008 source gate, 14-to-15 table mapping, manifest, benchmark command shapes,
   config compatibility, and lossless rollback preconditions recorded.
 - `git diff --check` must pass before commit.
