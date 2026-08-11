@@ -183,9 +183,7 @@ async def test_process_claims_respect_stage_a_and_b_stale_boundaries(
     )
     stage_a_claimed_sets = [_claimed_ids(result) for result in stage_a_results]
     assert stage_a_claimed_sets[0].isdisjoint(stage_a_claimed_sets[1])
-    assert stage_a_claimed_sets[0] | stage_a_claimed_sets[1] == {
-        stage_a_stale.job_id
-    }
+    assert stage_a_claimed_sets[0] | stage_a_claimed_sets[1] == {stage_a_stale.job_id}
 
     stage_b_stale_id = await store.save_job(_job("stage-b-stale"))
     stage_b_fresh_id = await store.save_job(_job("stage-b-fresh"))
