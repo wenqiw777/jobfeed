@@ -4802,27 +4802,27 @@ class PostgresStore:
                 return _empty
 
             id_list = sorted(applied_job_ids)
-            id_ph = ", ".join(f"${i + 1}" for i in range(len(id_list)))
             resp_sorted = sorted(RESPONSE_STATUSES)
-            resp_offset = len(id_list)
-            resp_ph = ", ".join(
-                f"${resp_offset + i + 1}" for i in range(len(resp_sorted))
-            )
             # 2. Response statuses reached
             response_rows = await conn.fetch(
-                f"""WITH applied_ts AS (
-                        SELECT job_id, MIN(changed_at) AS applied_at
+                """WITH applied_event AS (
+                        SELECT DISTINCT ON (job_id)
+                               job_id, id AS applied_id,
+                               changed_at AS applied_at
                         FROM job_status_history
-                        WHERE job_id IN ({id_ph}) AND to_status = 'applied'
-                        GROUP BY job_id
+                        WHERE job_id = ANY($1)
+                          AND to_status = 'applied'
+                          AND changed_at >= $3
+                        ORDER BY job_id, id ASC
                     )
                     SELECT DISTINCT h.job_id, h.to_status
                     FROM job_status_history h
-                    JOIN applied_ts a ON a.job_id = h.job_id
-                    WHERE h.to_status IN ({resp_ph})
-                      AND h.changed_at > a.applied_at""",
-                *id_list,
-                *resp_sorted,
+                    JOIN applied_event a ON a.job_id = h.job_id
+                    WHERE h.to_status = ANY($2)
+                      AND h.id > a.applied_id""",
+                id_list,
+                resp_sorted,
+                cutoff,
             )
 
             job_resp: dict[int, set[str]] = {}
@@ -4834,25 +4834,33 @@ class PostgresStore:
             # 3. Median days to first response (single CTE query)
             resp_job_ids = sorted(job_resp.keys())
             delta_rows = await conn.fetch(
-                """WITH applied_ts AS (
-                       SELECT job_id, MIN(changed_at) AS applied_at
+                """WITH applied_event AS (
+                       SELECT DISTINCT ON (job_id)
+                              job_id, id AS applied_id,
+                              changed_at AS applied_at
                        FROM job_status_history
-                       WHERE job_id = ANY($1) AND to_status = 'applied'
-                       GROUP BY job_id
-                ), resp_ts AS (
-                       SELECT h.job_id, MIN(h.changed_at) AS resp_at
+                       WHERE job_id = ANY($1)
+                         AND to_status = 'applied'
+                         AND changed_at >= $3
+                       ORDER BY job_id, id ASC
+                ), response_event AS (
+                       SELECT DISTINCT ON (h.job_id)
+                              h.job_id, h.changed_at AS response_at
                        FROM job_status_history h
-                       JOIN applied_ts a ON a.job_id = h.job_id
-                       WHERE h.job_id = ANY($1)
-                         AND h.to_status = ANY($2)
-                         AND h.changed_at > a.applied_at
-                       GROUP BY h.job_id
+                       JOIN applied_event a ON a.job_id = h.job_id
+                       WHERE h.to_status = ANY($2)
+                         AND h.id > a.applied_id
+                       ORDER BY h.job_id, h.id ASC
                    )
-                   SELECT EXTRACT(DAY FROM r.resp_at - a.applied_at)::integer AS days
-                   FROM applied_ts a
-                   JOIN resp_ts r ON r.job_id = a.job_id""",
+                   SELECT GREATEST(
+                              0,
+                              EXTRACT(DAY FROM r.response_at - a.applied_at)
+                          )::integer AS days
+                   FROM applied_event a
+                   JOIN response_event r ON r.job_id = a.job_id""",
                 resp_job_ids,
                 resp_sorted,
+                cutoff,
             )
             deltas = [row["days"] for row in delta_rows]
             median_days = _median(deltas)
@@ -4860,6 +4868,7 @@ class PostgresStore:
             # 4. Per-variant breakdown (optional)
             by_resume_dict: dict[str, ResumeVariantStats] | None = None
             if by_resume:
+                id_ph = ", ".join(f"${i + 1}" for i in range(len(id_list)))
                 vrows = await conn.fetch(
                     f"""SELECT DISTINCT ON (job_id)
                                job_id, resume_variant_at_change

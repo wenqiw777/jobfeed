@@ -54,8 +54,9 @@ PENDING_LIMIT = 100
 EXPECTED_JOB_PAIR = 2
 BUMP_SECOND_COUNT = 2
 FLOAT_TOLERANCE = 1e-6
-POST_APPLY_RESPONSE_COUNT = 2
-MEDIAN_RESPONSE_DAYS = 3.0
+POST_APPLY_RESPONSE_COUNT = 3
+POST_APPLY_INTERVIEW_COUNT = 3
+MEDIAN_RESPONSE_DAYS = 2.0
 SINGLE_COMPLETION_COUNT = 1
 RUN_STAGE_A_COUNT = 3
 RUN_STAGE_B_COUNT = 2
@@ -843,15 +844,15 @@ class TestApplicationAudit:
         assert stats.by_resume["first-variant"].sent == 1
         assert "later-variant" not in stats.by_resume
 
-    async def test_application_stats_uses_later_responses_and_exact_median(
+    async def test_application_stats_uses_append_order_and_exact_median(
         self,
         contract_store,
         contract_control,
     ):
-        """Only post-apply responses count, with an exact whole-day median."""
+        """History ID determines causality; timestamps determine duration."""
         base = datetime.now(UTC) - timedelta(days=20)
-        response_offsets = (2, 4, -2)
-        response_statuses = ("interviewing", "rejected", "offer")
+        response_offsets = (2, 4)
+        response_statuses = ("interviewing", "interviewing")
         job_ids: list[str] = []
         for index, (offset, response_status) in enumerate(
             zip(response_offsets, response_statuses, strict=True)
@@ -884,13 +885,63 @@ class TestApplicationAudit:
                 changed_at=base + timedelta(days=offset),
             )
 
+        pre_apply_id, _ = await _insert_job(
+            contract_store,
+            "stats-response-before-apply",
+        )
+        job_ids.append(pre_apply_id)
+        await contract_store.transition_status(
+            TransitionRequest(job_id=pre_apply_id, new_status="rejected", force=True)
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=pre_apply_id, new_status="applied", force=True)
+        )
+        await contract_control.set_history_time(
+            job_id=pre_apply_id,
+            to_status="rejected",
+            occurrence=0,
+            changed_at=base + timedelta(days=6),
+        )
+        await contract_control.set_history_time(
+            job_id=pre_apply_id,
+            to_status="applied",
+            occurrence=0,
+            changed_at=base,
+        )
+
+        clock_rollback_id, _ = await _insert_job(
+            contract_store,
+            "stats-response-clock-rollback",
+        )
+        job_ids.append(clock_rollback_id)
+        await contract_store.transition_status(
+            TransitionRequest(
+                job_id=clock_rollback_id, new_status="applied", force=True
+            )
+        )
+        await contract_store.transition_status(
+            TransitionRequest(job_id=clock_rollback_id, new_status="offer", force=True)
+        )
+        await contract_control.set_history_time(
+            job_id=clock_rollback_id,
+            to_status="applied",
+            occurrence=0,
+            changed_at=base,
+        )
+        await contract_control.set_history_time(
+            job_id=clock_rollback_id,
+            to_status="offer",
+            occurrence=0,
+            changed_at=base - timedelta(days=2),
+        )
+
         stats = await contract_store.application_stats(since_days_ago=30)
 
         assert stats.applied_count == len(job_ids)
         assert stats.response_count == POST_APPLY_RESPONSE_COUNT
-        assert stats.interview_count == 1
-        assert stats.offer_count == 0
-        assert stats.rejection_count == 1
+        assert stats.interview_count == POST_APPLY_INTERVIEW_COUNT
+        assert stats.offer_count == 1
+        assert stats.rejection_count == 0
         assert stats.median_days_to_response == MEDIAN_RESPONSE_DAYS
 
     async def test_duplicate_application_after_terminal_is_noop(self, contract_store):
