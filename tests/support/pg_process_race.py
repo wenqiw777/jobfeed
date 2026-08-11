@@ -22,7 +22,11 @@ async def _wait_for_path(path: Path) -> None:
 
 
 async def wait_for_process_signal(path: Path) -> None:
-    """Wait until a worker creates its synchronization path."""
+    """Wait until a worker creates its synchronization path.
+
+    Args:
+        path: File path the worker touches after reaching its barrier.
+    """
     await asyncio.wait_for(
         _wait_for_path(path),
         timeout=PROCESS_START_TIMEOUT_SECONDS,
@@ -102,7 +106,20 @@ async def run_store_process_race(
     payloads: list[dict[str, Any]],
     sync_dir: Path,
 ) -> list[dict[str, object]]:
-    """Start workers, release them together, and return their JSON results."""
+    """Start workers, release them together, and return their JSON results.
+
+    Args:
+        dsn: PostgreSQL DSN shared by every independent process.
+        payloads: One JSON-serializable operation description per worker.
+        sync_dir: Fresh directory used for file-based process barriers.
+
+    Returns:
+        Decoded result object from each worker in payload order.
+
+    Raises:
+        TimeoutError: If a worker does not reach its ready barrier.
+        RuntimeError: If a worker process exits unsuccessfully.
+    """
     sync_dir.mkdir()
     start_path = sync_dir / "start"
     workers: list[asyncio.subprocess.Process] = []
