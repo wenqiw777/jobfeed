@@ -670,6 +670,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 | 14 表可执行 schema registry | 已冻结 14 表 / 153 列并通过 Alembic 0008 独立推导测试 |
 | 真实 0008 snapshot manifest | **进行中；正式源仍为 0007，只允许升级隔离备份** |
 | 同机 PG benchmark | **待 0008 隔离备份 manifest 完成后采集** |
+| Baseline harness | **NO-GO 修复中**：真实 write overhead、dump/restore attestation、contention DB-delta 与 fresh-snapshot recheck 未全部闭合 |
 
 本计划现为 **APPROVED FOR TASK 0**，不是 Task 0 已完成。Task 1–3 在真实 manifest 与 benchmark artifact 评审通过前保持 blocked。执行保留 Task 5–8 和 194–292h 预算；任何改为 snapshot-only rollback 或长期双写的要求都属于 material plan drift，必须返回设计。
 
