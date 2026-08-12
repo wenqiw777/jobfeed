@@ -34,7 +34,7 @@ BENCHMARK_KEYS = {
     "read_consistency",
     "queries",
     "contention",
-    "open_workloads",
+    "scratch_mutations",
 }
 INDEX_KEYS = {
     "evidence_version",
@@ -118,10 +118,23 @@ CONTENTION_KEYS = {
     "p95_ms",
     "max_ms",
 }
-OPEN_WORKLOADS = {
-    "scan_save_job_insert_quality_upgrade_transaction_pair",
-    "evaluate_claim_release_result_error_paths",
+SCRATCH_MUTATION_KEYS = {
+    "mode",
+    "setup_in_timed_samples",
+    "sample_count",
+    "scan",
+    "evaluate",
 }
+SCAN_MUTATION_KEYS = {
+    "operation",
+    "verified_rows",
+    "p50_ms",
+    "p95_ms",
+    "max_ms",
+}
+EVALUATE_MUTATION_KEYS = {*SCAN_MUTATION_KEYS, "paths"}
+PATH_MUTATION_KEYS = {"sample_count", "p50_ms", "p95_ms", "max_ms"}
+EVALUATE_PATHS = {"claim_release", "claim_result", "claim_error"}
 ACTIVITY_COLUMNS = {
     "jobs": {"discovered_at", "enriched_at", "closed_at"},
     "pipeline_runs": {"started_at", "finished_at"},
@@ -260,3 +273,20 @@ def optional_text(value: object, name: str) -> str | None:
     if value is None:
         return None
     return text(value, name)
+
+
+def timing_summary(value: Mapping[str, object], name: str) -> None:
+    """Require finite nonnegative p50 <= p95 <= max timing metrics.
+
+    Args:
+        value: Mapping containing all three timing fields.
+        name: Error path.
+
+    Raises:
+        ValueError: If a metric is invalid or percentile order is impossible.
+    """
+    p50 = number(value["p50_ms"], f"{name}.p50_ms")
+    p95 = number(value["p95_ms"], f"{name}.p95_ms")
+    maximum = number(value["max_ms"], f"{name}.max_ms")
+    if not p50 <= p95 <= maximum:
+        raise ValueError(f"{name} timing order must satisfy p50 <= p95 <= max")

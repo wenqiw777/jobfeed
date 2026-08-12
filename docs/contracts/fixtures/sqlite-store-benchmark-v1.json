@@ -15,8 +15,8 @@
     {"name": "step_timings", "coverage": "perf.step_timings", "operation": "get_step_timings", "params": {"window_days": 30}},
     {"name": "llm_daily", "coverage": "perf.llm_daily", "operation": "get_llm_daily_stats", "params": {"window_days": 30}},
     {"name": "funnel", "coverage": "perf.funnel", "operation": "get_funnel_stats", "params": {"window_days": 30}},
-    {"name": "scan_db_only", "coverage": "overhead.scan", "operation": "scan_upsert_lookup", "params": {"limit": 100}},
-    {"name": "evaluate_db_only", "coverage": "overhead.evaluate", "operation": "evaluate_pending_claim_candidates", "params": {"limit": 100}}
+    {"name": "scan_db_only", "coverage": "overhead.scan", "operation": "scan_save_job_quality_upgrade", "params": {}},
+    {"name": "evaluate_db_only", "coverage": "overhead.evaluate", "operation": "evaluate_claim_release_result_error", "params": {}}
   ],
   "contention": {
     "operation": "claim_pending_stage_a",

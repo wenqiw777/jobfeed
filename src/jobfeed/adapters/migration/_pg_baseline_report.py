@@ -11,6 +11,7 @@ from jobfeed.adapters.migration._baseline_workload import (
 )
 from jobfeed.adapters.migration._pg_benchmark_runner import StoreBenchmarkResult
 from jobfeed.adapters.migration._pg_claim_contention import ClaimContentionResult
+from jobfeed.adapters.migration._pg_scratch_mutations import ScratchMutationResult
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -32,6 +33,31 @@ class ReportContext:
     scratch_post_gate: tuple[str, int, int]
     contention: ClaimContentionResult
     persisted_claim_ids: list[str]
+    scratch_mutations: ScratchMutationResult
+
+
+def _scratch_mutation_report(
+    result: ScratchMutationResult, sample_count: int
+) -> dict[str, object]:
+    return {
+        "mode": "disposable_scratch_real_writes",
+        "setup_in_timed_samples": False,
+        "sample_count": sample_count,
+        "scan": {
+            "operation": "save_job_insert_then_quality_upgrade",
+            "verified_rows": len(result.scan_canonical_ids),
+            **_summary(result.scan_result.samples_ms),
+        },
+        "evaluate": {
+            "operation": "claim_release_result_error",
+            "verified_rows": len(result.expected_evaluation_states),
+            **_summary(result.evaluate_result.samples_ms),
+            "paths": {
+                name: {"sample_count": len(samples), **_summary(samples)}
+                for name, samples in result.path_samples_ms.items()
+            },
+        },
+    }
 
 
 def build_benchmark_report(context: ReportContext) -> dict[str, object]:
@@ -122,8 +148,7 @@ def build_benchmark_report(context: ReportContext) -> dict[str, object]:
             "scratch_post_running_runs": scratch_post_running,
             **_summary(contention.samples_ms),
         },
-        "open_workloads": [
-            "scan_save_job_insert_quality_upgrade_transaction_pair",
-            "evaluate_claim_release_result_error_paths",
-        ],
+        "scratch_mutations": _scratch_mutation_report(
+            context.scratch_mutations, workload.sample_count
+        ),
     }

@@ -28,8 +28,7 @@ def _validate_queries(document: dict[str, object]) -> None:
         names.add(shape.text(query["name"], f"{name}.name"))
         coverages.add(shape.text(query["coverage"], f"{name}.coverage"))
         shape.integer(query["row_count"], f"{name}.row_count", minimum=1)
-        for metric in ("p50_ms", "p95_ms", "max_ms"):
-            shape.number(query[metric], f"{name}.{metric}")
+        shape.timing_summary(query, name)
     if len(names) != len(queries):
         raise ValueError("benchmark query names must be unique")
     if coverages != REQUIRED_BENCHMARK_COVERAGE or len(queries) != len(coverages):
@@ -94,12 +93,13 @@ def _validate_contention(document: dict[str, object]) -> None:
         raise ValueError("benchmark contention successful claim count mismatch")
     if value["database_claim_count"] != successful:
         raise ValueError("benchmark contention database claim count mismatch")
+    empty = shape.integer(value["empty_claims"], "benchmark.contention.empty_claims")
+    if successful + empty != attempted:
+        raise ValueError("benchmark contention successful+empty must equal attempted")
     for key in ("database_claim_ids_sha256", "scratch_initial_manifest_sha256"):
         shape.sha(value[key], f"benchmark.contention.{key}")
     _validate_contention_gates(value)
-    shape.integer(value["empty_claims"], "benchmark.contention.empty_claims")
-    for metric in ("p50_ms", "p95_ms", "max_ms"):
-        shape.number(value[metric], f"benchmark.contention.{metric}")
+    shape.timing_summary(value, "benchmark.contention")
 
 
 def _validate_contention_gates(value: dict[str, object]) -> None:
@@ -119,6 +119,49 @@ def _validate_contention_gates(value: dict[str, object]) -> None:
         or value["scratch_post_revision"] != "0008"
     ):
         raise ValueError("benchmark contention scratch revision mismatch")
+
+
+def _validate_mutation_metrics(
+    value: dict[str, object], expected: set[str], name: str
+) -> None:
+    shape.exact_keys(value, expected, name)
+    shape.integer(value["verified_rows"], f"{name}.verified_rows", minimum=1)
+    shape.timing_summary(value, name)
+
+
+def _validate_scratch_mutations(document: dict[str, object]) -> None:
+    value = shape.mapping(document["scratch_mutations"], "benchmark.scratch_mutations")
+    shape.exact_keys(value, shape.SCRATCH_MUTATION_KEYS, "benchmark.scratch_mutations")
+    if (
+        value["mode"] != "disposable_scratch_real_writes"
+        or value["setup_in_timed_samples"] is not False
+    ):
+        raise ValueError("benchmark scratch mutation mode mismatch")
+    sample_count = shape.integer(
+        value["sample_count"], "benchmark scratch sample count", minimum=_MIN_SAMPLES
+    )
+    scan = shape.mapping(value["scan"], "benchmark.scratch_mutations.scan")
+    _validate_mutation_metrics(
+        scan, shape.SCAN_MUTATION_KEYS, "benchmark.scratch_mutations.scan"
+    )
+    if scan["operation"] != "save_job_insert_then_quality_upgrade":
+        raise ValueError("benchmark scan mutation operation mismatch")
+    evaluate = shape.mapping(value["evaluate"], "benchmark.scratch_mutations.evaluate")
+    _validate_mutation_metrics(
+        evaluate,
+        shape.EVALUATE_MUTATION_KEYS,
+        "benchmark.scratch_mutations.evaluate",
+    )
+    if evaluate["operation"] != "claim_release_result_error":
+        raise ValueError("benchmark evaluate mutation operation mismatch")
+    paths = shape.mapping(evaluate["paths"], "benchmark scratch mutation paths")
+    shape.exact_keys(paths, shape.EVALUATE_PATHS, "benchmark scratch mutation paths")
+    for path, raw in paths.items():
+        metrics = shape.mapping(raw, f"benchmark scratch path {path}")
+        shape.exact_keys(metrics, shape.PATH_MUTATION_KEYS, f"scratch path {path}")
+        if metrics["sample_count"] != sample_count:
+            raise ValueError("benchmark scratch path sample count mismatch")
+        shape.timing_summary(metrics, f"benchmark scratch path {path}")
 
 
 def validate_benchmark_document(document: dict[str, object]) -> None:
@@ -146,9 +189,4 @@ def validate_benchmark_document(document: dict[str, object]) -> None:
     _validate_queries(document)
     _validate_read_consistency(document)
     _validate_contention(document)
-    open_workloads = document["open_workloads"]
-    if (
-        not isinstance(open_workloads, list)
-        or set(open_workloads) != shape.OPEN_WORKLOADS
-    ):
-        raise ValueError("benchmark open workloads mismatch")
+    _validate_scratch_mutations(document)

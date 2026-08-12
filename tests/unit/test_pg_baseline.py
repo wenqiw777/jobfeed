@@ -31,7 +31,7 @@ from jobfeed.adapters.migration.pg_baseline import (
     validate_live_schema,
     validate_public_tables,
 )
-from jobfeed.cli.migrate import migrate
+from jobfeed.cli.migrate import _write_new_json, migrate
 
 _WORKLOAD = (
     Path(__file__).resolve().parents[2]
@@ -207,7 +207,9 @@ def test_unordered_aggregate_rows_hash_independently_of_backend_order() -> None:
     assert aggregate_manifest(first) != aggregate_manifest(second)
 
 
-def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> None:
+def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic(
+    tmp_path: Path,
+) -> None:
     """Two distinct restores bind one dump; index hashes only prior artifacts."""
     digest = "a" * 64
     base = {
@@ -252,7 +254,7 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> Non
             table["name"]: {
                 "row_count": 1 if table["name"] == "jobs" else 0,
                 "primary_key": table["primary_key"],
-                "max_identity": None,
+                "max_identity": 1 if table["name"] == "jobs" else None,
                 "canonical_sha256": "5" * 64,
             }
             for table in canonical_schema_manifest_document()["tables"]
@@ -350,10 +352,34 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> Non
             "p95_ms": 1.0,
             "max_ms": 1.0,
         },
-        "open_workloads": [
-            "scan_save_job_insert_quality_upgrade_transaction_pair",
-            "evaluate_claim_release_result_error_paths",
-        ],
+        "scratch_mutations": {
+            "mode": "disposable_scratch_real_writes",
+            "setup_in_timed_samples": False,
+            "sample_count": 30,
+            "scan": {
+                "operation": "save_job_insert_then_quality_upgrade",
+                "verified_rows": 31,
+                "p50_ms": 1.0,
+                "p95_ms": 1.0,
+                "max_ms": 1.0,
+            },
+            "evaluate": {
+                "operation": "claim_release_result_error",
+                "verified_rows": 93,
+                "p50_ms": 1.0,
+                "p95_ms": 1.0,
+                "max_ms": 1.0,
+                "paths": {
+                    path: {
+                        "sample_count": 30,
+                        "p50_ms": 1.0,
+                        "p95_ms": 1.0,
+                        "max_ms": 1.0,
+                    }
+                    for path in ("claim_release", "claim_result", "claim_error")
+                },
+            },
+        },
     }
     index = {
         "evidence_version": 1,
@@ -364,6 +390,11 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> Non
         "git_commit": "deadbeef",
     }
     validate_evidence_bundle(manifest, benchmark, index, verify_hashes=False)
+
+    manifest_path = tmp_path / "manifest.json"
+    _write_new_json(manifest_path, manifest)
+    sorted_manifest = json.loads(manifest_path.read_text("utf-8"))
+    validate_evidence_bundle(sorted_manifest, benchmark, index, verify_hashes=False)
 
     malicious = copy.deepcopy(manifest)
     malicious["tables"]["jobs"]["unexpected"] = True
@@ -378,6 +409,18 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> Non
     with pytest.raises(ValueError, match="claim count"):
         validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
     malicious = copy.deepcopy(benchmark)
+    malicious["contention"]["scratch_initial_manifest_sha256"] = "b" * 64
+    with pytest.raises(ValueError, match="scratch manifest"):
+        validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
+    malicious = copy.deepcopy(benchmark)
+    malicious["contention"]["empty_claims"] = 1499
+    with pytest.raises(ValueError, match="attempted"):
+        validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
+    malicious = copy.deepcopy(benchmark)
+    malicious["queries"][0]["p50_ms"] = 2.0
+    with pytest.raises(ValueError, match="timing order"):
+        validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
+    malicious = copy.deepcopy(benchmark)
     malicious["read_consistency"]["post_revision"] = "0007"
     with pytest.raises(ValueError, match="read consistency"):
         validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
@@ -388,6 +431,10 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> Non
     malicious = copy.deepcopy(manifest)
     malicious["tables"]["jobs"]["row_count"] = 0
     with pytest.raises(ValueError, match="non-empty jobs"):
+        validate_evidence_bundle(malicious, benchmark, index, verify_hashes=False)
+    malicious = copy.deepcopy(manifest)
+    malicious["tables"]["jobs"]["max_identity"] = None
+    with pytest.raises(ValueError, match="max identity"):
         validate_evidence_bundle(malicious, benchmark, index, verify_hashes=False)
 
     with pytest.raises(ValueError, match="distinct"):
@@ -407,6 +454,20 @@ def test_machine_fingerprint_hashes_stable_host_and_cpu_without_plaintext() -> N
     assert result == machine_fingerprint("host-uuid-secret", "Apple M4 Max")
     assert result != machine_fingerprint("other-host", "Apple M4 Max")
     assert "host-uuid-secret" not in result
+
+
+def test_canonical_bin_forwards_benchmark_environment() -> None:
+    """Canonical Docker CLI forwards both scratch DSN and machine token."""
+    root = Path(__file__).resolve().parents[2]
+    wrapper = (root / "bin" / "jobfeed").read_text("utf-8")
+    compose = (root / "docker-compose.yml").read_text("utf-8")
+
+    assert "docker compose run --rm" in wrapper
+    scratch_line = (
+        'JOBFEED_MIGRATION_SCRATCH_PG_URL: "${JOBFEED_MIGRATION_SCRATCH_PG_URL:-}"'
+    )
+    assert scratch_line in compose
+    assert 'JOBFEED_BENCH_MACHINE_TOKEN: "${JOBFEED_BENCH_MACHINE_TOKEN:-}"' in compose
 
 
 def test_cli_requires_named_dsn_environment_without_creating_outputs(

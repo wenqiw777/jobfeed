@@ -515,11 +515,12 @@ restore orchestrator is integrated as the only CLI entry, generates both
 attestations from executed restore commands, validates live container/database
 identity, and prevents manually supplied provenance from reaching capture.
 
-Task 0 remains **OPEN** for two real scratch mutation workloads: scan must measure
-`save_job` insert plus quality-upgrade on the same natural key, and evaluate must
-measure claim plus release/result/error persistence paths. The current bounded
-`job_exists` and claim-candidate reads must not be presented as those overhead
-baselines.
+The disposable scratch benchmark now measures both real mutation workloads.
+Scan times one `save_job` insert plus a quality upgrade on the same natural key,
+then verifies one FULL row. Evaluate creates explicit fixtures outside the timed
+path and records at least 30 samples each for claim+release, claim+result, and
+claim+error through production store methods without external LLM calls. A fresh
+raw read verifies every final status, error, and score before reporting success.
 
 Real-data metrics are rechecked from the stopped 0008 source, never copied from a
 document. The evidence bundle includes:

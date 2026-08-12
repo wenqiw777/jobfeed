@@ -87,7 +87,6 @@ def _views_operation_call(
 def _metrics_operation_call(
     store: PostgresStore,
     query: BenchmarkQuery,
-    seeds: _Seeds,
 ) -> Callable[[], Awaitable[object]]:
     params = query.params
     operation = query.operation
@@ -103,10 +102,6 @@ def _metrics_operation_call(
         return lambda: store.get_llm_daily_stats(params["window_days"])
     if operation == "get_funnel_stats":
         return lambda: store.get_funnel_stats(params["window_days"])
-    if operation == "evaluate_pending_claim_candidates":
-        return lambda: store.preview_claimable_stage_a(limit=params["limit"])
-    if operation == "scan_upsert_lookup":
-        return lambda: _scan_lookup(store, seeds.jobs[: params["limit"]])
     raise ValueError(f"unknown PostgreSQL benchmark operation: {operation}")
 
 
@@ -125,14 +120,7 @@ def _operation_call(
         "list_twin_statuses",
     }:
         return _views_operation_call(store, detail, query, seeds)
-    return _metrics_operation_call(store, query, seeds)
-
-
-async def _scan_lookup(store: PostgresStore, jobs: Sequence[JobPosting]) -> list[bool]:
-    return [
-        await store.job_exists(platform=job.platform, canonical_id=job.canonical_id)
-        for job in jobs
-    ]
+    return _metrics_operation_call(store, query)
 
 
 async def run_postgres_store_benchmarks(

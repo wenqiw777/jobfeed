@@ -26,6 +26,15 @@ _ATTESTATION_KEYS = {
     "post_upgrade_revision",
 }
 _AGGREGATE_WINDOW_DAYS = 30
+_GENERATED_ID_TABLES = {
+    "jobs",
+    "evaluations",
+    "pipeline_runs",
+    "job_status_history",
+    "llm_usage",
+    "interview_rounds",
+    "step_timings",
+}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -108,8 +117,8 @@ def _validate_manifest_tables(manifest_doc: dict[str, object]) -> None:
     )
     tables = shape.mapping(manifest_doc["tables"], "manifest.tables")
     expected_tables = [table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables]
-    if list(tables) != expected_tables:
-        raise ValueError("manifest table order/coverage mismatch")
+    if len(tables) != len(expected_tables) or set(tables) != set(expected_tables):
+        raise ValueError("manifest table coverage mismatch")
     for table in CANONICAL_SCHEMA_MANIFEST_V1.tables:
         metric = shape.mapping(tables[table.name], f"manifest.tables.{table.name}")
         shape.exact_keys(
@@ -123,6 +132,8 @@ def _validate_manifest_tables(manifest_doc: dict[str, object]) -> None:
         if table.name == "jobs" and row_count == 0:
             raise ValueError("manifest requires non-empty jobs seed data")
         max_identity = metric["max_identity"]
+        if table.name in _GENERATED_ID_TABLES and row_count and max_identity is None:
+            raise ValueError(f"manifest max identity missing: {table.name}")
         if max_identity is not None:
             shape.integer(max_identity, f"manifest max identity: {table.name}")
         shape.sha(metric["canonical_sha256"], f"manifest table SHA: {table.name}")
@@ -214,6 +225,31 @@ def _validate_manifest(manifest_doc: dict[str, object]) -> str:
     return dump_sha
 
 
+def _validate_cross_links(
+    manifest_doc: dict[str, object],
+    benchmark_doc: dict[str, object],
+    index_doc: dict[str, object],
+    dump_sha: str,
+) -> None:
+    if (
+        benchmark_doc["git_commit"] != manifest_doc["git_commit"]
+        or index_doc["git_commit"] != manifest_doc["git_commit"]
+    ):
+        raise ValueError("evidence git commit mismatch")
+    if benchmark_doc["created_at_utc"] != manifest_doc["created_at_utc"]:
+        raise ValueError("evidence capture time mismatch")
+    if index_doc["source_dump_sha256"] != dump_sha:
+        raise ValueError("evidence index dump SHA mismatch")
+    if benchmark_doc["workload_sha256"] != index_doc["workload_sha256"]:
+        raise ValueError("benchmark workload SHA mismatch")
+    contention = shape.mapping(benchmark_doc["contention"], "benchmark.contention")
+    if (
+        contention["scratch_initial_manifest_sha256"]
+        != benchmark_doc["snapshot_manifest_sha256"]
+    ):
+        raise ValueError("benchmark scratch manifest SHA mismatch")
+
+
 def validate_evidence_bundle(
     manifest: object,
     benchmark: object,
@@ -240,17 +276,7 @@ def validate_evidence_bundle(
     shape.exact_keys(index_doc, shape.INDEX_KEYS, "evidence index")
     if index_doc["evidence_version"] != 1:
         raise ValueError("unknown evidence index version")
-    if (
-        benchmark_doc["git_commit"] != manifest_doc["git_commit"]
-        or index_doc["git_commit"] != manifest_doc["git_commit"]
-    ):
-        raise ValueError("evidence git commit mismatch")
-    if benchmark_doc["created_at_utc"] != manifest_doc["created_at_utc"]:
-        raise ValueError("evidence capture time mismatch")
-    if index_doc["source_dump_sha256"] != dump_sha:
-        raise ValueError("evidence index dump SHA mismatch")
-    if benchmark_doc["workload_sha256"] != index_doc["workload_sha256"]:
-        raise ValueError("benchmark workload SHA mismatch")
+    _validate_cross_links(manifest_doc, benchmark_doc, index_doc, dump_sha)
     if verify_hashes:
         manifest_sha = artifact_sha256(manifest_doc)
         benchmark_sha = artifact_sha256(benchmark_doc)

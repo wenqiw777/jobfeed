@@ -40,8 +40,8 @@ _OPERATION_COVERAGE: Final = {
     "get_step_timings": "perf.step_timings",
     "get_llm_daily_stats": "perf.llm_daily",
     "get_funnel_stats": "perf.funnel",
-    "scan_upsert_lookup": "overhead.scan",
-    "evaluate_pending_claim_candidates": "overhead.evaluate",
+    "scan_save_job_quality_upgrade": "overhead.scan",
+    "evaluate_claim_release_result_error": "overhead.evaluate",
 }
 _OPERATION_PARAMS: Final = {
     "jobs_view_list": frozenset({"limit"}),
@@ -56,8 +56,8 @@ _OPERATION_PARAMS: Final = {
     "get_step_timings": frozenset({"window_days"}),
     "get_llm_daily_stats": frozenset({"window_days"}),
     "get_funnel_stats": frozenset({"window_days"}),
-    "scan_upsert_lookup": frozenset({"limit"}),
-    "evaluate_pending_claim_candidates": frozenset({"limit"}),
+    "scan_save_job_quality_upgrade": frozenset(),
+    "evaluate_claim_release_result_error": frozenset(),
 }
 _CONTENTION_PROCESSES = 2
 _CONTENTION_COROUTINES = 8

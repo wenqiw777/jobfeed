@@ -22,12 +22,20 @@ from jobfeed.adapters.migration._pg_baseline_report import (
     ReportContext,
     build_benchmark_report,
 )
+from jobfeed.adapters.migration._pg_benchmark_merge import merge_benchmark_results
 from jobfeed.adapters.migration._pg_benchmark_runner import (
     run_postgres_store_benchmarks,
 )
 from jobfeed.adapters.migration._pg_claim_contention import (
     run_pg_claim_contention,
     validate_claim_contention_outcome,
+)
+from jobfeed.adapters.migration._pg_scratch_mutations import (
+    ScratchMutationConfig,
+    ScratchMutationTarget,
+)
+from jobfeed.adapters.migration._pg_scratch_runner import (
+    run_pg_scratch_mutation_benchmarks,
 )
 from jobfeed.adapters.migration.canonical_schema_manifest import (
     CANONICAL_SCHEMA_MANIFEST_V1,
@@ -200,10 +208,15 @@ def _capture_validated_baseline(
             ),
             chunk_size=chunk_size,
         )
-    store_results = asyncio.run(
+    read_operations = tuple(
+        operation
+        for operation in workload.operations
+        if not operation.coverage.startswith("overhead.")
+    )
+    read_results = asyncio.run(
         run_postgres_store_benchmarks(
             dsn,
-            workload.operations,
+            read_operations,
             warmups=workload.warmup_count,
             samples=workload.sample_count,
         )
@@ -238,6 +251,25 @@ def _capture_validated_baseline(
         errors=contention.errors,
         persisted_claim_ids=persisted_claim_ids,
     )
+    scratch_mutations = run_pg_scratch_mutation_benchmarks(
+        ScratchMutationTarget(
+            dsn=contention_dsn,
+            expected_database_identity=scratch_identity,
+            source_database_identity=source_identity,
+        ),
+        ScratchMutationConfig(
+            fixture_prefix=f"baseline-{manifest_sha256[:16]}",
+            warmup_count=workload.warmup_count,
+            sample_count=workload.sample_count,
+        ),
+    )
+    store_results = merge_benchmark_results(
+        workload.operations, read_results, scratch_mutations
+    )
+    with PostgresBaselineReader(contention_dsn) as scratch:
+        scratch_post_gate = _gate_state(scratch)
+        if scratch.database_identity() != scratch_identity:
+            raise ValueError("scratch database identity changed during benchmark")
     cpu_identifier = platform.processor() or platform.machine()
     machine, machine_token_hash, cpu_hash = component_fingerprints(
         source.machine_token, cpu_identifier
@@ -259,6 +291,7 @@ def _capture_validated_baseline(
             scratch_post_gate=scratch_post_gate,
             contention=contention,
             persisted_claim_ids=persisted_claim_ids,
+            scratch_mutations=scratch_mutations,
         )
     )
     return manifest, benchmark
