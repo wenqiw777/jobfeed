@@ -15,6 +15,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _WRAPPER = _ROOT / "bin" / "jobfeed"
 _COMPOSE = _ROOT / "docker-compose.yml"
 _RUN_AND_DOWN_CALLS = 2
+_GIT_COMMIT_LENGTH = 40
 
 
 def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
@@ -29,6 +30,7 @@ def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
         "        'artifacts': os.environ.get(\n"
         "            'JOBFEED_MIGRATION_ARTIFACT_PARENT_HOST'),\n"
         "        'run_root': os.environ.get('JOBFEED_MIGRATION_RUN_HOST'),\n"
+        "        'git_commit': os.environ.get('JOBFEED_MIGRATION_GIT_COMMIT'),\n"
         "    }}, ensure_ascii=False) + '\\n')\n"
         "args = sys.argv[1:]\n"
         "ids = {'restore-source': 'a' * 64, 'restore-scratch': 'b' * 64,\n"
@@ -55,6 +57,10 @@ def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
         "                if '--format' in args else '')\n"
         "    if template == '{{.Id}}': print(doc['Id'])\n"
         "    elif template == '{{.Image}}': print(doc['Image'])\n"
+        "    elif template == '{{.State.Running}}':\n"
+        "      print('false' if os.path.exists(os.path.join(\n"
+        "       os.environ['JOBFEED_MIGRATION_RUN_HOST'], 'post-inspection.json'))\n"
+        "       else 'true')\n"
         "    elif 'compose.project' in template: print(project)\n"
         "    elif 'compose.service' in template: print(service)\n"
         "    elif 'NetworkSettings.Networks' in template: print(network)\n"
@@ -81,7 +87,10 @@ def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _run_wrapper(
-    tmp_path: Path, *arguments: str, cleanup_fails: bool = False
+    tmp_path: Path,
+    *arguments: str,
+    cleanup_fails: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[dict[str, object]]]:
     _, log = _fake_docker(tmp_path)
     env = {
@@ -90,6 +99,7 @@ def _run_wrapper(
         "FAKE_DOCKER_LOG": str(log),
         "FAKE_DOCKER_DOWN_FAIL": "1" if cleanup_fails else "0",
     }
+    env.update(extra_env or {})
     result = subprocess.run(
         [str(_WRAPPER), *arguments],
         cwd=_ROOT,
@@ -134,7 +144,8 @@ def test_capture_route_uses_run_scoped_profile_and_rewrites_unicode_paths(
     assert len(calls) > _RUN_AND_DOWN_CALLS
     run = calls[0]
     argv = run["argv"]
-    assert argv[:2] == ["compose", "--project-directory"]
+    assert argv[:2] == ["compose", "--file"]
+    assert argv[2] == str(_COMPOSE)
     assert "--project-name" in argv
     project = argv[argv.index("--project-name") + 1]
     assert project.startswith("jobfeed-migration-")
@@ -142,10 +153,12 @@ def test_capture_route_uses_run_scoped_profile_and_rewrites_unicode_paths(
         "--profile",
         "migration",
     ]
-    assert argv[argv.index("up") : argv.index("up") + 5] == [
+    assert argv[argv.index("up") : argv.index("up") + 7] == [
         "up",
         "-d",
         "--wait",
+        "--wait-timeout",
+        "1800",
         "restore-source",
         "restore-scratch",
     ]
@@ -164,16 +177,27 @@ def test_capture_route_uses_run_scoped_profile_and_rewrites_unicode_paths(
     assert run["env"]["dump"] == str(dump.resolve())
     assert run["env"]["artifacts"] == str(output_workspace.resolve())
     assert run["env"]["run_root"]
+    assert len(run["env"]["git_commit"]) == _GIT_COMMIT_LENGTH
     assert any(call["argv"][:1] == ["inspect"] for call in calls)
     assert any(call["argv"][:1] == ["wait"] for call in calls)
     assert detached["env"] == {
         "dump": str(dump.resolve()),
         "artifacts": str(output_workspace.resolve()),
         "run_root": detached["env"]["run_root"],
+        "git_commit": detached["env"]["git_commit"],
     }
     down = calls[-1]["argv"]
     assert project in down
     assert down[-3:] == ["--volumes", "--remove-orphans", "--timeout=30"]
+    assert "--wait-timeout" in argv
+
+
+def test_capture_polls_runner_state_before_blocking_wait() -> None:
+    """Runner failure is observed through bounded state polls before docker wait."""
+    wrapper = _WRAPPER.read_text("utf-8")
+    assert "{{.State.Running}}" in wrapper
+    assert "runner exited before capture-ready" in wrapper
+    assert "deadline=$((SECONDS + migration_timeout))" in wrapper
 
 
 def test_capture_cleanup_failure_is_nonzero_and_prints_recovery_command(
@@ -258,6 +282,30 @@ def test_capture_rejects_user_supplied_attestation_before_docker(
     assert calls == []
 
 
+def test_capture_ignores_compose_file_environment_override(tmp_path: Path) -> None:
+    """Canonical migration always names the reviewed Compose file explicitly."""
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    dump = input_dir / "source.dump"
+    dump.write_bytes(b"pgdump")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    result, calls = _run_wrapper(
+        tmp_path,
+        "migrate",
+        "capture-postgres-baseline",
+        "--source-dump",
+        str(dump),
+        "--artifact-dir",
+        str(output_dir / "bundle"),
+        extra_env={"COMPOSE_FILE": "/tmp/attacker-compose.yml"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert all("/tmp/attacker-compose.yml" not in call["argv"] for call in calls)
+    compose_calls = [call for call in calls if call["argv"][:1] == ["compose"]]
+    assert all(call["argv"][1:3] == ["--file", str(_COMPOSE)] for call in compose_calls)
+
+
 def test_migration_compose_services_are_socket_free_and_formal_db_independent() -> None:
     """Migration profile has exactly its isolated network, stores, and mounts."""
     document = yaml.safe_load(_COMPOSE.read_text("utf-8"))
@@ -279,6 +327,8 @@ def test_migration_compose_services_are_socket_free_and_formal_db_independent() 
         "JOBFEED_MIGRATION_PG_URL",
         "JOBFEED_MIGRATION_SCRATCH_PG_URL",
         "JOBFEED_BENCH_MACHINE_TOKEN",
+        "JOBFEED_MIGRATION_GIT_COMMIT",
+        "JOBFEED_MIGRATION_TIMEOUT_SECONDS",
     }
     assert all("API_KEY" not in key for key in runner["environment"])
     assert document["networks"]["migration-internal"]["internal"] is True

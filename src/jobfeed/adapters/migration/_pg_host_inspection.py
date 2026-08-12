@@ -13,6 +13,8 @@ from jobfeed.adapters.migration._pg_preprovisioned_types import (
 _INSPECTION_KEYS = {"network", "source", "scratch", "runner"}
 _PROJECT_LABEL = "com.docker.compose.project"
 _SERVICE_LABEL = "com.docker.compose.service"
+_PGDATA_DESTINATION = "/var/lib/postgresql/data"
+_RUNNER_WRITABLE_DESTINATIONS = {"/run/jobfeed-migration", "/migration/artifacts"}
 
 
 def verify_host_inspection(
@@ -79,6 +81,10 @@ def _verify_container(
 ) -> None:
     document = _mapping(value, f"{phase} {expected.service} inspection")
     config = _mapping(document.get("Config"), f"{phase} {expected.service} config")
+    host_config = _mapping(
+        document.get("HostConfig"), f"{phase} {expected.service} host config"
+    )
+    state = _mapping(document.get("State"), f"{phase} {expected.service} state")
     labels = _mapping(config.get("Labels"), f"{phase} {expected.service} labels")
     networks = _mapping(
         _mapping(document.get("NetworkSettings"), "container network settings").get(
@@ -92,25 +98,59 @@ def _verify_container(
         or labels.get(_PROJECT_LABEL) != expected.project_label
         or labels.get(_SERVICE_LABEL) != expected.service
         or set(networks) != {expected.network_name}
+        or state.get("Running") is not True
+        or host_config.get("Privileged") is not False
+        or host_config.get("PortBindings") not in ({}, None)
     ):
         raise ValueError(f"{phase} host {expected.service} inspection mismatch")
     mounts = document.get("Mounts")
     if not isinstance(mounts, list):
         raise ValueError(f"{phase} host {expected.service} mounts missing")
-    dump_mounts = [
-        mount
-        for mount in mounts
-        if isinstance(mount, dict)
-        and mount.get("Destination") == str(bootstrap.dump_mount.runner_path)
-    ]
     if needs_dump_mount:
-        if len(dump_mounts) != 1:
-            raise ValueError(f"{phase} host runner dump mount mismatch")
-        dump = dump_mounts[0]
+        expected_destinations = _RUNNER_WRITABLE_DESTINATIONS | {
+            str(bootstrap.dump_mount.runner_path)
+        }
+        if (
+            len(mounts) != len(expected_destinations)
+            or {_mount_destination(mount, phase) for mount in mounts}
+            != expected_destinations
+        ):
+            raise ValueError(f"{phase} host runner exact mounts mismatch")
+        dump = next(
+            mount
+            for mount in mounts
+            if _mount_destination(mount, phase) == str(bootstrap.dump_mount.runner_path)
+        )
         if dump.get("Type") != "bind" or dump.get("RW") is not False:
             raise ValueError(f"{phase} host runner dump mount is not read-only")
-    elif dump_mounts:
-        raise ValueError(f"{phase} database service unexpectedly mounts dump")
+        writable = [mount for mount in mounts if mount is not dump]
+        if any(
+            _mapping(mount, f"{phase} runner writable mount").get("Type") != "bind"
+            or _mapping(mount, f"{phase} runner writable mount").get("RW") is not True
+            for mount in writable
+        ):
+            raise ValueError(f"{phase} host runner writable mounts mismatch")
+    else:
+        if len(mounts) != 1:
+            raise ValueError(f"{phase} database service storage mismatch")
+        storage = _mapping(mounts[0], f"{phase} database storage mount")
+        expected_suffix = expected.service.removeprefix("restore-").replace("-", "_")
+        if (
+            storage.get("Type") != "volume"
+            or storage.get("Destination") != _PGDATA_DESTINATION
+            or storage.get("RW") is not True
+            or storage.get("Name")
+            != f"{bootstrap.project_label}_restore_{expected_suffix}_data"
+        ):
+            raise ValueError(f"{phase} database service storage mismatch")
+
+
+def _mount_destination(value: object, phase: str) -> str:
+    mount = _mapping(value, f"{phase} runner mount")
+    destination = mount.get("Destination")
+    if not isinstance(destination, str):
+        raise ValueError(f"{phase} runner mount destination missing")
+    return destination
 
 
 def _binding(value: object) -> tuple[object, ...]:
@@ -119,7 +159,14 @@ def _binding(value: object) -> tuple[object, ...]:
     bindings: list[object] = [network.get("Name"), network.get("Id")]
     for name in ("source", "scratch", "runner"):
         document = _mapping(documents[name], f"host {name} inspection")
-        bindings.extend((document.get("Id"), document.get("Image")))
+        bindings.extend(
+            (
+                document.get("Id"),
+                document.get("Image"),
+                document.get("Mounts"),
+                document.get("HostConfig"),
+            )
+        )
     return tuple(bindings)
 
 

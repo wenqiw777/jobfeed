@@ -44,6 +44,8 @@ services:
       JOBFEED_MIGRATION_PG_URL: "${JOBFEED_MIGRATION_PG_URL:-}"
       JOBFEED_MIGRATION_SCRATCH_PG_URL: "${JOBFEED_MIGRATION_SCRATCH_PG_URL:-}"
       JOBFEED_BENCH_MACHINE_TOKEN: "${JOBFEED_BENCH_MACHINE_TOKEN:-}"
+      JOBFEED_MIGRATION_GIT_COMMIT: "${JOBFEED_MIGRATION_GIT_COMMIT:-}"
+      JOBFEED_MIGRATION_TIMEOUT_SECONDS: "${JOBFEED_MIGRATION_TIMEOUT_SECONDS:-1800}"
       # Resolve the fastembed ONNX weight cache to the path the image BAKES the
       # weights into at build time, so the canonical `docker compose run --rm`
       # path does zero runtime download and works offline. Reasserts the
@@ -118,6 +120,8 @@ services:
       JOBFEED_MIGRATION_PG_URL: "postgresql://jobfeed@restore-source:5432/jobfeed_restore"
       JOBFEED_MIGRATION_SCRATCH_PG_URL: "postgresql://jobfeed@restore-scratch:5432/jobfeed_restore"
       JOBFEED_BENCH_MACHINE_TOKEN: "${JOBFEED_BENCH_MACHINE_TOKEN:-}"
+      JOBFEED_MIGRATION_GIT_COMMIT: "${JOBFEED_MIGRATION_GIT_COMMIT:-}"
+      JOBFEED_MIGRATION_TIMEOUT_SECONDS: "${JOBFEED_MIGRATION_TIMEOUT_SECONDS:-1800}"
     volumes:
       - type: bind
         source: ${JOBFEED_MIGRATION_DUMP_HOST:-/dev/null}

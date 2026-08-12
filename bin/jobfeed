@@ -90,6 +90,22 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
 
     export JOBFEED_MIGRATION_DUMP_HOST="$dump_host"
     export JOBFEED_MIGRATION_ARTIFACT_PARENT_HOST="$artifact_parent"
+    git_commit="$(git -C "$REPO_ROOT" rev-parse --verify HEAD^{commit})"
+    [ "${#git_commit}" -eq 40 ] \
+        || fail "repository HEAD must be an exact 40-character lowercase commit"
+    case "$git_commit" in
+        *[!0-9a-f]*)
+            fail "repository HEAD must be an exact 40-character lowercase commit"
+            ;;
+    esac
+    export JOBFEED_MIGRATION_GIT_COMMIT="$git_commit"
+    migration_timeout="${JOBFEED_MIGRATION_TIMEOUT_SECONDS:-1800}"
+    case "$migration_timeout" in
+        ''|*[!0-9]*) fail "JOBFEED_MIGRATION_TIMEOUT_SECONDS must be an integer" ;;
+    esac
+    [ "$migration_timeout" -gt 0 ] \
+        || fail "JOBFEED_MIGRATION_TIMEOUT_SECONDS must be positive"
+    export JOBFEED_MIGRATION_TIMEOUT_SECONDS="$migration_timeout"
     run_host="$(mktemp -d "$artifact_parent/.jobfeed-migration-control.XXXXXX")"
     export JOBFEED_MIGRATION_RUN_HOST="$run_host"
     forwarded+=(
@@ -98,11 +114,12 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
 
     project_name="jobfeed-migration-${PPID}-$$-${RANDOM}"
     compose=(
-        docker compose
+        docker compose --file "$REPO_ROOT/docker-compose.yml"
         --project-directory "$REPO_ROOT"
         --project-name "$project_name"
         --profile migration
     )
+    unset COMPOSE_FILE COMPOSE_PATH_SEPARATOR
     export JOBFEED_MIGRATION_PROJECT="$project_name"
 
     cleanup_migration_project() {
@@ -122,7 +139,8 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     trap 'exit 143' TERM
     trap 'exit 129' HUP
 
-    "${compose[@]}" up -d --wait restore-source restore-scratch
+    "${compose[@]}" up -d --wait --wait-timeout "$migration_timeout" \
+        restore-source restore-scratch
     source_id="$("${compose[@]}" ps -q restore-source)"
     scratch_id="$("${compose[@]}" ps -q restore-scratch)"
     runner_name="${project_name}-migration-runner"
@@ -165,12 +183,26 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     chmod 0400 "$bootstrap_tmp"
     mv "$bootstrap_tmp" "$run_host/bootstrap.json"
 
-    for _ in {1..240}; do
+    deadline=$((SECONDS + migration_timeout))
+    while [ "$SECONDS" -lt "$deadline" ]; do
         [ -f "$run_host/capture-ready.json" ] && break
+        runner_running="$(docker inspect --format '{{.State.Running}}' "$runner_id")"
+        if [ "$runner_running" != "true" ]; then
+            runner_status="$(docker wait "$runner_id")"
+            docker logs "$runner_id"
+            fail "migration runner exited before capture-ready with $runner_status"
+        fi
         sleep 0.25
     done
     [ -f "$run_host/capture-ready.json" ] || fail "migration runner capture timed out"
     write_inspection "$run_host/post-inspection.json"
+    deadline=$((SECONDS + migration_timeout))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        runner_running="$(docker inspect --format '{{.State.Running}}' "$runner_id")"
+        [ "$runner_running" = "true" ] || break
+        sleep 0.25
+    done
+    [ "$runner_running" != "true" ] || fail "migration runner verification timed out"
     runner_status="$(docker wait "$runner_id")"
     docker logs "$runner_id"
     [ "$runner_status" = "0" ] || fail "migration runner failed with $runner_status"

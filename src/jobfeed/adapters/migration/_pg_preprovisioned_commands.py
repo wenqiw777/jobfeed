@@ -87,7 +87,7 @@ def restore_service(
 
 
 def dump_fingerprint(path: Path) -> DumpFingerprint:
-    """Hash a non-symlink, non-writable regular dump through one open FD.
+    """Hash a non-symlink regular dump through one open file descriptor.
 
     Args:
         path: Fixed runner dump mount path.
@@ -96,7 +96,7 @@ def dump_fingerprint(path: Path) -> DumpFingerprint:
         Dump SHA-256 and byte size.
 
     Raises:
-        ValueError: If the path is not a regular read-only file.
+        ValueError: If the path is not a regular file.
         OSError: If the path cannot be opened or read.
     """
     file_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -104,8 +104,8 @@ def dump_fingerprint(path: Path) -> DumpFingerprint:
     size = 0
     try:
         metadata = os.fstat(file_fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o222:
-            raise ValueError("restore dump mount must be a read-only regular file")
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("restore dump mount must be a regular file")
         while chunk := os.read(file_fd, 1024 * 1024):
             digest.update(chunk)
             size += len(chunk)

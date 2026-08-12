@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import shutil
 import sqlite3
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -18,12 +16,18 @@ import click
 
 from jobfeed.adapters.migration._baseline_evidence import (
     validate_evidence_bundle,
-    validate_restore_attestations,
 )
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
+from jobfeed.adapters.migration.baseline_provenance import (
+    build_provenance_index,
+    validate_provenance_bundle,
+)
 from jobfeed.adapters.migration.pg_baseline import PgDumpEvidence, capture_pg_baseline
 from jobfeed.adapters.migration.pg_preprovisioned_restore import (
+    RESTORE_BOOTSTRAP_PATH,
+    RESTORE_CAPTURE_READY_PATH,
     RESTORE_POST_INSPECTION_PATH,
+    RESTORE_VERIFIED_PATH,
     SCRATCH_RESTORE_DSN,
     SOURCE_RESTORE_DSN,
     PreprovisionedRestoreConfig,
@@ -38,10 +42,23 @@ from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.cli import require_app
 
 _RESTORE_PRE_INSPECTION_PATH = Path("/run/jobfeed-migration/pre-inspection.json")
+_GIT_COMMIT_LENGTH = 40
+
+
+def _migration_timeout_seconds() -> float:
+    raw = os.environ.get("JOBFEED_MIGRATION_TIMEOUT_SECONDS", "1800")
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError("migration timeout must be a positive number") from exc
+    if value <= 0:
+        raise ValueError("migration timeout must be a positive number")
+    return value
 
 
 def _wait_for_restore_bootstrap() -> Any:
-    for _ in range(240):
+    deadline = time.monotonic() + _migration_timeout_seconds()
+    while time.monotonic() < deadline:
         try:
             return load_restore_bootstrap()
         except FileNotFoundError:
@@ -50,11 +67,57 @@ def _wait_for_restore_bootstrap() -> Any:
 
 
 def _wait_for_restore_file(path: Path, name: str) -> None:
-    for _ in range(240):
+    deadline = time.monotonic() + _migration_timeout_seconds()
+    while time.monotonic() < deadline:
         if path.is_file():
             return
         time.sleep(0.25)
     raise ValueError(f"{name} marker timed out")
+
+
+def _injected_git_commit() -> str:
+    value = os.environ.get("JOBFEED_MIGRATION_GIT_COMMIT", "")
+    if len(value) != _GIT_COMMIT_LENGTH or any(
+        character not in "0123456789abcdef" for character in value
+    ):
+        raise ValueError("migration git commit must be 40 lowercase hexadecimal")
+    return value
+
+
+def _alembic_executable() -> Path:
+    value = shutil.which("alembic")
+    if value is None:
+        raise ValueError("alembic executable is unavailable in migration image")
+    path = Path(value)
+    if not path.is_absolute() or not path.is_file():
+        raise ValueError("alembic executable must resolve to an absolute file")
+    return path
+
+
+def _publish_provenance(
+    staging: Path,
+    artifact_dir: Path,
+    bundle: dict[str, object],
+    pre_docs: object,
+    post_docs: object,
+) -> None:
+    documents = {
+        "restore-bootstrap.json": json.loads(RESTORE_BOOTSTRAP_PATH.read_text("utf-8")),
+        "pre-inspection.json": pre_docs,
+        "post-inspection.json": post_docs,
+        "capture-ready.json": json.loads(RESTORE_CAPTURE_READY_PATH.read_text("utf-8")),
+        "provenance-verified.json": json.loads(
+            RESTORE_VERIFIED_PATH.read_text("utf-8")
+        ),
+    }
+    provenance_index = build_provenance_index(documents, bundle["index"])
+    validate_provenance_bundle(documents, bundle["index"], provenance_index)
+    for filename, document in documents.items():
+        _write_new_json(staging / filename, document)
+    _write_new_json(staging / "provenance-index.json", provenance_index)
+    if artifact_dir.exists():
+        raise FileExistsError(f"artifact bundle appeared concurrently: {artifact_dir}")
+    staging.rename(artifact_dir)
 
 
 # ---- Helpers ----
@@ -219,153 +282,6 @@ def _write_new_json(path: Path, document: object) -> None:
         raise click.ClickException(f"Cannot write artifact {path}: {exc}") from exc
 
 
-def _file_sha256(path: Path) -> str:
-    """Hash one evidence artifact without loading it into memory.
-
-    Args:
-        path: Artifact to read.
-
-    Returns:
-        Lowercase SHA-256 digest.
-    """
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-@migrate.command(name="benchmark-store", help="Capture a versioned store benchmark.")
-@click.option("--backend", required=True, type=click.Choice(["postgres", "sqlite"]))
-@click.option("--dsn-env", help="Environment variable containing source DSN.")
-@click.option(
-    "--scratch-dsn-env", help="Environment variable containing disposable clone DSN."
-)
-@click.option(
-    "--machine-token-env",
-    required=True,
-    help="Environment variable containing the shared benchmark machine token.",
-)
-@click.option(
-    "--workload",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-)
-@click.option("--artifact-dir", required=True, type=click.Path(path_type=Path))
-@click.option(
-    "--source-dump",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Read-only pg_dump artifact restored into this rehearsal database.",
-)
-@click.option(
-    "--source-restore-attestation",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-)
-@click.option(
-    "--scratch-restore-attestation",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-)
-def benchmark_store_command(**options: object) -> None:
-    """Capture an atomic evidence bundle without writing to the source.
-
-    Args:
-        **options: Click-parsed backend, DSN names, workload, dump, and output.
-
-    Raises:
-        click.ClickException: If gates fail or an artifact cannot be created.
-    """
-    backend = cast(str, options["backend"])
-    dsn_env = cast(str | None, options["dsn_env"])
-    scratch_dsn_env = cast(str | None, options["scratch_dsn_env"])
-    machine_token_env = cast(str, options["machine_token_env"])
-    workload = cast(Path, options["workload"])
-    artifact_dir = cast(Path, options["artifact_dir"])
-    source_dump = cast(Path, options["source_dump"])
-    source_attestation_path = cast(Path, options["source_restore_attestation"])
-    scratch_attestation_path = cast(Path, options["scratch_restore_attestation"])
-    if backend != "postgres":
-        raise click.ClickException("SQLite benchmark implementation is not available")
-    if not dsn_env or not scratch_dsn_env:
-        raise click.ClickException(
-            "Postgres benchmark requires both named DSN env vars"
-        )
-    dsn = os.environ.get(dsn_env)
-    scratch_dsn = os.environ.get(scratch_dsn_env)
-    machine_token = os.environ.get(machine_token_env)
-    if not dsn or not scratch_dsn or not machine_token:
-        raise click.ClickException(
-            "Postgres benchmark DSN or machine environment is empty"
-        )
-    if dsn == scratch_dsn:
-        raise click.ClickException("Source and contention scratch DSNs must differ")
-    if artifact_dir.exists():
-        raise click.ClickException(
-            f"Refusing to overwrite artifact bundle: {artifact_dir}"
-        )
-    artifact_dir.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{artifact_dir.name}.partial-", dir=artifact_dir.parent
-        )
-    )
-    try:
-        workload_document = json.loads(workload.read_text("utf-8"))
-        git_commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        dump_sha256 = _file_sha256(source_dump)
-        restore_attestations = validate_restore_attestations(
-            json.loads(source_attestation_path.read_text("utf-8")),
-            json.loads(scratch_attestation_path.read_text("utf-8")),
-            dump_sha256=dump_sha256,
-        )
-        manifest, benchmark = capture_pg_baseline(
-            dsn,
-            scratch_dsn,
-            workload_document,
-            source=PgDumpEvidence(
-                git_commit=git_commit,
-                sha256=dump_sha256,
-                size_bytes=source_dump.stat().st_size,
-                restore_attestations=restore_attestations,
-                machine_token=machine_token,
-            ),
-        )
-        evidence_index = {
-            "evidence_version": 1,
-            "source_dump_sha256": dump_sha256,
-            "manifest_sha256": artifact_sha256(manifest),
-            "benchmark_sha256": artifact_sha256(benchmark),
-            "workload_sha256": artifact_sha256(workload_document),
-            "git_commit": git_commit,
-        }
-        validate_evidence_bundle(manifest, benchmark, evidence_index)
-        _write_new_json(staging / "snapshot-manifest.json", manifest)
-        _write_new_json(staging / "store-benchmark.json", benchmark)
-        _write_new_json(staging / "evidence-index.json", evidence_index)
-        if artifact_dir.exists():
-            raise FileExistsError(
-                f"artifact bundle appeared concurrently: {artifact_dir}"
-            )
-        staging.rename(artifact_dir)
-    except Exception as exc:
-        shutil.rmtree(staging, ignore_errors=True)
-        if isinstance(exc, click.ClickException):
-            raise
-        raise click.ClickException(str(exc)) from exc
-    click.echo(
-        f"Evidence bundle: {artifact_dir} "
-        f"manifest_sha256={evidence_index['manifest_sha256']} "
-        f"benchmark_sha256={evidence_index['benchmark_sha256']}"
-    )
-
-
 @migrate.command(name="_capture-preprovisioned-baseline", hidden=True)
 @click.option(
     "--machine-token-env",
@@ -391,30 +307,28 @@ def capture_preprovisioned_baseline_command(
     Raises:
         click.ClickException: If any restore, capture, or provenance gate fails.
     """
+    staging: Path | None = None
     try:
         machine_token = os.environ.get(machine_token_env)
         if not machine_token:
             raise ValueError("benchmark machine token environment is empty")
+        git_commit = _injected_git_commit()
         bootstrap = _wait_for_restore_bootstrap()
         config = PreprovisionedRestoreConfig(
             dump_path=Path("/run/jobfeed-migration/source.dump"),
             project_root=Path("/app"),
-            alembic_executable=Path("/app/.venv/bin/alembic"),
+            alembic_executable=_alembic_executable(),
             source_dsn=SOURCE_RESTORE_DSN,
             scratch_dsn=SCRATCH_RESTORE_DSN,
             expected_project_label=bootstrap.project_label,
             bootstrap=bootstrap,
         )
         workload_document = json.loads(workload.read_text("utf-8"))
+        bundle_holder: list[dict[str, object]] = []
 
         def capture(result: object) -> dict[str, object]:
+            nonlocal staging
             restore = cast(Any, result)
-            git_commit = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
             manifest, benchmark = capture_pg_baseline(
                 restore.source_dsn,
                 restore.scratch_dsn,
@@ -447,11 +361,17 @@ def capture_preprovisioned_baseline_command(
                 _write_new_json(staging / "snapshot-manifest.json", manifest)
                 _write_new_json(staging / "store-benchmark.json", benchmark)
                 _write_new_json(staging / "evidence-index.json", index)
-                staging.rename(artifact_dir)
             except Exception:
                 shutil.rmtree(staging, ignore_errors=True)
+                staging = None
                 raise
-            return {"manifest": manifest, "benchmark": benchmark, "index": index}
+            bundle: dict[str, object] = {
+                "manifest": manifest,
+                "benchmark": benchmark,
+                "index": index,
+            }
+            bundle_holder.append(bundle)
+            return bundle
 
         ready = capture_preprovisioned_restore(
             config,
@@ -461,17 +381,7 @@ def capture_preprovisioned_baseline_command(
         _wait_for_restore_file(RESTORE_POST_INSPECTION_PATH, "post-inspection")
         pre_docs = json.loads(_RESTORE_PRE_INSPECTION_PATH.read_text("utf-8"))
         post_docs = json.loads(RESTORE_POST_INSPECTION_PATH.read_text("utf-8"))
-        bundle = {
-            "manifest": json.loads(
-                (artifact_dir / "snapshot-manifest.json").read_text("utf-8")
-            ),
-            "benchmark": json.loads(
-                (artifact_dir / "store-benchmark.json").read_text("utf-8")
-            ),
-            "index": json.loads(
-                (artifact_dir / "evidence-index.json").read_text("utf-8")
-            ),
-        }
+        bundle = bundle_holder[0]
         verify_preprovisioned_provenance(
             ProvenanceVerification(
                 bootstrap=bootstrap,
@@ -481,7 +391,13 @@ def capture_preprovisioned_baseline_command(
                 actual_evidence_bundle_sha256=artifact_sha256(bundle),
             )
         )
+        if staging is None:
+            raise ValueError("baseline staging directory is unavailable")
+        _publish_provenance(staging, artifact_dir, bundle, pre_docs, post_docs)
+        staging = None
     except Exception as exc:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
         if isinstance(exc, click.ClickException):
             raise
         raise click.ClickException(str(exc)) from exc

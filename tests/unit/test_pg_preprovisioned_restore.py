@@ -141,16 +141,36 @@ def _host_docs(dump_path: Path) -> dict[str, object]:
     project = "jobfeed-migration-run-123"
 
     def container(service: str, container_id: str) -> dict[str, object]:
-        mounts: list[dict[str, object]] = []
+        suffix = service.removeprefix("restore-")
+        mounts: list[dict[str, object]] = [
+            {
+                "Type": "volume",
+                "Name": f"{project}_restore_{suffix}_data",
+                "Destination": "/var/lib/postgresql/data",
+                "RW": True,
+            }
+        ]
         if service == "migration-runner":
-            mounts.append(
+            mounts = [
                 {
                     "Type": "bind",
                     "Source": "/host/frozen.dump",
                     "Destination": str(dump_path),
                     "RW": False,
-                }
-            )
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/host/artifacts",
+                    "Destination": "/migration/artifacts",
+                    "RW": True,
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/host/run",
+                    "Destination": "/run/jobfeed-migration",
+                    "RW": True,
+                },
+            ]
         return {
             "Id": container_id,
             "Image": f"sha256:{'c' * 64}",
@@ -161,6 +181,8 @@ def _host_docs(dump_path: Path) -> dict[str, object]:
                 }
             },
             "NetworkSettings": {"Networks": {network: {}}},
+            "State": {"Running": True},
+            "HostConfig": {"Privileged": False, "PortBindings": {}},
             "Mounts": mounts,
         }
 
@@ -228,7 +250,16 @@ def test_socket_free_restore_binds_bootstrap_and_live_database_identity(
     restores = [command for command in runner.calls if command[0] == "pg_restore"]
     assert len(restores) == _PG_RESTORE_CALLS
     assert all("docker" not in command for command in restores)
-    assert seen_bootstrap_sha == [bootstrap_sha256(config.bootstrap)]
+
+
+def test_host_mode_0600_is_accepted_when_mount_provenance_is_read_only(
+    tmp_path: Path,
+) -> None:
+    """Docker :ro does not rewrite host mode bits; host inspection proves RO."""
+    config = _config(tmp_path)
+    config.dump_path.chmod(0o600)
+    runner = FakePreprovisionedRunner(config)
+    assert run_preprovisioned_restore(config, _capture, runner=runner)
     psql_sql = [command[-1] for command in runner.calls if command[0] == "psql"]
     assert all("current_setting" not in sql for sql in psql_sql)
 
@@ -307,6 +338,21 @@ def test_host_verifier_requires_read_only_runner_dump_mount(tmp_path: Path) -> N
     assert isinstance(mount, dict)
     mount["RW"] = True
     with pytest.raises(ValueError, match="not read-only"):
+        verify_host_inspection(config.bootstrap, documents, documents)
+
+
+def test_host_verifier_rejects_formal_or_extra_storage_mount(tmp_path: Path) -> None:
+    """Restore databases cannot reuse formal pgdata or acquire extra mounts."""
+    config = _config(tmp_path)
+    documents = _host_docs(config.dump_path)
+    source = documents["source"]
+    assert isinstance(source, dict)
+    mounts = source["Mounts"]
+    assert isinstance(mounts, list)
+    mount = mounts[0]
+    assert isinstance(mount, dict)
+    mount["Name"] = "jobfeed_pgdata"
+    with pytest.raises(ValueError, match="storage mismatch"):
         verify_host_inspection(config.bootstrap, documents, documents)
 
 

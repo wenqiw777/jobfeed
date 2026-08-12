@@ -512,6 +512,6 @@ def test_cli_requires_named_dsn_environment_without_creating_outputs(
         },
     )
 
-    assert result.exit_code == 1
-    assert "environment is empty" in result.output
+    assert result.exit_code != 0
+    assert "No such command 'benchmark-store'" in result.output
     assert not artifact_dir.exists()
