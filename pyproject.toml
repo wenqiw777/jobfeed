@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Local-first job scanning and evaluation pipeline."
 requires-python = ">=3.11"
 dependencies = [
+    "aiosqlite >= 0.20",
     "alembic >= 1.15",
     "asyncpg >= 0.30",
     "beautifulsoup4 >= 4.12",
@@ -62,6 +63,7 @@ dependencies = [
     "opentelemetry-instrumentation-asyncpg >= 0.46b",
     "opentelemetry-instrumentation-fastapi >= 0.46b",
     "sentry-sdk[fastapi] >= 2.0",
+    "sqlalchemy >= 2.0",
 ]
 
 [project.optional-dependencies]
