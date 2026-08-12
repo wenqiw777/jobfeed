@@ -92,13 +92,21 @@ async def _attention(
 async def _funnel(
     connection: aiosqlite.Connection, cutoff: str
 ) -> list[dict[str, object]]:
+    greatest_stage = (
+        "CASE WHEN jobs_gate_passed IS NULL AND stage_a_scored IS NULL "
+        "AND stage_b_scored IS NULL THEN NULL ELSE "
+        "max(coalesce(jobs_gate_passed,-1),coalesce(stage_a_scored,-1),"
+        "coalesce(stage_b_scored,-1)) END"
+    )
+    greatest_scored = (
+        "CASE WHEN stage_a_scored IS NULL AND stage_b_scored IS NULL THEN NULL "
+        "ELSE max(coalesce(stage_a_scored,-1),coalesce(stage_b_scored,-1)) END"
+    )
     return await _dict_rows(
         connection,
-        "SELECT run_id, jobs_filtered+jobs_ml_gated+"
-        "max(jobs_gate_passed,stage_a_scored,stage_b_scored) total_candidates, "
-        "jobs_ml_gated+max(jobs_gate_passed,stage_a_scored,stage_b_scored) "
-        "after_filter, max(jobs_gate_passed,stage_a_scored,stage_b_scored) "
-        "after_gate, max(stage_a_scored,stage_b_scored) scored "
+        f"SELECT run_id, jobs_filtered+jobs_ml_gated+({greatest_stage}) "
+        f"total_candidates, jobs_ml_gated+({greatest_stage}) after_filter, "
+        f"({greatest_stage}) after_gate, ({greatest_scored}) scored "
         "FROM pipeline_runs WHERE source='evaluate' AND started_at >= ? "
         "ORDER BY started_at DESC, run_id DESC",
         (cutoff,),

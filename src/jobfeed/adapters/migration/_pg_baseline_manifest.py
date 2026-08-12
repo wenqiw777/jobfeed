@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Final
 
@@ -119,6 +120,8 @@ def _json_value(value: object) -> object:
         return timestamp_value(value)
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
     if isinstance(value, Enum):
         return value.value
     return value

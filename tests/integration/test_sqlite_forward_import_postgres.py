@@ -8,7 +8,11 @@ from pathlib import Path
 import psycopg2  # type: ignore[import-untyped]
 import pytest
 
+from jobfeed.adapters.migration._pg_baseline_manifest import aggregate_manifest
 from jobfeed.adapters.migration._pg_baseline_reader import PostgresBaselineReader
+from jobfeed.adapters.migration._pg_canonical_aggregates import (
+    capture_canonical_aggregates,
+)
 from jobfeed.adapters.migration.canonical_schema_manifest import (
     CANONICAL_SCHEMA_MANIFEST_V1,
     MIGRATED_TABLE_ORDER_V1,
@@ -17,6 +21,12 @@ from jobfeed.adapters.migration.canonical_schema_manifest import (
 from jobfeed.adapters.migration.sqlite_forward_import import (
     import_postgres_snapshot_to_sqlite,
 )
+from jobfeed.adapters.migration.sqlite_parity import (
+    SqliteParityVerificationError,
+    verify_sqlite_parity,
+)
+from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
 from tests.unit._sqlite_forward_import_fixture import (
     canonical_source_rows,
     snapshot_manifest,
@@ -88,3 +98,33 @@ def test_real_postgres_0008_snapshot_imports_to_physical_sqlite(
         assert len(result.table_sha256) == len(MIGRATED_TABLE_ORDER_V1)
     finally:
         connection.close()
+
+
+@pytest.mark.postgres
+async def test_real_postgres_import_passes_exact_sqlite_parity(
+    fresh_pg_dsn: str, tmp_path: Path
+) -> None:
+    """One source snapshot imports and passes all table and aggregate parity."""
+    rows = canonical_source_rows()
+    _seed_postgres(fresh_pg_dsn, rows)
+    target = tmp_path / "verified-from-postgres.db"
+
+    with PostgresBaselineReader(fresh_pg_dsn) as source:
+        manifest = snapshot_manifest(rows)
+        source_raw = capture_canonical_aggregates(source, source.database_clock())
+        manifest["aggregates"] = aggregate_manifest(source_raw)
+        import_postgres_snapshot_to_sqlite(source, manifest, target, chunk_size=1)
+
+    lifecycle = SqliteLifecycle(target, ensure_sqlite_schema)
+    await lifecycle.open()
+    try:
+        try:
+            report = await verify_sqlite_parity(lifecycle, manifest, chunk_size=1)
+        except SqliteParityVerificationError as error:
+            pytest.fail(f"unexpected real parity mismatch: {error.report.mismatches!r}")
+    finally:
+        await lifecycle.close()
+
+    assert report.is_match
+    assert len(report.tables) == len(MIGRATED_TABLE_ORDER_V1)
+    assert report.mismatches == ()
