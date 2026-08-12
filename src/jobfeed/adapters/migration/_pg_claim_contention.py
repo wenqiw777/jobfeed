@@ -40,14 +40,14 @@ def validate_claim_contention_outcome(
     *,
     claimed_by_process: dict[int, list[str]],
     errors: list[str],
-    database_claim_delta: int,
+    persisted_claim_ids: list[str],
 ) -> None:
     """Fail closed on missing processes, duplicate claims, or worker errors.
 
     Args:
         claimed_by_process: Claimed identities grouped by reporting OS process.
         errors: Worker exception summaries.
-        database_claim_delta: Exact increase in persisted in-progress claims.
+        persisted_claim_ids: Final claimed IDs selected by the DB cutoff query.
 
     Raises:
         ValueError: If the workload did not prove its correctness gates.
@@ -65,28 +65,32 @@ def validate_claim_contention_outcome(
         raise ValueError("claim contention produced a duplicate claim")
     if len(claimed_ids) < _MINIMUM_SUCCESSFUL_WRITES:
         raise ValueError("claim contention produced fewer than 100 short writes")
-    if database_claim_delta != len(claimed_ids):
-        raise ValueError(
-            "claim contention database delta mismatch: "
-            f"delta={database_claim_delta}, claims={len(claimed_ids)}"
-        )
+    if sorted(persisted_claim_ids, key=int) != sorted(claimed_ids, key=int):
+        raise ValueError("claim contention persisted claim ID set mismatch")
 
 
 async def _run_worker_async(
-    dsn: str, coroutines: int, rounds: int, claim_limit: int
+    config: _WorkerConfig,
+    ready: Any,
+    start: Any,
 ) -> dict[str, object]:
-    store = PostgresStore(dsn, min_size=coroutines, max_size=coroutines)
+    store = PostgresStore(
+        config.dsn, min_size=config.coroutines, max_size=config.coroutines
+    )
     await store.connect()
+    ready.put(os.getpid())
+    if not start.wait(timeout=30):
+        raise RuntimeError("claim contention start event timed out")
 
     async def claim_loop() -> tuple[list[str], list[float], int, list[str]]:
         claimed_ids: list[str] = []
         timings: list[float] = []
         empty = 0
         errors: list[str] = []
-        for _ in range(rounds):
+        for _ in range(config.rounds):
             started = time.perf_counter_ns()
             try:
-                jobs = await store.claim_pending_stage_a(limit=claim_limit)
+                jobs = await store.claim_pending_stage_a(limit=config.claim_limit)
             except Exception as exc:  # workload evidence must preserve adapter errors
                 errors.append(f"{type(exc).__name__}: {exc}")
                 break
@@ -98,7 +102,9 @@ async def _run_worker_async(
         return claimed_ids, timings, empty, errors
 
     try:
-        results = await asyncio.gather(*(claim_loop() for _ in range(coroutines)))
+        results = await asyncio.gather(
+            *(claim_loop() for _ in range(config.coroutines))
+        )
     finally:
         await store.close()
     return {
@@ -112,21 +118,12 @@ async def _run_worker_async(
 
 def _claim_worker(
     config: _WorkerConfig,
-    start_barrier: Any,
+    ready: Any,
+    start: Any,
     output: Any,
 ) -> None:
     try:
-        start_barrier.wait(timeout=30)
-        output.put(
-            asyncio.run(
-                _run_worker_async(
-                    config.dsn,
-                    config.coroutines,
-                    config.rounds,
-                    config.claim_limit,
-                )
-            )
-        )
+        output.put(asyncio.run(_run_worker_async(config, ready, start)))
     except Exception as exc:  # parent converts bootstrap failures into gate evidence
         output.put(
             {
@@ -158,7 +155,8 @@ def run_pg_claim_contention(
     """
     context = multiprocessing.get_context("spawn")
     output = context.Queue()
-    start_barrier = context.Barrier(workload.processes)
+    ready = context.Queue()
+    start = context.Event()
     processes = [
         context.Process(
             target=_claim_worker,
@@ -169,7 +167,8 @@ def run_pg_claim_contention(
                     rounds=workload.rounds_per_coroutine,
                     claim_limit=workload.claim_limit,
                 ),
-                start_barrier,
+                ready,
+                start,
                 output,
             ),
         )
@@ -179,6 +178,12 @@ def run_pg_claim_contention(
         process.start()
     documents = []
     try:
+        ready_pids = {
+            int(ready.get(timeout=_WORKER_TIMEOUT_SECONDS)) for _ in processes
+        }
+        if len(ready_pids) != workload.processes:
+            raise ValueError("claim contention workers were not distinctly ready")
+        start.set()
         for _ in processes:
             documents.append(output.get(timeout=_WORKER_TIMEOUT_SECONDS))
     except Empty as exc:
@@ -190,6 +195,7 @@ def run_pg_claim_contention(
                 process.terminate()
                 process.join(timeout=5)
         output.close()
+        ready.close()
     claimed_by_process = {
         int(document["pid"]): [str(job_id) for job_id in document["claimed_ids"]]
         for document in documents

@@ -24,14 +24,14 @@ class ReportContext:
     workload: BenchmarkWorkload
     store_results: list[StoreBenchmarkResult]
     machine_fingerprint: str
-    host_identifier_sha256: str
+    machine_token_sha256: str
     cpu_identifier_sha256: str
     source_gate: tuple[str, int, int]
     source_post_gate: tuple[str, int, int]
     scratch_gate: tuple[str, int, int]
     scratch_post_gate: tuple[str, int, int]
     contention: ClaimContentionResult
-    database_claim_delta: int
+    persisted_claim_ids: list[str]
 
 
 def build_benchmark_report(context: ReportContext) -> dict[str, object]:
@@ -72,7 +72,7 @@ def build_benchmark_report(context: ReportContext) -> dict[str, object]:
         "snapshot_manifest_sha256": context.manifest_sha256,
         "workload_sha256": artifact_sha256(context.workload_document),
         "machine_fingerprint": context.machine_fingerprint,
-        "host_identifier_sha256": context.host_identifier_sha256,
+        "machine_token_sha256": context.machine_token_sha256,
         "cpu_identifier_sha256": context.cpu_identifier_sha256,
         "warmup_count": workload.warmup_count,
         "sample_count": workload.sample_count,
@@ -105,7 +105,10 @@ def build_benchmark_report(context: ReportContext) -> dict[str, object]:
                 * workload.contention.rounds_per_coroutine
             ),
             "successful_claims": successful_claims,
-            "database_claim_delta": context.database_claim_delta,
+            "database_claim_count": len(context.persisted_claim_ids),
+            "database_claim_ids_sha256": artifact_sha256(
+                sorted(context.persisted_claim_ids, key=int)
+            ),
             "empty_claims": contention.empty_claims,
             "duplicate_claims": 0,
             "data_loss": 0,

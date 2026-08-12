@@ -10,10 +10,10 @@ import pytest
 from click.testing import CliRunner
 
 from jobfeed.adapters.migration._baseline_evidence import (
-    machine_fingerprint,
     validate_evidence_bundle,
     validate_restore_attestations,
 )
+from jobfeed.adapters.migration._baseline_machine import machine_fingerprint
 from jobfeed.adapters.migration._baseline_workload import (
     REQUIRED_BENCHMARK_COVERAGE,
     validate_benchmark_workload,
@@ -70,32 +70,32 @@ def test_claim_contention_outcome_rejects_duplicates_or_errors() -> None:
     validate_claim_contention_outcome(
         claimed_by_process={101: unique_claims[:50], 102: unique_claims[50:]},
         errors=[],
-        database_claim_delta=len(unique_claims),
+        persisted_claim_ids=unique_claims,
     )
 
     with pytest.raises(ValueError, match="duplicate"):
         validate_claim_contention_outcome(
             claimed_by_process={101: ["1"], 102: ["1"]},
             errors=[],
-            database_claim_delta=2,
+            persisted_claim_ids=["1"],
         )
     with pytest.raises(ValueError, match="error"):
         validate_claim_contention_outcome(
             claimed_by_process={101: ["1"], 102: []},
             errors=["boom"],
-            database_claim_delta=1,
+            persisted_claim_ids=["1"],
         )
     with pytest.raises(ValueError, match="process"):
         validate_claim_contention_outcome(
             claimed_by_process={101: unique_claims, 102: []},
             errors=[],
-            database_claim_delta=len(unique_claims),
+            persisted_claim_ids=unique_claims,
         )
-    with pytest.raises(ValueError, match="delta"):
+    with pytest.raises(ValueError, match="ID set"):
         validate_claim_contention_outcome(
             claimed_by_process={101: unique_claims[:50], 102: unique_claims[50:]},
             errors=[],
-            database_claim_delta=len(unique_claims) - 1,
+            persisted_claim_ids=unique_claims[:-1],
         )
 
 
@@ -188,8 +188,10 @@ def test_text_primary_keys_use_explicit_binary_postgres_order() -> None:
 
 
 def test_unordered_aggregate_rows_hash_independently_of_backend_order() -> None:
-    """Golden aggregate hashes sort nested rows by stable serialized keys."""
+    """Only explicitly unordered attention buckets are stable-sorted."""
     first = {
+        "as_of_utc": "2026-08-12T00:00:00Z",
+        "window_days": 30,
         "pending_stage_a": 1,
         "pending_stage_b": 2,
         "needs_attention": {"enrich_errors": [{"job_id": "2"}, {"job_id": "1"}]},
@@ -199,11 +201,10 @@ def test_unordered_aggregate_rows_hash_independently_of_backend_order() -> None:
     }
     second = copy.deepcopy(first)
     second["needs_attention"]["enrich_errors"].reverse()
-    second["funnel"].reverse()
-    second["daily_cost"].reverse()
-    second["llm_percentiles"].reverse()
 
     assert aggregate_manifest(first) == aggregate_manifest(second)
+    second["funnel"].reverse()
+    assert aggregate_manifest(first) != aggregate_manifest(second)
 
 
 def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> None:
@@ -230,14 +231,64 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> Non
         "format_version": 1,
         "created_at_utc": "2026-08-12T00:00:00Z",
         "git_commit": "deadbeef",
-        "schema_registry": {},
-        "source": {"source_dump_sha256": digest},
+        "schema_registry": canonical_schema_manifest_document(),
+        "source": {
+            "backend": "postgresql",
+            "alembic_revision": "0008",
+            "source_dump_sha256": digest,
+            "source_dump_size_bytes": 1,
+            "consistent_snapshot_id": f"pgdump-sha256:{digest}",
+            "server_version": "16.4",
+            "database_size_bytes": 1,
+            "jobs_size_bytes": 1,
+        },
         "restore_attestations": attestations,
-        "writer_quiescence": {},
-        "tables": {},
-        "activity_maxima": {},
-        "aggregates": {},
-        "target": {},
+        "writer_quiescence": {
+            "checked_at_utc": "2026-08-12T00:00:00Z",
+            "active_jobfeed_writers": 0,
+            "historical_running_runs": 0,
+        },
+        "tables": {
+            table["name"]: {
+                "row_count": 1 if table["name"] == "jobs" else 0,
+                "primary_key": table["primary_key"],
+                "max_identity": None,
+                "canonical_sha256": "5" * 64,
+            }
+            for table in canonical_schema_manifest_document()["tables"]
+        },
+        "activity_maxima": {
+            "jobs": {"discovered_at": None, "enriched_at": None, "closed_at": None},
+            "pipeline_runs": {"started_at": None, "finished_at": None},
+            "llm_usage": {"timestamp": None},
+            "step_timings": {"created_at": None},
+            "applied": {"applied_at": None},
+            "job_status_history": {"changed_at": None},
+            "interview_rounds": {
+                "created_at": None,
+                "scheduled_at": None,
+                "completed_at": None,
+            },
+        },
+        "aggregates": {
+            "as_of_utc": "2026-08-12T00:00:00Z",
+            "window_days": 30,
+            "pending_stage_a": 0,
+            "pending_stage_b": 0,
+            "needs_attention_sha256": "6" * 64,
+            "funnel_sha256": "7" * 64,
+            "daily_cost_sha256": "8" * 64,
+            "llm_percentiles_sha256": "9" * 64,
+        },
+        "target": {
+            "status": "not_applicable_postgres_baseline",
+            "backend": "sqlite",
+            "sqlite_schema_version": 1,
+            "minimum_sqlite_version": "3.35.0",
+            "migrated_table_count": 14,
+            "total_table_count": 15,
+            "sqlite_file_sha256": None,
+        },
     }
     benchmark = {
         "report_version": 1,
@@ -246,14 +297,63 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> Non
         "snapshot_manifest_sha256": "e" * 64,
         "workload_sha256": "f" * 64,
         "machine_fingerprint": "2" * 64,
-        "host_identifier_sha256": "3" * 64,
+        "machine_token_sha256": "3" * 64,
         "cpu_identifier_sha256": "4" * 64,
         "warmup_count": 1,
         "sample_count": 30,
-        "read_consistency": {},
-        "queries": [],
-        "contention": {},
-        "open_workloads": [],
+        "read_consistency": {
+            "mode": "quiescent_pre_post_gate_with_fresh_rehash",
+            "canonical_manifest": "initial repeatable-read read-only transaction",
+            "store_metrics": "separate connections followed by fresh full rehash",
+            "contention": "distinct attested disposable scratch restore only",
+            "pre_revision": "0008",
+            "pre_active_writers": 0,
+            "pre_running_runs": 0,
+            "post_revision": "0008",
+            "post_active_writers": 0,
+            "post_running_runs": 0,
+        },
+        "queries": [
+            {
+                "name": coverage,
+                "coverage": coverage,
+                "row_count": 1,
+                "p50_ms": 1.0,
+                "p95_ms": 1.0,
+                "max_ms": 1.0,
+            }
+            for coverage in sorted(REQUIRED_BENCHMARK_COVERAGE)
+        ],
+        "contention": {
+            "mode": "claim_pending_stage_a",
+            "processes": 2,
+            "worker_pids": [101, 102],
+            "successful_claims_by_process": {"101": 50, "102": 50},
+            "coroutines_per_process": 8,
+            "rounds_per_coroutine": 100,
+            "attempted_short_writes": 1600,
+            "successful_claims": 100,
+            "database_claim_count": 100,
+            "database_claim_ids_sha256": "a" * 64,
+            "empty_claims": 1500,
+            "duplicate_claims": 0,
+            "data_loss": 0,
+            "retry_exhausted_busy": 0,
+            "scratch_initial_manifest_sha256": "e" * 64,
+            "scratch_pre_revision": "0008",
+            "scratch_pre_active_writers": 0,
+            "scratch_pre_running_runs": 0,
+            "scratch_post_revision": "0008",
+            "scratch_post_active_writers": 0,
+            "scratch_post_running_runs": 0,
+            "p50_ms": 1.0,
+            "p95_ms": 1.0,
+            "max_ms": 1.0,
+        },
+        "open_workloads": [
+            "scan_save_job_insert_quality_upgrade_transaction_pair",
+            "evaluate_claim_release_result_error_paths",
+        ],
     }
     index = {
         "evidence_version": 1,
@@ -264,6 +364,31 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> Non
         "git_commit": "deadbeef",
     }
     validate_evidence_bundle(manifest, benchmark, index, verify_hashes=False)
+
+    malicious = copy.deepcopy(manifest)
+    malicious["tables"]["jobs"]["unexpected"] = True
+    with pytest.raises(ValueError, match="exact keys"):
+        validate_evidence_bundle(malicious, benchmark, index, verify_hashes=False)
+    malicious = copy.deepcopy(benchmark)
+    malicious["queries"][0]["row_count"] = 0
+    with pytest.raises(ValueError, match="row_count"):
+        validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
+    malicious = copy.deepcopy(benchmark)
+    malicious["contention"]["database_claim_count"] = 99
+    with pytest.raises(ValueError, match="claim count"):
+        validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
+    malicious = copy.deepcopy(benchmark)
+    malicious["read_consistency"]["post_revision"] = "0007"
+    with pytest.raises(ValueError, match="read consistency"):
+        validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
+    malicious = copy.deepcopy(manifest)
+    malicious["activity_maxima"]["jobs"]["unexpected"] = None
+    with pytest.raises(ValueError, match="activity maxima"):
+        validate_evidence_bundle(malicious, benchmark, index, verify_hashes=False)
+    malicious = copy.deepcopy(manifest)
+    malicious["tables"]["jobs"]["row_count"] = 0
+    with pytest.raises(ValueError, match="non-empty jobs"):
+        validate_evidence_bundle(malicious, benchmark, index, verify_hashes=False)
 
     with pytest.raises(ValueError, match="distinct"):
         validate_restore_attestations(base, base, dump_sha256=digest)
@@ -306,6 +431,8 @@ def test_cli_requires_named_dsn_environment_without_creating_outputs(
             "MISSING_BASELINE_DSN",
             "--scratch-dsn-env",
             "MISSING_SCRATCH_DSN",
+            "--machine-token-env",
+            "MISSING_MACHINE_TOKEN",
             "--workload",
             str(_WORKLOAD),
             "--artifact-dir",
@@ -317,7 +444,11 @@ def test_cli_requires_named_dsn_environment_without_creating_outputs(
             "--scratch-restore-attestation",
             str(scratch_attestation),
         ],
-        env={"MISSING_BASELINE_DSN": "", "MISSING_SCRATCH_DSN": ""},
+        env={
+            "MISSING_BASELINE_DSN": "",
+            "MISSING_SCRATCH_DSN": "",
+            "MISSING_MACHINE_TOKEN": "",
+        },
     )
 
     assert result.exit_code == 1

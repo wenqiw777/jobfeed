@@ -336,25 +336,28 @@ before the consistent snapshot begins.
 ## Snapshot manifest
 
 Every rehearsal and cutover produces a UTF-8 JSON manifest. It contains no DSN,
-password, token, environment dump, or absolute home-directory secret. Required
-fields are:
+password, token, environment dump, or absolute home-directory secret. The
+illustrative shape below is not an accepted artifact: placeholders must be
+replaced by values satisfying the executable exact validator. Required fields
+are:
 
 ```json
 {
   "format_version": 1,
-  "canonical_row_codec_version": "jobfeed-canonical-row-v1",
   "created_at_utc": "2026-08-11T00:00:00.000000Z",
   "git_commit": "full-sha",
-  "migrated_table_order": [
-    "jobs", "evaluations", "pipeline_runs", "resume_variants", "job_status",
-    "job_status_history", "applied", "resume_snapshots", "companies",
-    "cost_ledger", "state", "llm_usage", "interview_rounds", "step_timings"
-  ],
+  "schema_registry": {
+    "manifest_version": 1,
+    "canonical_row_codec_version": "jobfeed-canonical-row-v1",
+    "alembic_revision": "0008",
+    "tables": "the exact ordered 14-table registry object described below"
+  },
   "source": {
     "backend": "postgresql",
     "alembic_revision": "0008",
     "server_version": "16.x",
     "database_size_bytes": 0,
+    "jobs_size_bytes": 0,
     "consistent_snapshot_id": "pgdump-sha256:<sha256>",
     "source_dump_sha256": "sha256",
     "source_dump_size_bytes": 0
@@ -383,51 +386,12 @@ fields are:
       "row_count": 0,
       "primary_key": ["id"],
       "max_identity": 0,
-      "canonical_sha256": "sha256",
-      "canonical_schema": {
-        "name": "jobs-v1",
-        "columns": [
-          {"name": "id", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false},
-          {"name": "platform", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
-          {"name": "canonical_id", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
-          {"name": "url", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
-          {"name": "title", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
-          {"name": "company", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
-          {"name": "location", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
-          {"name": "jd_text", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "jd_quality", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "posted_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
-          {"name": "discovered_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": false},
-          {"name": "enriched_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
-          {"name": "enrich_source", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "company_norm", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "title_norm", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "location_norm", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "jd_lang", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "enrich_error", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "quality_rubric_version", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": true},
-          {"name": "reapply_notice", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "hard_filter", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "seniority_level", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "degree_required", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "clearance_required", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "bool", "nullable": true},
-          {"name": "school_restricted", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "bool", "nullable": true},
-          {"name": "domain_tags", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "json", "nullable": true},
-          {"name": "tech_required", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "json", "nullable": true},
-          {"name": "role_type", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "yoe_min", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": true},
-          {"name": "ml_gate_score", "source_sql_type": "double precision", "target_sqlite_type": "REAL", "codec_kind": "float", "nullable": true},
-          {"name": "ml_gate_result", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "ml_gate_fail_reason", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "ml_gate_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
-          {"name": "ml_gate_version", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
-          {"name": "is_swe_role", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "bool", "nullable": true},
-          {"name": "closed_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true}
-        ]
-      }
+      "canonical_sha256": "sha256"
     }
   },
   "aggregates": {
+    "as_of_utc": "2026-08-11T00:00:00.000000Z",
+    "window_days": 30,
     "pending_stage_a": 0,
     "pending_stage_b": 0,
     "needs_attention_sha256": "sha256",
@@ -519,6 +483,7 @@ workload manifest for both backends:
   --backend postgres \
   --dsn-env JOBFEED_MIGRATION_PG_URL \
   --scratch-dsn-env JOBFEED_MIGRATION_SCRATCH_PG_URL \
+  --machine-token-env JOBFEED_BENCH_MACHINE_TOKEN \
   --source-dump artifacts/jobfeed-0007.dump \
   --source-restore-attestation artifacts/source-restore.json \
   --scratch-restore-attestation artifacts/scratch-restore.json \
@@ -529,15 +494,26 @@ workload manifest for both backends:
 # the SQLite adapter and scratch-copy lifecycle exist.
 ```
 
-The report records machine fingerprint, git SHA, snapshot manifest SHA, warmup
-count, sample count, per-query P50/P95/max, contention outcomes, and migration
-duration. It covers list/detail/status hot paths, all five Views methods, all four
-Performance read methods, insights, scan/evaluate DB-only overhead, and the
-approved two-process contention workload. P95 uses at least 30 measured samples.
-Text primary keys use PostgreSQL `COLLATE "C"` and SQLite byte order. Unordered
-aggregate goldens are recursively sorted by stable serialized keys before hash.
-The source is freshly gated and fully rehashed after read benchmarks; contention
-runs only on a distinct scratch restore behind a simultaneous process barrier.
+The report records the hash of an explicit shared machine token plus CPU
+identity, git SHA, snapshot manifest SHA, warmup count, sample count, per-query
+P50/P95/max, and contention outcomes. It covers list/detail/status hot paths, all
+five Views methods, all four Performance read methods, insights, DB-only read
+proxies, and the approved two-process contention workload. P95 uses at least 30
+measured samples. Text primary keys use PostgreSQL `COLLATE "C"` and SQLite byte
+order. Only explicitly unordered `needs_attention` buckets are stable-sorted;
+funnel primary order, cost day-desc order, and LLM day-asc order remain digest
+inputs. Every rolling aggregate binds the same database-derived `as_of_utc` and
+records it with the 30-day window. The source is freshly gated and fully rehashed
+after read benchmarks. Both contention processes connect before a shared start
+event; each must claim successfully, and the final IDs/statuses must exactly
+match the reported claims, including legitimate stale-claim recovery.
+
+Restore provenance remains **OPEN** in this bounded slice. The current two
+attestation-file options are validation plumbing, not proof: user-authored JSON
+can still satisfy their shape. Baseline capture is prohibited until the canonical
+restore orchestrator is integrated as the only CLI entry, generates both
+attestations from executed restore commands, validates live container/database
+identity, and prevents manually supplied provenance from reaching capture.
 
 Task 0 remains **OPEN** for two real scratch mutation workloads: scan must measure
 `save_job` insert plus quality-upgrade on the same natural key, and evaluate must

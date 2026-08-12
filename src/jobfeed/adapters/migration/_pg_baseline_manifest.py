@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, date, datetime
@@ -11,8 +10,8 @@ from typing import Final
 
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
 from jobfeed.adapters.migration._pg_baseline_reader import PostgresBaselineReader
-from jobfeed.adapters.migration._pg_benchmark_runner import (
-    capture_postgres_store_aggregates,
+from jobfeed.adapters.migration._pg_canonical_aggregates import (
+    capture_canonical_aggregates,
 )
 from jobfeed.adapters.migration.canonical_row import CanonicalRowHasher
 from jobfeed.adapters.migration.canonical_schema_manifest import (
@@ -115,13 +114,7 @@ def _json_value(value: object) -> object:
     if isinstance(value, dict):
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        normalized = [_json_value(item) for item in value]
-        return sorted(
-            normalized,
-            key=lambda item: json.dumps(
-                item, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-            ),
-        )
+        return [_json_value(item) for item in value]
     if isinstance(value, datetime):
         return timestamp_value(value)
     if isinstance(value, date):
@@ -129,6 +122,22 @@ def _json_value(value: object) -> object:
     if isinstance(value, Enum):
         return value.value
     return value
+
+
+def _unordered_buckets(value: object) -> object:
+    normalized = _json_value(value)
+    if not isinstance(normalized, dict):
+        raise ValueError("needs_attention aggregate must be an object")
+    return {
+        key: sorted(
+            rows,
+            key=lambda item: json.dumps(
+                item, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ),
+        )
+        for key, rows in sorted(normalized.items())
+        if isinstance(rows, list)
+    }
 
 
 def aggregate_manifest(raw: dict[str, object]) -> dict[str, object]:
@@ -141,10 +150,13 @@ def aggregate_manifest(raw: dict[str, object]) -> dict[str, object]:
         Counts and backend-order-independent aggregate hashes.
     """
     return {
-        "window_days": 30,
+        "as_of_utc": timestamp_value(raw["as_of_utc"]),
+        "window_days": raw["window_days"],
         "pending_stage_a": raw["pending_stage_a"],
         "pending_stage_b": raw["pending_stage_b"],
-        "needs_attention_sha256": artifact_sha256(_json_value(raw["needs_attention"])),
+        "needs_attention_sha256": artifact_sha256(
+            _unordered_buckets(raw["needs_attention"])
+        ),
         "funnel_sha256": artifact_sha256(_json_value(raw["funnel"])),
         "daily_cost_sha256": artifact_sha256(_json_value(raw["daily_cost"])),
         "llm_percentiles_sha256": artifact_sha256(_json_value(raw["llm_percentiles"])),
@@ -201,7 +213,7 @@ def build_snapshot_manifest(
             for table, columns in _ACTIVITY_COLUMNS.items()
         },
         "aggregates": aggregate_manifest(
-            asyncio.run(capture_postgres_store_aggregates(context.dsn))
+            capture_canonical_aggregates(reader, reader.database_clock())
         ),
         "target": {
             "status": "not_applicable_postgres_baseline",

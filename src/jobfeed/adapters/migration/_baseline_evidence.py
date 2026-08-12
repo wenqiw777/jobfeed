@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
-from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from typing import cast
 
+from jobfeed.adapters.migration import _baseline_evidence_shape as shape
+from jobfeed.adapters.migration._baseline_evidence_benchmark import (
+    validate_benchmark_document,
+)
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
+from jobfeed.adapters.migration.canonical_schema_manifest import (
+    CANONICAL_SCHEMA_MANIFEST_V1,
+    validate_schema_manifest,
+)
 
-_HEX_LENGTH = 64
 _ATTESTATION_KEYS = {
     "attestation_version",
     "dump_sha256",
@@ -21,43 +25,7 @@ _ATTESTATION_KEYS = {
     "pre_upgrade_revision",
     "post_upgrade_revision",
 }
-_MANIFEST_KEYS = {
-    "format_version",
-    "created_at_utc",
-    "git_commit",
-    "schema_registry",
-    "source",
-    "restore_attestations",
-    "writer_quiescence",
-    "tables",
-    "activity_maxima",
-    "aggregates",
-    "target",
-}
-_BENCHMARK_KEYS = {
-    "report_version",
-    "created_at_utc",
-    "git_commit",
-    "snapshot_manifest_sha256",
-    "workload_sha256",
-    "machine_fingerprint",
-    "host_identifier_sha256",
-    "cpu_identifier_sha256",
-    "warmup_count",
-    "sample_count",
-    "read_consistency",
-    "queries",
-    "contention",
-    "open_workloads",
-}
-_INDEX_KEYS = {
-    "evidence_version",
-    "source_dump_sha256",
-    "manifest_sha256",
-    "benchmark_sha256",
-    "workload_sha256",
-    "git_commit",
-}
+_AGGREGATE_WINDOW_DAYS = 30
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -75,36 +43,9 @@ class RestoreAttestation:
     post_upgrade_revision: str
 
 
-def _mapping(value: object, name: str) -> dict[str, object]:
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
-        raise ValueError(f"{name} must be an object")
-    return cast(dict[str, object], value)
-
-
-def _exact_keys(value: Mapping[str, object], expected: set[str], name: str) -> None:
-    if set(value) != expected:
-        raise ValueError(
-            f"{name} exact keys mismatch: missing={sorted(expected - set(value))}, "
-            f"extra={sorted(set(value) - expected)}"
-        )
-
-
-def _text(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{name} must be non-empty text")
-    return value
-
-
-def _sha(value: object, name: str) -> str:
-    text = _text(value, name)
-    if len(text) != _HEX_LENGTH or any(char not in "0123456789abcdef" for char in text):
-        raise ValueError(f"{name} must be lowercase SHA-256")
-    return text
-
-
 def _restore_attestation(value: object, name: str) -> RestoreAttestation:
-    document = _mapping(value, name)
-    _exact_keys(document, _ATTESTATION_KEYS, name)
+    document = shape.mapping(value, name)
+    shape.exact_keys(document, _ATTESTATION_KEYS, name)
     if document["attestation_version"] != 1:
         raise ValueError(f"{name} unknown attestation version")
     if document["pre_upgrade_revision"] != "0007":
@@ -113,16 +54,16 @@ def _restore_attestation(value: object, name: str) -> RestoreAttestation:
         raise ValueError(f"{name} must attest post-upgrade revision 0008")
     return RestoreAttestation(
         attestation_version=1,
-        dump_sha256=_sha(document["dump_sha256"], f"{name}.dump_sha256"),
-        container_id=_text(document["container_id"], f"{name}.container_id"),
-        database_identity=_sha(
+        dump_sha256=shape.sha(document["dump_sha256"], f"{name}.dump_sha256"),
+        container_id=shape.text(document["container_id"], f"{name}.container_id"),
+        database_identity=shape.sha(
             document["database_identity"], f"{name}.database_identity"
         ),
-        restore_tool=_text(document["restore_tool"], f"{name}.restore_tool"),
-        restore_tool_version=_text(
+        restore_tool=shape.text(document["restore_tool"], f"{name}.restore_tool"),
+        restore_tool_version=shape.text(
             document["restore_tool_version"], f"{name}.restore_tool_version"
         ),
-        restore_command_sha256=_sha(
+        restore_command_sha256=shape.sha(
             document["restore_command_sha256"], f"{name}.restore_command_sha256"
         ),
         pre_upgrade_revision="0007",
@@ -146,7 +87,7 @@ def validate_restore_attestations(
     Raises:
         ValueError: If provenance is incomplete, inconsistent, or not distinct.
     """
-    expected_dump = _sha(dump_sha256, "dump_sha256")
+    expected_dump = shape.sha(dump_sha256, "dump_sha256")
     source_value = _restore_attestation(source, "source attestation")
     scratch_value = _restore_attestation(scratch, "scratch attestation")
     if (
@@ -159,6 +100,118 @@ def validate_restore_attestations(
     if source_value.database_identity == scratch_value.database_identity:
         raise ValueError("restore attestations require distinct database identities")
     return {"source": asdict(source_value), "scratch": asdict(scratch_value)}
+
+
+def _validate_manifest_tables(manifest_doc: dict[str, object]) -> None:
+    validate_schema_manifest(
+        shape.mapping(manifest_doc["schema_registry"], "schema registry")
+    )
+    tables = shape.mapping(manifest_doc["tables"], "manifest.tables")
+    expected_tables = [table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables]
+    if list(tables) != expected_tables:
+        raise ValueError("manifest table order/coverage mismatch")
+    for table in CANONICAL_SCHEMA_MANIFEST_V1.tables:
+        metric = shape.mapping(tables[table.name], f"manifest.tables.{table.name}")
+        shape.exact_keys(
+            metric, shape.TABLE_METRIC_KEYS, f"manifest.tables.{table.name}"
+        )
+        if metric["primary_key"] != list(table.primary_key):
+            raise ValueError(f"manifest table primary key mismatch: {table.name}")
+        row_count = shape.integer(
+            metric["row_count"], f"manifest table row count: {table.name}"
+        )
+        if table.name == "jobs" and row_count == 0:
+            raise ValueError("manifest requires non-empty jobs seed data")
+        max_identity = metric["max_identity"]
+        if max_identity is not None:
+            shape.integer(max_identity, f"manifest max identity: {table.name}")
+        shape.sha(metric["canonical_sha256"], f"manifest table SHA: {table.name}")
+
+
+def _validate_source(manifest_doc: dict[str, object]) -> str:
+    source = shape.mapping(manifest_doc["source"], "manifest.source")
+    shape.exact_keys(source, shape.SOURCE_KEYS, "manifest.source")
+    dump_sha = shape.sha(source.get("source_dump_sha256"), "source dump")
+    if source["backend"] != "postgresql" or source["alembic_revision"] != "0008":
+        raise ValueError("manifest source backend/revision mismatch")
+    if source["consistent_snapshot_id"] != f"pgdump-sha256:{dump_sha}":
+        raise ValueError("manifest restored dump identity mismatch")
+    shape.text(source["server_version"], "manifest source server version")
+    for key in ("source_dump_size_bytes", "database_size_bytes", "jobs_size_bytes"):
+        shape.integer(source[key], f"manifest.source.{key}", minimum=1)
+    return dump_sha
+
+
+def _validate_aggregate_target(manifest_doc: dict[str, object]) -> None:
+    aggregates = shape.mapping(manifest_doc["aggregates"], "manifest.aggregates")
+    shape.exact_keys(aggregates, shape.AGGREGATE_KEYS, "manifest.aggregates")
+    for key in (
+        "needs_attention_sha256",
+        "funnel_sha256",
+        "daily_cost_sha256",
+        "llm_percentiles_sha256",
+    ):
+        shape.sha(aggregates[key], f"manifest.aggregates.{key}")
+    shape.text(aggregates["as_of_utc"], "manifest.aggregates.as_of_utc")
+    if aggregates["window_days"] != _AGGREGATE_WINDOW_DAYS:
+        raise ValueError("manifest aggregate window must equal 30 days")
+    for key in ("pending_stage_a", "pending_stage_b"):
+        shape.integer(aggregates[key], f"manifest.aggregates.{key}")
+    target = shape.mapping(manifest_doc["target"], "manifest.target")
+    shape.exact_keys(target, shape.TARGET_KEYS, "manifest.target")
+    if target != {
+        "status": "not_applicable_postgres_baseline",
+        "backend": "sqlite",
+        "sqlite_schema_version": 1,
+        "minimum_sqlite_version": "3.35.0",
+        "migrated_table_count": 14,
+        "total_table_count": 15,
+        "sqlite_file_sha256": None,
+    }:
+        raise ValueError("manifest target placeholder mismatch")
+
+
+def _validate_manifest(manifest_doc: dict[str, object]) -> str:
+    """Validate manifest provenance and nested evidence.
+
+    Time complexity is O(tables + fields).
+    """
+    shape.exact_keys(manifest_doc, shape.MANIFEST_KEYS, "manifest")
+    if manifest_doc["format_version"] != 1:
+        raise ValueError("unknown manifest version")
+    shape.text(manifest_doc["created_at_utc"], "manifest.created_at_utc")
+    shape.text(manifest_doc["git_commit"], "manifest.git_commit")
+    dump_sha = _validate_source(manifest_doc)
+    _validate_manifest_tables(manifest_doc)
+    _validate_aggregate_target(manifest_doc)
+    attestations = shape.mapping(
+        manifest_doc["restore_attestations"], "restore attestations"
+    )
+    shape.exact_keys(attestations, {"source", "scratch"}, "restore attestations")
+    validate_restore_attestations(
+        attestations["source"], attestations["scratch"], dump_sha256=dump_sha
+    )
+    quiescence = shape.mapping(
+        manifest_doc["writer_quiescence"], "manifest.writer_quiescence"
+    )
+    shape.exact_keys(quiescence, shape.QUIESCENCE_KEYS, "manifest.writer_quiescence")
+    if (
+        quiescence["active_jobfeed_writers"] != 0
+        or quiescence["historical_running_runs"] != 0
+    ):
+        raise ValueError("manifest writer quiescence mismatch")
+    shape.text(quiescence["checked_at_utc"], "manifest quiescence checked_at")
+    activity = shape.mapping(
+        manifest_doc["activity_maxima"], "manifest.activity_maxima"
+    )
+    if set(activity) != set(shape.ACTIVITY_COLUMNS):
+        raise ValueError("manifest activity maxima coverage mismatch")
+    for table, columns in shape.ACTIVITY_COLUMNS.items():
+        maxima = shape.mapping(activity[table], f"manifest.activity_maxima.{table}")
+        shape.exact_keys(maxima, columns, f"manifest activity maxima {table}")
+        for column, value in maxima.items():
+            shape.optional_text(value, f"manifest activity maximum {table}.{column}")
+    return dump_sha
 
 
 def validate_evidence_bundle(
@@ -179,18 +232,21 @@ def validate_evidence_bundle(
     Raises:
         ValueError: If schemas, versions, or acyclic hash links differ.
     """
-    manifest_doc = _mapping(manifest, "manifest")
-    benchmark_doc = _mapping(benchmark, "benchmark")
-    index_doc = _mapping(index, "evidence index")
-    _exact_keys(manifest_doc, _MANIFEST_KEYS, "manifest")
-    _exact_keys(benchmark_doc, _BENCHMARK_KEYS, "benchmark")
-    _exact_keys(index_doc, _INDEX_KEYS, "evidence index")
-    if manifest_doc["format_version"] != 1 or benchmark_doc["report_version"] != 1:
-        raise ValueError("unknown manifest or benchmark version")
+    manifest_doc = shape.mapping(manifest, "manifest")
+    benchmark_doc = shape.mapping(benchmark, "benchmark")
+    index_doc = shape.mapping(index, "evidence index")
+    dump_sha = _validate_manifest(manifest_doc)
+    validate_benchmark_document(benchmark_doc)
+    shape.exact_keys(index_doc, shape.INDEX_KEYS, "evidence index")
     if index_doc["evidence_version"] != 1:
         raise ValueError("unknown evidence index version")
-    manifest_source = _mapping(manifest_doc["source"], "manifest.source")
-    dump_sha = _sha(manifest_source.get("source_dump_sha256"), "source dump")
+    if (
+        benchmark_doc["git_commit"] != manifest_doc["git_commit"]
+        or index_doc["git_commit"] != manifest_doc["git_commit"]
+    ):
+        raise ValueError("evidence git commit mismatch")
+    if benchmark_doc["created_at_utc"] != manifest_doc["created_at_utc"]:
+        raise ValueError("evidence capture time mismatch")
     if index_doc["source_dump_sha256"] != dump_sha:
         raise ValueError("evidence index dump SHA mismatch")
     if benchmark_doc["workload_sha256"] != index_doc["workload_sha256"]:
@@ -204,35 +260,3 @@ def validate_evidence_bundle(
             raise ValueError("evidence index manifest SHA mismatch")
         if index_doc["benchmark_sha256"] != benchmark_sha:
             raise ValueError("evidence index benchmark SHA mismatch")
-
-
-def machine_fingerprint(host_identifier: str, cpu_identifier: str) -> str:
-    """Hash stable host and CPU identifiers without exposing their plaintext.
-
-    Args:
-        host_identifier: Stable local hardware or host identifier.
-        cpu_identifier: Stable CPU model identifier.
-
-    Returns:
-        Combined lowercase SHA-256 digest.
-    """
-    return hashlib.sha256(f"{host_identifier}\0{cpu_identifier}".encode()).hexdigest()
-
-
-def component_fingerprints(
-    host_identifier: str, cpu_identifier: str
-) -> tuple[str, str, str]:
-    """Return combined, host-only, and CPU-only hashed fingerprints.
-
-    Args:
-        host_identifier: Stable local hardware or host identifier.
-        cpu_identifier: Stable CPU model identifier.
-
-    Returns:
-        Combined, host, and CPU SHA-256 values.
-    """
-    return (
-        machine_fingerprint(host_identifier, cpu_identifier),
-        hashlib.sha256(host_identifier.encode()).hexdigest(),
-        hashlib.sha256(cpu_identifier.encode()).hexdigest(),
-    )

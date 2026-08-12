@@ -211,6 +211,11 @@ def _file_sha256(path: Path) -> str:
     "--scratch-dsn-env", help="Environment variable containing disposable clone DSN."
 )
 @click.option(
+    "--machine-token-env",
+    required=True,
+    help="Environment variable containing the shared benchmark machine token.",
+)
+@click.option(
     "--workload",
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
@@ -244,6 +249,7 @@ def benchmark_store_command(**options: object) -> None:
     backend = cast(str, options["backend"])
     dsn_env = cast(str | None, options["dsn_env"])
     scratch_dsn_env = cast(str | None, options["scratch_dsn_env"])
+    machine_token_env = cast(str, options["machine_token_env"])
     workload = cast(Path, options["workload"])
     artifact_dir = cast(Path, options["artifact_dir"])
     source_dump = cast(Path, options["source_dump"])
@@ -257,8 +263,11 @@ def benchmark_store_command(**options: object) -> None:
         )
     dsn = os.environ.get(dsn_env)
     scratch_dsn = os.environ.get(scratch_dsn_env)
-    if not dsn or not scratch_dsn:
-        raise click.ClickException("Postgres benchmark DSN environment is empty")
+    machine_token = os.environ.get(machine_token_env)
+    if not dsn or not scratch_dsn or not machine_token:
+        raise click.ClickException(
+            "Postgres benchmark DSN or machine environment is empty"
+        )
     if dsn == scratch_dsn:
         raise click.ClickException("Source and contention scratch DSNs must differ")
     if artifact_dir.exists():
@@ -294,6 +303,7 @@ def benchmark_store_command(**options: object) -> None:
                 sha256=dump_sha256,
                 size_bytes=source_dump.stat().st_size,
                 restore_attestations=restore_attestations,
+                machine_token=machine_token,
             ),
         )
         evidence_index = {

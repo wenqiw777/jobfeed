@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager
+from datetime import datetime
 from typing import Any
 
 import psycopg2  # type: ignore[import-untyped]
@@ -259,3 +260,36 @@ class PostgresBaselineReader(AbstractContextManager["PostgresBaselineReader"]):
         if type(value) is not int:
             raise ValueError("Stage A in-progress count is not an integer")
         return value
+
+    def database_clock(self) -> datetime:
+        """Read the database wall clock used as a claim verification cutoff.
+
+        Returns:
+            Aware PostgreSQL timestamp from ``clock_timestamp``.
+
+        Raises:
+            ValueError: If PostgreSQL does not return a timestamp.
+        """
+        value = self.scalar("SELECT clock_timestamp()")
+        if not isinstance(value, datetime) or value.tzinfo is None:
+            raise ValueError("database clock did not return an aware timestamp")
+        return value
+
+    def stage_a_claimed_ids_since(self, cutoff: datetime) -> list[str]:
+        """List persisted Stage A claims updated at or after a cutoff.
+
+        Args:
+            cutoff: Database-derived aware timestamp before worker release.
+
+        Returns:
+            Job IDs in numeric order, including reclaimed stale rows.
+        """
+        return [
+            str(row["job_id"])
+            for row in self.rows(
+                "SELECT job_id FROM evaluations "
+                "WHERE stage_a_status='in_progress' AND updated_at >= %s "
+                "ORDER BY job_id",
+                (cutoff,),
+            )
+        ]

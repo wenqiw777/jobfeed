@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import platform
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from jobfeed.adapters.migration._baseline_evidence import component_fingerprints
+from jobfeed.adapters.migration._baseline_machine import component_fingerprints
 from jobfeed.adapters.migration._baseline_workload import (
     artifact_sha256,
     validate_benchmark_workload,
@@ -46,6 +45,7 @@ class PgDumpEvidence:
     sha256: str
     size_bytes: int
     restore_attestations: dict[str, object]
+    machine_token: str
 
 
 def assert_capture_allowed(
@@ -228,21 +228,19 @@ def _capture_validated_baseline(
             raise ValueError("source and scratch database identities must differ")
         if table_metrics(scratch, chunk_size) != manifest["tables"]:
             raise ValueError("contention scratch clone differs from initial manifest")
-        initial_claim_count = scratch.stage_a_in_progress_count()
+        claim_cutoff = scratch.database_clock()
     contention = run_pg_claim_contention(contention_dsn, workload.contention)
     with PostgresBaselineReader(contention_dsn) as scratch:
         scratch_post_gate = _gate_state(scratch)
-        final_claim_count = scratch.stage_a_in_progress_count()
-    database_claim_delta = final_claim_count - initial_claim_count
+        persisted_claim_ids = scratch.stage_a_claimed_ids_since(claim_cutoff)
     validate_claim_contention_outcome(
         claimed_by_process=contention.claimed_by_process,
         errors=contention.errors,
-        database_claim_delta=database_claim_delta,
+        persisted_claim_ids=persisted_claim_ids,
     )
-    host_identifier = f"{platform.node()}|{uuid.getnode()}"
     cpu_identifier = platform.processor() or platform.machine()
-    machine, host_hash, cpu_hash = component_fingerprints(
-        host_identifier, cpu_identifier
+    machine, machine_token_hash, cpu_hash = component_fingerprints(
+        source.machine_token, cpu_identifier
     )
     benchmark = build_benchmark_report(
         ReportContext(
@@ -253,14 +251,14 @@ def _capture_validated_baseline(
             workload=workload,
             store_results=store_results,
             machine_fingerprint=machine,
-            host_identifier_sha256=host_hash,
+            machine_token_sha256=machine_token_hash,
             cpu_identifier_sha256=cpu_hash,
             source_gate=source_gate,
             source_post_gate=source_post_gate,
             scratch_gate=scratch_gate,
             scratch_post_gate=scratch_post_gate,
             contention=contention,
-            database_claim_delta=database_claim_delta,
+            persisted_claim_ids=persisted_claim_ids,
         )
     )
     return manifest, benchmark
