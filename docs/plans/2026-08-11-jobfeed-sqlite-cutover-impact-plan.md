@@ -525,6 +525,16 @@ review 的单位是可运行 milestone，不是 Git commit。提交粒度继续�
 - **证据：** DDL tests、FK/check tests、migration interruption tests、backup restore test。
 - **返回设计：** 若目标运行环境 SQLite 版本不支持选定原子 SQL，先改 version floor 或 claim 设计。
 
+**状态（2026-08-12）：完成 / GO。** SQLite v1 使用独立
+`PRAGMA user_version=1`，支持原子且并发幂等的 `0→1`，空文件创建精确 15
+表与两条 idle lease。每个连接验证 SQLite `>=3.35` 并启用 WAL、FK、5 秒
+busy timeout 和 deterministic Unicode casefold；online backup 与 closed-state restore
+均经过 integrity、FK 和 v1 schema 验证后才发布/替换。Task 1 focused 为 36
+passed；完整 `make quality` 为 1582 passed / 482 deselected，Ruff、format、
+mypy 全绿。该 milestone 唯一一次 review 的 3 个 P1（错误 schema restore、
+并发首次初始化、DB-generated timestamp 格式）修复后定向复查 6 passed，结论 GO；
+未做新一轮全局扫描。
+
 ### Task 2：核心 jobs/evaluation/claim/run slice
 
 - **结果：** scan/evaluate 核心合同和跨进程原子 claim 通过。
