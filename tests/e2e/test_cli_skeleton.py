@@ -1,4 +1,4 @@
-"""E2E tests for the Phase 0 Click CLI walking skeleton (PostgreSQL backend)."""
+"""E2E tests for the Phase 0 Click CLI walking skeleton."""
 
 from __future__ import annotations
 
@@ -8,10 +8,7 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner, Result
 
-from jobfeed.adapters.store.legacy_stage_b_threshold import (
-    LegacyPostgresStageBThresholdSync,
-)
-from jobfeed.adapters.store.postgres import PostgresStore
+from jobfeed.adapters.store.sqlite import SQLiteStore
 from jobfeed.cli import cli, create_app
 
 MOCK_JOB_COUNT = 3
@@ -240,8 +237,8 @@ def test_cli_rejects_missing_explicit_config(tmp_path: Path) -> None:
     assert "Traceback" not in result.output
 
 
-def test_create_app_wires_postgres_store(tmp_path: Path) -> None:
-    """create_app should build a PostgresStore (the only supported backend).
+def test_create_app_wires_sqlite_store(tmp_path: Path) -> None:
+    """create_app builds SQLite and its native threshold capability.
 
     Construction does not open a connection, so this stays offline.
 
@@ -253,8 +250,8 @@ def test_create_app_wires_postgres_store(tmp_path: Path) -> None:
 
     app = create_app(config_path)
 
-    assert isinstance(app["store"], PostgresStore)
-    assert isinstance(app["stage_b_threshold_sync"], LegacyPostgresStageBThresholdSync)
+    assert isinstance(app["store"], SQLiteStore)
+    assert app["stage_b_threshold_sync"] is app["store"]
 
 
 def test_cli_migrate_dry_run_needs_no_target_store(tmp_path: Path) -> None:

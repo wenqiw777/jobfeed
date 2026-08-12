@@ -157,14 +157,15 @@ def test_import_sqlite_nonexistent_db_exits_one() -> None:
 def test_import_sqlite_dry_run_exits_zero_no_data_written(tmp_path: Path) -> None:
     """import-sqlite --dry-run prints plan without opening the target store.
 
-    The dry-run path never connects, so this uses an unreachable DSN to prove
+    The dry-run path never connects, so this uses a missing parent path to prove
     no database access happens.
 
     Args:
         tmp_path: Temporary directory for the config file.
     """
     runner = CliRunner()
-    config_path = _write_import_config(tmp_path, "postgresql://unused/none")
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[db]\npath = "missing/unused.sqlite"\n', encoding="utf-8")
 
     result = runner.invoke(
         cli,

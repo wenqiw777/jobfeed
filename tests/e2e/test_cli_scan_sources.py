@@ -1,10 +1,10 @@
 """E2E CLI tests for the Phase 4a scan sources (SpeedyApply + JobSpy).
 
-These run inside ``make quality`` (no PostgreSQL, no network): the store is
+These run inside ``make quality`` (no database or network): the store is
 replaced with an in-memory fake via patching ``jobfeed.cli._create_store`` and
 every source's network call is monkeypatched, so a ``CliRunner`` drives the real
 ``jobfeed scan`` dispatch + ``_run_scan`` AsyncExitStack wiring without touching
-real HTTP, JobSpy, or Postgres.
+real HTTP, JobSpy, or SQLite.
 """
 
 from __future__ import annotations
@@ -154,7 +154,7 @@ def _write_config(tmp_path: Path, enabled: dict[str, bool]) -> Path:
     config_path = tmp_path / "config.toml"
     blocks = [
         "[db]",
-        'url = "postgresql://x:y@localhost:5432/unused"',
+        'path = "unused.sqlite"',
         "",
         "[observability]",
         'log_level = "info"',

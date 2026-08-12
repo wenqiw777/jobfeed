@@ -143,7 +143,7 @@ async def _build_speedyapply(
     config = app["settings"].sources.speedyapply
     require_enabled(config.enabled, "speedyapply")
     client = _register_client(stack, create_http_client(config.fetch_timeout_s))
-    # The PostgresStore implements ClosedJobLookup; passing it lets the source
+    # The runtime store implements ClosedJobLookup; passing it lets the source
     # skip re-fetching JDs for postings already stamped closed_at (dead links).
     closed_lookup = cast(ClosedJobLookup, app["store"])
     sources.append(
@@ -210,7 +210,7 @@ async def _build_linkedin(
 ) -> None:
     config = app["settings"].sources.linkedin
     require_enabled(config.enabled, "linkedin")
-    # The PostgresStore implements EnrichmentLookup; passing it lets the session
+    # The runtime store implements EnrichmentLookup; passing it lets the session
     # skip re-enriching postings whose JD is already fresh in the store.
     freshness = cast(EnrichmentLookup, app["store"])
     sources.append(

@@ -74,10 +74,10 @@ LINKEDIN_GUEST_TOML_TIMEOUT_S = 20.0
 
 
 def test_load_settings_returns_defaults_without_config_file() -> None:
-    """Omitting config should fall back to repo-local defaults (no DSN set)."""
+    """Omitting config should fall back to the repo-local SQLite path."""
     settings = load_settings()
 
-    assert settings.db.url is None
+    assert settings.db.path == Path("data/jobfeed.sqlite")
     assert settings.llm.stage_a == "codex-cli/gpt-5.4-mini"
 
 
@@ -95,8 +95,7 @@ def test_load_settings_accepts_config_example() -> None:
     """The checked-in example config should validate successfully."""
     settings = load_settings(REPO_ROOT / "config.example.toml")
 
-    assert settings.db.url is not None
-    assert settings.db.url.startswith("postgresql://")
+    assert settings.db.path == REPO_ROOT / "data/jobfeed.sqlite"
     assert settings.scoring.stage_a_threshold == DEFAULT_STAGE_A_THRESHOLD
     assert settings.observability.log_format == "human"
 
@@ -112,34 +111,31 @@ def test_load_settings_env_overrides_file_value(
         monkeypatch: Pytest helper used to set scoped environment variables.
     """
     config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        '[db]\nurl = "postgresql://file@host/db"\n', encoding="utf-8"
-    )
-    monkeypatch.setenv("JOBFEED_DB__URL", "postgresql://env@host/db")
+    config_path.write_text('[db]\npath = "file.sqlite"\n', encoding="utf-8")
+    monkeypatch.setenv("JOBFEED_DB__PATH", "env.sqlite")
 
     settings = load_settings(config_path)
 
-    assert settings.db.url == "postgresql://env@host/db"
+    assert settings.db.path == tmp_path / "env.sqlite"
 
 
-def test_load_settings_flat_db_url_alias_maps_to_db_url(
+def test_load_settings_flat_db_path_alias_maps_to_db_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The flat ``JOBFEED_DB_URL`` alias must map to ``db.url`` and validate.
+    """The flat ``JOBFEED_DB_PATH`` alias maps to ``db.path`` and validates.
 
     Regression: ``_collect_env_overrides`` splits only on ``__``, so the flat
-    var also landed as a top-level ``db_url`` key. ``Settings`` forbids extra
-    fields, so config loading failed whenever Docker/CI set ``JOBFEED_DB_URL``.
+    var otherwise lands as a forbidden top-level ``db_path`` key.
 
     Args:
         monkeypatch: Pytest helper used to set scoped environment variables.
     """
-    url = "postgresql://jobfeed:jobfeed_dev@postgres:5432/jobfeed_dev"
-    monkeypatch.setenv("JOBFEED_DB_URL", url)
+    path = "/data/jobfeed.sqlite"
+    monkeypatch.setenv("JOBFEED_DB_PATH", path)
 
     settings = load_settings()
 
-    assert settings.db.url == url
+    assert settings.db.path == Path(path)
 
 
 def test_load_settings_ignores_flat_compose_plumbing_env(
@@ -150,23 +146,23 @@ def test_load_settings_ignores_flat_compose_plumbing_env(
 
     settings = load_settings()
 
-    assert settings.db.url is None
+    assert settings.db.path == Path("data/jobfeed.sqlite")
 
 
-def test_load_settings_nested_db_url_beats_flat_alias(
+def test_load_settings_nested_db_path_beats_flat_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The nested ``JOBFEED_DB__URL`` form takes precedence over the flat alias.
+    """The nested ``JOBFEED_DB__PATH`` form takes precedence over the flat alias.
 
     Args:
         monkeypatch: Pytest helper used to set scoped environment variables.
     """
-    monkeypatch.setenv("JOBFEED_DB_URL", "postgresql://flat@host/db")
-    monkeypatch.setenv("JOBFEED_DB__URL", "postgresql://nested@host/db")
+    monkeypatch.setenv("JOBFEED_DB_PATH", "flat.sqlite")
+    monkeypatch.setenv("JOBFEED_DB__PATH", "nested.sqlite")
 
     settings = load_settings()
 
-    assert settings.db.url == "postgresql://nested@host/db"
+    assert settings.db.path == Path("nested.sqlite")
 
 
 def test_load_settings_env_overrides_nested_numeric_value(

@@ -213,27 +213,6 @@ class JobStore(Protocol):
         """
         ...
 
-    # --- pipeline runs ---
-
-    async def record_pipeline_run(self, run: PipelineRun) -> None:
-        """Persist pipeline run counters.
-
-        Args:
-            run: Pipeline run.
-        """
-        ...
-
-    async def update_pipeline_run_status(
-        self,
-        run: PipelineRun,
-    ) -> None:
-        """Persist a pipeline run's current counters, status, and finish time.
-
-        Args:
-            run: Pipeline run with accumulated counters to persist.
-        """
-        ...
-
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Load a pipeline run by identity.
 

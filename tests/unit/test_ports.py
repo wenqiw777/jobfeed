@@ -407,7 +407,6 @@ def test_job_store_protocol_has_required_async_methods() -> None:
         "get_evaluation",
         "top_evaluated_jobs",
         "save_ml_gate_result",
-        "record_pipeline_run",
         "get_pipeline_run",
         "connect",
         "close",

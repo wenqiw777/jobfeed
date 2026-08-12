@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import os
-import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from jobfeed._config_loading import (
+    apply_database_env_aliases,
+    collect_env_overrides,
+    load_toml_file,
+    merge_dicts,
+)
 from jobfeed.config_sources import (
     SourcesATSConfig,
     SourcesConfig,
@@ -21,20 +26,30 @@ from jobfeed.config_sources import (
 )
 from jobfeed.domain.filtering import HardFilters
 
-CONFIG_ENV_PREFIX = "JOBFEED_"
-ENV_NESTED_DELIMITER = "__"
-
 
 class DBSettings(BaseModel):
-    """PostgreSQL connection settings validated after TOML and env merging.
-
-    Postgres is the only supported backend. ``url`` is the asyncpg/libpq DSN;
-    when omitted, the CLI falls back to its built-in development DSN.
-    """
+    """Shared persistent SQLite file used by every normal runtime process."""
 
     model_config = ConfigDict(extra="forbid")
 
-    url: str | None = None
+    path: Path = Path("data/jobfeed.sqlite")
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _validate_path(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("SQLite db.path must not be empty")
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_url(cls, value: object) -> object:
+        if isinstance(value, Mapping) and "url" in value:
+            raise ValueError(
+                "PostgreSQL runtime db.url is no longer supported; run "
+                "`./bin/jobfeed migrate pg-to-sqlite` and configure [db].path"
+            )
+        return value
 
 
 class LLMSettings(BaseModel):
@@ -185,96 +200,20 @@ def load_settings(config_path: Path | None = None) -> Settings:
     Raises:
         FileNotFoundError: If an explicit config path does not exist.
     """
-    file_data = _load_toml_file(config_path)
-    env_data = _collect_env_overrides(os.environ)
-    _apply_convenience_env_vars(os.environ, env_data)
-    merged = _merge_dicts(file_data, env_data)
-    return Settings.model_validate(merged)
+    file_data = load_toml_file(config_path)
+    env_data = collect_env_overrides(os.environ)
+    apply_database_env_aliases(os.environ, env_data)
+    merged = merge_dicts(file_data, env_data)
+    settings = Settings.model_validate(merged)
+    return _resolve_database_path(settings, config_path)
 
 
-def _load_toml_file(config_path: Path | None) -> dict[str, object]:
-    if config_path is None:
-        return {}
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    with config_path.open("rb") as config_file:
-        return cast(dict[str, object], tomllib.load(config_file))
-
-
-def _collect_env_overrides(environ: Mapping[str, str]) -> dict[str, object]:
-    """Collect explicit nested JOBFEED env overrides.
-
-    Args:
-        environ: Environment mapping to inspect.
-
-    Returns:
-        Nested dictionary suitable for merging into TOML config.
-
-    Notes:
-        Time complexity: O(E * D), where E is the number of environment
-        variables and D is the number of nested path segments per override.
-    """
-    overrides: dict[str, object] = {}
-    for key, value in environ.items():
-        if not key.startswith(CONFIG_ENV_PREFIX):
-            continue
-        raw_path = key.removeprefix(CONFIG_ENV_PREFIX)
-        if ENV_NESTED_DELIMITER not in raw_path:
-            continue
-        path = raw_path.lower().split(ENV_NESTED_DELIMITER)
-        if not all(path):
-            continue
-        _set_nested_value(overrides, path, value)
-    return overrides
-
-
-def _apply_convenience_env_vars(
-    environ: Mapping[str, str],
-    overrides: dict[str, object],
-) -> None:
-    """Apply convenience (non-nested) env var aliases into the overrides dict.
-
-    ``JOBFEED_DB_URL`` is a flat env var that maps to ``db.url`` for ergonomic
-    use in Docker Compose and shell scripts.  The nested form
-    ``JOBFEED_DB__URL`` takes precedence if both are set.
-    """
-    db_url = environ.get("JOBFEED_DB_URL")
-    if db_url is not None:
-        # ``_collect_env_overrides`` splits only on ``__``, so ``JOBFEED_DB_URL``
-        # lands as a spurious top-level ``db_url`` key. ``Settings`` forbids extra
-        # fields, so drop that flat key and remap the value to ``db.url`` instead.
-        overrides.pop("db_url", None)
-        db_section = overrides.setdefault("db", {})
-        if isinstance(db_section, dict):
-            db_section.setdefault("url", db_url)
-
-
-def _set_nested_value(target: dict[str, object], path: list[str], value: str) -> None:
-    current = target
-    for part in path[:-1]:
-        next_value = current.get(part)
-        if not isinstance(next_value, dict):
-            next_value = {}
-            current[part] = next_value
-        current = cast(dict[str, object], next_value)
-    current[path[-1]] = value
-
-
-def _merge_dicts(
-    base: dict[str, object],
-    overrides: dict[str, object],
-) -> dict[str, object]:
-    merged = dict(base)
-    for key, override_value in overrides.items():
-        base_value = merged.get(key)
-        if isinstance(base_value, dict) and isinstance(override_value, dict):
-            merged[key] = _merge_dicts(
-                cast(dict[str, object], base_value),
-                cast(dict[str, object], override_value),
-            )
-            continue
-        merged[key] = override_value
-    return merged
+def _resolve_database_path(settings: Settings, config_path: Path | None) -> Settings:
+    path = settings.db.path.expanduser()
+    if not path.is_absolute() and config_path is not None:
+        path = config_path.resolve().parent / path
+    database = settings.db.model_copy(update={"path": path})
+    return settings.model_copy(update={"db": database})
 
 
 __all__ = [

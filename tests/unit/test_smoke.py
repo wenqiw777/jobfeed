@@ -19,4 +19,4 @@ def test_example_config_is_parseable() -> None:
 
     parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
 
-    assert parsed["db"]["url"].startswith("postgresql://")
+    assert parsed["db"]["path"] == "data/jobfeed.sqlite"

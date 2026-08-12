@@ -1,7 +1,6 @@
 [db]
-# PostgreSQL DSN. Omit to use the CLI's built-in development DSN, or override
-# at runtime with JOBFEED_DB_URL / JOBFEED_DB__URL.
-url = "postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev"
+# Shared persistent SQLite file. JOBFEED_DB__PATH overrides JOBFEED_DB_PATH.
+path = "data/jobfeed.sqlite"
 
 [llm]
 # Recommended: the low-latency pair. codex-cli reuses your subscription auth at

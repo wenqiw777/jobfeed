@@ -9,11 +9,7 @@ from typing import NotRequired, TypedDict, TypeVar, cast
 import click
 
 from jobfeed.adapters.sources.mock import MockSource
-from jobfeed.adapters.store.legacy_run_leases import LegacyRunLeaseStore
-from jobfeed.adapters.store.legacy_stage_b_threshold import (
-    LegacyPostgresStageBThresholdSync,
-)
-from jobfeed.adapters.store.postgres import PostgresStore
+from jobfeed.adapters.store.sqlite import SQLiteStore
 from jobfeed.cli._probe import ProbeVendorFn, build_probe_company
 from jobfeed.config import Settings, load_settings
 from jobfeed.observability import (
@@ -25,7 +21,7 @@ from jobfeed.observability import (
 )
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
-from jobfeed.ports.store_ext import StageBThresholdSync, StoreEvaluationBatchMixin
+from jobfeed.ports.store_ext import StageBThresholdSync
 from jobfeed.services.digest import DigestService, DigestStore
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator
 from jobfeed.services.scan import ScanService
@@ -51,8 +47,7 @@ class AppContext(TypedDict):
 def create_app(config_path: Path | None = None) -> AppContext:
     """Build the application dependency graph.
 
-    Wires the PostgreSQL store (the only supported backend) from
-    ``settings.db.url``, falling back to the built-in development DSN.
+    Wires the shared persistent SQLite store from ``settings.db.path``.
 
     The evaluate command builds its own EvaluateService lazily so that
     scan, digest, and migrate work without LLM CLI tools installed.
@@ -76,10 +71,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
     init_sentry(settings.observability)
     logger = get_logger()
     store = _create_store(settings)
-    run_orchestrator = RunLeaseOrchestrator(LegacyRunLeaseStore(store))
-    stage_b_threshold_sync = LegacyPostgresStageBThresholdSync(
-        cast(StoreEvaluationBatchMixin, store)
-    )
+    run_orchestrator = RunLeaseOrchestrator(store)
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
     return AppContext(
         settings=settings,
@@ -91,7 +83,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
             run_orchestrator,
         ),
         run_orchestrator=run_orchestrator,
-        stage_b_threshold_sync=stage_b_threshold_sync,
+        stage_b_threshold_sync=store,
         digest_service=DigestService(cast(DigestStore, store), logger),
         probe_company=build_probe_company(settings),
         logger=logger,
@@ -234,12 +226,8 @@ def _resolve_config_path(config_path: Path | None) -> Path | None:
     return None
 
 
-DEFAULT_POSTGRES_URL = "postgresql://jobfeed:jobfeed_dev@localhost:5432/jobfeed_dev"
-
-
-def _create_store(settings: Settings) -> JobStore:
-    dsn = settings.db.url or DEFAULT_POSTGRES_URL
-    return PostgresStore(dsn)
+def _create_store(settings: Settings) -> SQLiteStore:
+    return SQLiteStore(settings.db.path)
 
 
 from jobfeed.cli.apply import apply_cmd, apply_history  # noqa: E402
