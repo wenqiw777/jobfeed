@@ -65,6 +65,7 @@ def test_frozen_benchmark_workload_covers_every_required_path() -> None:
     assert [query.operation for query in workload.operations if query.allow_empty] == [
         "get_step_timings",
         "get_llm_daily_stats",
+        "get_funnel_stats",
     ]
 
 

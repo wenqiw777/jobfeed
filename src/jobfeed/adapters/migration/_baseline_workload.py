@@ -63,7 +63,9 @@ _CONTENTION_PROCESSES = 2
 _CONTENTION_COROUTINES = 8
 _MIN_CONTENTION_ROUNDS = 100
 _MIN_SAMPLE_COUNT = 30
-_ALLOW_EMPTY_OPERATIONS: Final = frozenset({"get_step_timings", "get_llm_daily_stats"})
+_ALLOW_EMPTY_OPERATIONS: Final = frozenset(
+    {"get_step_timings", "get_llm_daily_stats", "get_funnel_stats"}
+)
 
 
 @dataclass(frozen=True, kw_only=True)
