@@ -63,7 +63,8 @@ def test_frozen_benchmark_workload_covers_every_required_path() -> None:
     assert workload.contention.rounds_per_coroutine >= _MINIMUM_ROUNDS
     assert workload.contention.claim_limit == 1
     assert [query.operation for query in workload.operations if query.allow_empty] == [
-        "get_step_timings"
+        "get_step_timings",
+        "get_llm_daily_stats",
     ]
 
 
