@@ -40,6 +40,8 @@ async def _seed_inputs(store: PostgresStore, limit: int) -> _Seeds:
             if row.company_norm and row.title_norm
         )
     )
+    if not jobs or not page.rows or not keys:
+        raise ValueError("benchmark seed corpus is empty or has no non-blank twin key")
     job_id = str(jobs[0].id) if jobs and jobs[0].id is not None else "0"
     return _Seeds(job_id=job_id, jobs=jobs, twin_keys=keys)
 
@@ -153,6 +155,9 @@ async def run_postgres_store_benchmarks(
 
     Returns:
         Results in descriptor order.
+
+    Raises:
+        ValueError: If a required benchmark seed or operation returns no rows.
     """
     store = PostgresStore(dsn, min_size=1, max_size=2)
     await store.connect()
@@ -169,11 +174,43 @@ async def run_postgres_store_benchmarks(
                 result = await call()
                 elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
                 row_count = _count_rows(result)
+                if row_count == 0:
+                    raise ValueError(
+                        f"benchmark operation {query.operation} returned zero rows"
+                    )
                 if index >= warmups:
                     durations.append(elapsed_ms)
             reports.append(
                 StoreBenchmarkResult(samples_ms=durations, row_count=row_count)
             )
         return reports
+    finally:
+        await store.close()
+
+
+async def capture_postgres_store_aggregates(dsn: str) -> dict[str, object]:
+    """Capture exact store outputs used as cross-backend aggregate goldens.
+
+    Args:
+        dsn: PostgreSQL DSN for the quiescent rehearsal database.
+
+    Returns:
+        Pending counts and raw view/performance result objects.
+    """
+    store = PostgresStore(dsn, min_size=1, max_size=2)
+    await store.connect()
+    try:
+        pending_stage_a = await store.load_pending_stage_a(limit=1_000_000)
+        pending_stage_b = await store.load_pending_stage_b(limit=1_000_000)
+        return {
+            "pending_stage_a": len(pending_stage_a),
+            "pending_stage_b": len(pending_stage_b),
+            "needs_attention": await store.needs_attention(
+                days=30, max_per_category=100_000
+            ),
+            "funnel": await store.get_funnel_stats(30),
+            "daily_cost": await store.get_cost_range(since_days=30),
+            "llm_percentiles": await store.get_llm_daily_stats(30),
+        }
     finally:
         await store.close()

@@ -1,7 +1,7 @@
 {
   "workload_version": 1,
   "warmup_count": 1,
-  "sample_count": 5,
+  "sample_count": 30,
   "operations": [
     {"name": "list_jobs", "coverage": "hot.list", "operation": "jobs_view_list", "params": {"limit": 100}},
     {"name": "job_detail", "coverage": "hot.detail", "operation": "job_detail", "params": {}},
@@ -19,10 +19,10 @@
     {"name": "evaluate_db_only", "coverage": "overhead.evaluate", "operation": "evaluate_pending_claim_candidates", "params": {"limit": 100}}
   ],
   "contention": {
-    "operation": "two_client_write_lock",
-    "clients": 2,
-    "samples": 3,
-    "hold_ms": 50,
-    "lock_key": 90422117
+    "operation": "claim_pending_stage_a",
+    "processes": 2,
+    "coroutines_per_process": 8,
+    "rounds_per_coroutine": 100,
+    "claim_limit": 1
   }
 }

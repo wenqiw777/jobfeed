@@ -5,46 +5,39 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import platform
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Final
 
 from jobfeed.adapters.migration._baseline_workload import (
     _summary,
     artifact_sha256,
     validate_benchmark_workload,
 )
+from jobfeed.adapters.migration._pg_baseline_manifest import (
+    SnapshotManifestContext,
+    build_snapshot_manifest,
+    table_metrics,
+)
 from jobfeed.adapters.migration._pg_baseline_reader import PostgresBaselineReader
 from jobfeed.adapters.migration._pg_benchmark_runner import (
     run_postgres_store_benchmarks,
 )
-from jobfeed.adapters.migration.canonical_row import CanonicalRowHasher
+from jobfeed.adapters.migration._pg_claim_contention import run_pg_claim_contention
 from jobfeed.adapters.migration.canonical_schema_manifest import (
-    CANONICAL_ROW_SCHEMAS_V1,
     CANONICAL_SCHEMA_MANIFEST_V1,
-    canonical_schema_manifest_document,
     validate_schema_manifest,
 )
 
-_GENERATED_ID_TABLES = frozenset(
-    {
-        "jobs",
-        "evaluations",
-        "pipeline_runs",
-        "job_status_history",
-        "llm_usage",
-        "interview_rounds",
-        "step_timings",
-    }
-)
-_ACTIVITY_COLUMNS: Final = {
-    "jobs": ("discovered_at", "enriched_at", "closed_at"),
-    "pipeline_runs": ("started_at", "finished_at"),
-    "llm_usage": ("timestamp",),
-    "step_timings": ("created_at",),
-    "applied": ("applied_at",),
-    "job_status_history": ("changed_at",),
-    "interview_rounds": ("created_at", "scheduled_at", "completed_at"),
-}
+_SHA256_HEX_LENGTH = 64
+
+
+@dataclass(frozen=True, kw_only=True)
+class PgDumpEvidence:
+    """Immutable identity and code provenance for one restored pg_dump."""
+
+    git_commit: str
+    sha256: str
+    size_bytes: int
 
 
 def assert_capture_allowed(
@@ -82,12 +75,23 @@ def validate_live_schema(document: object) -> None:
     validate_schema_manifest(document)
 
 
-def _timestamp(value: object) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    return str(value)
+def validate_public_tables(table_names: list[str]) -> None:
+    """Require exactly 14 migrated tables plus Alembic metadata.
+
+    Args:
+        table_names: Complete live public base-table names.
+
+    Raises:
+        ValueError: If a table is missing, extra, or duplicated.
+    """
+    expected = {table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables}
+    expected.add("alembic_version")
+    actual = set(table_names)
+    if len(actual) != len(table_names) or actual != expected:
+        raise ValueError(
+            "live public table mismatch: "
+            f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+        )
 
 
 def _as_int(value: object) -> int:
@@ -116,92 +120,55 @@ def _gate_state(reader: PostgresBaselineReader) -> tuple[str, int, int]:
     return revision, active_writers, running_runs
 
 
-def _table_metrics(
-    reader: PostgresBaselineReader, chunk_size: int
-) -> dict[str, object]:
-    """Hash all registry rows.
-
-    Time complexity is O(R), with O(chunk_size) database memory.
-    """
-    metrics: dict[str, object] = {}
-    for table, schema in zip(
-        CANONICAL_SCHEMA_MANIFEST_V1.tables,
-        CANONICAL_ROW_SCHEMAS_V1,
-        strict=True,
-    ):
-        hasher = CanonicalRowHasher(schema)
-        count = 0
-        for row in reader.stream_table(table.name, chunk_size):
-            hasher.update_rows([row])
-            count += 1
-        max_identity = None
-        if table.name in _GENERATED_ID_TABLES:
-            max_identity = reader.scalar(f'SELECT MAX(id) FROM "{table.name}"')
-        metrics[table.name] = {
-            "row_count": count,
-            "primary_key": list(table.primary_key),
-            "max_identity": max_identity,
-            "canonical_sha256": hasher.hexdigest(),
-        }
-    return metrics
-
-
-def _activity_maxima(reader: PostgresBaselineReader) -> dict[str, object]:
-    return {
-        table: {
-            column: _timestamp(reader.scalar(f'SELECT MAX("{column}") FROM "{table}"'))
-            for column in columns
-        }
-        for table, columns in _ACTIVITY_COLUMNS.items()
-    }
-
-
 def capture_pg_baseline(
     dsn: str,
+    contention_dsn: str,
     workload_document: object,
     *,
-    git_commit: str,
+    source: PgDumpEvidence,
     chunk_size: int = 1000,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Capture one gated manifest and benchmark from a PostgreSQL-0008 snapshot.
 
     Args:
         dsn: PostgreSQL DSN from a named environment variable.
+        contention_dsn: Separate disposable clone restored from the same dump.
         workload_document: Parsed frozen benchmark workload.
-        git_commit: Full source commit SHA.
+        source: Dump identity plus full source commit SHA.
         chunk_size: Server-side canonical hashing fetch size.
 
     Returns:
         Snapshot manifest and benchmark report.
+
+    Raises:
+        ValueError: If source, schema, quiescence, or benchmark gates fail.
     """
+    if len(source.sha256) != _SHA256_HEX_LENGTH or any(
+        character not in "0123456789abcdef" for character in source.sha256
+    ):
+        raise ValueError("source pg_dump SHA-256 must be lowercase hexadecimal")
+    if source.size_bytes <= 0:
+        raise ValueError("source pg_dump must be non-empty")
     workload = validate_benchmark_workload(workload_document)
     captured_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     with PostgresBaselineReader(dsn) as reader:
         revision, active_writers, running_runs = _gate_state(reader)
+        validate_public_tables(reader.public_base_tables())
         validate_live_schema(reader.live_schema_document())
-        manifest: dict[str, object] = {
-            "format_version": 1,
-            "created_at_utc": captured_at,
-            "git_commit": git_commit,
-            "schema_registry": canonical_schema_manifest_document(),
-            "source": {
-                "backend": "postgresql",
-                "alembic_revision": revision,
-                "server_version": reader.scalar("SHOW server_version"),
-                "database_size_bytes": reader.scalar(
-                    "SELECT pg_database_size(current_database())"
-                ),
-                "jobs_size_bytes": reader.scalar(
-                    "SELECT pg_total_relation_size('jobs')"
-                ),
-            },
-            "writer_quiescence": {
-                "active_jobfeed_writers": active_writers,
-                "historical_running_runs": running_runs,
-            },
-            "tables": _table_metrics(reader, chunk_size),
-            "activity_maxima": _activity_maxima(reader),
-        }
+        manifest = build_snapshot_manifest(
+            reader,
+            context=SnapshotManifestContext(
+                dsn=dsn,
+                captured_at=captured_at,
+                git_commit=source.git_commit,
+                dump_sha256=source.sha256,
+                dump_size_bytes=source.size_bytes,
+                revision=revision,
+                active_writers=active_writers,
+                running_runs=running_runs,
+            ),
+            chunk_size=chunk_size,
+        )
         store_results = asyncio.run(
             run_postgres_store_benchmarks(
                 dsn,
@@ -220,28 +187,70 @@ def capture_pg_baseline(
                     **_summary(result.samples_ms),
                 }
             )
-        contention_samples = reader.contention_samples(
-            workload.contention.lock_key,
-            workload.contention.hold_ms,
-            workload.contention.samples,
+        mid_revision, mid_writers, mid_running = _gate_state(reader)
+        post_revision, post_writers, post_running = _gate_state(reader)
+    manifest_sha256 = artifact_sha256(manifest)
+    with PostgresBaselineReader(contention_dsn) as scratch:
+        scratch_revision, scratch_writers, scratch_running = _gate_state(scratch)
+        validate_public_tables(scratch.public_base_tables())
+        validate_live_schema(scratch.live_schema_document())
+        if table_metrics(scratch, chunk_size) != manifest["tables"]:
+            raise ValueError("contention scratch clone differs from initial manifest")
+    contention = run_pg_claim_contention(contention_dsn, workload.contention)
+    with PostgresBaselineReader(contention_dsn) as scratch:
+        scratch_post_revision, scratch_post_writers, scratch_post_running = _gate_state(
+            scratch
         )
-        _gate_state(reader)
     machine = "|".join((platform.system(), platform.release(), platform.machine()))
     benchmark: dict[str, object] = {
         "report_version": 1,
         "created_at_utc": captured_at,
-        "git_commit": git_commit,
-        "snapshot_manifest_sha256": artifact_sha256(manifest),
+        "git_commit": source.git_commit,
+        "snapshot_manifest_sha256": manifest_sha256,
         "workload_sha256": artifact_sha256(workload_document),
         "machine_fingerprint": hashlib.sha256(machine.encode()).hexdigest(),
         "warmup_count": workload.warmup_count,
         "sample_count": workload.sample_count,
+        "read_consistency": {
+            "mode": "quiescent_pre_post_gate",
+            "canonical_manifest": "repeatable-read read-only transaction",
+            "store_metrics": "separate connections while writers/runs remain zero",
+            "contention": "runs after read metrics and mutates only rehearsal",
+            "pre_revision": revision,
+            "pre_active_writers": active_writers,
+            "pre_running_runs": running_runs,
+            "mid_revision": mid_revision,
+            "mid_active_writers": mid_writers,
+            "mid_running_runs": mid_running,
+            "post_revision": post_revision,
+            "post_active_writers": post_writers,
+            "post_running_runs": post_running,
+        },
         "queries": query_reports,
         "contention": {
             "mode": workload.contention.mode,
-            "clients": workload.contention.clients,
-            "hold_ms": workload.contention.hold_ms,
-            **_summary(contention_samples),
+            "processes": workload.contention.processes,
+            "worker_pids": contention.worker_pids,
+            "coroutines_per_process": workload.contention.coroutines_per_process,
+            "rounds_per_coroutine": workload.contention.rounds_per_coroutine,
+            "attempted_short_writes": (
+                workload.contention.processes
+                * workload.contention.coroutines_per_process
+                * workload.contention.rounds_per_coroutine
+            ),
+            "successful_claims": len(contention.claimed_ids),
+            "empty_claims": contention.empty_claims,
+            "duplicate_claims": 0,
+            "data_loss": 0,
+            "retry_exhausted_busy": 0,
+            "scratch_initial_manifest_sha256": manifest_sha256,
+            "scratch_pre_revision": scratch_revision,
+            "scratch_pre_active_writers": scratch_writers,
+            "scratch_pre_running_runs": scratch_running,
+            "scratch_post_revision": scratch_post_revision,
+            "scratch_post_active_writers": scratch_post_writers,
+            "scratch_post_running_runs": scratch_post_running,
+            **_summary(contention.samples_ms),
         },
     }
     return manifest, benchmark

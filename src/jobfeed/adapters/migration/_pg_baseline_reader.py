@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-import time
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager
 from typing import Any
@@ -17,6 +15,23 @@ from jobfeed.adapters.migration.canonical_schema_manifest import (
 
 def _identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
+
+
+def _primary_key_order(table_name: str) -> str:
+    table = next(
+        table
+        for table in CANONICAL_SCHEMA_MANIFEST_V1.tables
+        if table.name == table_name
+    )
+    by_name = {column.name: column for column in table.columns}
+    return ", ".join(
+        (
+            f'{_identifier(name)} COLLATE "C"'
+            if by_name[name].source_sql_type == "text"
+            else _identifier(name)
+        )
+        for name in table.primary_key
+    )
 
 
 class PostgresBaselineReader(AbstractContextManager["PostgresBaselineReader"]):
@@ -116,7 +131,7 @@ class PostgresBaselineReader(AbstractContextManager["PostgresBaselineReader"]):
                 if column.source_sql_type == "jsonb"
                 else identifier
             )
-        order = ", ".join(_identifier(name) for name in table.primary_key)
+        order = _primary_key_order(table.name)
         sql = (
             f"SELECT {', '.join(projections)} FROM {_identifier(table.name)} "
             f"ORDER BY {order}"
@@ -189,45 +204,17 @@ class PostgresBaselineReader(AbstractContextManager["PostgresBaselineReader"]):
             "tables": tables,
         }
 
-    def contention_samples(
-        self, lock_key: int, hold_ms: int, samples: int
-    ) -> list[float]:
-        """Measure two-client advisory-lock waiting without mutating source rows.
-
-        Args:
-            lock_key: Dedicated PostgreSQL advisory lock key.
-            hold_ms: First client's lock hold duration.
-            samples: Number of two-client trials.
+    def public_base_tables(self) -> list[str]:
+        """Return every public base table in lexical order.
 
         Returns:
-            Second-client wait durations in milliseconds.
+            Complete table names, including Alembic's revision table.
         """
-        return [self._contention_once(lock_key, hold_ms) for _ in range(samples)]
-
-    def _contention_once(self, lock_key: int, hold_ms: int) -> float:
-        acquired = threading.Event()
-
-        def holder() -> None:
-            with (
-                psycopg2.connect(self._dsn) as connection,
-                connection.cursor() as cursor,
-            ):
-                cursor.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
-                acquired.set()
-                time.sleep(hold_ms / 1000)
-
-        thread = threading.Thread(target=holder, daemon=True)
-        thread.start()
-        if not acquired.wait(timeout=5):
-            raise RuntimeError("contention holder did not acquire advisory lock")
-        started = time.perf_counter_ns()
-        with (
-            psycopg2.connect(self._dsn) as connection,
-            connection.cursor() as cursor,
-        ):
-            cursor.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
-        elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
-        thread.join(timeout=5)
-        if thread.is_alive():
-            raise RuntimeError("contention holder did not exit")
-        return elapsed_ms
+        return [
+            str(row["table_name"])
+            for row in self.rows(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema='public' AND table_type='BASE TABLE' "
+                "ORDER BY table_name"
+            )
+        ]

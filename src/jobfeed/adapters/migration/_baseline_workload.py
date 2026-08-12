@@ -59,7 +59,9 @@ _OPERATION_PARAMS: Final = {
     "scan_upsert_lookup": frozenset({"limit"}),
     "evaluate_pending_claim_candidates": frozenset({"limit"}),
 }
-_CONTENTION_CLIENTS = 2
+_CONTENTION_PROCESSES = 2
+_CONTENTION_COROUTINES = 8
+_MIN_CONTENTION_ROUNDS = 100
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -74,13 +76,13 @@ class BenchmarkQuery:
 
 @dataclass(frozen=True, kw_only=True)
 class ContentionWorkload:
-    """Safe two-client PostgreSQL advisory-lock workload."""
+    """Frozen multi-process real-claim contention workload."""
 
     mode: str
-    clients: int
-    samples: int
-    hold_ms: int
-    lock_key: int
+    processes: int
+    coroutines_per_process: int
+    rounds_per_coroutine: int
+    claim_limit: int
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -144,15 +146,24 @@ def _parse_contention(value: object) -> ContentionWorkload:
     if not isinstance(value, dict):
         raise ValueError("benchmark contention must be an object")
     mode = value.get("operation")
-    clients = value.get("clients")
-    if mode != "two_client_write_lock" or clients != _CONTENTION_CLIENTS:
-        raise ValueError("benchmark contention requires exact two-client mode")
+    processes = value.get("processes")
+    coroutines = value.get("coroutines_per_process")
+    rounds = value.get("rounds_per_coroutine")
+    claim_limit = value.get("claim_limit")
+    if mode != "claim_pending_stage_a" or processes != _CONTENTION_PROCESSES:
+        raise ValueError("benchmark contention requires exact two-process claim mode")
+    if coroutines != _CONTENTION_COROUTINES:
+        raise ValueError("benchmark contention requires eight coroutines per process")
+    if type(rounds) is not int or rounds < _MIN_CONTENTION_ROUNDS:
+        raise ValueError("benchmark contention requires at least 100 rounds")
+    if claim_limit != 1:
+        raise ValueError("benchmark contention claim_limit must equal one")
     return ContentionWorkload(
         mode=mode,
-        clients=clients,
-        samples=_positive_int(value.get("samples"), "contention samples"),
-        hold_ms=_positive_int(value.get("hold_ms"), "contention hold_ms"),
-        lock_key=_positive_int(value.get("lock_key"), "contention lock_key"),
+        processes=processes,
+        coroutines_per_process=coroutines,
+        rounds_per_coroutine=rounds,
+        claim_limit=claim_limit,
     )
 
 

@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
-from jobfeed.adapters.migration.pg_baseline import capture_pg_baseline
+from jobfeed.adapters.migration.pg_baseline import PgDumpEvidence, capture_pg_baseline
 from jobfeed.adapters.store.legacy_import import ImportReport, import_legacy_sqlite
 from jobfeed.adapters.store.parity import verify_import_parity
 from jobfeed.adapters.store.postgres import PostgresStore
@@ -182,47 +184,77 @@ def _write_new_json(path: Path, document: object) -> None:
         raise click.ClickException(f"Cannot write artifact {path}: {exc}") from exc
 
 
-@migrate.command(
-    name="capture-pg-baseline",
-    help="Capture a gated PostgreSQL-0008 manifest and benchmark.",
+def _file_sha256(path: Path) -> str:
+    """Hash one evidence artifact without loading it into memory.
+
+    Args:
+        path: Artifact to read.
+
+    Returns:
+        Lowercase SHA-256 digest.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@migrate.command(name="benchmark-store", help="Capture a versioned store benchmark.")
+@click.option("--backend", required=True, type=click.Choice(["postgres", "sqlite"]))
+@click.option("--dsn-env", help="Environment variable containing source DSN.")
+@click.option(
+    "--scratch-dsn-env", help="Environment variable containing disposable clone DSN."
 )
-@click.option("--dsn-env", required=True, help="Environment variable containing DSN.")
 @click.option(
     "--workload",
     required=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
 )
+@click.option("--artifact-dir", required=True, type=click.Path(path_type=Path))
 @click.option(
-    "--manifest-output", required=True, type=click.Path(dir_okay=False, path_type=Path)
-)
-@click.option(
-    "--benchmark-output",
+    "--source-dump",
     required=True,
-    type=click.Path(dir_okay=False, path_type=Path),
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Read-only pg_dump artifact restored into this rehearsal database.",
 )
-def capture_pg_baseline_command(
-    dsn_env: str,
-    workload: Path,
-    manifest_output: Path,
-    benchmark_output: Path,
-) -> None:
-    """Capture canonical evidence without writing to the PostgreSQL source.
+def benchmark_store_command(**options: object) -> None:
+    """Capture an atomic evidence bundle without writing to the source.
 
     Args:
-        dsn_env: Name of the environment variable containing the source DSN.
-        workload: Frozen backend-neutral workload descriptor.
-        manifest_output: New snapshot manifest destination.
-        benchmark_output: New benchmark report destination.
+        **options: Click-parsed backend, DSN names, workload, dump, and output.
 
     Raises:
         click.ClickException: If gates fail or an artifact cannot be created.
     """
+    backend = cast(str, options["backend"])
+    dsn_env = cast(str | None, options["dsn_env"])
+    scratch_dsn_env = cast(str | None, options["scratch_dsn_env"])
+    workload = cast(Path, options["workload"])
+    artifact_dir = cast(Path, options["artifact_dir"])
+    source_dump = cast(Path, options["source_dump"])
+    if backend != "postgres":
+        raise click.ClickException("SQLite benchmark implementation is not available")
+    if not dsn_env or not scratch_dsn_env:
+        raise click.ClickException(
+            "Postgres benchmark requires both named DSN env vars"
+        )
     dsn = os.environ.get(dsn_env)
-    if not dsn:
-        raise click.ClickException(f"DSN environment variable is empty: {dsn_env}")
-    for output in (manifest_output, benchmark_output):
-        if output.exists():
-            raise click.ClickException(f"Refusing to overwrite artifact: {output}")
+    scratch_dsn = os.environ.get(scratch_dsn_env)
+    if not dsn or not scratch_dsn:
+        raise click.ClickException("Postgres benchmark DSN environment is empty")
+    if dsn == scratch_dsn:
+        raise click.ClickException("Source and contention scratch DSNs must differ")
+    if artifact_dir.exists():
+        raise click.ClickException(
+            f"Refusing to overwrite artifact bundle: {artifact_dir}"
+        )
+    artifact_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{artifact_dir.name}.partial-", dir=artifact_dir.parent
+        )
+    )
     try:
         workload_document = json.loads(workload.read_text("utf-8"))
         git_commit = subprocess.run(
@@ -231,15 +263,43 @@ def capture_pg_baseline_command(
             capture_output=True,
             text=True,
         ).stdout.strip()
+        dump_sha256 = _file_sha256(source_dump)
         manifest, benchmark = capture_pg_baseline(
-            dsn, workload_document, git_commit=git_commit
+            dsn,
+            scratch_dsn,
+            workload_document,
+            source=PgDumpEvidence(
+                git_commit=git_commit,
+                sha256=dump_sha256,
+                size_bytes=source_dump.stat().st_size,
+            ),
         )
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        evidence_index = {
+            "evidence_version": 1,
+            "source_dump_sha256": dump_sha256,
+            "manifest_sha256": artifact_sha256(manifest),
+            "benchmark_sha256": artifact_sha256(benchmark),
+            "workload_sha256": artifact_sha256(workload_document),
+            "git_commit": git_commit,
+        }
+        _write_new_json(staging / "snapshot-manifest.json", manifest)
+        _write_new_json(staging / "store-benchmark.json", benchmark)
+        _write_new_json(staging / "evidence-index.json", evidence_index)
+        if artifact_dir.exists():
+            raise FileExistsError(
+                f"artifact bundle appeared concurrently: {artifact_dir}"
+            )
+        staging.rename(artifact_dir)
+    except Exception as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        if isinstance(exc, click.ClickException):
+            raise
         raise click.ClickException(str(exc)) from exc
-    _write_new_json(manifest_output, manifest)
-    _write_new_json(benchmark_output, benchmark)
-    click.echo(f"Manifest: {manifest_output} sha256={artifact_sha256(manifest)}")
-    click.echo(f"Benchmark: {benchmark_output} sha256={artifact_sha256(benchmark)}")
+    click.echo(
+        f"Evidence bundle: {artifact_dir} "
+        f"manifest_sha256={evidence_index['manifest_sha256']} "
+        f"benchmark_sha256={evidence_index['benchmark_sha256']}"
+    )
 
 
 @migrate.command(name="inspect-sqlite", help="Inspect a legacy SQLite v16 database.")
