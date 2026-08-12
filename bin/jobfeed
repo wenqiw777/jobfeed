@@ -149,10 +149,10 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     source_id="$("${compose[@]}" ps -q restore-source)"
     scratch_id="$("${compose[@]}" ps -q restore-scratch)"
     runner_name="${project_name}-migration-runner"
-    runner_ref="$("${compose[@]}" run --build -d --no-deps --name "$runner_name" \
+    "${compose[@]}" run --build -d --no-deps --name "$runner_name" \
         migration-runner jobfeed migrate _capture-preprovisioned-baseline \
-        "${forwarded[@]:2}")"
-    runner_id="$(docker inspect --format '{{.Id}}' "$runner_ref")"
+        "${forwarded[@]:2}"
+    runner_id="$(docker inspect --format '{{.Id}}' "$runner_name")"
     network_name="${project_name}_migration-internal"
 
     write_inspection() {
