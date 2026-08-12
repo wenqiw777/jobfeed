@@ -1,6 +1,9 @@
 services:
   postgres:
+    # This target remains only for explicit rollback/migration work during
+    # soak; normal CLI/Web runs never select this profile or depend on it.
     image: postgres:16
+    profiles: ["migration"]
     environment:
       POSTGRES_USER: jobfeed
       POSTGRES_PASSWORD: jobfeed_dev
@@ -40,7 +43,9 @@ services:
       dockerfile: Dockerfile
     working_dir: /app
     environment:
-      JOBFEED_DB_URL: "postgresql://jobfeed:jobfeed_dev@postgres:5432/jobfeed_dev"
+      # Task 6A consumes this exact flat alias. The parent directory is the
+      # shared named volume, not an ephemeral container filesystem.
+      JOBFEED_DB_PATH: "/data/jobfeed.sqlite"
       JOBFEED_MIGRATION_PG_URL: "${JOBFEED_MIGRATION_PG_URL:-}"
       JOBFEED_MIGRATION_SCRATCH_PG_URL: "${JOBFEED_MIGRATION_SCRATCH_PG_URL:-}"
       JOBFEED_BENCH_MACHINE_TOKEN: "${JOBFEED_BENCH_MACHINE_TOKEN:-}"
@@ -67,15 +72,15 @@ services:
       MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
     volumes:
+      # Every ephemeral CLI container and the long-running Web process mount
+      # this same directory, so SQLite/WAL/lock sidecars share one lifecycle.
+      - jobfeed_data:/data
       # Named volume for the fastembed ONNX weights. A FRESH mlcache is seeded
       # from the image's baked weights at this path on first mount, so runs work
       # offline out of the box; the volume then persists them across `--rm`.
       # Upgraders with a pre-existing EMPTY mlcache (from before the bake) run
       # `docker volume rm jobfeed_mlcache` once so it re-seeds from the new image.
       - mlcache:/cache/jobfeed/fastembed
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   restore-source:
     image: postgres:16
@@ -150,6 +155,7 @@ networks:
 
 volumes:
   pgdata:
+  jobfeed_data:
   mlcache:
   jaeger_data:
   restore_source_data:

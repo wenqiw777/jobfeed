@@ -8,6 +8,7 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    JOBFEED_DB_PATH=/data/jobfeed.sqlite \
     JOBFEED_ML_CACHE_DIR=/cache/jobfeed/fastembed
 
 WORKDIR /app
@@ -15,6 +16,7 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends make \
     && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /data \
     && python -m venv /opt/venv
 
 COPY . .

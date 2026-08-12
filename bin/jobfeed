@@ -216,7 +216,11 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     exit 0
 fi
 
-args=(docker compose run --rm)
+unset COMPOSE_FILE COMPOSE_PATH_SEPARATOR
+args=(
+    docker compose --file "$REPO_ROOT/docker-compose.yml"
+    --project-directory "$REPO_ROOT" run --rm
+)
 if [ ! -t 0 ]; then
     args+=(-T)
 fi
