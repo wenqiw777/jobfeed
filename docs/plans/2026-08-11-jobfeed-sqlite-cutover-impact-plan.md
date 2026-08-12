@@ -1,6 +1,6 @@
 # Jobfeed PostgreSQL → SQLite 重构影响与实施设计
 
-**状态：** APPROVED FOR TASK 0 / TASK 0 IN PROGRESS
+**状态：** TASK 0 COMPLETE / TASK 1 READY
 **验证日期：** 2026-08-11  
 **适用仓库：** `/Users/wenqiwang/wwq/jobfeed`  
 **候选阶段：** Phase 10，但本文件不覆盖旧 Phase 9 文档里占位的 network/auth 工作  
@@ -672,7 +672,9 @@ review 的单位是可运行 milestone，不是 Git commit。提交粒度继续�
 
 ## 15. Readiness 状态
 
-独立 agent 共做了三轮 readiness review：第一轮发现 7 个阻塞项，第二轮发现 5 个残留阻塞项，第三轮确认行为 ledger、codec、schema registry 和 rollback trigger 合同闭合。用户已选择第 14 节方案 1。当前状态是 **Task 0 IN PROGRESS**：计划获准执行，但真实 0008 snapshot manifest 与同机 benchmark 证据仍是 Task 1–3 的硬前置。
+独立 agent 完成了 Task 0 合同审计；用户已选择第 14 节方案 1。按第
+10.2 节修正后的 milestone cadence，Task 0 的唯一最终 gate 已由真实 canonical
+命令通过，因此当前状态是 **Task 0 COMPLETE / TASK 1 READY**。
 
 | 检查 | 状态 |
 |---|---|
@@ -685,9 +687,9 @@ review 的单位是可运行 milestone，不是 Git commit。提交粒度继续�
 | 代码量与工时 | 已估算并标注误差 |
 | 最终回滚等级 | **已选择 1：无损 SQLite → PostgreSQL 回灌** |
 | 14 表可执行 schema registry | 已冻结 14 表 / 153 列并通过 Alembic 0008 独立推导测试 |
-| 真实 0008 snapshot manifest | **进行中；正式源仍为 0007，只允许升级隔离备份** |
-| 同机 PG benchmark | **待 0008 隔离备份 manifest 完成后采集** |
-| Baseline harness | **实现完成，待唯一最终 gate**：运行 canonical baseline，核验 manifest、benchmark、零资源残留与正式 PG 未变化 |
+| 真实 0008 snapshot manifest | **PASS**：隔离 0007 dump 升级至 0008；14 表、188,276 rows |
+| 同机 PG benchmark | **PASS**：30 samples × 14 queries；434 successful claims；0 duplicate/data loss |
+| Baseline harness | **PASS**：canonical 命令 155 秒；exact evidence/provenance validators 通过；隔离资源残留 0/0/0；正式 PG 未变化 |
 
 ### 15.1 Task 0 implementation reality：migration control-plane
 
@@ -720,13 +722,33 @@ restore orchestrator：镜像没有 Docker CLI，Compose 没有 Docker socket，
 架构、70/78 behavior surface 或无损回滚选择；只把原先不可执行的证据采集路径
 改成满足现有 Docker/runtime 安全边界的正式入口。
 
-本计划现为 **APPROVED FOR TASK 0**，不是 Task 0 已完成。Task 1–3 在真实 manifest 与 benchmark artifact 评审通过前保持 blocked。执行保留 Task 5–8 和 202–306h 预算；任何改为 snapshot-only rollback 或长期双写的要求都属于 material plan drift，必须返回设计。
+Task 0 已完成，Task 1 schema+lifecycle 可以开始。Task 2–3 仍按依赖等待各自
+前置行为切片。执行保留 Task 5–8 和 202–306h 预算；任何改为 snapshot-only
+rollback 或长期双写的要求都属于 material plan drift，必须返回设计。
 
 ## 16. 本文档变更的验证证据
 
+- Task 0 canonical final gate 于 2026-08-12 通过：
+  `./bin/jobfeed migrate capture-postgres-baseline` 对 88 MiB、PG16.13 生成的
+  0007 dump 做两份隔离 restore、升级至 0008、采集 manifest/benchmark/provenance，
+  总耗时 155 秒。
+- Evidence artifact：
+  `/Users/wenqiwang/wwq/jobfeed-sqlite-final-evidence/2026-08-12-task0-final`，
+  9 个 exact files；file-set SHA-256
+  `06d8edcdeb0d4fb016c3e47cf5e859c3eff3ed17fea93a21c47f476ee1c27e21`；
+  provenance-index SHA-256
+  `6c5d20f2fae95d67659a5f11622ccf1a04fd1a9ba7de561557de87a7ef37049c`。
+- Snapshot manifest：revision 0008，14 表、188,276 rows，active writers/running
+  runs 为 0/0；dump SHA-256
+  `96b82cdf6affa4fec779aa8c596d0d5898f259462c024780311f51cc9bfdc7ec`。
+- Benchmark：14 queries 各 30 samples；两进程 × 八协程 × 100 short writes，
+  434 successful claims、0 duplicate、0 data loss、0 retry-exhausted busy。
+- Cleanup：run-scoped containers/networks/volumes 残留 0/0/0。正式
+  `jobfeed-postgres-1` 保持 exited，container inspect 与 `jobfeed_pgdata` volume
+  inspect 的 before/after SHA-256 均完全一致。
 - 三个独立只读 agent 分别审计 store surface、实际运行并发、迁移/工时。
 - 独立 reviewer 证明 95 项 ledger 无重复/遗漏，`28 + 21 + 29 = 78`，并关闭 codec precision、复合 PK、claim concurrency、JSON、release 和 exact-trigger 合同 findings。
 - `git diff --check` 通过。
 - 使用仓库 `.venv/bin` 运行 `make quality`：Ruff、format、mypy 全通过；pytest **1,479 passed、482 deselected**。
 - Codec/manifest/hygiene 定向测试 **54 passed**；PG process/JSON/release 定向测试 **14 passed**。
-- Task 0 已新增行为合同、PostgreSQL characterization tests、versioned canonical codec 与 14 表/153 列 executable registry；尚未新增 SQLite runtime adapter 或修改正式 PostgreSQL 数据。
+- Task 0 已新增行为合同、PostgreSQL characterization tests、versioned canonical codec、14 表/153 列 executable registry 和已运行的 canonical evidence bundle；尚未新增 SQLite runtime adapter 或修改正式 PostgreSQL 数据。
