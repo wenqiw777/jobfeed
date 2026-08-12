@@ -1,6 +1,6 @@
 # Jobfeed PostgreSQL → SQLite 重构影响与实施设计
 
-**状态：** APPROVED / IMPLEMENTATION-READY  
+**状态：** APPROVED FOR TASK 0 / TASK 0 IN PROGRESS
 **验证日期：** 2026-08-11  
 **适用仓库：** `/Users/wenqiwang/wwq/jobfeed`  
 **候选阶段：** Phase 10，但本文件不覆盖旧 Phase 9 文档里占位的 network/auth 工作  
@@ -23,7 +23,7 @@ Jobfeed 适合从 PostgreSQL 收敛为 SQLite，但这不是“小改连接串�
 - 使用停写窗口做一次性 PostgreSQL → 临时 SQLite 文件迁移，校验成功后才原子切换。
 - Runtime storage 采用模块化 Hybrid Core：简单 CRUD/schema/mapping 使用 SQLAlchemy Core，关键 claim/lease/status/apply 事务保留显式 SQL；目标约 3,500 LOC，而不是复制一个新的 5,895 行 god object。
 
-含无损回滚的推荐预算是 **194–292 人类工程小时**。采用 3 个并行执行 agent 加 1 个集成 owner，合理日历时间是 **12–18 个工作日实施与验证，另加至少 7 天 soak**。并行只缩短日历时间，不减少总工程投入。代码 churn 预计 **20,000–30,000 LOC，误差约 ±30%**。
+含无损回滚的推荐预算是 **202–306 人类工程小时**。采用 3 个并行执行 agent 加 1 个集成 owner，合理日历时间是 **13–19 个工作日实施与验证，另加至少 7 天 soak**。并行只缩短日历时间，不减少总工程投入。代码 churn 预计 **20,600–31,000 LOC，误差约 ±30%**。相对初版增加的 8–14 小时与 600–1,000 LOC 来自 Task 0 实际验证发现的 migration control-plane：正式 Docker CLI 不能安全地在普通应用容器内通过 Docker socket 动态创建 rehearsal 资源。
 
 ## 2. 已锁定目标、约束与非目标
 
@@ -468,7 +468,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 | 阶段 | 独立可验收结果 | 前置 | 工时 |
 |---|---|---|---:|
-| 0. 行为基线与决策冻结 | PG golden contract、回滚合同、SQLite version floor | 本文获批 | 12–18h |
+| 0. 行为基线与决策冻结 | PG golden contract、回滚合同、SQLite version floor、socket-free migration Compose control-plane | 本文获批 | 20–32h |
 | 1. SQLite schema/migrator | 15 表、indexes、FK、version、backup/restore tests | 0 | 18–28h |
 | 2. Jobs/evaluation/claim/run | scan/evaluate 核心合同与双进程 claim 通过 | 1 | 32–48h |
 | 3A. Status/apply 原子性 | 状态、history、bulk/twin、apply 一致 | 2 | 14–22h |
@@ -480,7 +480,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 | 6. Config/Docker/CI/test conversion | 正式 CLI 使用持久化 SQLite，CI 不依赖 PG | 2、3A–3D、4 | 24–36h |
 | 7. 真数据 rehearsal/cutover/soak | 真实数据 smoke、故障注入、cutover 与 7 天 soak | 5、6 | 16–24h |
 | 8. PG-only 清理 | 删除 PG runtime、依赖、CI lane 和过时文档 | 7 + 明确清理批准 | 8–12h |
-| 建议工程预算 | 含无损回滚；阶段工时直接相加 |  | **194–292h** |
+| 建议工程预算 | 含无损回滚；阶段工时直接相加 |  | **202–306h** |
 
 ### 10.1 Agent team 日历假设
 
@@ -490,7 +490,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 - 主 agent：接口冻结、任务集成、冲突处理、全链验证和文档。
 - 只有独立可验证的 slice 才并行；相互依赖的 schema、claim 和 cutover 顺序不并行假装完成。
 
-在该配置下，预计 **12–18 个工作日**完成实现和验证，之后保留 **至少 7 个自然日 soak**。单人串行预计约 **5–8 周**。
+在该配置下，预计 **13–19 个工作日**完成实现和验证，之后保留 **至少 7 个自然日 soak**。单人串行预计约 **5–8 周**。
 
 ## 11. 分阶段 task contracts
 
@@ -498,7 +498,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 - **结果：** 所有 92 个现有 runtime 持久化行为和 3 个新 run-lease 行为映射到现有测试或新增 golden contract，并逐项得到 `retain/merge/compat-wrapper/retire` disposition。最终 port 设计目标为 78 个 typed public operations；行为合并后仍由原 golden contract 验证。18 个迁移专用方法也必须有 cutover/rollback 合同，但不进入 runtime facade。每一行必须写明输入/输出/error、事务边界、幂等性、排序/tie-break、NULL、casefold、时间、JSON 和 percentile 规则中适用的项目。
 - **边界：** 不写 SQLite production adapter。
-- **证据：** PG baseline 测试清单、snapshot manifest、采集命令与 hash、逐方法行为矩阵、第 9.1 节 benchmark 报告、最低 SQLite 版本和回滚选择被记录并评审通过。矩阵未通过前 Task 1–3 不得启动并行实现。
+- **证据：** PG baseline 测试清单、snapshot manifest、采集命令与 hash、逐方法行为矩阵、第 9.1 节 benchmark 报告、最低 SQLite 版本和回滚选择被记录并评审通过；canonical `./bin/jobfeed` 通过 socket-free migration Compose profile 完成真实双 restore、0007→0008 和 bundle 回读。矩阵与 control-plane 未通过前 Task 1–3 不得启动并行实现。
 - **返回设计：** 若发现业务依赖真正需要多个独立 DB writer 或远程 DB 访问，停止并重评 SQLite。
 
 ### Task 1：SQLite schema 与生命周期
@@ -639,7 +639,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 - 优点：减少约 20–30h，实施更快。
 - 缺点：soak 期间每次 scan/evaluate/status/apply 都扩大数据损失窗口。
-- 总工程预算：174–262h；Task 5 删除，Task 7 改为恢复切换前 snapshot 演练。
+- 总工程预算：182–276h；Task 5 删除，Task 7 改为恢复切换前 snapshot 演练。
 - 完整度：7/10。
 
 ### 3. 长期双写
@@ -648,7 +648,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 
 - 优点：理论上两个后端一直最新。
 - 缺点：92 个 runtime 持久化操作形成长期双实现、部分失败和顺序一致性问题，复杂度最高。
-- 总工程预算：当前无法沿用本计划；必须重新设计双写顺序、一致性、修复队列、切读和对账，预计至少 260–380h。
+- 总工程预算：当前无法沿用本计划；必须重新设计双写顺序、一致性、修复队列、切读和对账，预计至少 268–394h。
 - 完整度：8/10，但不符合“小而可靠”的目标。
 
 **决策：选择 1。** 用户于 2026-08-11 明确选择无损 SQLite → PostgreSQL 回滚。它让“可回滚”成为可验证事实，同时仍能在 soak 后删除 PostgreSQL。
@@ -672,7 +672,38 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 | 同机 PG benchmark | **待 0008 隔离备份 manifest 完成后采集** |
 | Baseline harness | **NO-GO 修复中**：真实 write overhead、dump/restore attestation、contention DB-delta 与 fresh-snapshot recheck 未全部闭合 |
 
-本计划现为 **APPROVED FOR TASK 0**，不是 Task 0 已完成。Task 1–3 在真实 manifest 与 benchmark artifact 评审通过前保持 blocked。执行保留 Task 5–8 和 194–292h 预算；任何改为 snapshot-only rollback 或长期双写的要求都属于 material plan drift，必须返回设计。
+### 15.1 Task 0 implementation reality：migration control-plane
+
+Task 0 的可执行性审查证明，普通 `jobfeed-cli` 容器不能直接承载当前动态
+restore orchestrator：镜像没有 Docker CLI，Compose 没有 Docker socket，容器内
+`127.0.0.1:<published-port>` 也不是宿主 PostgreSQL。把 Docker socket 挂进应用
+容器会授予近似宿主 root 权限，不作为可接受修复；改跑 host Python 则违反
+`./bin/jobfeed` 的 production-parity 边界。
+
+冻结的修复是 socket-free migration Compose control-plane：
+
+- `./bin/jobfeed migrate capture-postgres-baseline` 仍是唯一 public 入口；host
+  wrapper 只生成 run-scoped Compose project 并负责 trap cleanup，不运行 Jobfeed
+  Python。
+- 专用 profile 固定包含 `restore-source`、`restore-scratch` 与
+  `migration-runner`。两个 PostgreSQL 服务只在 internal network 暴露 5432，使用
+  独立 tmpfs/run-scoped volume，不映射 host port，也不引用正式 PG volume。
+- runner 不安装 Docker CLI、不挂 `/var/run/docker.sock`、不接收 LLM/API keys；
+  通过 Compose DNS 连接两个 restore target，在 callback 生命周期内完成
+  `pg_restore`、0007→0008、manifest 和真实 read/write benchmark。
+- dump 以只读单文件挂载，artifact parent 单独可写；public command 不接受用户
+  提供的 attestation JSON 或 DSN。bootstrap provenance 由 wrapper 从真实 Compose
+  container ID、image digest、project label 和 mount/network inspection 生成，并由
+  runner 与 live database identity、dump hash、revision transition 交叉验证。
+- canonical E2E 必须证明任一 restore/Alembic/capture/SIGINT 失败后没有 run-labeled
+  container、network 或 volume 残留；cleanup 失败返回非零及明确恢复命令。正式
+  `jobfeed-postgres-1` 和 `jobfeed_pgdata` 前后 identity 必须不变。
+
+这项实现现实使 Task 0 增加 8–14h 与约 600–1,000 LOC。它不改变 SQLite runtime
+架构、70/78 behavior surface 或无损回滚选择；只把原先不可执行的证据采集路径
+改成满足现有 Docker/runtime 安全边界的正式入口。
+
+本计划现为 **APPROVED FOR TASK 0**，不是 Task 0 已完成。Task 1–3 在真实 manifest 与 benchmark artifact 评审通过前保持 blocked。执行保留 Task 5–8 和 202–306h 预算；任何改为 snapshot-only rollback 或长期双写的要求都属于 material plan drift，必须返回设计。
 
 ## 16. 本文档变更的验证证据
 
