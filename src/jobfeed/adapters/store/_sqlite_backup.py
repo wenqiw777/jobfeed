@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import aiosqlite
@@ -34,7 +35,11 @@ async def _create_online_backup(
     return destination
 
 
-async def _restore_database(source: Path, target: Path) -> None:
+async def _restore_database(
+    source: Path,
+    target: Path,
+    validate_stage: Callable[[Path], Awaitable[None]],
+) -> None:
     stage = _create_stage(target, "restore")
     try:
         source_connection = await _open_validated(source)
@@ -43,6 +48,9 @@ async def _restore_database(source: Path, target: Path) -> None:
         finally:
             await source_connection.close()
         await _validate_database(stage)
+        await validate_stage(stage)
+        await _validate_database(stage)
+        _assert_no_live_sidecars(stage)
         _sync_file(stage)
         _assert_no_live_sidecars(target)
         os.replace(stage, target)
@@ -125,5 +133,6 @@ def _sync_directory(path: Path) -> None:
 
 
 def _remove_owned_stage(path: Path) -> None:
-    with contextlib.suppress(FileNotFoundError):
-        path.unlink()
+    for owned_path in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        with contextlib.suppress(FileNotFoundError):
+            owned_path.unlink()

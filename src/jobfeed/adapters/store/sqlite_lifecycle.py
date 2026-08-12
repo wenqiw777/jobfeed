@@ -14,7 +14,10 @@ from jobfeed.adapters.store._sqlite_backup import (
     _create_online_backup,
     _restore_database,
 )
-from jobfeed.adapters.store._sqlite_connection import _open_configured_connection
+from jobfeed.adapters.store._sqlite_connection import (
+    _open_configured_connection,
+    _scalar,
+)
 from jobfeed.adapters.store._sqlite_errors import (
     SqliteDatabaseValidationError,
     SqliteLifecycleBusyError,
@@ -92,11 +95,7 @@ class SqliteLifecycle:
             connection: aiosqlite.Connection | None = None
             try:
                 connection = await _open_configured_connection(self._path)
-                await self._initializer(connection)
-                if connection.in_transaction:
-                    await connection.rollback()
-                    msg = "schema initializer returned with an active transaction"
-                    raise SqliteLifecycleStateError(msg)
+                await self._run_initializer(connection)
             except BaseException:
                 if connection is not None:
                     await connection.close()
@@ -196,7 +195,7 @@ class SqliteLifecycle:
         database_lock = DatabaseFileLock(self._path)
         try:
             database_lock.acquire_exclusive()
-            await _restore_database(source, self._path)
+            await _restore_database(source, self._path, self._validate_restore_stage)
         finally:
             database_lock.release()
             await self._finish_restore()
@@ -226,6 +225,26 @@ class SqliteLifecycle:
     async def _finish_restore(self) -> None:
         async with self._state_lock:
             self._is_restoring = False
+
+    async def _validate_restore_stage(self, stage: Path) -> None:
+        connection = await _open_configured_connection(stage)
+        try:
+            await self._run_initializer(connection)
+            # Atomic publication moves one file, so fold any validator writes out
+            # of WAL before the stage can become the live database.
+            journal_mode = await _scalar(connection, "PRAGMA journal_mode=DELETE")
+            if str(journal_mode).lower() != "delete":
+                msg = "SQLite restore stage could not leave WAL mode safely"
+                raise SqliteDatabaseValidationError(msg)
+        finally:
+            await connection.close()
+
+    async def _run_initializer(self, connection: aiosqlite.Connection) -> None:
+        await self._initializer(connection)
+        if connection.in_transaction:
+            await connection.rollback()
+            msg = "schema initializer returned with an active transaction"
+            raise SqliteLifecycleStateError(msg)
 
 
 def _same_path(left: Path, right: Path) -> bool:
