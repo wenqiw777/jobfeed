@@ -490,6 +490,23 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 - 主 agent：接口冻结、任务集成、冲突处理、全链验证和文档。
 - 只有独立可验证的 slice 才并行；相互依赖的 schema、claim 和 cutover 顺序不并行假装完成。
 
+### 10.2 Review cadence（2026-08-12 流程修正）
+
+本项目从 review-driven development 切回 milestone-driven implementation：
+
+- 一个 task 内允许连续多个可回退的小提交；小提交不触发逐提交 review。
+- 只有完整、可运行的行为切片达到该 task acceptance criteria 后做一次 review。
+- P0/P1 修复后只复查对应 finding，不重新扫描整个系统。
+- P2/P3 进入 backlog，不阻塞当前阶段。
+- 已冻结的架构决定不重复讨论；只有真实数据损失或实现不可行证据才返回设计。
+- Task 0 不再做第四轮整体架构 review。唯一剩余 gate 是 canonical baseline
+  命令真实跑通，并验证 manifest、benchmark、资源清理和正式 PostgreSQL 未被修改。
+- 后续 review 只发生在 Task 1 schema+lifecycle 完成、Task 2
+  jobs/evaluation/claims 完成、Task 3 其余 capability 完成，以及最终 cutover 前。
+
+review 的单位是可运行 milestone，不是 Git commit。提交粒度继续服务于回退和
+定位；不得把提交数转换成 reviewer 轮数。
+
 在该配置下，预计 **13–19 个工作日**完成实现和验证，之后保留 **至少 7 个自然日 soak**。单人串行预计约 **5–8 周**。
 
 ## 11. 分阶段 task contracts
@@ -670,7 +687,7 @@ Task 0 必须在同一台 cutover 机器、同一份 56k-job snapshot 上记录 
 | 14 表可执行 schema registry | 已冻结 14 表 / 153 列并通过 Alembic 0008 独立推导测试 |
 | 真实 0008 snapshot manifest | **进行中；正式源仍为 0007，只允许升级隔离备份** |
 | 同机 PG benchmark | **待 0008 隔离备份 manifest 完成后采集** |
-| Baseline harness | **NO-GO 修复中**：真实 write overhead、dump/restore attestation、contention DB-delta 与 fresh-snapshot recheck 未全部闭合 |
+| Baseline harness | **实现完成，待唯一最终 gate**：运行 canonical baseline，核验 manifest、benchmark、零资源残留与正式 PG 未变化 |
 
 ### 15.1 Task 0 implementation reality：migration control-plane
 
