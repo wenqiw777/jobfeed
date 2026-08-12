@@ -101,7 +101,11 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.state.run_manager = RunManager(
         store=store,
         logger=logger,
-        scan_service_factory=lambda: ScanService(store, logger),
+        scan_service_factory=lambda: ScanService(
+            store,
+            logger,
+            context.get("run_orchestrator"),
+        ),
         evaluate_service_factory=lambda **kw: build_evaluate_service(
             context,
             EvalBuildParams(
@@ -112,6 +116,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
             ),
         ),
         scan_source_resolver=_make_scan_source_resolver(context),
+        run_orchestrator=context.get("run_orchestrator"),
     )
 
     app.state.jobs_view_service = JobsViewService(

@@ -174,6 +174,7 @@ def build_evaluate_service(
             ml_gate_enabled=ml_gate_enabled,
             ml_gate_max_candidates=settings.ml_gate.max_candidates,
         ),
+        run_orchestrator=app.get("run_orchestrator"),
         logger=logger,
     )
 

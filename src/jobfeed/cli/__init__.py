@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TypedDict, TypeVar, cast
+from typing import NotRequired, TypedDict, TypeVar, cast
 
 import click
 
 from jobfeed.adapters.sources.mock import MockSource
+from jobfeed.adapters.store.legacy_run_leases import LegacyRunLeaseStore
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.cli._probe import ProbeVendorFn, build_probe_company
 from jobfeed.config import Settings, load_settings
@@ -22,6 +23,7 @@ from jobfeed.observability import (
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.services.digest import DigestService, DigestStore
+from jobfeed.services.run_orchestration import RunLeaseOrchestrator
 from jobfeed.services.scan import ScanService
 
 T = TypeVar("T")
@@ -34,6 +36,7 @@ class AppContext(TypedDict):
     store: JobStore
     sources: dict[str, SimpleSource]
     scan_service: ScanService
+    run_orchestrator: NotRequired[RunLeaseOrchestrator]
     digest_service: DigestService
     probe_company: ProbeVendorFn
     logger: JobfeedLogger
@@ -68,12 +71,18 @@ def create_app(config_path: Path | None = None) -> AppContext:
     init_sentry(settings.observability)
     logger = get_logger()
     store = _create_store(settings)
+    run_orchestrator = RunLeaseOrchestrator(LegacyRunLeaseStore(store))
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
     return AppContext(
         settings=settings,
         store=store,
         sources=sources,
-        scan_service=ScanService(store, logger),
+        scan_service=ScanService(
+            store,
+            logger,
+            run_orchestrator,
+        ),
+        run_orchestrator=run_orchestrator,
         digest_service=DigestService(cast(DigestStore, store), logger),
         probe_company=build_probe_company(settings),
         logger=logger,
