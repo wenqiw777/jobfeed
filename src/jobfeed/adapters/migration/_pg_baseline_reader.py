@@ -142,7 +142,7 @@ class PostgresBaselineReader(AbstractContextManager["PostgresBaselineReader"]):
         cursor.itersize = chunk_size
         try:
             cursor.execute(sql)
-            names = tuple(column.name for column in cursor.description or ())
+            names = tuple(column.name for column in table.columns)
             for row in cursor:
                 yield dict(zip(names, row, strict=True))
         finally:
