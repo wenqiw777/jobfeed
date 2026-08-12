@@ -127,6 +127,49 @@ if [ "${1:-}" = "migrate" ] && { \
         --artifact-dir "/migration/artifacts/$artifact_name"
     )
 
+    fingerprint_formal_resources() {
+        if container_raw="$(docker inspect jobfeed-postgres-1 2>/dev/null)"; then
+            container="$(printf '%s' "$container_raw" | jq -cS '.[0] | {
+                present: true,
+                name: "jobfeed-postgres-1",
+                container_id: .Id,
+                image_id: .Image,
+                status: .State.Status,
+                pgdata_mounts: [.Mounts[]
+                    | select(.Type == "volume" and .Name == "jobfeed_pgdata")
+                    | {type: .Type, name: .Name, destination: .Destination,
+                       read_write: .RW}]
+            }')"
+        else
+            container='{"name":"jobfeed-postgres-1","present":false}'
+        fi
+        if volume_raw="$(docker volume inspect jobfeed_pgdata 2>/dev/null)"; then
+            volume_metadata_sha="$(printf '%s' "$volume_raw" \
+                | jq -cS '.[0] | {labels: (.Labels // {}), options: (.Options // {})}' \
+                | shasum -a 256 | awk '{print $1}')"
+            volume="$(printf '%s' "$volume_raw" | jq -cS \
+                --arg metadata_sha256 "$volume_metadata_sha" '.[0] | {
+                present: true,
+                name: .Name,
+                driver: .Driver,
+                created_at: .CreatedAt,
+                metadata_sha256: $metadata_sha256
+            }')"
+        else
+            volume='{"name":"jobfeed_pgdata","present":false}'
+        fi
+        jq -cnS --argjson container "$container" --argjson volume "$volume" \
+            '{container: $container, volume: $volume}'
+    }
+
+    formal_before="$(fingerprint_formal_resources)"
+    formal_tmp="$(mktemp "$input_host/.formal-resources.XXXXXX")"
+    jq -cnS --argjson resources "$formal_before" \
+        '{fingerprint_version: 1, before: $resources, after: $resources}' \
+        >"$formal_tmp"
+    chmod 0400 "$formal_tmp"
+    mv "$formal_tmp" "$input_host/formal-resource-fingerprints.json"
+
     project_name="jobfeed-migration-${PPID}-$$-${RANDOM}"
     compose=(
         docker compose --file "$REPO_ROOT/docker-compose.yml"
@@ -137,10 +180,12 @@ if [ "${1:-}" = "migrate" ] && { \
     unset COMPOSE_FILE COMPOSE_PATH_SEPARATOR
     export JOBFEED_MIGRATION_PROJECT="$project_name"
 
+    cleanup_complete=0
     cleanup_migration_project() {
         status=$?
         trap - EXIT INT TERM HUP
-        if ! "${compose[@]}" down --volumes --remove-orphans --timeout=30; then
+        if [ "$cleanup_complete" -eq 0 ] \
+            && ! "${compose[@]}" down --volumes --remove-orphans --timeout=30; then
             printf 'error: migration project cleanup failed\n' >&2
             printf 'Recovery: docker compose --project-directory %q --project-name %q --profile migration down --volumes --remove-orphans --timeout=30\n' \
                 "$REPO_ROOT" "$project_name" >&2
@@ -223,6 +268,16 @@ if [ "${1:-}" = "migrate" ] && { \
     [ "$runner_status" = "0" ] || fail "migration runner failed with $runner_status"
     [ -f "$output_host/provenance-verified.json" ] \
         || fail "migration provenance verification marker missing"
+    if ! "${compose[@]}" down --volumes --remove-orphans --timeout=30; then
+        printf 'error: migration project cleanup failed\n' >&2
+        exit 70
+    fi
+    cleanup_complete=1
+    formal_after="$(fingerprint_formal_resources)"
+    if [ "$formal_before" != "$formal_after" ]; then
+        rm -rf -- "$artifact_parent/$artifact_name"
+        fail "formal PostgreSQL resources changed during migration rehearsal"
+    fi
     exit 0
 fi
 

@@ -8,12 +8,15 @@ from jobfeed.adapters.migration._baseline_workload import artifact_sha256
 from jobfeed.adapters.migration._pg_host_inspection import verify_host_inspection
 from jobfeed.adapters.migration._pg_preprovisioned_types import parse_restore_bootstrap
 
+_SHA256_HEX_LENGTH = 64
+
 PROVENANCE_DOCUMENT_KEYS = {
     "restore-bootstrap.json",
     "pre-inspection.json",
     "post-inspection.json",
     "capture-ready.json",
     "provenance-verified.json",
+    "formal-resource-fingerprints.json",
 }
 PROVENANCE_INDEX_KEYS = {
     "provenance_version",
@@ -23,6 +26,7 @@ PROVENANCE_INDEX_KEYS = {
     "post_inspection_sha256",
     "capture_ready_sha256",
     "provenance_verified_sha256",
+    "formal_resource_fingerprints_sha256",
 }
 
 
@@ -55,6 +59,9 @@ def build_provenance_index(
         "provenance_verified_sha256": artifact_sha256(
             documents["provenance-verified.json"]
         ),
+        "formal_resource_fingerprints_sha256": artifact_sha256(
+            documents["formal-resource-fingerprints.json"]
+        ),
     }
     validate_provenance_bundle(documents, evidence_index, index)
     return index
@@ -82,6 +89,7 @@ def validate_provenance_bundle(
     expected = _build_provenance_index_unchecked(docs, evidence_index)
     if value != expected:
         raise ValueError("provenance index hash mismatch")
+    _validate_formal_fingerprints(docs["formal-resource-fingerprints.json"])
     bootstrap = parse_restore_bootstrap(docs["restore-bootstrap.json"])
     host_sha = verify_host_inspection(
         bootstrap,
@@ -134,7 +142,75 @@ def _build_provenance_index_unchecked(
         "provenance_verified_sha256": artifact_sha256(
             documents["provenance-verified.json"]
         ),
+        "formal_resource_fingerprints_sha256": artifact_sha256(
+            documents["formal-resource-fingerprints.json"]
+        ),
     }
+
+
+def _validate_formal_fingerprints(value: object) -> None:
+    document = _mapping(value, "formal resource fingerprints")
+    if set(document) != {"fingerprint_version", "before", "after"} or (
+        document["fingerprint_version"] != 1
+    ):
+        raise ValueError("formal resource fingerprints exact schema mismatch")
+    before = _mapping(document["before"], "formal resources before")
+    after = _mapping(document["after"], "formal resources after")
+    if set(before) != {"container", "volume"} or before != after:
+        raise ValueError("formal PostgreSQL resources changed")
+    _validate_formal_resource(before["container"], "container")
+    _validate_formal_resource(before["volume"], "volume")
+
+
+def _validate_formal_resource(value: object, kind: str) -> None:
+    resource = _mapping(value, f"formal {kind}")
+    present = resource.get("present")
+    if present is False:
+        expected = {"present", "name"}
+    elif kind == "container":
+        expected = {
+            "present",
+            "name",
+            "container_id",
+            "image_id",
+            "status",
+            "pgdata_mounts",
+        }
+    else:
+        expected = {
+            "present",
+            "name",
+            "driver",
+            "created_at",
+            "metadata_sha256",
+        }
+    expected_name = "jobfeed-postgres-1" if kind == "container" else "jobfeed_pgdata"
+    if (
+        type(present) is not bool
+        or set(resource) != expected
+        or resource.get("name") != expected_name
+    ):
+        raise ValueError(f"formal {kind} fingerprint exact schema mismatch")
+    if present is False:
+        return
+    string_fields = (
+        ("container_id", "image_id", "status")
+        if kind == "container"
+        else ("driver", "created_at", "metadata_sha256")
+    )
+    if any(not isinstance(resource[field], str) for field in string_fields):
+        raise ValueError(f"formal {kind} fingerprint field mismatch")
+    if kind == "volume":
+        digest_value = resource["metadata_sha256"]
+        if not isinstance(digest_value, str):
+            raise ValueError("formal volume metadata hash mismatch")
+        digest = digest_value
+        if len(digest) != _SHA256_HEX_LENGTH or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise ValueError("formal volume metadata hash mismatch")
+    elif not isinstance(resource["pgdata_mounts"], list):
+        raise ValueError("formal container mount fingerprint mismatch")
 
 
 def _mapping(value: object, name: str) -> dict[str, object]:

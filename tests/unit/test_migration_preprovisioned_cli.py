@@ -45,9 +45,11 @@ def test_hidden_runner_captures_then_verifies_host_inspection(
     bootstrap_path = tmp_path / "bootstrap.json"
     ready_path = tmp_path / "capture-ready.json"
     verified_path = tmp_path / "verified.json"
+    formal_path = tmp_path / "formal.json"
     pre.write_text('{"phase":"pre"}', encoding="utf-8")
     post.write_text('{"phase":"post"}', encoding="utf-8")
     bootstrap_path.write_text('{"bootstrap_version":1}', encoding="utf-8")
+    formal_path.write_text('{"fingerprint_version":1}', encoding="utf-8")
     ready_path.write_text(
         json.dumps(
             {
@@ -76,6 +78,9 @@ def test_hidden_runner_captures_then_verifies_host_inspection(
     monkeypatch.setattr(migrate_module, "RESTORE_CAPTURE_READY_PATH", ready_path)
     monkeypatch.setattr(migrate_module, "RESTORE_VERIFIED_PATH", verified_path)
     monkeypatch.setattr(migrate_module, "_RESTORE_PRE_INSPECTION_PATH", pre)
+    monkeypatch.setattr(
+        migrate_module, "_FORMAL_RESOURCE_FINGERPRINT_PATH", formal_path
+    )
     monkeypatch.setattr(migrate_module, "load_restore_bootstrap", lambda: bootstrap)
     monkeypatch.setattr(
         migrate_module,
@@ -162,9 +167,11 @@ def test_hidden_import_publishes_sqlite_and_exact_parity_evidence(
     bootstrap_path = tmp_path / "bootstrap.json"
     ready_path = tmp_path / "capture-ready.json"
     verified_path = tmp_path / "verified.json"
+    formal_path = tmp_path / "formal.json"
     pre.write_text('{"phase":"pre"}', encoding="utf-8")
     post.write_text('{"phase":"post"}', encoding="utf-8")
     bootstrap_path.write_text('{"bootstrap_version":1}', encoding="utf-8")
+    formal_path.write_text('{"fingerprint_version":1}', encoding="utf-8")
     ready_path.write_text("{}", encoding="utf-8")
     artifact = tmp_path / "cutover bundle"
     bootstrap = SimpleNamespace(project_label="jobfeed-migration-test")
@@ -196,6 +203,9 @@ def test_hidden_import_publishes_sqlite_and_exact_parity_evidence(
     monkeypatch.setattr(migrate_module, "RESTORE_CAPTURE_READY_PATH", ready_path)
     monkeypatch.setattr(migrate_module, "RESTORE_VERIFIED_PATH", verified_path)
     monkeypatch.setattr(migrate_module, "_RESTORE_PRE_INSPECTION_PATH", pre)
+    monkeypatch.setattr(
+        migrate_module, "_FORMAL_RESOURCE_FINGERPRINT_PATH", formal_path
+    )
     monkeypatch.setattr(migrate_module, "load_restore_bootstrap", lambda: bootstrap)
     monkeypatch.setattr(migrate_module, "run_cutover_rehearsal", rehearse)
     alembic = tmp_path / "alembic"

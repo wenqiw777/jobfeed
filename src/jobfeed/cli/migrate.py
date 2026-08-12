@@ -46,6 +46,9 @@ from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.cli import require_app
 
 _RESTORE_PRE_INSPECTION_PATH = Path("/run/jobfeed-migration/input/pre-inspection.json")
+_FORMAL_RESOURCE_FINGERPRINT_PATH = Path(
+    "/run/jobfeed-migration/input/formal-resource-fingerprints.json"
+)
 _GIT_COMMIT_LENGTH = 40
 
 
@@ -112,6 +115,9 @@ def _publish_provenance(
         "capture-ready.json": json.loads(RESTORE_CAPTURE_READY_PATH.read_text("utf-8")),
         "provenance-verified.json": json.loads(
             RESTORE_VERIFIED_PATH.read_text("utf-8")
+        ),
+        "formal-resource-fingerprints.json": json.loads(
+            _FORMAL_RESOURCE_FINGERPRINT_PATH.read_text("utf-8")
         ),
     }
     provenance_index = build_provenance_index(documents, bundle["index"])

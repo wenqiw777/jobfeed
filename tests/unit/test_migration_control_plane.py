@@ -16,6 +16,7 @@ _WRAPPER = _ROOT / "bin" / "jobfeed"
 _COMPOSE = _ROOT / "docker-compose.yml"
 _RUN_AND_DOWN_CALLS = 2
 _GIT_COMMIT_LENGTH = 40
+_FORMAL_FINGERPRINT_READS = 2
 
 
 def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
@@ -33,6 +34,23 @@ def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
         "        'git_commit': os.environ.get('JOBFEED_MIGRATION_GIT_COMMIT'),\n"
         "    }}, ensure_ascii=False) + '\\n')\n"
         "args = sys.argv[1:]\n"
+        "formal_phase = os.environ.get('FAKE_FORMAL_PHASE', 'same')\n"
+        "formal_changed = (formal_phase == 'changed' and os.path.exists(\n"
+        " os.path.join(os.environ['JOBFEED_MIGRATION_OUTPUT_HOST'],\n"
+        " 'capture-ready.json')))\n"
+        "if args[:2] == ['inspect', 'jobfeed-postgres-1']:\n"
+        "    if formal_phase == 'absent': raise SystemExit(1)\n"
+        "    doc = {'Id': ('e' if formal_changed else 'd') * 64,\n"
+        "      'State': {'Status': 'exited'},\n"
+        "      'Mounts': [{'Type': 'volume', 'Name': 'jobfeed_pgdata',\n"
+        "       'Destination': '/var/lib/postgresql/data', 'RW': True}]}\n"
+        "    print(json.dumps([doc])); raise SystemExit(0)\n"
+        "if args[:3] == ['volume', 'inspect', 'jobfeed_pgdata']:\n"
+        "    if formal_phase == 'absent': raise SystemExit(1)\n"
+        "    doc = {'Name': 'jobfeed_pgdata', 'Driver': 'local',\n"
+        "      'CreatedAt': ('changed' if formal_changed else 'stable'),\n"
+        "      'Options': None, 'Labels': {'compose': 'jobfeed'}}\n"
+        "    print(json.dumps([doc])); raise SystemExit(0)\n"
         "ids = {'restore-source': 'a' * 64, 'restore-scratch': 'b' * 64,\n"
         "       'migration-runner': 'c' * 64}\n"
         "project = os.environ.get('JOBFEED_MIGRATION_PROJECT', 'missing')\n"
@@ -144,7 +162,7 @@ def test_capture_route_uses_run_scoped_profile_and_rewrites_unicode_paths(
 
     assert result.returncode == 0, result.stderr
     assert len(calls) > _RUN_AND_DOWN_CALLS
-    run = calls[0]
+    run = next(call for call in calls if "up" in call["argv"])
     argv = run["argv"]
     assert argv[:2] == ["compose", "--file"]
     assert argv[2] == str(_COMPOSE)
@@ -188,7 +206,7 @@ def test_capture_route_uses_run_scoped_profile_and_rewrites_unicode_paths(
         "run_root": detached["env"]["run_root"],
         "git_commit": detached["env"]["git_commit"],
     }
-    down = calls[-1]["argv"]
+    down = next(call["argv"] for call in calls if "down" in call["argv"])
     assert project in down
     assert down[-3:] == ["--volumes", "--remove-orphans", "--timeout=30"]
     assert "--wait-timeout" in argv
@@ -223,11 +241,66 @@ def test_import_route_reuses_isolated_restore_and_forwards_only_artifact_path(
     assert "/migration/artifacts/cutover bundle" in argv
     assert "--workload" not in argv
     assert "--machine-token-env" not in argv
-    assert calls[-1]["argv"][-3:] == [
+    down = next(call["argv"] for call in calls if "down" in call["argv"])
+    assert down[-3:] == [
         "--volumes",
         "--remove-orphans",
         "--timeout=30",
     ]
+
+
+@pytest.mark.parametrize("formal_phase", ["same", "absent"])
+def test_import_requires_stable_read_only_formal_fingerprint(
+    tmp_path: Path, formal_phase: str
+) -> None:
+    """Stable present and explicit absent formal resources both pass."""
+    source = tmp_path / "source.dump"
+    source.write_bytes(b"pgdump")
+    output = tmp_path / "output"
+    output.mkdir()
+
+    result, calls = _run_wrapper(
+        tmp_path,
+        "migrate",
+        "import-postgres-snapshot",
+        "--source-dump",
+        str(source),
+        "--artifact-dir",
+        str(output / "bundle"),
+        extra_env={"FAKE_FORMAL_PHASE": formal_phase},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert [call["argv"][:2] for call in calls].count(
+        ["inspect", "jobfeed-postgres-1"]
+    ) == _FORMAL_FINGERPRINT_READS
+    assert [call["argv"][:3] for call in calls].count(
+        ["volume", "inspect", "jobfeed_pgdata"]
+    ) == _FORMAL_FINGERPRINT_READS
+
+
+def test_import_rejects_changed_formal_fingerprint_after_cleanup(
+    tmp_path: Path,
+) -> None:
+    """Canonical acceptance fails when a formal resource identity changes."""
+    source = tmp_path / "source.dump"
+    source.write_bytes(b"pgdump")
+    output = tmp_path / "output"
+    output.mkdir()
+
+    result, _calls = _run_wrapper(
+        tmp_path,
+        "migrate",
+        "import-postgres-snapshot",
+        "--source-dump",
+        str(source),
+        "--artifact-dir",
+        str(output / "bundle"),
+        extra_env={"FAKE_FORMAL_PHASE": "changed"},
+    )
+
+    assert result.returncode != 0
+    assert "formal PostgreSQL resources changed" in result.stderr
 
 
 def test_capture_polls_runner_state_before_blocking_wait() -> None:

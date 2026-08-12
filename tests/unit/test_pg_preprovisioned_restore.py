@@ -420,6 +420,17 @@ def test_final_provenance_index_rejects_nested_tampering(tmp_path: Path) -> None
             "evidence_bundle_sha256": "e" * 64,
         },
     }
+    documents["formal-resource-fingerprints.json"] = {
+        "fingerprint_version": 1,
+        "before": {
+            "container": {"present": False, "name": "jobfeed-postgres-1"},
+            "volume": {"present": False, "name": "jobfeed_pgdata"},
+        },
+        "after": {
+            "container": {"present": False, "name": "jobfeed-postgres-1"},
+            "volume": {"present": False, "name": "jobfeed_pgdata"},
+        },
+    }
     index = build_provenance_index(documents, evidence_index)
     validate_provenance_bundle(documents, evidence_index, index)
 
@@ -429,6 +440,52 @@ def test_final_provenance_index_rejects_nested_tampering(tmp_path: Path) -> None
     verified["extra"] = "forged"
     with pytest.raises(ValueError, match=r"hash mismatch|exact schema"):
         validate_provenance_bundle(tampered, evidence_index, index)
+
+
+def test_final_provenance_index_binds_formal_resource_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """Normalized formal-resource evidence is hash-bound into final provenance."""
+    config = _config(tmp_path)
+    host_docs = _host_docs(config.dump_path)
+    bootstrap_hash = bootstrap_sha256(config.bootstrap)
+    documents = {
+        "restore-bootstrap.json": _bootstrap(config.dump_path),
+        "pre-inspection.json": host_docs,
+        "post-inspection.json": copy.deepcopy(host_docs),
+        "capture-ready.json": {
+            "marker_version": 1,
+            "bootstrap_sha256": bootstrap_hash,
+            "evidence_bundle_sha256": "e" * 64,
+        },
+        "provenance-verified.json": {
+            "verified_version": 1,
+            "bootstrap_sha256": bootstrap_hash,
+            "evidence_bundle_sha256": "e" * 64,
+        },
+    }
+    evidence_index = {"evidence_version": 1}
+    formal = {
+        "fingerprint_version": 1,
+        "before": {
+            "container": {"present": False, "name": "jobfeed-postgres-1"},
+            "volume": {"present": False, "name": "jobfeed_pgdata"},
+        },
+        "after": {
+            "container": {"present": False, "name": "jobfeed-postgres-1"},
+            "volume": {"present": False, "name": "jobfeed_pgdata"},
+        },
+    }
+    documents["formal-resource-fingerprints.json"] = formal
+    index = build_provenance_index(documents, evidence_index)
+    validate_provenance_bundle(documents, evidence_index, index)
+
+    formal["after"] = {
+        "container": {"present": False, "name": "jobfeed-postgres-1"},
+        "volume": {"present": True, "name": "jobfeed_pgdata"},
+    }
+    with pytest.raises(ValueError, match="provenance index hash mismatch"):
+        validate_provenance_bundle(documents, evidence_index, index)
 
 
 def test_two_phase_markers_bind_resources_and_evidence_bundle(tmp_path: Path) -> None:
