@@ -226,20 +226,19 @@ class _SqliteApplication:
             first_applied = _first_apply_by_job(applied_rows)
             if not first_applied:
                 return _empty_stats()
+            job_ids = sorted(first_applied)
             histories = await _fetch_rows(
                 connection,
                 f"""SELECT id,job_id,to_status,changed_at
                     FROM job_status_history WHERE job_id IN
-                    ({_placeholders(first_applied)}) ORDER BY id ASC""",
-                tuple(first_applied),
+                    ({_placeholders(job_ids)}) ORDER BY id ASC""",
+                job_ids,
             )
         outcomes, deltas = _causal_outcomes(first_applied, histories)
-        response_count, interview_count, offer_count, rejection_count = (
-            _count_outcomes(outcomes)
+        response_count, interview_count, offer_count, rejection_count = _count_outcomes(
+            outcomes
         )
-        resume_stats = (
-            _by_resume_stats(first_applied, outcomes) if by_resume else None
-        )
+        resume_stats = _by_resume_stats(first_applied, outcomes) if by_resume else None
         return ApplicationStats(
             applied_count=len(first_applied),
             response_count=response_count,
@@ -354,9 +353,7 @@ async def _record_new_application_status(
     now: datetime,
 ) -> None:
     timestamp = _require_utc_timestamp(now)
-    followup = _require_utc_timestamp(
-        now + timedelta(days=DEFAULT_FOLLOWUP_GRACE_DAYS)
-    )
+    followup = _require_utc_timestamp(now + timedelta(days=DEFAULT_FOLLOWUP_GRACE_DAYS))
     await connection.execute(
         """UPDATE job_status SET status='applied',last_status_change_at=?,
            next_followup_at=?,resume_variant=COALESCE(?,resume_variant)
@@ -421,8 +418,7 @@ def _causal_outcomes(
         max(
             0,
             (
-                response_at
-                - _parse_utc_timestamp(first_applied[job_id]["changed_at"])
+                response_at - _parse_utc_timestamp(first_applied[job_id]["changed_at"])
             ).days,
         )
         for job_id, response_at in first_response_at.items()

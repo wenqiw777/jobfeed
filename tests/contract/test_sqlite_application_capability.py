@@ -150,9 +150,10 @@ async def test_snapshot_prefix_listing_usage_and_first_write_wins(
         "aa11": 1,
         "aa22": 0,
     }
-    assert [row.job_id for row in await applications.list_applications(
-        resume_hash_prefix="aa1"
-    )] == [job_id]
+    assert [
+        row.job_id
+        for row in await applications.list_applications(resume_hash_prefix="aa1")
+    ] == [job_id]
     await lifecycle.close()
 
 

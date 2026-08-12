@@ -109,9 +109,7 @@ class _SqliteStatus:
                 ]
             )
             params.append(
-                _require_utc_timestamp(
-                    now - timedelta(days=query.no_response_days)
-                )
+                _require_utc_timestamp(now - timedelta(days=query.no_response_days))
             )
         if query.needs_followup:
             clauses.extend(
@@ -177,12 +175,13 @@ class _SqliteStatus:
             self._lifecycle.connection() as connection,
             _immediate_transaction(connection),
         ):
+            decay_statuses = sorted(DECAY_SOURCES)
             ghost_rows = await _fetch_rows(
                 connection,
                 f"SELECT job_id FROM job_status WHERE status IN "
-                f"({_placeholders(DECAY_SOURCES)}) AND last_status_change_at<?",
+                f"({_placeholders(decay_statuses)}) AND last_status_change_at<?",
                 (
-                    *sorted(DECAY_SOURCES),
+                    *decay_statuses,
                     _require_utc_timestamp(now - timedelta(days=ghost_days)),
                 ),
             )
@@ -190,11 +189,7 @@ class _SqliteStatus:
                 connection,
                 "SELECT job_id FROM job_status WHERE status='ignored' "
                 "AND last_status_change_at<?",
-                (
-                    _require_utc_timestamp(
-                        now - timedelta(days=archive_ignored_days)
-                    ),
-                ),
+                (_require_utc_timestamp(now - timedelta(days=archive_ignored_days)),),
             )
             for row in ghost_rows:
                 await self._transition_status_in_tx(
@@ -263,7 +258,7 @@ class _SqliteStatus:
             f"'{match['title']}' (job {match['id']}, status={match['status']})"
         )
 
-    async def expand_twin_ids(self, job_ids: list[int]) -> dict[int, list[int]]:
+    async def _expand_twin_ids(self, job_ids: list[int]) -> dict[int, list[int]]:
         """Expand job ids through nonblank normalized company and title keys."""
         result: dict[int, list[int]] = {}
         async with self._lifecycle.connection() as connection:
@@ -290,7 +285,7 @@ class _SqliteStatus:
     ) -> BulkResult:
         """Transition each twin cluster atomically while isolating cluster errors."""
         result = BulkResult()
-        twin_map = await self.expand_twin_ids([int(item[0]) for item in request.items])
+        twin_map = await self._expand_twin_ids([int(item[0]) for item in request.items])
         processed: set[int] = set()
         for selected_id, target in request.items:
             numeric_id = int(selected_id)
@@ -333,8 +328,7 @@ class _SqliteStatus:
         interview = await self._interview_attention(now, lookahead_days)
         statuses = sorted(DECAY_SOURCES)
         ghosting = await self._attention_rows(
-            f"s.status IN ({_placeholders(statuses)}) "
-            "AND s.last_status_change_at<?",
+            f"s.status IN ({_placeholders(statuses)}) AND s.last_status_change_at<?",
             (
                 *statuses,
                 _require_utc_timestamp(

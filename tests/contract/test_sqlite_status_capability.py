@@ -17,6 +17,8 @@ from tests.support.sqlite_status_application_fixtures import (
     _seed_job,
 )
 
+_SECOND_CALL = 2
+
 
 class _AtTime(SqliteStatusApplications):
     def _application_time(self, value=None):  # type: ignore[no-untyped-def]
@@ -31,17 +33,23 @@ async def test_transition_status_and_history_are_atomic_and_ordered(
     status = _AtTime(lifecycle)
     job_id = await _seed_job(lifecycle, "status")
 
-    assert await status.transition_status(
-        TransitionRequest(job_id=job_id, new_status="scored")
-    ) == "scored"
-    assert await status.transition_status(
-        TransitionRequest(
-            job_id=job_id,
-            new_status="applied",
-            force=True,
-            resume_variant=None,
+    assert (
+        await status.transition_status(
+            TransitionRequest(job_id=job_id, new_status="scored")
         )
-    ) == "applied"
+        == "scored"
+    )
+    assert (
+        await status.transition_status(
+            TransitionRequest(
+                job_id=job_id,
+                new_status="applied",
+                force=True,
+                resume_variant=None,
+            )
+        )
+        == "applied"
+    )
     info = await status.get_status(job_id)
     assert info is not None
     assert info.status == "applied"
@@ -85,6 +93,40 @@ async def test_followup_note_list_decay_and_attention_use_application_utc(
             ("2026-07-01T00:00:00.000000Z", int(job_id)),
         )
     assert (await status.auto_decay()).ghosted == 1
+    await lifecycle.close()
+
+
+async def test_auto_decay_rolls_back_the_whole_sweep_on_history_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lifecycle = await _open_lifecycle(tmp_path)
+    status = _AtTime(lifecycle)
+    first = await _seed_job(lifecycle, "decay-a")
+    second = await _seed_job(lifecycle, "decay-b", company="Other")
+    for job_id in (first, second):
+        await status.transition_status(
+            TransitionRequest(job_id=job_id, new_status="applied", force=True)
+        )
+    async with lifecycle.connection() as connection:
+        await connection.execute(
+            "UPDATE job_status SET last_status_change_at=? WHERE job_id IN (?,?)",
+            ("2026-07-01T00:00:00.000000Z", int(first), int(second)),
+        )
+
+    calls = 0
+
+    async def _fail_second(*_args: object, **_kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == _SECOND_CALL:
+            raise RuntimeError("second history failure")
+
+    monkeypatch.setattr(status, "_after_status_update", _fail_second)
+    with pytest.raises(RuntimeError, match="second history failure"):
+        await status.auto_decay()
+    assert (await status.get_status(first)).status == "applied"  # type: ignore[union-attr]
+    assert (await status.get_status(second)).status == "applied"  # type: ignore[union-attr]
     await lifecycle.close()
 
 
