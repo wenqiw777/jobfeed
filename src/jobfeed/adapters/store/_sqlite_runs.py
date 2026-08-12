@@ -22,6 +22,11 @@ async def _get_pipeline_run(
     )
     if row is None:
         return None
+    return _pipeline_run_from_row(row)
+
+
+def _pipeline_run_from_row(row: aiosqlite.Row) -> PipelineRun:
+    """Hydrate one complete pipeline-run row."""
     finished_at = row["finished_at"]
     return PipelineRun(
         run_id=str(row["run_id"]),
