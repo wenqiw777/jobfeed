@@ -4,21 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import cast
 
-from jobfeed.domain.errors import ScoringParseError
+from jobfeed.domain.errors import RunLeaseLostError, ScoringParseError
 from jobfeed.domain.models import JobPosting, LLMRequest, PipelineRun, StageAResult
-from jobfeed.domain.scoring_parse import parse_stage_a_response, parse_stage_b_response
+from jobfeed.domain.scoring_parse import parse_stage_a_response
 from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
-from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.prompts import PromptBundle
+from jobfeed.ports.run_leases import RunLeaseStore
 from jobfeed.services._evaluate_budget import EvaluateBudgetGate
 from jobfeed.services._evaluate_claims import (
     load_stage_a_for_run,
-    load_stage_b_for_run,
-    maintain_stage_b_claim,
     release_stage_a_for_run,
-    release_stage_b_for_run,
-    sync_stage_b_threshold,
     validate_evaluate_stage,
 )
 from jobfeed.services._evaluate_dryrun import DryRunRequest, build_dry_run_preview
@@ -26,17 +23,14 @@ from jobfeed.services._evaluate_funnel import run_funnel
 from jobfeed.services._evaluate_helpers import (
     SHORT_JD_THRESHOLD,
     UsageRecordContext,
-    finalize_evaluate_run,
-    load_stage_a_scores,
-    mark_evaluate_run_failed,
     record_usage,
     require_job_id,
     run_auto_decay,
 )
-from jobfeed.services._evaluate_sweep import sweep_stage_b
+from jobfeed.services._evaluate_stage_b import _run_stage_b
 from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
-from jobfeed.services.runs import start_pipeline_run
+from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
 
 
 class EvaluateService:
@@ -48,6 +42,7 @@ class EvaluateService:
         deps: EvaluateDependencies,
         config: EvaluateRuntimeConfig,
         logger: JobfeedLogger,
+        run_orchestrator: RunLeaseOrchestrator | None = None,
     ) -> None:
         self._deps = deps
         self._config = config
@@ -56,6 +51,9 @@ class EvaluateService:
         self._perf = get_perf_store(deps.store)
         self._tracer = get_tracer("jobfeed.evaluate")
         self._on_progress: Callable[[PipelineRun], None] | None = None
+        self._run_orchestrator = run_orchestrator or RunLeaseOrchestrator(
+            cast(RunLeaseStore, deps.store)
+        )
 
     async def run(  # noqa: PLR0913 - on_progress + run params
         self,
@@ -67,44 +65,85 @@ class EvaluateService:
         dry_run: bool = False,
         on_progress: Callable[[PipelineRun], None] | None = None,
         run: PipelineRun | None = None,
+        lease_session: RunLeaseSession | None = None,
     ) -> PipelineRun:
         """Evaluate pending jobs, persist run counters.
 
         Args: stage "both"/"a"/"b"; corpus/limit/max_days/dry_run filter
-            knobs; on_progress fires after funnel and each stage; run is a
-            pre-created pipeline run (from RunManager), fresh if None.
+            knobs; on_progress fires after funnel and each stage; run is an
+            optional in-memory dry run; lease_session is a pre-acquired web
+            fence, while direct real calls acquire their own fence.
         Returns: Recorded pipeline run with counters.
         Raises: Whatever a stage raised, after marking the run failed.
         """
         validate_evaluate_stage(stage)
-        if not dry_run:
-            await run_auto_decay(self._deps, self._config, self._logger)
-        if run is None:
-            run = start_pipeline_run("evaluate")
-        bind_run_id(run.run_id)
-        self._on_progress = on_progress
         lim = self._config.default_eval_limit if limit is None else limit
-        if not dry_run:
-            await self._deps.store.record_pipeline_run(run)
         if dry_run:
+            if lease_session is not None:
+                raise ValueError("dry-run must not receive a lease session")
+            if run is None:
+                run = self._run_orchestrator.new_unpersisted_run("evaluate")
+            bind_run_id(run.run_id)
             request = DryRunRequest(self._logger, stage, corpus, lim, max_days)
             await build_dry_run_preview(self._deps, self._config, run, request)
-        else:
-            try:
-                if stage != "b":
-                    await self._run_stage_a(run, corpus, lim, max_days)
-                    self._emit_progress(run)
-                if stage != "a":
-                    async with self._st(run.run_id, "stage", "stage_b"):
-                        await self._run_stage_b(run, lim, max_days)
-                    self._emit_progress(run)
-            except Exception:
-                # The CLI path has no RunManager wrapper: don't leave the
-                # persisted run stuck in "running" forever.
-                await mark_evaluate_run_failed(self._deps.store, run)
-                raise
-        await finalize_evaluate_run(self._deps.store, run, dry_run, on_progress)
-        return run
+            run.jobs_scored = run.stage_a_scored + run.stage_b_scored
+            self._run_orchestrator.finish_unpersisted(run, "succeeded")
+            if on_progress is not None:
+                on_progress(run)
+            return run
+        if run is not None:
+            raise ValueError("persisted runs require a lease session, not a bare run")
+        if lease_session is None:
+            result = await self._run_orchestrator.run(
+                "evaluate",
+                "evaluate",
+                lambda session: self._run_leased(
+                    session,
+                    stage=stage,
+                    corpus=corpus,
+                    limit=lim,
+                    max_days=max_days,
+                    on_progress=on_progress,
+                ),
+            )
+            if on_progress is not None:
+                on_progress(result)
+            return result
+        await self._run_leased(
+            lease_session,
+            stage=stage,
+            corpus=corpus,
+            limit=lim,
+            max_days=max_days,
+            on_progress=on_progress,
+        )
+        return lease_session.run
+
+    async def _run_leased(  # noqa: PLR0913 - mirrors evaluate run filters
+        self,
+        lease_session: RunLeaseSession,
+        *,
+        stage: str,
+        corpus: str,
+        limit: int,
+        max_days: int | None,
+        on_progress: Callable[[PipelineRun], None] | None,
+    ) -> None:
+        """Execute evaluation work under an already-started fencing token."""
+        run = lease_session.run
+        bind_run_id(run.run_id)
+        self._on_progress = on_progress
+        lease_session.ensure_active()
+        await run_auto_decay(self._deps, self._config, self._logger)
+        lease_session.ensure_active()
+        if stage != "b":
+            await self._run_stage_a(run, corpus, limit, max_days, lease_session)
+            self._emit_progress(run)
+        if stage != "a":
+            async with self._st(run.run_id, "stage", "stage_b"):
+                await _run_stage_b(self, run, limit, max_days, lease_session)
+            self._emit_progress(run)
+        run.jobs_scored = run.stage_a_scored + run.stage_b_scored
 
     def _emit_progress(self, run: PipelineRun) -> None:
         if self._on_progress is not None:
@@ -114,10 +153,16 @@ class EvaluateService:
         return StepTimer(self._perf, run_id, step_type, step_name, self._tracer)
 
     async def _run_stage_a(
-        self, run: PipelineRun, corpus: str, limit: int, max_days: int | None
+        self,
+        run: PipelineRun,
+        corpus: str,
+        limit: int,
+        max_days: int | None,
+        lease_session: RunLeaseSession,
     ) -> None:
         if limit <= 0:
             return  # "max jobs"=0 means do no funnel work (mirrors _run_stage_b)
+        lease_session.ensure_active()
         if not await self._budget.has_budget():
             return
         async with self._st(run.run_id, "stage", "funnel"):
@@ -130,6 +175,7 @@ class EvaluateService:
                 logger=self._logger,
                 dry_run=False,
             )
+        lease_session.ensure_active()
         self._emit_progress(run)  # funnel counters, before the slow scoring
         if not survivors:
             return
@@ -142,11 +188,18 @@ class EvaluateService:
 
             async def _worker(job: JobPosting) -> None:
                 async with sem:
-                    await self._score_stage_a(job, run)
+                    lease_session.ensure_active()
+                    await self._score_stage_a(job, run, lease_session)
 
             await asyncio.gather(*(_worker(j) for j in jobs))
 
-    async def _score_stage_a(self, job: JobPosting, run: PipelineRun) -> None:
+    async def _score_stage_a(
+        self,
+        job: JobPosting,
+        run: PipelineRun,
+        lease_session: RunLeaseSession,
+    ) -> None:
+        lease_session.ensure_active()
         job_id = require_job_id(job)
         if len(job.jd_text or "") < SHORT_JD_THRESHOLD:
             await self._deps.store.save_stage_a_error(
@@ -158,9 +211,10 @@ class EvaluateService:
             resume_text=self._config.resume_text, job=job
         )
         req = LLMRequest(messages=bundle.messages, model=self._config.llm.stage_a)
-        result = await self._call_parse_a(job_id, req, bundle, run)
+        result = await self._call_parse_a(job_id, req, bundle, run, lease_session)
         if result is None:
             return
+        lease_session.ensure_active()
         await self._deps.store.save_stage_a(job_id, result)
         run.stage_a_scored += 1
         self._logger.info("stage_a_scored", job_id=job_id, score=result.score)
@@ -168,15 +222,24 @@ class EvaluateService:
             await self._deps.store.mark_stage_b_skipped(job_id)
 
     async def _call_parse_a(
-        self, job_id: str, req: LLMRequest, bundle: PromptBundle, run: PipelineRun
+        self,
+        job_id: str,
+        req: LLMRequest,
+        bundle: PromptBundle,
+        run: PipelineRun,
+        lease_session: RunLeaseSession,
     ) -> StageAResult | None:
         for attempt in range(2):
+            lease_session.ensure_active()
             ledger_day = await self._budget.reserve()
             if ledger_day is None:
                 await release_stage_a_for_run(self._deps.store, job_id)
                 return None
             try:
                 resp = await self._deps.llm_stage_a.complete(req)
+                lease_session.ensure_active()
+            except RunLeaseLostError:
+                raise
             except Exception as exc:
                 if attempt == 0:
                     self._logger.warning(
@@ -213,88 +276,3 @@ class EvaluateService:
                 )
                 return None
         return None  # pragma: no cover
-
-    async def _run_stage_b(
-        self, run: PipelineRun, limit: int, max_days: int | None
-    ) -> None:
-        if limit <= 0:
-            return
-        await sync_stage_b_threshold(
-            self._deps.store, self._config.stage_a_threshold, max_days
-        )
-        if not await self._budget.has_budget():
-            return
-        jobs = await load_stage_b_for_run(
-            self._deps.store, limit, max_days, self._config.stage_a_threshold
-        )
-        self._logger.info("stage_b_queued", count=len(jobs))
-        stage_a_scores = await load_stage_a_scores(self._deps.store, jobs)
-        sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
-        failed: list[JobPosting] = []
-
-        async def _worker(job: JobPosting) -> None:
-            async with sem:
-                score = stage_a_scores.get(require_job_id(job))
-                outcome = await self._score_stage_b(
-                    job, run, self._deps.llm_stage_b, stage_a_score=score
-                )
-                if outcome == "failed":
-                    failed.append(job)
-
-        await asyncio.gather(*(_worker(j) for j in jobs))
-        await sweep_stage_b(self._deps, run, failed, score_stage_b=self._score_stage_b)
-
-    async def _score_stage_b(
-        self,
-        job: JobPosting,
-        run: PipelineRun,
-        llm: LLMClient,
-        *,
-        stage_a_score: int | None = None,
-        parse_attempts: int = 2,
-    ) -> str:
-        job_id = require_job_id(job)
-        bundle = self._deps.prompt_renderer.render_stage_b(
-            resume_text=self._config.resume_text,
-            job=job,
-            stage_a_score=stage_a_score,
-        )
-        req = LLMRequest(messages=bundle.messages, model=self._config.llm.stage_b)
-        for attempt in range(parse_attempts):
-            ledger_day = await self._budget.reserve()
-            if ledger_day is None:
-                await release_stage_b_for_run(self._deps.store, job_id)
-                return "skipped"
-            try:
-                async with maintain_stage_b_claim(self._deps.store, job_id):
-                    resp = await llm.complete(req)
-            except Exception as exc:
-                self._logger.error(
-                    "stage_b_runtime_failed", job_id=job_id, error=str(exc)
-                )
-                return "failed"
-            context = UsageRecordContext(job_id, "b", run.run_id, ledger_day)
-            await record_usage(self._deps.store_ops, resp, context)
-            run.total_llm_cost_usd += resp.cost_usd or 0.0
-            try:
-                result = parse_stage_b_response(
-                    resp.content,
-                    model=resp.model,
-                    prompt_hash=bundle.prompt_hash,
-                    resume_hash=bundle.resume_hash,
-                    cost_usd=resp.cost_usd,
-                )
-            except ScoringParseError as exc:
-                if attempt + 1 < parse_attempts:
-                    self._logger.warning(
-                        "stage_b_parse_retry", job_id=job_id, error=str(exc)
-                    )
-                    continue
-                return "failed"
-            await self._deps.store.save_stage_b(job_id, result)
-            run.stage_b_scored += 1
-            self._logger.info(
-                "stage_b_scored", job_id=job_id, score=result.fit_analysis.score
-            )
-            return "completed"
-        return "failed"  # pragma: no cover

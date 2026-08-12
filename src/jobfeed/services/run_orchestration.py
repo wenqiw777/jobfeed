@@ -38,21 +38,31 @@ class RunLeaseSession:
 
     @property
     def heartbeat_running(self) -> bool:
-        """Return whether the heartbeat loop started and has not stopped."""
+        """Return whether the heartbeat loop started and has not stopped.
+
+        Returns:
+            True while the background heartbeat task is alive.
+        """
         task = self._heartbeat_task
         return self._started.is_set() and task is not None and not task.done()
 
     @property
     def lease_lost(self) -> bool:
-        """Return whether renewal proved or conservatively assumed ownership loss."""
+        """Return whether ownership is no longer safe to assume.
+
+        Returns:
+            True after a rejected or failed renewal.
+        """
         return self._lost.is_set()
 
     def ensure_active(self) -> None:
-        """Reject scheduling after heartbeat renewal has failed."""
+        """Reject scheduling after heartbeat renewal has failed.
+
+        Raises:
+            RunLeaseLostError: If this worker can no longer schedule work.
+        """
         if self.lease_lost:
-            raise RunLeaseLostError(
-                f"{self.kind} run {self.run.run_id} lost its lease"
-            )
+            raise RunLeaseLostError(f"{self.kind} run {self.run.run_id} lost its lease")
 
     def _start_heartbeat(self) -> None:
         self._heartbeat_task = asyncio.create_task(self._heartbeat())
@@ -110,15 +120,44 @@ class RunLeaseOrchestrator:
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
 
     def new_unpersisted_run(self, source: str) -> PipelineRun:
-        """Create an in-memory run for a dry-run path without lease writes."""
+        """Create an in-memory run for a dry-run path without lease writes.
+
+        Args:
+            source: Display label for the preview run.
+
+        Returns:
+            A running PipelineRun that has not touched the store.
+        """
         return PipelineRun(
             run_id=str(self._run_id_factory()),
             started_at=_aware_utc(self._clock()),
             source=source,
         )
 
+    def finish_unpersisted(self, run: PipelineRun, status: str) -> None:
+        """Finish an in-memory dry run using the injected UTC clock.
+
+        Args:
+            run: Preview run to mutate in memory.
+            status: Terminal status to expose to the caller.
+        """
+        run.status = status
+        run.finished_at = _aware_utc(self._clock())
+
     async def start(self, kind: RunKind, source: str) -> RunLeaseSession:
-        """Atomically start a persisted run and its heartbeat before returning."""
+        """Atomically start a persisted run and its heartbeat before returning.
+
+        Args:
+            kind: Exclusive lease kind.
+            source: Pipeline history display label.
+
+        Returns:
+            Acquired session whose heartbeat task has started.
+
+        Raises:
+            RunConflictError: If another live owner holds the kind.
+            ValueError: If the injected clock returns a naive timestamp.
+        """
         now = _aware_utc(self._clock())
         run = PipelineRun(
             run_id=str(self._run_id_factory()),
@@ -147,7 +186,18 @@ class RunLeaseOrchestrator:
         return session
 
     async def execute(self, session: RunLeaseSession, work: RunWork) -> PipelineRun:
-        """Run leased work and persist its terminal state with the same fence."""
+        """Run leased work and persist its terminal state with the same fence.
+
+        Args:
+            session: Previously acquired fencing session.
+            work: Scan or evaluate operation guarded by the session.
+
+        Returns:
+            Fenced terminal pipeline run.
+
+        Raises:
+            RunLeaseLostError: If ownership is lost before finalization.
+        """
         try:
             session.ensure_active()
             await work(session)
@@ -168,18 +218,35 @@ class RunLeaseOrchestrator:
         source: str,
         work: RunWork,
     ) -> PipelineRun:
-        """Atomically start, execute, and fenced-finalize one pipeline run."""
+        """Atomically start, execute, and fenced-finalize one pipeline run.
+
+        Args:
+            kind: Exclusive lease kind.
+            source: Pipeline history display label.
+            work: Scan or evaluate operation guarded by the new session.
+
+        Returns:
+            Fenced terminal pipeline run.
+        """
         session = await self.start(kind, source)
         return await self.execute(session, work)
 
     async def fail(self, session: RunLeaseSession) -> bool:
-        """Fenced-finalize a started session that failed before work began."""
+        """Fenced-finalize a started session that failed before work began.
+
+        Args:
+            session: Acquired session whose setup failed.
+
+        Returns:
+            True only when the session still owned its fence.
+        """
         return await self._finalize(session, "failed")
 
     async def _finalize(self, session: RunLeaseSession, status: str) -> bool:
         await session._stop_heartbeat()
         now = _aware_utc(self._clock())
-        session.run.status = status
+        if status == "failed" or session.run.status == "running":
+            session.run.status = status
         session.run.finished_at = now
         return await self._store.finalize_run_with_lease(
             session.run,

@@ -8,12 +8,11 @@ A score loading for Stage B prompt context. (Budget reservation lives in
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
-from jobfeed.domain.models import JobPosting, LLMResponse, LLMUsage, PipelineRun
+from jobfeed.domain.models import JobPosting, LLMResponse, LLMUsage
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ext import StoreEvaluationBatchMixin
 from jobfeed.ports.store_ops import StoreOpsMixin
@@ -103,41 +102,6 @@ async def load_stage_a_scores(
     return await store.get_stage_a_scores([require_job_id(job) for job in jobs])
 
 
-async def finalize_evaluate_run(
-    store: JobStore,
-    run: PipelineRun,
-    dry_run: bool,
-    on_progress: Callable[[PipelineRun], None] | None,
-) -> None:
-    """Tally scores, persist final status, and fire the final progress event.
-
-    Args:
-        store: Job store for status persistence.
-        run: Pipeline run being finalized.
-        dry_run: True to skip store writes.
-        on_progress: Optional callback fired with the finalized run.
-    """
-    run.jobs_scored = run.stage_a_scored + run.stage_b_scored
-    run.finished_at = datetime.now(UTC)
-    run.status = "succeeded"
-    if not dry_run:
-        await store.update_pipeline_run_status(run)
-    if on_progress is not None:
-        on_progress(run)
-
-
-async def mark_evaluate_run_failed(store: JobStore, run: PipelineRun) -> None:
-    """Persist a failed terminal status so the run is not left 'running'.
-
-    Args:
-        store: Job store for status persistence.
-        run: Pipeline run whose stage work raised.
-    """
-    run.status = "failed"
-    run.finished_at = datetime.now(UTC)
-    await store.update_pipeline_run_status(run)
-
-
 async def run_auto_decay(
     deps: EvaluateDependencies,
     config: EvaluateRuntimeConfig,
@@ -161,9 +125,7 @@ async def run_auto_decay(
 __all__ = [
     "SHORT_JD_THRESHOLD",
     "UsageRecordContext",
-    "finalize_evaluate_run",
     "load_stage_a_scores",
-    "mark_evaluate_run_failed",
     "record_usage",
     "require_job_id",
     "run_auto_decay",

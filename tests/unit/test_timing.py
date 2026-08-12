@@ -11,6 +11,7 @@ from jobfeed.domain.models_perf import StepTiming
 from jobfeed.observability import _NoOpSpanWrapper
 from jobfeed.services._timing import StepTimer
 from jobfeed.services.scan import ScanService
+from tests.support.run_leases import SuccessfulRunLeaseMixin
 
 EXPECTED_PROGRESS_CALLS = 2
 
@@ -50,7 +51,7 @@ class _NoOpCtx:
         pass
 
 
-class ScanRecordingStore:
+class ScanRecordingStore(SuccessfulRunLeaseMixin):
     """Combined store double for scan + perf paths."""
 
     def __init__(self) -> None:

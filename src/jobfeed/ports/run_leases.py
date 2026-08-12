@@ -24,6 +24,12 @@ class RunLeaseStore(Protocol):
     ) -> int | None:
         """Atomically acquire ``kind`` and insert its running history row.
 
+        Args:
+            run: New running pipeline row to insert in the same transaction.
+            kind: Exclusive pipeline kind.
+            owner_id: Canonical UUID text for the worker process.
+            now: Aware UTC acquisition timestamp.
+
         Returns:
             Positive fencing generation, or ``None`` when an unexpired owner
             already holds the run kind.
@@ -39,7 +45,18 @@ class RunLeaseStore(Protocol):
         generation: int,
         now: datetime,
     ) -> bool:
-        """Renew only the exact, unexpired fencing token."""
+        """Renew only the exact, unexpired fencing token.
+
+        Args:
+            kind: Exclusive pipeline kind.
+            owner_id: Worker identity from acquisition.
+            run_id: Pipeline identity from acquisition.
+            generation: Positive fencing generation from acquisition.
+            now: Aware UTC renewal timestamp.
+
+        Returns:
+            True only when the exact unexpired token was renewed.
+        """
         ...
 
     async def finalize_run_with_lease(
@@ -51,7 +68,18 @@ class RunLeaseStore(Protocol):
         generation: int,
         now: datetime,
     ) -> bool:
-        """Persist a terminal run and release only its exact fencing token."""
+        """Persist a terminal run and release only its exact fencing token.
+
+        Args:
+            run: Terminal pipeline counters to persist.
+            kind: Exclusive pipeline kind.
+            owner_id: Worker identity from acquisition.
+            generation: Positive fencing generation from acquisition.
+            now: Aware UTC finalization timestamp.
+
+        Returns:
+            True only when the exact token finalized the run.
+        """
         ...
 
 

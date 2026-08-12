@@ -9,8 +9,11 @@ from uuid import UUID
 import pytest
 
 from jobfeed.domain.errors import RunLeaseLostError
-from jobfeed.domain.models import PipelineRun
+from jobfeed.domain.models import JobPosting, PipelineRun, SaveJobResult
+from jobfeed.ports.run_leases import RunLeaseStore
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator
+from jobfeed.services.scan import ScanService
+from tests.support.factories import make_job
 
 NOW = datetime(2026, 8, 12, 14, 30, tzinfo=UTC)
 OWNER_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -47,9 +50,7 @@ class LeaseStore:
         now: datetime,
     ) -> bool:
         """Record a fenced renewal request."""
-        self.calls.append(
-            ("renew", (kind, owner_id, run_id, generation, now))
-        )
+        self.calls.append(("renew", (kind, owner_id, run_id, generation, now)))
         return self.renew_result
 
     async def finalize_run_with_lease(
@@ -62,10 +63,52 @@ class LeaseStore:
         now: datetime,
     ) -> bool:
         """Record a fenced terminal transition."""
-        self.calls.append(
-            ("finalize", (run, kind, owner_id, generation, now))
-        )
+        self.calls.append(("finalize", (run, kind, owner_id, generation, now)))
         return True
+
+
+class ScanLeaseStore(LeaseStore):
+    """Lease store double with only the business write scan needs."""
+
+    async def save_job(self, job: JobPosting) -> SaveJobResult:
+        """Record a scan write without exposing legacy run finalization."""
+        self.calls.append(("save_job", job))
+        return SaveJobResult(job_id="1", inserted=True, updated=False)
+
+
+class StaticSource:
+    """Simple source that records its external fetch ordering."""
+
+    def __init__(self, store: LeaseStore) -> None:
+        self._store = store
+
+    async def fetch_jobs(self, _config: dict[str, object]) -> list[JobPosting]:
+        """Return one job after the lease start has committed."""
+        assert self._store.calls[0][0] == "start"
+        return [make_job()]
+
+
+class WaitForLeaseLossSource:
+    """Source that returns only after the heartbeat loses ownership."""
+
+    def __init__(self, store: LeaseStore) -> None:
+        self._store = store
+
+    async def fetch_jobs(self, _config: dict[str, object]) -> list[JobPosting]:
+        """Wait for a failed renewal before offering a job to persist."""
+        while not any(name == "renew" for name, _ in self._store.calls):
+            await asyncio.sleep(0)
+        return [make_job()]
+
+
+class NoOpLogger:
+    """Logger double for the scan service."""
+
+    def info(self, _event: str, **_kwargs: object) -> None:
+        """Ignore an info event."""
+
+    def error(self, _event: str, **_kwargs: object) -> None:
+        """Ignore an error event."""
 
 
 def _orchestrator(
@@ -78,6 +121,18 @@ def _orchestrator(
         run_id_factory=lambda: RUN_ID,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
     )
+
+
+def test_lease_store_protocol_exposes_exact_fenced_operations() -> None:
+    """The port is structural and contains only the three lease mutations."""
+    store = LeaseStore()
+
+    assert isinstance(store, RunLeaseStore)
+    assert {name for name in RunLeaseStore.__dict__ if not name.startswith("_")} == {
+        "start_run_with_lease",
+        "renew_run_lease",
+        "finalize_run_with_lease",
+    }
 
 
 @pytest.mark.asyncio
@@ -158,3 +213,39 @@ async def test_naive_injected_clock_fails_before_store_mutation() -> None:
         await orchestrator.start("scan", "scan")
 
     assert store.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scan_service_uses_shared_lease_path_without_legacy_run_writes() -> None:
+    """The direct CLI service path is atomically leased and fenced-finalized."""
+    store = ScanLeaseStore()
+    service = ScanService(
+        store,  # type: ignore[arg-type]
+        NoOpLogger(),  # type: ignore[arg-type]
+        run_orchestrator=_orchestrator(store),
+    )
+
+    run = await service.run([("indeed", StaticSource(store), {})])
+
+    assert run.status == "succeeded"
+    assert [name for name, _ in store.calls] == ["start", "save_job", "finalize"]
+    assert not hasattr(store, "record_pipeline_run")
+    assert not hasattr(store, "update_pipeline_run_status")
+
+
+@pytest.mark.asyncio
+async def test_scan_stops_saving_new_jobs_after_renewal_loss() -> None:
+    """A failed heartbeat fences business writes that were not yet scheduled."""
+    store = ScanLeaseStore()
+    store.renew_result = False
+    service = ScanService(
+        store,  # type: ignore[arg-type]
+        NoOpLogger(),  # type: ignore[arg-type]
+        run_orchestrator=_orchestrator(store, heartbeat_interval_seconds=0.001),
+    )
+
+    with pytest.raises(RunLeaseLostError):
+        await service.run([("indeed", WaitForLeaseLossSource(store), {})])
+
+    assert "save_job" not in [name for name, _ in store.calls]
+    assert [name for name, _ in store.calls] == ["start", "renew", "finalize"]

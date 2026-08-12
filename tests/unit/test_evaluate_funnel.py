@@ -78,6 +78,8 @@ class FakeStore:
         self.stage_a_errors: list[tuple[str, str]] = []
         self.stage_b_skipped: list[str] = []
         self.pipeline_runs: list[PipelineRun] = []
+        self.lease_calls: list[str] = []
+        self.legacy_run_calls: list[str] = []
         self.load_gate_kwargs: list[dict[str, object]] = []
         self.auto_decay_calls: list[dict[str, int]] = []
 
@@ -178,10 +180,30 @@ class FakeStore:
 
     async def record_pipeline_run(self, run: PipelineRun) -> None:
         """Record the persisted pipeline run."""
+        self.legacy_run_calls.append("record")
         self.pipeline_runs.append(run)
 
     async def update_pipeline_run_status(self, _run: object) -> None:
         """No-op status update for testing."""
+        self.legacy_run_calls.append("update")
+
+    async def start_run_with_lease(self, run: PipelineRun, **_kwargs: object) -> int:
+        """Atomically record the run and return a fencing generation."""
+        self.lease_calls.append("start")
+        self.pipeline_runs.append(run)
+        return 1
+
+    async def renew_run_lease(self, **_kwargs: object) -> bool:
+        """Keep the test owner current."""
+        self.lease_calls.append("renew")
+        return True
+
+    async def finalize_run_with_lease(
+        self, _run: PipelineRun, **_kwargs: object
+    ) -> bool:
+        """Record a fenced terminal transition."""
+        self.lease_calls.append("finalize")
+        return True
 
     async def auto_decay(
         self, *, ghost_days: int = 30, archive_ignored_days: int = 14
@@ -662,6 +684,8 @@ async def test_survivor_ids_handed_to_claim_stage_a_by_ids() -> None:
     assert store.stage_a_saved == ["pass"]
     assert run.jobs_ml_gated == 1
     assert run.stage_a_scored == 1
+    assert store.lease_calls == ["start", "finalize"]
+    assert store.legacy_run_calls == []
 
 
 @pytest.mark.asyncio
@@ -707,6 +731,8 @@ async def test_dry_run_service_does_not_persist_or_score() -> None:
     assert store.stage_a_saved == []
     assert store.gate_results == []
     assert store.pipeline_runs == []  # dry-run does not record the run
+    assert store.lease_calls == []
+    assert store.legacy_run_calls == []
     assert {item.job_id for item in run.dry_run_preview} == {"a", "b"}
 
 

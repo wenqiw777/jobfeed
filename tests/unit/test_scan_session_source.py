@@ -12,6 +12,7 @@ from jobfeed.domain.errors import SourceBusyError
 from jobfeed.domain.models import JobPosting, QualityBand, SaveJobResult
 from jobfeed.ports.source import DiscoverResult, EnrichResult
 from jobfeed.services.scan import ScanService
+from tests.support.run_leases import SuccessfulRunLeaseMixin
 
 GOOD_JD = (
     "Build reliable job-search infrastructure with async Python, clean service "
@@ -22,7 +23,7 @@ ERROR_JD = "Fallback card text"
 POSTED_AT = datetime(2026, 5, 30, tzinfo=UTC)
 
 
-class RecordingStore:
+class RecordingStore(SuccessfulRunLeaseMixin):
     """Minimal store double for the scan path."""
 
     def __init__(self) -> None:

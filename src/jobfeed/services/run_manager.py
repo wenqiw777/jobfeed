@@ -1,7 +1,8 @@
 """Async task lifecycle for web-triggered pipeline runs.
 
 Concurrency locks (one scan + one evaluate at a time), progress broadcast via
-per-subscriber asyncio.Queue, and stale-run recovery on startup.
+per-subscriber asyncio.Queue, and fenced persistence delegated to the shared
+run-lease orchestrator.
 """
 
 from __future__ import annotations
@@ -9,13 +10,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from jobfeed.domain.errors import RunConflictError
 from jobfeed.domain.models import PipelineRun
-from jobfeed.services.runs import start_pipeline_run
+from jobfeed.ports.run_leases import RunLeaseStore
+from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
+from jobfeed.services.run_tracking import ActiveRun, RunProgressBroker
 from jobfeed.services.scan import SourceSpec, run_source_name
 
 if TYPE_CHECKING:
@@ -32,16 +33,6 @@ SourceResolver = Callable[[str, contextlib.AsyncExitStack], Awaitable[list[Sourc
 domain error (SourceConfigError) so this service never imports CLI/adapters."""
 
 
-@dataclass
-class ActiveRun:
-    """A currently executing pipeline run."""
-
-    run_id: str
-    source: str
-    started_at: datetime
-    run: PipelineRun
-
-
 class RunManager:
     """Async task lifecycle manager for web-triggered pipeline runs.
 
@@ -49,24 +40,27 @@ class RunManager:
     a second concurrent trigger raises RunConflictError immediately.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - factories plus shared lease orchestration
         self,
         store: JobStore,
         logger: JobfeedLogger,
         scan_service_factory: Callable[[], ScanService],
         evaluate_service_factory: Callable[..., EvaluateService],
         scan_source_resolver: SourceResolver | None = None,
+        run_orchestrator: RunLeaseOrchestrator | None = None,
     ) -> None:
         """Create a RunManager with injected factories and source resolver."""
-        self._store = store
         self._logger = logger
         self._scan_factory = scan_service_factory
         self._eval_factory = evaluate_service_factory
         self._source_resolver = scan_source_resolver
+        self._run_orchestrator = run_orchestrator or RunLeaseOrchestrator(
+            cast(RunLeaseStore, store)
+        )
         self._scan_lock = asyncio.Lock()
         self._eval_lock = asyncio.Lock()
         self._active: dict[str, ActiveRun] = {}
-        self._subscribers: dict[str, list[asyncio.Queue[PipelineRun | object]]] = {}
+        self._progress = RunProgressBroker(RUN_DONE)
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     async def trigger_scan(self, source_name_or_specs: str | list[SourceSpec]) -> str:
@@ -74,8 +68,8 @@ class RunManager:
 
         Args:
             source_name_or_specs: Source token or pre-built SourceSpec list.
-                Resolved before the run is created, so a disabled source is
-                an immediate error to the caller, not a vanished run.
+                The lease is acquired before resolver store work; resolver
+                failures are returned immediately after fenced failure.
 
         Returns: The new run's run_id.
         Raises: RunConflictError if a scan is already running.
@@ -83,28 +77,36 @@ class RunManager:
         self._require_unlocked(self._scan_lock, "scan")
         await self._scan_lock.acquire()
         stack = contextlib.AsyncExitStack()
-        run: PipelineRun | None = None
+        session: RunLeaseSession | None = None
         try:
-            specs = await self._resolve_sources(source_name_or_specs, stack)
-            source = self._source_label(source_name_or_specs, specs)
-            run = start_pipeline_run(source)
-            current_run = run
-            self._register(run, source)
             service = self._scan_factory()
-            cb = self._make_progress(run.run_id)
+            source = self._source_label_before_resolution(source_name_or_specs)
+            session = await self._run_orchestrator.start("scan", source)
+            self._register(session.run, source)
+            specs = await self._resolve_sources(source_name_or_specs, stack)
+            cb = self._make_progress(session.run.run_id)
 
-            async def _call() -> None:
-                await service.run(specs, on_progress=cb, run=current_run)
+            async def _work(active_session: RunLeaseSession) -> None:
+                await service.run(
+                    specs,
+                    on_progress=cb,
+                    lease_session=active_session,
+                )
 
-            self._tasks[run.run_id] = asyncio.create_task(
-                self._execute_run(self._scan_lock, run, _call, stack)
+            self._tasks[session.run.run_id] = asyncio.create_task(
+                self._execute_run(self._scan_lock, session, _work, stack)
             )
-            return run.run_id
+            return session.run.run_id
         except Exception:
-            if run is not None:
-                self._active.pop(run.run_id, None)
-            await stack.aclose()
-            self._scan_lock.release()
+            try:
+                if session is not None:
+                    self._active.pop(session.run.run_id, None)
+                    await self._run_orchestrator.fail(session)
+            finally:
+                try:
+                    await stack.aclose()
+                finally:
+                    self._scan_lock.release()
             raise
 
     async def trigger_evaluate(self, **kwargs: Any) -> str:
@@ -121,43 +123,82 @@ class RunManager:
         self._require_unlocked(self._eval_lock, "evaluation")
         await self._eval_lock.acquire()
         run: PipelineRun | None = None
+        session: RunLeaseSession | None = None
         try:
             service = self._eval_factory(**kwargs)
-            run = start_pipeline_run("evaluate")
-            current_run = run
+            dry_run = bool(kwargs.get("dry_run", False))
+            if dry_run:
+                run = self._run_orchestrator.new_unpersisted_run("evaluate")
+            else:
+                session = await self._run_orchestrator.start("evaluate", "evaluate")
+                run = session.run
             self._register(run, "evaluate")
             cb = self._make_progress(run.run_id)
 
-            async def _call() -> None:
-                await service.run(on_progress=cb, run=current_run, **kwargs)
+            if session is None:
 
-            self._tasks[run.run_id] = asyncio.create_task(
-                self._execute_run(self._eval_lock, run, _call)
-            )
+                async def _dry_call() -> None:
+                    await service.run(on_progress=cb, run=run, **kwargs)
+
+                task = self._execute_unpersisted_run(self._eval_lock, run, _dry_call)
+            else:
+
+                async def _work(active_session: RunLeaseSession) -> None:
+                    await service.run(
+                        on_progress=cb,
+                        lease_session=active_session,
+                        **kwargs,
+                    )
+
+                task = self._execute_run(self._eval_lock, session, _work)
+            self._tasks[run.run_id] = asyncio.create_task(task)
             return run.run_id
         except Exception:
             if run is not None:
                 self._active.pop(run.run_id, None)
-            self._eval_lock.release()
+            try:
+                if session is not None:
+                    await self._run_orchestrator.fail(session)
+            finally:
+                self._eval_lock.release()
             raise
 
     async def _execute_run(
         self,
         lock: asyncio.Lock,
-        run: PipelineRun,
-        service_call: Callable[[], Awaitable[None]],
+        session: RunLeaseSession,
+        work: Callable[[RunLeaseSession], Awaitable[None]],
         stack: contextlib.AsyncExitStack | None = None,
     ) -> None:
-        """Run service_call, finalize run, close resources, release lock."""
+        """Run work through fenced finalization, then release process state."""
+        try:
+            await self._run_orchestrator.execute(session, work)
+        except Exception as exc:
+            self._logger.error("run_failed", run_id=session.run.run_id, error=str(exc))
+        finally:
+            self._finish_tracking(session.run)
+            try:
+                if stack is not None:
+                    await stack.aclose()
+            finally:
+                lock.release()
+
+    async def _execute_unpersisted_run(
+        self,
+        lock: asyncio.Lock,
+        run: PipelineRun,
+        service_call: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Run a dry-run preview without any lease or pipeline-row write."""
         try:
             await service_call()
-            await self._finish_run(run, "succeeded")
+            if run.status == "running":
+                self._run_orchestrator.finish_unpersisted(run, "succeeded")
         except Exception as exc:
             self._logger.error("run_failed", run_id=run.run_id, error=str(exc))
-            await self._finish_run(run, "failed")
+            self._run_orchestrator.finish_unpersisted(run, "failed")
         finally:
-            if stack is not None:
-                await stack.aclose()
+            self._finish_tracking(run)
             lock.release()
 
     async def _resolve_sources(
@@ -174,13 +215,13 @@ class RunManager:
         return await self._source_resolver(name_or_specs, stack)
 
     @staticmethod
-    def _source_label(
-        name_or_specs: str | list[SourceSpec], specs: list[SourceSpec]
+    def _source_label_before_resolution(
+        name_or_specs: str | list[SourceSpec],
     ) -> str:
-        """Label the run with the requested token or the specs' source name."""
+        """Label a run before source construction can perform store work."""
         if isinstance(name_or_specs, str):
             return name_or_specs
-        return run_source_name(specs)
+        return run_source_name(name_or_specs)
 
     def _register(self, run: PipelineRun, source: str) -> None:
         """Track a run as active."""
@@ -197,17 +238,10 @@ class RunManager:
         if lock.locked():
             raise RunConflictError(f"A {label} is already running")
 
-    async def _finish_run(self, run: PipelineRun, status: str) -> None:
-        """Persist terminal status (inserting a row the service never recorded,
-        keeping a status it already finalized), broadcast, drop tracking."""
-        if run.status == "running":
-            run.status = status
-            run.finished_at = datetime.now(UTC)
-        if await self._store.get_pipeline_run(run.run_id) is None:
-            await self._store.record_pipeline_run(run)
-        await self._store.update_pipeline_run_status(run)
-        self._broadcast(run.run_id, run)
-        self._close_subscribers(run.run_id)
+    def _finish_tracking(self, run: PipelineRun) -> None:
+        """Broadcast a final snapshot and release in-process tracking only."""
+        self._progress.broadcast(run.run_id, run)
+        self._progress.close(run.run_id)
         self._active.pop(run.run_id, None)
         self._tasks.pop(run.run_id, None)
 
@@ -229,11 +263,7 @@ class RunManager:
             loses the finish race terminates instead of waiting forever.
             Pass the queue to unsubscribe() when done.
         """
-        queue: asyncio.Queue[PipelineRun | object] = asyncio.Queue()
-        self._subscribers.setdefault(run_id, []).append(queue)
-        if run_id not in self._active:
-            queue.put_nowait(RUN_DONE)
-        return queue
+        return self._progress.subscribe(run_id, active=run_id in self._active)
 
     def unsubscribe(
         self, run_id: str, queue: asyncio.Queue[PipelineRun | object]
@@ -244,57 +274,22 @@ class RunManager:
             run_id: Run the queue was subscribed to.
             queue: The queue returned by subscribe().
         """
-        subs = self._subscribers.get(run_id)
-        if subs is None:
-            return
-        if queue in subs:
-            subs.remove(queue)
-        if not subs:
-            self._subscribers.pop(run_id, None)
+        self._progress.unsubscribe(run_id, queue)
 
     def _make_progress(self, run_id: str) -> Callable[[PipelineRun], None]:
         """Create a progress callback that broadcasts to subscribers."""
-
-        def _on_progress(run: PipelineRun) -> None:
-            self._broadcast(run_id, run)
-
-        return _on_progress
-
-    def _broadcast(self, run_id: str, run: PipelineRun) -> None:
-        """Push a snapshot per event: services mutate one PipelineRun in
-        place, and a live reference would rewrite undrained queue items."""
-        queues = self._subscribers.get(run_id, [])
-        if not queues:
-            return
-        snapshot = replace(run, dry_run_preview=list(run.dry_run_preview))
-        for queue in queues:
-            queue.put_nowait(snapshot)
-
-    def _close_subscribers(self, run_id: str) -> None:
-        """Signal all subscribers that a run has finished."""
-        for queue in self._subscribers.pop(run_id, []):
-            queue.put_nowait(RUN_DONE)
+        return self._progress.callback(run_id)
 
     async def recover_stale_runs(self) -> int:
-        """Transition runs stuck in 'running' to 'failed' at startup.
+        """Return zero because store lifecycle owns expired-only recovery.
 
-        Returns: Count of recovered stale runs.
+        ``store.connect()`` performs the atomic, lease-expiry-aware recovery.
+        Keeping this no-op preserves the web lifespan call until composition is
+        migrated without reintroducing a scan of every running history row.
+
+        Returns: Always zero; no run rows are read or mutated here.
         """
-        store = self._store
-        try:
-            list_fn = store.list_pipeline_runs  # type: ignore[attr-defined]
-        except AttributeError:
-            return 0
-        runs, _ = await list_fn(limit=100)
-        recovered = 0
-        for run in runs:
-            if run.status == "running":
-                run.status = "failed"
-                run.finished_at = datetime.now(UTC)
-                await self._store.update_pipeline_run_status(run)
-                self._logger.info("recovered_stale_run", run_id=run.run_id)
-                recovered += 1
-        return recovered
+        return 0
 
 
 __all__ = ["RUN_DONE", "ActiveRun", "RunConflictError", "RunManager", "SourceResolver"]

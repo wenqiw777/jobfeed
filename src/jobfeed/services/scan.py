@@ -6,15 +6,17 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
 
-from jobfeed.domain.errors import SourceBusyError
+from jobfeed.domain.errors import RunLeaseLostError, SourceBusyError
 from jobfeed.domain.models import JobPosting, PipelineRun
 from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
+from jobfeed.ports.run_leases import RunLeaseStore
 from jobfeed.ports.source import EnrichResult, ScanSession, SessionSource, SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.error_handler import ServiceErrorHandler
-from jobfeed.services.runs import start_pipeline_run
+from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
 
 ProgressCallback = Callable[[PipelineRun], None]
 
@@ -26,7 +28,12 @@ SINGLE_SOURCE_COUNT = 1
 class ScanService:
     """Application service for source fetch and job persistence."""
 
-    def __init__(self, store: JobStore, logger: JobfeedLogger) -> None:
+    def __init__(
+        self,
+        store: JobStore,
+        logger: JobfeedLogger,
+        run_orchestrator: RunLeaseOrchestrator | None = None,
+    ) -> None:
         """Create a scan service with injected ports.
 
         Args:
@@ -36,58 +43,68 @@ class ScanService:
         self.store = store
         self.logger = logger
         self.error_handler = ServiceErrorHandler(store=store, logger=logger)
+        self._run_orchestrator = run_orchestrator or RunLeaseOrchestrator(
+            cast(RunLeaseStore, store)
+        )
 
     async def run(
         self,
         sources: list[SourceSpec],
         on_progress: ProgressCallback | None = None,
-        run: PipelineRun | None = None,
+        lease_session: RunLeaseSession | None = None,
     ) -> PipelineRun:
         """Fetch jobs from sources and persist scan counters.
 
         Args:
             sources: Source name, source port, and source config tuples.
             on_progress: Optional callback invoked after each source completes.
-            run: Pre-created pipeline run (from RunManager); fresh if None.
+            lease_session: Pre-acquired web-run fence; direct calls acquire one.
 
         Returns:
             Recorded pipeline run with discovery and upsert counters.
         Raises: Whatever escaped the scan, after the run is marked failed.
         """
-        if run is None:
-            run = start_pipeline_run(run_source_name(sources))
+        if lease_session is None:
+            return await self._run_orchestrator.run(
+                "scan",
+                run_source_name(sources),
+                lambda session: self._run_leased(
+                    session, sources, on_progress=on_progress
+                ),
+            )
+        await self._run_leased(lease_session, sources, on_progress=on_progress)
+        return lease_session.run
+
+    async def _run_leased(
+        self,
+        lease_session: RunLeaseSession,
+        sources: list[SourceSpec],
+        *,
+        on_progress: ProgressCallback | None,
+    ) -> None:
+        """Perform scan work under a heartbeat session owned by the caller."""
+        run = lease_session.run
         bind_run_id(run.run_id)
         self._tracer = get_tracer("jobfeed.scan")
         self._perf_store = get_perf_store(self.store)
         self._on_progress = on_progress
-        await self.store.record_pipeline_run(run)
-        try:
-            await asyncio.gather(
-                *(
-                    self._scan_one_source(run, name, source, config)
-                    for name, source, config in sources
-                )
+        lease_session.ensure_active()
+        await asyncio.gather(
+            *(
+                self._scan_one_source(lease_session, run, name, source, config)
+                for name, source, config in sources
             )
-        except Exception:
-            # An escaped exception (e.g. a store failure while saving jobs)
-            # must not leave the persisted run stuck in "running" forever.
-            await self._finalize_run(run, "failed")
-            raise
-        await self._finalize_run(run, "succeeded")
-        return run
-
-    async def _finalize_run(self, run: PipelineRun, status: str) -> None:
-        run.finished_at = datetime.now(UTC)
-        run.status = status
-        await self.store.update_pipeline_run_status(run)
+        )
 
     async def _scan_one_source(
         self,
+        lease_session: RunLeaseSession,
         run: PipelineRun,
         name: str,
         source: SourcePort,
         config: dict[str, object],
     ) -> None:
+        lease_session.ensure_active()
         async with StepTimer(
             self._perf_store,
             run.run_id,
@@ -96,35 +113,44 @@ class ScanService:
             self._tracer,
         ):
             if isinstance(source, SessionSource):
-                await self._scan_session_source(run, name, source, config)
+                await self._scan_session_source(
+                    lease_session, run, name, source, config
+                )
             else:
-                await self._scan_simple_source(run, name, source, config)
+                await self._scan_simple_source(lease_session, run, name, source, config)
         if self._on_progress is not None:
             self._on_progress(run)
 
     async def _scan_simple_source(
         self,
+        lease_session: RunLeaseSession,
         run: PipelineRun,
         name: str,
         source: SimpleSource,
         config: dict[str, object],
     ) -> None:
         try:
+            lease_session.ensure_active()
             jobs = await source.fetch_jobs(config)
+        except RunLeaseLostError:
+            raise
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
             return
-        await self._record_jobs(run, name, jobs)
+        await self._record_jobs(lease_session, run, name, jobs)
 
     async def _scan_session_source(
         self,
+        lease_session: RunLeaseSession,
         run: PipelineRun,
         name: str,
         source: SessionSource,
         config: dict[str, object],
     ) -> None:
         try:
-            jobs = await self._run_session(name, source, config)
+            jobs = await self._run_session(lease_session, name, source, config)
+        except RunLeaseLostError:
+            raise
         except SourceBusyError as exc:
             # Contention (e.g. another LinkedIn session holds the enrich lock) is
             # a benign skip, not a fetch failure: do not count it as an error.
@@ -133,30 +159,37 @@ class ScanService:
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
             return
-        await self._record_jobs(run, name, jobs)
+        await self._record_jobs(lease_session, run, name, jobs)
 
     async def _run_session(
         self,
+        lease_session: RunLeaseSession,
         name: str,
         source: SessionSource,
         config: dict[str, object],
     ) -> list[JobPosting]:
         # ONE locked session spans discover + enrich, so the source's exclusive
         # resource (lock + browser) is held across both phases.
+        lease_session.ensure_active()
         async with source.session() as session:
+            lease_session.ensure_active()
             discovered = await session.discover(config)
             if discovered.needs_reauth:
                 raise RuntimeError(discovered.error or "source requires reauth")
-            return await self._enrich_postings(name, session, discovered.postings)
+            return await self._enrich_postings(
+                lease_session, name, session, discovered.postings
+            )
 
     async def _enrich_postings(
         self,
+        lease_session: RunLeaseSession,
         name: str,
         session: ScanSession,
         postings: list[JobPosting],
     ) -> list[JobPosting]:
         jobs: list[JobPosting] = []
         for posting in postings:
+            lease_session.ensure_active()
             result = await session.enrich(posting)
             if result.error is not None:
                 self.logger.error(
@@ -170,11 +203,12 @@ class ScanService:
 
     async def _record_jobs(
         self,
+        lease_session: RunLeaseSession,
         run: PipelineRun,
         name: str,
         jobs: list[JobPosting],
     ) -> None:
-        inserted, updated = await self._save_jobs(jobs)
+        inserted, updated = await self._save_jobs(lease_session, jobs)
         run.jobs_discovered += len(jobs)
         run.jobs_inserted += inserted
         run.jobs_updated += updated
@@ -186,10 +220,13 @@ class ScanService:
             jobs_updated=updated,
         )
 
-    async def _save_jobs(self, jobs: list[JobPosting]) -> tuple[int, int]:
+    async def _save_jobs(
+        self, lease_session: RunLeaseSession, jobs: list[JobPosting]
+    ) -> tuple[int, int]:
         inserted = 0
         updated = 0
         for job in jobs:
+            lease_session.ensure_active()
             result = await self.store.save_job(job)
             inserted += int(result.inserted)
             updated += int(result.updated)

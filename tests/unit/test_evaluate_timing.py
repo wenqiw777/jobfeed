@@ -25,6 +25,7 @@ from jobfeed.services.evaluate_types import (
     EvaluateLLMConfig,
     EvaluateRuntimeConfig,
 )
+from tests.support.run_leases import SuccessfulRunLeaseMixin
 
 CLEAN_JD = (
     "Entry-level software engineering role on our platform team. Write Python "
@@ -41,7 +42,7 @@ RUN_AT = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 # ---------------------------------------------------------------------------
 
 
-class FakeStore:
+class FakeStore(SuccessfulRunLeaseMixin):
     """In-memory store covering the funnel + Stage A claim/score surface."""
 
     def __init__(self, candidates: list[JobPosting]) -> None:
