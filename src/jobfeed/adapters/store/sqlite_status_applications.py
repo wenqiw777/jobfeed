@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from jobfeed.adapters.store._sqlite_application import _SqliteApplication
 from jobfeed.adapters.store._sqlite_status import _SqliteStatus
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 
 
-class SqliteStatusApplications(_SqliteStatus):
+class SqliteStatusApplications(_SqliteStatus, _SqliteApplication):
     """Expose status/application/interview aggregates over one lifecycle."""
 
     def __init__(self, lifecycle: SqliteLifecycle) -> None:
