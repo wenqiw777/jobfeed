@@ -8,15 +8,25 @@ fail() {
     exit 2
 }
 
-if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
+if [ "${1:-}" = "migrate" ] && { \
+    [ "${2:-}" = "capture-postgres-baseline" ] \
+    || [ "${2:-}" = "import-postgres-snapshot" ]; \
+}; then
+    migration_action="$2"
     shift 2
     dump_input=""
     artifact_input=""
-    forwarded=(
-        migrate capture-postgres-baseline
-        --workload /app/docs/contracts/fixtures/sqlite-store-benchmark-v1.json
-        --machine-token-env JOBFEED_BENCH_MACHINE_TOKEN
-    )
+    if [ "$migration_action" = "capture-postgres-baseline" ]; then
+        runner_command="_capture-preprovisioned-baseline"
+        forwarded=(
+            migrate capture-postgres-baseline
+            --workload /app/docs/contracts/fixtures/sqlite-store-benchmark-v1.json
+            --machine-token-env JOBFEED_BENCH_MACHINE_TOKEN
+        )
+    else
+        runner_command="_import-preprovisioned-snapshot"
+        forwarded=(migrate import-postgres-snapshot)
+    fi
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -150,7 +160,7 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     scratch_id="$("${compose[@]}" ps -q restore-scratch)"
     runner_name="${project_name}-migration-runner"
     "${compose[@]}" run --build -d --no-deps --name "$runner_name" \
-        migration-runner jobfeed migrate _capture-preprovisioned-baseline \
+        migration-runner jobfeed migrate "$runner_command" \
         "${forwarded[@]:2}"
     runner_id="$(docker inspect --format '{{.Id}}' "$runner_name")"
     network_name="${project_name}_migration-internal"

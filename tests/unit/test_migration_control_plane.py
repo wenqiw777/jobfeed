@@ -194,6 +194,42 @@ def test_capture_route_uses_run_scoped_profile_and_rewrites_unicode_paths(
     assert "--wait-timeout" in argv
 
 
+def test_import_route_reuses_isolated_restore_and_forwards_only_artifact_path(
+    tmp_path: Path,
+) -> None:
+    """Canonical forward import uses the same socket-free run-scoped project."""
+    input_dir = tmp_path / "导入 source"
+    input_dir.mkdir()
+    dump = input_dir / "source 0007.dump"
+    dump.write_bytes(b"pgdump")
+    output_dir = tmp_path / "导入 evidence"
+    output_dir.mkdir()
+    artifact = output_dir / "cutover bundle"
+
+    result, calls = _run_wrapper(
+        tmp_path,
+        "migrate",
+        "import-postgres-snapshot",
+        "--source-dump",
+        str(dump),
+        "--artifact-dir",
+        str(artifact),
+    )
+
+    assert result.returncode == 0, result.stderr
+    detached = next(call for call in calls if "run" in call["argv"])
+    argv = detached["argv"]
+    assert "_import-preprovisioned-snapshot" in argv
+    assert "/migration/artifacts/cutover bundle" in argv
+    assert "--workload" not in argv
+    assert "--machine-token-env" not in argv
+    assert calls[-1]["argv"][-3:] == [
+        "--volumes",
+        "--remove-orphans",
+        "--timeout=30",
+    ]
+
+
 def test_capture_polls_runner_state_before_blocking_wait() -> None:
     """Runner failure is observed through bounded state polls before docker wait."""
     wrapper = _WRAPPER.read_text("utf-8")

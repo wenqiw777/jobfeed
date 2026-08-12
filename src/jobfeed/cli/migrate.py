@@ -36,6 +36,10 @@ from jobfeed.adapters.migration.pg_preprovisioned_restore import (
     load_restore_bootstrap,
     verify_preprovisioned_provenance,
 )
+from jobfeed.adapters.migration.sqlite_cutover_rehearsal import (
+    CutoverSourceEvidence,
+    run_cutover_rehearsal,
+)
 from jobfeed.adapters.store.legacy_import import ImportReport, import_legacy_sqlite
 from jobfeed.adapters.store.parity import verify_import_parity
 from jobfeed.adapters.store.postgres import PostgresStore
@@ -431,6 +435,95 @@ def capture_preprovisioned_baseline_command(
         )
         if staging is None:
             raise ValueError("baseline staging directory is unavailable")
+        _publish_provenance(staging, artifact_dir, bundle, pre_docs, post_docs)
+        staging = None
+    except Exception as exc:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+        if isinstance(exc, click.ClickException):
+            raise
+        raise click.ClickException(str(exc)) from exc
+
+
+@migrate.command(name="_import-preprovisioned-snapshot", hidden=True)
+@click.option("--artifact-dir", required=True, type=click.Path(path_type=Path))
+def import_preprovisioned_snapshot_command(artifact_dir: Path) -> None:
+    """Restore, import, verify, and atomically publish one cutover rehearsal.
+
+    Args:
+        artifact_dir: New output bundle directory inside the artifact mount.
+
+    Raises:
+        click.ClickException: Restore, import, parity, or provenance fails.
+    """
+    staging: Path | None = None
+    try:
+        git_commit = _injected_git_commit()
+        bootstrap = _wait_for_restore_bootstrap()
+        config = PreprovisionedRestoreConfig(
+            dump_path=Path("/run/jobfeed-migration/source.dump"),
+            project_root=Path("/app"),
+            alembic_executable=_alembic_executable(),
+            source_dsn=SOURCE_RESTORE_DSN,
+            scratch_dsn=SCRATCH_RESTORE_DSN,
+            expected_project_label=bootstrap.project_label,
+            bootstrap=bootstrap,
+        )
+        bundle_holder: list[dict[str, object]] = []
+
+        def capture(result: object) -> dict[str, object]:
+            nonlocal staging
+            restore = cast(Any, result)
+            if artifact_dir.exists():
+                raise FileExistsError(f"artifact bundle exists: {artifact_dir}")
+            staging = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{artifact_dir.name}.partial-", dir=artifact_dir.parent
+                )
+            )
+            rehearsal = run_cutover_rehearsal(
+                restore.source_dsn,
+                destination=staging / "jobfeed.sqlite",
+                source=CutoverSourceEvidence(
+                    git_commit=git_commit,
+                    dump_sha256=restore.dump_sha256,
+                    dump_size_bytes=restore.dump_size_bytes,
+                    restore_attestations=restore.attestations,
+                ),
+            )
+            _write_new_json(staging / "snapshot-manifest.json", rehearsal.manifest)
+            _write_new_json(staging / "import-result.json", rehearsal.import_result)
+            _write_new_json(staging / "parity-result.json", rehearsal.parity_result)
+            _write_new_json(staging / "cutover-evidence-index.json", rehearsal.index)
+            bundle: dict[str, object] = {
+                "manifest": rehearsal.manifest,
+                "import_result": rehearsal.import_result,
+                "parity_result": rehearsal.parity_result,
+                "index": rehearsal.index,
+            }
+            bundle_holder.append(bundle)
+            return bundle
+
+        ready = capture_preprovisioned_restore(
+            config,
+            capture,
+            evidence_bundle_sha256=artifact_sha256,
+        )
+        _wait_for_restore_file(RESTORE_POST_INSPECTION_PATH, "post-inspection")
+        pre_docs = json.loads(_RESTORE_PRE_INSPECTION_PATH.read_text("utf-8"))
+        post_docs = json.loads(RESTORE_POST_INSPECTION_PATH.read_text("utf-8"))
+        bundle = bundle_holder[0]
+        verify_preprovisioned_provenance(
+            ProvenanceVerification(
+                bootstrap=bootstrap,
+                pre_docs=pre_docs,
+                post_docs=post_docs,
+                capture_ready=ready,
+                actual_evidence_bundle_sha256=artifact_sha256(bundle),
+            )
+        )
+        if staging is None:
+            raise ValueError("cutover staging directory is unavailable")
         _publish_provenance(staging, artifact_dir, bundle, pre_docs, post_docs)
         staging = None
     except Exception as exc:
