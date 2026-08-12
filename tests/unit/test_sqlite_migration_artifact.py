@@ -19,6 +19,10 @@ from jobfeed.adapters.migration.sqlite_artifact import (
 from jobfeed.adapters.store._sqlite_errors import SqliteLifecycleBusyError
 from jobfeed.adapters.store._sqlite_lock import DatabaseFileLock
 
+_PRIVATE_FILE_MODE = 0o600
+_PRIVATE_DIRECTORY_MODE = 0o700
+_SHA256_LENGTH = 64
+
 
 def _source_metadata() -> SourceManifestMetadata:
     return SourceManifestMetadata(
@@ -89,20 +93,23 @@ async def test_valid_artifact_publishes_exclusively_with_bound_metadata(
     with SqliteMigrationArtifact.create(target, source) as artifact:
         assert artifact.staging_path.parent.parent == target.parent
         assert artifact.staging_path.name == "artifact.sqlite"
-        assert artifact.staging_path.stat().st_mode & 0o777 == 0o600
-        assert artifact.staging_path.parent.stat().st_mode & 0o777 == 0o700
+        assert artifact.staging_path.stat().st_mode & 0o777 == _PRIVATE_FILE_MODE
+        assert (
+            artifact.staging_path.parent.stat().st_mode & 0o777
+            == _PRIVATE_DIRECTORY_MODE
+        )
         _write_valid_database(artifact.staging_path)
         result = await artifact.publish(verify)
 
     assert result.path == target
     assert result.source_manifest == source
     assert result.sqlite_sha256 == sha256(target.read_bytes()).hexdigest()
-    assert len(result.sqlite_sha256) == 64
+    assert len(result.sqlite_sha256) == _SHA256_LENGTH
     assert result.size_bytes == target.stat().st_size
     assert len(seen) == 1
     assert seen[0][1] == source
     assert seen[0][0].name == "artifact.sqlite"
-    assert target.stat().st_mode & 0o777 == 0o600
+    assert target.stat().st_mode & 0o777 == _PRIVATE_FILE_MODE
     assert _workspace_paths(tmp_path, target.name) == []
     with sqlite3.connect(target) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
@@ -122,10 +129,12 @@ async def test_corruption_and_validator_failure_remove_only_run_owned_stage(
         nonlocal called
         called = True
 
-    with pytest.raises(MigrationArtifactValidationError, match="validation failed"):
-        with SqliteMigrationArtifact.create(target, _source_metadata()) as artifact:
-            artifact.staging_path.write_bytes(b"not sqlite")
-            await artifact.publish(should_not_run)
+    with (
+        pytest.raises(MigrationArtifactValidationError, match="validation failed"),
+        SqliteMigrationArtifact.create(target, _source_metadata()) as artifact,
+    ):
+        artifact.staging_path.write_bytes(b"not sqlite")
+        await artifact.publish(should_not_run)
     assert not called
     assert not target.exists()
     assert _workspace_paths(tmp_path, target.name) == []
@@ -136,10 +145,12 @@ async def test_corruption_and_validator_failure_remove_only_run_owned_stage(
     ) -> None:
         raise ValueError("checksum mismatch")
 
-    with pytest.raises(ValueError, match="checksum mismatch"):
-        with SqliteMigrationArtifact.create(target, _source_metadata()) as artifact:
-            _write_valid_database(artifact.staging_path)
-            await artifact.publish(reject_parity)
+    with (
+        pytest.raises(ValueError, match="checksum mismatch"),
+        SqliteMigrationArtifact.create(target, _source_metadata()) as artifact,
+    ):
+        _write_valid_database(artifact.staging_path)
+        await artifact.publish(reject_parity)
     assert not target.exists()
     assert _workspace_paths(tmp_path, target.name) == []
 
@@ -154,10 +165,12 @@ async def test_concurrent_destination_is_never_replaced(tmp_path: Path) -> None:
     ) -> None:
         target.write_bytes(b"other-run")
 
-    with pytest.raises(FileExistsError):
-        with SqliteMigrationArtifact.create(target, _source_metadata()) as artifact:
-            _write_valid_database(artifact.staging_path)
-            await artifact.publish(competing_publish)
+    with (
+        pytest.raises(FileExistsError),
+        SqliteMigrationArtifact.create(target, _source_metadata()) as artifact,
+    ):
+        _write_valid_database(artifact.staging_path)
+        await artifact.publish(competing_publish)
 
     assert target.read_bytes() == b"other-run"
     assert _workspace_paths(tmp_path, target.name) == []
@@ -197,10 +210,12 @@ def test_interruption_and_sidecars_are_cleaned_without_publication(
 ) -> None:
     """Base exceptions and incomplete WAL artifacts leave no owned files behind."""
     target = tmp_path / "interrupted.sqlite"
-    with pytest.raises(KeyboardInterrupt):
-        with SqliteMigrationArtifact.create(target, _source_metadata()) as artifact:
-            artifact.staging_path.write_bytes(b"partial")
-            raise KeyboardInterrupt
+    with (
+        pytest.raises(KeyboardInterrupt),
+        SqliteMigrationArtifact.create(target, _source_metadata()) as artifact,
+    ):
+        artifact.staging_path.write_bytes(b"partial")
+        raise KeyboardInterrupt
     assert not target.exists()
     assert _workspace_paths(tmp_path, target.name) == []
 
@@ -212,45 +227,53 @@ async def test_publish_rejects_live_sidecars_and_unlinks_them(tmp_path: Path) ->
     async def verify(_path: Path, _metadata: SourceManifestMetadata) -> None:
         raise AssertionError("validator must not see a candidate with sidecars")
 
-    with pytest.raises(MigrationArtifactStateError, match="sidecar"):
-        with SqliteMigrationArtifact.create(target, _source_metadata()) as artifact:
-            _write_valid_database(artifact.staging_path)
-            Path(f"{artifact.staging_path}-wal").write_bytes(b"live")
-            Path(f"{artifact.staging_path}-shm").write_bytes(b"live")
-            await artifact.publish(verify)
+    with (
+        pytest.raises(MigrationArtifactStateError, match="sidecar"),
+        SqliteMigrationArtifact.create(target, _source_metadata()) as artifact,
+    ):
+        _write_valid_database(artifact.staging_path)
+        Path(f"{artifact.staging_path}-wal").write_bytes(b"live")
+        Path(f"{artifact.staging_path}-shm").write_bytes(b"live")
+        await artifact.publish(verify)
     assert not target.exists()
     assert _workspace_paths(tmp_path, target.name) == []
 
 
-async def test_parent_fsync_failure_removes_just_linked_artifact(
+@pytest.mark.parametrize("failure_call", [1, 2, 3])
+async def test_directory_fsync_failure_removes_just_linked_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure_call: int,
 ) -> None:
-    """A failed durability barrier does not leave an unconfirmed final artifact."""
+    """Any failed durability barrier rolls the publication back to no target."""
     target = tmp_path / "fsync.sqlite"
     real_sync = _sqlite_artifact_files._sync_directory
     calls = 0
 
-    def fail_first_sync(file_descriptor: int) -> None:
+    def fail_selected_sync(file_descriptor: int) -> None:
         nonlocal calls
         calls += 1
-        if calls == 1:
+        if calls == failure_call:
             raise OSError("fsync failed")
         real_sync(file_descriptor)
 
     async def verify(_path: Path, _metadata: SourceManifestMetadata) -> None:
         return None
 
-    monkeypatch.setattr(_sqlite_artifact_files, "_sync_directory", fail_first_sync)
-    with pytest.raises(OSError, match="fsync failed"):
-        with SqliteMigrationArtifact.create(target, _source_metadata()) as artifact:
-            _write_valid_database(artifact.staging_path)
-            await artifact.publish(verify)
+    monkeypatch.setattr(_sqlite_artifact_files, "_sync_directory", fail_selected_sync)
+    with (
+        pytest.raises(OSError, match="fsync failed"),
+        SqliteMigrationArtifact.create(target, _source_metadata()) as artifact,
+    ):
+        _write_valid_database(artifact.staging_path)
+        await artifact.publish(verify)
     assert not target.exists()
     assert _workspace_paths(tmp_path, target.name) == []
 
 
-async def test_replaced_staging_name_is_not_published_or_deleted(tmp_path: Path) -> None:
+async def test_replaced_staging_name_is_not_published_or_deleted(
+    tmp_path: Path,
+) -> None:
     """Ownership checks fail closed if the staged name changes inode."""
     target = tmp_path / "replaced.sqlite"
 
