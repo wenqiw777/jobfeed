@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
-from collections.abc import Mapping
-from pathlib import Path
-from typing import cast
+from collections.abc import Callable
+from dataclasses import replace
+from typing import TypeVar, cast
 
 from jobfeed.adapters.migration._baseline_evidence import (
     validate_restore_attestations,
 )
+from jobfeed.adapters.migration._pg_restore_artifacts import EvidenceWorkspace
+from jobfeed.adapters.migration._pg_restore_cleanup import cleanup
 from jobfeed.adapters.migration._pg_restore_docker import (
-    cleanup,
+    OwnedContainer,
+    OwnedVolume,
     preflight,
     start_target,
 )
@@ -22,6 +23,7 @@ from jobfeed.adapters.migration._pg_restore_types import (
     CommandResult,
     CommandRunner,
     RestoreRehearsalConfig,
+    RestoreRehearsalResult,
     RestoreTarget,
     SubprocessRunner,
 )
@@ -30,6 +32,7 @@ _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 _SQL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _MIN_HOST_PORT = 1024
 _MAX_HOST_PORT = 65535
+_CaptureResult = TypeVar("_CaptureResult")
 _RESERVED_CONTAINERS = {
     "postgres",
     "jobfeed-postgres-1",
@@ -50,75 +53,95 @@ __all__ = [
     "CommandResult",
     "CommandRunner",
     "RestoreRehearsalConfig",
+    "RestoreRehearsalResult",
     "RestoreTarget",
-    "create_restore_attestations",
+    "run_restore_rehearsal",
 ]
 
 
-def create_restore_attestations(
-    config: RestoreRehearsalConfig, *, runner: CommandRunner | None = None
-) -> dict[str, dict[str, object]]:
-    """Restore one dump twice, upgrade 0007 to 0008, and write attestations.
+def run_restore_rehearsal(
+    config: RestoreRehearsalConfig,
+    capture: Callable[[RestoreRehearsalResult], _CaptureResult],
+    *,
+    runner: CommandRunner | None = None,
+) -> _CaptureResult:
+    """Restore one dump twice and run capture inside the verified session.
 
     Args:
         config: Explicit new resources and local dump/project paths.
+        capture: Canonical baseline callback; receives derived evidence and DSNs.
         runner: Injectable argv-only command runner for deterministic tests.
 
     Returns:
-        Validated ``source`` and ``scratch`` attestation documents.
+        The capture callback's result after resources are safely cleaned.
 
     Raises:
         ValueError: If paths, names, ports, revisions, or evidence are unsafe.
         RuntimeError: If Docker, PostgreSQL, restore, or Alembic commands fail.
 
     Side effects:
-        Creates two isolated containers and optional volumes. They remain running
-        after success for baseline capture and are removed on any failure.
+        Creates two isolated containers, a staged dump, and optional volumes.
+        Capture runs before the containers are removed; JSON evidence remains.
     """
     _validate_config(config)
     command_runner = runner or SubprocessRunner()
     preflight(config, command_runner)
-    created_containers: list[str] = []
-    created_volumes: list[str] = []
-    dump_sha256 = _file_sha256(config.dump_path)
+    workspace = EvidenceWorkspace.create(config.output_dir, config.dump_path)
+    staged_config = replace(config, dump_path=workspace.staged_dump_path)
+    created_containers: list[OwnedContainer] = []
+    created_volumes: list[OwnedVolume] = []
+    is_evidence_written = False
     try:
         documents: dict[str, dict[str, object]] = {}
         for label, target in (
-            ("source", config.source),
-            ("scratch", config.scratch),
+            ("source", staged_config.source),
+            ("scratch", staged_config.scratch),
         ):
-            container_id = start_target(
-                config,
+            owned = start_target(
+                staged_config,
                 target,
                 command_runner,
                 created_containers,
                 created_volumes,
             )
             documents[label] = restore_and_attest(
-                config,
-                target,
+                staged_config,
+                owned,
                 command_runner,
-                container_id=container_id,
-                dump_sha256=dump_sha256,
+                dump_sha256=workspace.dump_sha256,
             )
+            workspace.assert_dump_unchanged()
         validated = validate_restore_attestations(
-            documents["source"], documents["scratch"], dump_sha256=dump_sha256
+            documents["source"],
+            documents["scratch"],
+            dump_sha256=workspace.dump_sha256,
         )
         typed = cast(dict[str, dict[str, object]], validated)
-        _write_attestations(config.output_dir, typed)
-        return typed
-    except BaseException:
+        workspace.write_attestations(typed)
+        is_evidence_written = True
+        result = RestoreRehearsalResult(
+            attestations=typed,
+            source_dsn=_dsn(staged_config, staged_config.source),
+            scratch_dsn=_dsn(staged_config, staged_config.scratch),
+            staged_dump_path=workspace.staged_dump_path,
+            dump_sha256=workspace.dump_sha256,
+            dump_size_bytes=workspace.dump_size_bytes,
+        )
+        return capture(result)
+    finally:
         cleanup(command_runner, created_containers, created_volumes)
-        raise
+        if is_evidence_written:
+            workspace.close()
+        else:
+            workspace.cleanup()
 
 
 def _validate_config(config: RestoreRehearsalConfig) -> None:
     _validate_paths(config)
     _validate_database_values(config)
     _validate_targets(config)
-    for name in ("source", "scratch"):
-        if (config.output_dir / f"{name}-restore-attestation.json").exists():
-            raise ValueError("restore attestation output already exists")
+    if config.output_dir.exists() or config.output_dir.is_symlink():
+        raise ValueError("restore evidence output directory already exists")
 
 
 def _validate_paths(config: RestoreRehearsalConfig) -> None:
@@ -169,32 +192,8 @@ def _validate_target(target: RestoreTarget) -> None:
         raise ValueError("volume name is reserved for formal or Compose data")
 
 
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _write_attestations(
-    output_dir: Path, documents: Mapping[str, Mapping[str, object]]
-) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    temporary: list[Path] = []
-    outputs: list[Path] = []
-    try:
-        for name in ("source", "scratch"):
-            output = output_dir / f"{name}-restore-attestation.json"
-            temp = output.with_suffix(".json.tmp")
-            temp.write_text(
-                json.dumps(documents[name], sort_keys=True, indent=2) + "\n", "utf-8"
-            )
-            temporary.append(temp)
-            outputs.append(output)
-        for temp, output in zip(temporary, outputs, strict=True):
-            temp.replace(output)
-    except Exception:
-        for path in (*temporary, *outputs):
-            path.unlink(missing_ok=True)
-        raise
+def _dsn(config: RestoreRehearsalConfig, target: RestoreTarget) -> str:
+    return (
+        f"postgresql://{config.database_user}@127.0.0.1:"
+        f"{target.host_port}/{config.database_name}"
+    )

@@ -7,7 +7,7 @@ import os
 import re
 
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
-from jobfeed.adapters.migration._pg_restore_docker import DUMP_PATH
+from jobfeed.adapters.migration._pg_restore_docker import DUMP_PATH, OwnedContainer
 from jobfeed.adapters.migration._pg_restore_types import (
     CommandRunner,
     RestoreRehearsalConfig,
@@ -16,23 +16,22 @@ from jobfeed.adapters.migration._pg_restore_types import (
 )
 
 _DATABASE_IDENTITY_PARTS = 3
+_DUMP_HASH_PARTS = 2
 
 
 def restore_and_attest(
     config: RestoreRehearsalConfig,
-    target: RestoreTarget,
+    owned: OwnedContainer,
     runner: CommandRunner,
     *,
-    container_id: str,
     dump_sha256: str,
 ) -> dict[str, object]:
     """Restore and upgrade one target using independently derived evidence.
 
     Args:
         config: Shared rehearsal configuration.
-        target: One running isolated restore target.
+        owned: One verified running isolated restore target.
         runner: Argv-only command executor.
-        container_id: Identity already verified through Docker inspect.
         dump_sha256: Digest streamed from the selected dump file.
 
     Returns:
@@ -42,21 +41,24 @@ def restore_and_attest(
         ValueError: If tool output, revision transition, or identity is invalid.
         RuntimeError: If restore, migration, or PostgreSQL commands fail.
     """
-    version = _restore_version(runner, target)
-    restore_command = _restore_command(config, target)
+    target = owned.target
+    _assert_container_dump(runner, owned, dump_sha256)
+    version = _restore_version(runner, owned)
+    restore_command = _restore_command(config, owned)
     checked(runner.run(restore_command), "pg_restore")
-    pre_revision = _revision(runner, config, target)
+    _assert_container_dump(runner, owned, dump_sha256)
+    pre_revision = _revision(runner, config, owned)
     if pre_revision != "0007":
         raise ValueError(f"restored dump must be at Alembic 0007, got {pre_revision}")
     _upgrade(runner, config, target)
-    post_revision = _revision(runner, config, target)
+    post_revision = _revision(runner, config, owned)
     if post_revision != "0008":
         raise ValueError(f"Alembic upgrade must finish at 0008, got {post_revision}")
     return {
         "attestation_version": 1,
         "dump_sha256": dump_sha256,
-        "container_id": container_id,
-        "database_identity": _database_identity(runner, config, target),
+        "container_id": owned.container_id,
+        "database_identity": _database_identity(runner, config, owned),
         "restore_tool": "pg_restore",
         "restore_tool_version": version,
         "restore_command_sha256": artifact_sha256(list(restore_command)),
@@ -65,11 +67,29 @@ def restore_and_attest(
     }
 
 
-def _restore_version(runner: CommandRunner, target: RestoreTarget) -> str:
+def _assert_container_dump(
+    runner: CommandRunner, owned: OwnedContainer, expected_sha256: str
+) -> None:
+    command = (
+        "docker",
+        "exec",
+        owned.container_id,
+        "sha256sum",
+        DUMP_PATH,
+    )
+    output = checked(runner.run(command), "hash staged dump in container").stdout
+    parts = output.strip().split()
+    if (
+        len(parts) != _DUMP_HASH_PARTS
+        or parts[0] != expected_sha256
+        or parts[1] != DUMP_PATH
+    ):
+        raise ValueError("container staged dump digest mismatch")
+
+
+def _restore_version(runner: CommandRunner, owned: OwnedContainer) -> str:
     result = checked(
-        runner.run(
-            ("docker", "exec", target.container_name, "pg_restore", "--version")
-        ),
+        runner.run(("docker", "exec", owned.container_id, "pg_restore", "--version")),
         "pg_restore --version",
     )
     match = re.search(r"(\d+(?:\.\d+)*)\s*$", result.stdout.strip())
@@ -79,12 +99,12 @@ def _restore_version(runner: CommandRunner, target: RestoreTarget) -> str:
 
 
 def _restore_command(
-    config: RestoreRehearsalConfig, target: RestoreTarget
+    config: RestoreRehearsalConfig, owned: OwnedContainer
 ) -> tuple[str, ...]:
     return (
         "docker",
         "exec",
-        target.container_name,
+        owned.container_id,
         "pg_restore",
         "--exit-on-error",
         "--no-owner",
@@ -98,12 +118,12 @@ def _restore_command(
 
 
 def _psql_command(
-    config: RestoreRehearsalConfig, target: RestoreTarget, sql: str
+    config: RestoreRehearsalConfig, owned: OwnedContainer, sql: str
 ) -> tuple[str, ...]:
     return (
         "docker",
         "exec",
-        target.container_name,
+        owned.container_id,
         "psql",
         "--no-psqlrc",
         "--quiet",
@@ -124,9 +144,9 @@ def _psql_command(
 def _revision(
     runner: CommandRunner,
     config: RestoreRehearsalConfig,
-    target: RestoreTarget,
+    owned: OwnedContainer,
 ) -> str:
-    command = _psql_command(config, target, "SELECT version_num FROM alembic_version")
+    command = _psql_command(config, owned, "SELECT version_num FROM alembic_version")
     return checked(runner.run(command), "read Alembic revision").stdout.strip()
 
 
@@ -155,7 +175,7 @@ def _upgrade(
 def _database_identity(
     runner: CommandRunner,
     config: RestoreRehearsalConfig,
-    target: RestoreTarget,
+    owned: OwnedContainer,
 ) -> str:
     sql = (
         "SELECT current_database(), "
@@ -163,7 +183,7 @@ def _database_identity(
         "(SELECT system_identifier::text FROM pg_control_system())"
     )
     output = checked(
-        runner.run(_psql_command(config, target, sql)), "read database identity"
+        runner.run(_psql_command(config, owned, sql)), "read database identity"
     ).stdout.strip()
     parts = output.split("\t")
     if len(parts) != _DATABASE_IDENTITY_PARTS or any(not part for part in parts):

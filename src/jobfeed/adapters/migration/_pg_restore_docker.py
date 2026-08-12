@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from jobfeed.adapters.migration._pg_restore_types import (
@@ -17,6 +17,24 @@ from jobfeed.adapters.migration._pg_restore_types import (
 
 DATA_PATH = "/var/lib/postgresql/data"
 DUMP_PATH = "/restore/source.dump"
+_TOKEN_LABEL = "jobfeed.restore.token"
+
+
+@dataclass(frozen=True, kw_only=True)
+class OwnedVolume:
+    """Named volume whose random label proves this run created it."""
+
+    name: str
+    token: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class OwnedContainer:
+    """Container bound to an immutable ID and random ownership label."""
+
+    target: RestoreTarget
+    container_id: str
+    token: str
 
 
 def preflight(config: RestoreRehearsalConfig, runner: CommandRunner) -> None:
@@ -40,9 +58,8 @@ def _assert_absent(runner: CommandRunner, kind: str, name: str) -> None:
     result = runner.run(("docker", kind, "inspect", name))
     if result.returncode == 0:
         raise ValueError(f"Docker {kind} {name!r} already exists")
-    if result.returncode != 1 or (
-        result.stderr and "no such" not in result.stderr.casefold()
-    ):
+    expected = f"no such {kind}: {name}".casefold()
+    if result.returncode != 1 or expected not in result.stderr.casefold():
         raise RuntimeError(f"cannot prove Docker {kind} {name!r} is absent")
 
 
@@ -50,9 +67,9 @@ def start_target(
     config: RestoreRehearsalConfig,
     target: RestoreTarget,
     runner: CommandRunner,
-    created_containers: list[str],
-    created_volumes: list[str],
-) -> str:
+    created_containers: list[OwnedContainer],
+    created_volumes: list[OwnedVolume],
+) -> OwnedContainer:
     """Create one isolated target and return its inspected container identity.
 
     Args:
@@ -70,16 +87,25 @@ def start_target(
         RuntimeError: If creation, readiness, or ownership proof fails.
     """
     if target.volume_name:
-        _create_owned_volume(runner, target.volume_name, created_volumes)
-    checked(runner.run(_docker_run_command(config, target)), "docker run")
-    created_containers.append(target.container_name)
-    _wait_until_ready(runner, config, target)
-    return _validated_inspect(runner, config, target)
+        volume = _create_owned_volume(runner, target.volume_name)
+        created_volumes.append(volume)
+    else:
+        volume = None
+    token = secrets.token_hex(16)
+    result = checked(
+        runner.run(_docker_run_command(config, target, token)), "docker run"
+    )
+    container_id = result.stdout.strip()
+    if not container_id:
+        raise RuntimeError("docker run did not return a container ID")
+    owned = OwnedContainer(target=target, container_id=container_id, token=token)
+    created_containers.append(owned)
+    _wait_until_ready(runner, config, owned)
+    _validated_inspect(runner, config, owned, volume)
+    return owned
 
 
-def _create_owned_volume(
-    runner: CommandRunner, volume_name: str, created_volumes: list[str]
-) -> None:
+def _create_owned_volume(runner: CommandRunner, volume_name: str) -> OwnedVolume:
     token = secrets.token_hex(16)
     command = (
         "docker",
@@ -88,7 +114,7 @@ def _create_owned_volume(
         "--label",
         "jobfeed.restore.rehearsal=true",
         "--label",
-        f"jobfeed.restore.token={token}",
+        f"{_TOKEN_LABEL}={token}",
         volume_name,
     )
     checked(runner.run(command), "docker volume create")
@@ -98,18 +124,18 @@ def _create_owned_volume(
     )
     try:
         document = json.loads(result.stdout)[0]
-        actual_token = document["Labels"]["jobfeed.restore.token"]
+        actual_token = document["Labels"][_TOKEN_LABEL]
     except (IndexError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise RuntimeError(
             "cannot prove ownership of created rehearsal volume"
         ) from exc
     if document.get("Name") != volume_name or actual_token != token:
         raise RuntimeError("cannot prove ownership of created rehearsal volume")
-    created_volumes.append(volume_name)
+    return OwnedVolume(name=volume_name, token=token)
 
 
 def _docker_run_command(
-    config: RestoreRehearsalConfig, target: RestoreTarget
+    config: RestoreRehearsalConfig, target: RestoreTarget, token: str
 ) -> tuple[str, ...]:
     command = [
         "docker",
@@ -121,6 +147,10 @@ def _docker_run_command(
         f"127.0.0.1:{target.host_port}:5432",
         "--mount",
         f"type=bind,src={config.dump_path.resolve()},dst={DUMP_PATH},readonly",
+        "--label",
+        "jobfeed.restore.rehearsal=true",
+        "--label",
+        f"{_TOKEN_LABEL}={token}",
     ]
     if target.volume_name:
         command.extend(
@@ -145,12 +175,12 @@ def _docker_run_command(
 def _wait_until_ready(
     runner: CommandRunner,
     config: RestoreRehearsalConfig,
-    target: RestoreTarget,
+    owned: OwnedContainer,
 ) -> None:
     command = (
         "docker",
         "exec",
-        target.container_name,
+        owned.container_id,
         "pg_isready",
         "--username",
         config.database_user,
@@ -167,13 +197,37 @@ def _wait_until_ready(
 def _validated_inspect(
     runner: CommandRunner,
     config: RestoreRehearsalConfig,
-    target: RestoreTarget,
-) -> str:
-    result = checked(
-        runner.run(("docker", "inspect", target.container_name)), "inspect"
-    )
+    owned: OwnedContainer,
+    volume: OwnedVolume | None,
+) -> None:
+    result = checked(runner.run(("docker", "inspect", owned.container_id)), "inspect")
+    document, dump, data, ports = _parse_container_inspect(result.stdout)
+    target = owned.target
+    if document.get("Id") != owned.container_id:
+        raise ValueError("Docker inspect container ID mismatch")
+    if document.get("Name") != f"/{target.container_name}":
+        raise ValueError("Docker inspect container name mismatch")
+    image = document.get("Config")
+    if not isinstance(image, dict) or image.get("Image") != config.postgres_image:
+        raise ValueError("Docker inspect image mismatch")
+    labels = image.get("Labels")
+    if not isinstance(labels, dict) or labels.get(_TOKEN_LABEL) != owned.token:
+        raise ValueError("Docker inspect container ownership mismatch")
+    _validate_mounts_and_port(config, target, dump, data, ports)
+    if volume is not None:
+        _assert_owned_volume(runner, volume)
+
+
+def _parse_container_inspect(
+    stdout: str,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    list[dict[str, str]],
+]:
     try:
-        values = json.loads(result.stdout)
+        values = json.loads(stdout)
         document = values[0]
         mounts = document["Mounts"]
         ports = document["NetworkSettings"]["Ports"]["5432/tcp"]
@@ -187,11 +241,16 @@ def _validated_inspect(
         json.JSONDecodeError,
     ) as exc:
         raise ValueError("Docker inspect evidence is incomplete") from exc
-    if document.get("Name") != f"/{target.container_name}":
-        raise ValueError("Docker inspect container name mismatch")
-    image = document.get("Config")
-    if not isinstance(image, dict) or image.get("Image") != config.postgres_image:
-        raise ValueError("Docker inspect image mismatch")
+    return document, dump, data, ports
+
+
+def _validate_mounts_and_port(
+    config: RestoreRehearsalConfig,
+    target: RestoreTarget,
+    dump: dict[str, object],
+    data: dict[str, object],
+    ports: list[dict[str, str]],
+) -> None:
     if dump.get("Type") != "bind" or dump.get("RW") is not False:
         raise ValueError("pg_dump must be mounted read-only")
     if Path(str(dump.get("Source"))).resolve() != config.dump_path.resolve():
@@ -203,23 +262,17 @@ def _validated_inspect(
         raise ValueError("Docker inspect isolated storage mismatch")
     if ports != [{"HostIp": "127.0.0.1", "HostPort": str(target.host_port)}]:
         raise ValueError("Docker inspect loopback port mismatch")
-    container_id = document.get("Id")
-    if not isinstance(container_id, str) or not container_id:
-        raise ValueError("Docker inspect container identity is missing")
-    return container_id
 
 
-def cleanup(
-    runner: CommandRunner, containers: Sequence[str], volumes: Sequence[str]
-) -> None:
-    """Best-effort remove only resources proven newly created in this run.
-
-    Args:
-        runner: Argv-only command executor.
-        containers: Container names recorded after successful creation.
-        volumes: Volume names recorded after ownership-label verification.
-    """
-    for name in reversed(containers):
-        runner.run(("docker", "rm", "--force", name))
-    for name in reversed(volumes):
-        runner.run(("docker", "volume", "rm", name))
+def _assert_owned_volume(runner: CommandRunner, volume: OwnedVolume) -> None:
+    result = checked(
+        runner.run(("docker", "volume", "inspect", volume.name)),
+        "Docker volume ownership inspect",
+    )
+    try:
+        document = json.loads(result.stdout)[0]
+        token = document["Labels"][_TOKEN_LABEL]
+    except (IndexError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("cannot prove rehearsal volume ownership") from exc
+    if document.get("Name") != volume.name or token != volume.token:
+        raise RuntimeError("cannot prove rehearsal volume ownership")

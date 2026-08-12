@@ -64,6 +64,18 @@ class RestoreRehearsalConfig:
     database_user: str = "jobfeed_restore"
 
 
+@dataclass(frozen=True, kw_only=True)
+class RestoreRehearsalResult:
+    """Derived evidence and live DSNs supplied only to the capture callback."""
+
+    attestations: dict[str, dict[str, object]]
+    source_dsn: str
+    scratch_dsn: str
+    staged_dump_path: Path
+    dump_sha256: str
+    dump_size_bytes: int
+
+
 class SubprocessRunner:
     """Run bounded subprocess argv directly without invoking a shell."""
 

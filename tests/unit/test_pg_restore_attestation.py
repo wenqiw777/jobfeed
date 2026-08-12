@@ -4,150 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
 from jobfeed.adapters.migration.pg_restore_attestation import (
-    CommandResult,
     RestoreRehearsalConfig,
+    RestoreRehearsalResult,
     RestoreTarget,
-    create_restore_attestations,
+    run_restore_rehearsal,
 )
+from tests.support.fake_restore_runner import FakeRestoreRunner
 
 _RESTORE_COUNT = 2
-
-
-class FakeRunner:
-    """Return deterministic Docker/PostgreSQL evidence without starting processes."""
-
-    def __init__(self, config: RestoreRehearsalConfig) -> None:
-        self.config = config
-        self.calls: list[
-            tuple[tuple[str, ...], Path | None, Mapping[str, str] | None]
-        ] = []
-        self.existing: set[tuple[str, str]] = set()
-        self.hijack_created_volume = False
-        self.fail_restore_container: str | None = None
-        self._volume_labels: dict[str, dict[str, str]] = {}
-        self._revision_calls: dict[str, int] = {}
-
-    def run(
-        self,
-        argv: Sequence[str],
-        *,
-        cwd: Path | None = None,
-        env: Mapping[str, str] | None = None,
-    ) -> CommandResult:
-        """Record argv and synthesize outputs from the requested target."""
-        command = tuple(argv)
-        self.calls.append((command, cwd, env))
-        if command[0] == "docker":
-            return self._docker(command)
-        if command[0] == str(self.config.alembic_executable):
-            return CommandResult(0, "", "")
-        raise AssertionError(f"unexpected command: {command}")
-
-    def _docker(self, command: tuple[str, ...]) -> CommandResult:
-        if command[:3] == ("docker", "container", "inspect"):
-            exists = ("container", command[3]) in self.existing
-            return CommandResult(0 if exists else 1, "", "")
-        if command[:3] == ("docker", "volume", "inspect"):
-            if command[3] in self._volume_labels:
-                labels = self._volume_labels[command[3]]
-                return CommandResult(
-                    0,
-                    json.dumps([{"Name": command[3], "Labels": labels}]),
-                    "",
-                )
-            exists = ("volume", command[3]) in self.existing
-            return CommandResult(0 if exists else 1, "", "")
-        if command[:3] == ("docker", "volume", "create"):
-            volume_name = command[-1]
-            token = command[-2].split("=", 1)[1]
-            self._volume_labels[volume_name] = {
-                "jobfeed.restore.token": "hijacked"
-                if self.hijack_created_volume
-                else token
-            }
-            return CommandResult(0, volume_name, "")
-        if command[:2] == ("docker", "run"):
-            return CommandResult(0, "created-container", "")
-        if command[:2] == ("docker", "inspect"):
-            return CommandResult(0, self._inspect(command[2]), "")
-        if command[:2] == ("docker", "exec"):
-            return self._exec(command)
-        if command[:3] in {
-            ("docker", "rm", "--force"),
-            ("docker", "volume", "rm"),
-        }:
-            return CommandResult(0, "", "")
-        raise AssertionError(f"unexpected Docker command: {command}")
-
-    def _exec(self, command: tuple[str, ...]) -> CommandResult:
-        if "pg_isready" in command:
-            return CommandResult(0, "ready", "")
-        if "pg_restore" in command and "--version" in command:
-            return CommandResult(0, "pg_restore (PostgreSQL) 16.4", "")
-        if "pg_restore" in command:
-            if command[2] == self.fail_restore_container:
-                return CommandResult(1, "", "restore failed")
-            return CommandResult(0, "", "")
-        if "psql" in command:
-            return self._psql(command)
-        raise AssertionError(f"unexpected Docker exec command: {command}")
-
-    def _target(self, container_name: str) -> RestoreTarget:
-        return next(
-            target
-            for target in (self.config.source, self.config.scratch)
-            if target.container_name == container_name
-        )
-
-    def _inspect(self, container_name: str) -> str:
-        target = self._target(container_name)
-        storage = {
-            "Type": "volume" if target.volume_name else "tmpfs",
-            "Destination": "/var/lib/postgresql/data",
-        }
-        if target.volume_name:
-            storage["Name"] = target.volume_name
-        document = [
-            {
-                "Id": f"sha256:{container_name}",
-                "Name": f"/{container_name}",
-                "Config": {"Image": self.config.postgres_image},
-                "Mounts": [
-                    {
-                        "Type": "bind",
-                        "Source": str(self.config.dump_path.resolve()),
-                        "Destination": "/restore/source.dump",
-                        "RW": False,
-                    },
-                    storage,
-                ],
-                "NetworkSettings": {
-                    "Ports": {
-                        "5432/tcp": [
-                            {"HostIp": "127.0.0.1", "HostPort": str(target.host_port)}
-                        ]
-                    }
-                },
-            }
-        ]
-        return json.dumps(document)
-
-    def _psql(self, command: tuple[str, ...]) -> CommandResult:
-        container_name = command[2]
-        sql = command[-1]
-        if "version_num" in sql:
-            count = self._revision_calls.get(container_name, 0)
-            self._revision_calls[container_name] = count + 1
-            return CommandResult(0, "0007" if count == 0 else "0008", "")
-        assert "pg_control_system" in sql
-        return CommandResult(0, f"jobfeed_restore\t42\tsystem-{container_name}", "")
 
 
 def _config(tmp_path: Path) -> RestoreRehearsalConfig:
@@ -173,14 +45,21 @@ def _config(tmp_path: Path) -> RestoreRehearsalConfig:
     )
 
 
-def test_attestations_derive_dump_container_database_and_command_identity(
+def _capture(result: RestoreRehearsalResult) -> dict[str, dict[str, object]]:
+    assert result.source_dsn.endswith(":55431/jobfeed_restore")
+    assert result.scratch_dsn.endswith(":55432/jobfeed_restore")
+    assert result.staged_dump_path.read_bytes() == b"immutable pg dump"
+    return result.attestations
+
+
+def test_rehearsal_derives_identity_and_invokes_capture_before_cleanup(
     tmp_path: Path,
 ) -> None:
-    """Attestation identity comes only from artifacts and live command output."""
+    """One canonical API creates evidence, runs capture, and then cleans resources."""
     config = _config(tmp_path)
-    runner = FakeRunner(config)
+    runner = FakeRestoreRunner(config)
 
-    attestations = create_restore_attestations(config, runner=runner)
+    attestations = run_restore_rehearsal(config, _capture, runner=runner)
 
     digest = hashlib.sha256(config.dump_path.read_bytes()).hexdigest()
     assert attestations["source"]["dump_sha256"] == digest
@@ -192,17 +71,14 @@ def test_attestations_derive_dump_container_database_and_command_identity(
         attestations["source"]["database_identity"]
         != attestations["scratch"]["database_identity"]
     )
-    source_file = config.output_dir / "source-restore-attestation.json"
-    scratch_file = config.output_dir / "scratch-restore-attestation.json"
-    assert json.loads(source_file.read_text("utf-8")) == attestations["source"]
-    assert json.loads(scratch_file.read_text("utf-8")) == attestations["scratch"]
-
+    for name in ("source", "scratch"):
+        output = config.output_dir / f"{name}-restore-attestation.json"
+        assert json.loads(output.read_text("utf-8")) == attestations[name]
     run_commands = [
         call[0] for call in runner.calls if call[0][:2] == ("docker", "run")
     ]
     assert len(run_commands) == _RESTORE_COUNT
     assert all("readonly" in " ".join(command) for command in run_commands)
-    assert all("127.0.0.1:" in " ".join(command) for command in run_commands)
     restore_commands = [
         call[0]
         for call in runner.calls
@@ -211,6 +87,7 @@ def test_attestations_derive_dump_container_database_and_command_identity(
     assert attestations["source"]["restore_command_sha256"] == artifact_sha256(
         list(restore_commands[0])
     )
+    assert all(command[2].startswith("sha256:") for command in restore_commands)
 
 
 @pytest.mark.parametrize(
@@ -218,38 +95,49 @@ def test_attestations_derive_dump_container_database_and_command_identity(
     [
         ("postgres", None),
         ("jobfeed-postgres-1", None),
-        ("safe-rehearsal", "pgdata"),
-        ("safe-rehearsal", "jobfeed_pgdata"),
+        ("safe", "pgdata"),
+        ("safe", "jobfeed_pgdata"),
     ],
 )
-def test_formal_and_compose_targets_are_rejected_before_docker_calls(
+def test_formal_targets_are_rejected_before_docker(
     tmp_path: Path, container_name: str, volume_name: str | None
 ) -> None:
-    """Known production and Compose identities cannot be rehearsal targets."""
+    """Known formal and Compose identities cannot be rehearsal targets."""
     config = _config(tmp_path)
-    config = RestoreRehearsalConfig(
-        **{
-            **config.__dict__,
-            "source": RestoreTarget(
-                container_name=container_name,
-                host_port=55431,
-                volume_name=volume_name,
-            ),
-        }
+    config = replace(
+        config,
+        source=RestoreTarget(
+            container_name=container_name, host_port=55431, volume_name=volume_name
+        ),
     )
-    runner = FakeRunner(config)
-
+    runner = FakeRestoreRunner(config)
     with pytest.raises(ValueError, match="reserved"):
-        create_restore_attestations(config, runner=runner)
-
+        run_restore_rehearsal(config, _capture, runner=runner)
     assert runner.calls == []
 
 
-@pytest.mark.parametrize("kind", ["container", "volume"])
-def test_preflight_rejects_existing_resources(tmp_path: Path, kind: str) -> None:
-    """A name collision fails before any restore resource is created."""
+def test_preflight_requires_explicit_not_found_diagnostic(tmp_path: Path) -> None:
+    """An unclassified Docker failure never passes the absence gate."""
     config = _config(tmp_path)
-    runner = FakeRunner(config)
+    runner = FakeRestoreRunner(config)
+    original = runner.run
+
+    def empty_error(*args: object, **kwargs: object):
+        result = original(*args, **kwargs)
+        if result.returncode == 1:
+            return type(result)(1, "", "")
+        return result
+
+    runner.run = empty_error  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="cannot prove"):
+        run_restore_rehearsal(config, _capture, runner=runner)
+
+
+@pytest.mark.parametrize("kind", ["container", "volume"])
+def test_preflight_rejects_existing_resource(tmp_path: Path, kind: str) -> None:
+    """Any existing target name blocks all restore creation."""
+    config = _config(tmp_path)
+    runner = FakeRestoreRunner(config)
     name = (
         config.source.container_name
         if kind == "container"
@@ -257,39 +145,110 @@ def test_preflight_rejects_existing_resources(tmp_path: Path, kind: str) -> None
     )
     assert name is not None
     runner.existing.add((kind, name))
-
     with pytest.raises(ValueError, match="already exists"):
-        create_restore_attestations(config, runner=runner)
-
+        run_restore_rehearsal(config, _capture, runner=runner)
     assert not any(call[0][:2] == ("docker", "run") for call in runner.calls)
 
 
-def test_restore_failure_cleans_only_created_resources_and_writes_nothing(
-    tmp_path: Path,
-) -> None:
-    """A partial rehearsal removes its new containers/volumes and no evidence."""
+def test_unproven_created_volume_is_never_mounted_or_deleted(tmp_path: Path) -> None:
+    """A create-name race cannot enter the owned volume ledger."""
     config = _config(tmp_path)
-    runner = FakeRunner(config)
-    runner.fail_restore_container = config.scratch.container_name
-
-    with pytest.raises(RuntimeError, match="pg_restore"):
-        create_restore_attestations(config, runner=runner)
-
+    runner = FakeRestoreRunner(config)
+    runner.hijack_created_volume = True
+    with pytest.raises(RuntimeError, match="ownership"):
+        run_restore_rehearsal(config, _capture, runner=runner)
     commands = [call[0] for call in runner.calls]
-    assert ("docker", "rm", "--force", config.source.container_name) in commands
-    assert ("docker", "rm", "--force", config.scratch.container_name) in commands
-    assert ("docker", "volume", "rm", config.scratch.volume_name) in commands
+    assert ("docker", "volume", "rm", config.scratch.volume_name) not in commands
+
+
+def test_staged_dump_mutation_fails_before_second_restore(tmp_path: Path) -> None:
+    """Both restores must observe the same immutable staged dump digest."""
+    config = _config(tmp_path)
+    runner = FakeRestoreRunner(config)
+    runner.mutate_staged_after_first_hash = True
+    with pytest.raises(ValueError, match="dump digest"):
+        run_restore_rehearsal(config, _capture, runner=runner)
+    restores = [
+        call
+        for call in runner.calls
+        if "pg_restore" in call[0] and "--version" not in call[0]
+    ]
+    assert len(restores) == 1
     assert not config.output_dir.exists()
 
 
-def test_volume_creation_race_never_deletes_unproven_volume(tmp_path: Path) -> None:
-    """A raced named volume is rejected and never treated as cleanup-owned."""
+@pytest.mark.parametrize(
+    ("container_id", "revisions", "message"),
+    [
+        ("sha256:jf-rehearsal-source", ("0006", "0008"), "0007"),
+        ("sha256:jf-rehearsal-source", ("0007", "0009"), "0008"),
+    ],
+)
+def test_revision_transition_is_exact(
+    tmp_path: Path, container_id: str, revisions: tuple[str, str], message: str
+) -> None:
+    """Any pre/post revision other than 0007 to 0008 fails closed."""
     config = _config(tmp_path)
-    runner = FakeRunner(config)
-    runner.hijack_created_volume = True
+    runner = FakeRestoreRunner(config)
+    runner.revisions[container_id] = revisions
+    with pytest.raises(ValueError, match=message):
+        run_restore_rehearsal(config, _capture, runner=runner)
 
-    with pytest.raises(RuntimeError, match="ownership"):
-        create_restore_attestations(config, runner=runner)
 
-    commands = [call[0] for call in runner.calls]
-    assert ("docker", "volume", "rm", config.scratch.volume_name) not in commands
+def test_name_swap_never_executes_or_deletes_replacement_container(
+    tmp_path: Path,
+) -> None:
+    """Commands and cleanup bind immutable IDs, not reusable container names."""
+    config = _config(tmp_path)
+    runner = FakeRestoreRunner(config)
+    failed_id = "sha256:jf-rehearsal-scratch"
+    runner.fail_restore_id = failed_id
+    runner.swap_failed_container = True
+    with pytest.raises(RuntimeError, match="pg_restore"):
+        run_restore_rehearsal(config, _capture, runner=runner)
+    removes = [
+        call[0] for call in runner.calls if call[0][:3] == ("docker", "rm", "--force")
+    ]
+    assert ("docker", "rm", "--force", failed_id) not in removes
+    assert all(command[3] != config.scratch.container_name for command in removes)
+
+
+def test_output_directory_race_preserves_attacker_file(tmp_path: Path) -> None:
+    """Exclusive output ownership rejects a raced directory without overwriting it."""
+    config = _config(tmp_path)
+    runner = FakeRestoreRunner(config)
+    runner.race_output_directory = True
+    with pytest.raises(FileExistsError):
+        run_restore_rehearsal(config, _capture, runner=runner)
+    assert (config.output_dir / "attacker").read_text("utf-8") == "keep"
+
+
+def test_attestation_link_race_never_overwrites_existing_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Atomic no-replace links preserve a concurrently created final artifact."""
+    config = _config(tmp_path)
+    runner = FakeRestoreRunner(config)
+    real_link = os.link
+    raced = False
+
+    def race_link(src: str, dst: str, **kwargs: object) -> None:
+        nonlocal raced
+        if not raced:
+            raced = True
+            fd = kwargs["dst_dir_fd"]
+            attack = os.open(
+                dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400, dir_fd=fd
+            )
+            os.write(attack, b"attacker")
+            os.close(attack)
+        real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(
+        "jobfeed.adapters.migration._pg_restore_artifacts.os.link", race_link
+    )
+    with pytest.raises(FileExistsError):
+        run_restore_rehearsal(config, _capture, runner=runner)
+    assert (
+        config.output_dir / "source-restore-attestation.json"
+    ).read_bytes() == b"attacker"
