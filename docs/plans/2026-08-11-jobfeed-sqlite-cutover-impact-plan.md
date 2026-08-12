@@ -638,6 +638,17 @@ passed / 502 deselected，Ruff、format、mypy 全绿。
 - **证据：** 容器删除/重建后数据存在，CLI+Web 同时操作通过，browser smoke 通过。
 - **返回设计：** 若多个临时容器实际挂载不到同一文件，停止并修正 volume 设计。
 
+**状态（2026-08-12）：完成 / GO。** 普通 runtime 已只组装共享
+`SQLiteStore`；旧 `[db].url` fail fast，PostgreSQL adapter 只保留在明确的
+migration/rollback 路径。Docker CLI/Web 共享持久化 `/data/jobfeed.sqlite`，普通
+service 不再依赖 PostgreSQL；CI 默认 SQLite lane，PostgreSQL 合同保留为显式
+transition lane。真实 canonical smoke 中，第一个临时 CLI 容器扫描并持久化 3
+个 job 和成功 run，容器删除后第二个 CLI 容器读取到相同 3 条记录；Web 进程对
+同一 volume 的 `/api/health` 返回 `db=ok`，`/api/jobs` 返回相同数据，scan lease
+已释放。完整 `make quality` 为 1841 passed / 416 deselected，Ruff、format、
+mypy 全绿。本机未跟踪 `config.toml` 的 `[db]` 已从旧 URL 切为 SQLite path；
+正式 PostgreSQL container 保持 exited，未被本阶段访问或修改。
+
 ### Task 7：cutover 与 soak
 
 - **结果：** 正式数据完成切换、rollback rehearsal 通过、soak 无阻塞缺陷。
