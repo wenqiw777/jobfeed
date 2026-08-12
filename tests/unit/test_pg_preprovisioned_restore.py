@@ -68,7 +68,11 @@ class FakePreprovisionedRunner:
         command = tuple(argv)
         self.calls.append(command)
         if command[:2] == ("pg_restore", "--version"):
-            return CommandResult(0, "pg_restore (PostgreSQL) 16.4", "")
+            return CommandResult(
+                0,
+                "pg_restore (PostgreSQL) 17.10 (Debian 17.10-0+deb13u1)",
+                "",
+            )
         if command[0] == "pg_restore":
             dsn = command[command.index("--dbname") + 1]
             if self.mutate_after_source_restore and dsn == _SOURCE_DSN:

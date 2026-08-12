@@ -142,7 +142,7 @@ def restore_tool_version(runner: CommandRunner) -> str:
         RuntimeError: If pg_restore cannot run.
     """
     result = checked(runner.run(("pg_restore", "--version")), "pg_restore --version")
-    match = re.search(r"(\d+(?:\.\d+)*)\s*$", result.stdout.strip())
+    match = re.search(r"PostgreSQL\)\s+(\d+(?:\.\d+)*)\b", result.stdout.strip())
     if match is None:
         raise ValueError("pg_restore version output is unrecognized")
     return match.group(1)
