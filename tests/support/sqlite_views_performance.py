@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
-from jobfeed.adapters.store.sqlite_views_performance import SqliteViewsPerformance
 
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
+from jobfeed.adapters.store.sqlite_views_performance import SqliteViewsPerformance
 from jobfeed.domain.models import PipelineRun
 
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
@@ -18,7 +18,14 @@ NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
 async def open_views_performance(
     path: Path,
 ) -> tuple[SqliteLifecycle, SqliteViewsPerformance]:
-    """Open one lifecycle and bind the views/performance capability."""
+    """Open one lifecycle and bind the views/performance capability.
+
+    Args:
+        path: Database file to initialize.
+
+    Returns:
+        The open lifecycle and its bound capability.
+    """
     lifecycle = SqliteLifecycle(path, ensure_sqlite_schema)
     await lifecycle.open()
     return lifecycle, SqliteViewsPerformance(lifecycle)
@@ -38,7 +45,24 @@ async def insert_job(  # noqa: PLR0913
     quality: str | None = "full",
     closed_at: str | None = None,
 ) -> int:
-    """Insert a deterministic jobs-view row and return its numeric id."""
+    """Insert a deterministic jobs-view row and return its numeric id.
+
+    Args:
+        lifecycle: Open database lifecycle.
+        canonical_id: Unique fixture identity.
+        discovered_at: Canonical discovery timestamp.
+        company: Display company.
+        company_norm: Persisted company twin key.
+        title: Display title.
+        title_norm: Persisted title twin key.
+        status: Seeded status override.
+        posted_at: Optional canonical posted timestamp.
+        quality: Optional JD quality.
+        closed_at: Optional canonical closure timestamp.
+
+    Returns:
+        Numeric store identity.
+    """
     async with lifecycle.connection() as connection:
         cursor = await connection.execute(
             """INSERT INTO jobs (
@@ -81,7 +105,17 @@ async def set_evaluation(  # noqa: PLR0913
     stage_b_status: str | None = None,
     stage_a_at: str | None = None,
 ) -> None:
-    """Insert one evaluation summary used by view and insights tests."""
+    """Insert one evaluation summary used by view and insights tests.
+
+    Args:
+        lifecycle: Open database lifecycle.
+        job_id: Existing job identity.
+        stage_a_score: Optional Stage A score.
+        fit_score: Optional Stage B fit score.
+        verdict: Optional Stage B verdict.
+        stage_b_status: Optional Stage B status.
+        stage_a_at: Optional canonical completion timestamp.
+    """
     fit_json = None if fit_score is None else f'{{"score_0_100":{fit_score}}}'
     async with lifecycle.connection() as connection:
         await connection.execute(
@@ -105,7 +139,12 @@ async def set_evaluation(  # noqa: PLR0913
 
 
 async def insert_run(lifecycle: SqliteLifecycle, run: PipelineRun) -> None:
-    """Insert a complete pipeline run without acquiring a run lease."""
+    """Insert a complete pipeline run without acquiring a run lease.
+
+    Args:
+        lifecycle: Open database lifecycle.
+        run: Run fixture to persist.
+    """
     async with lifecycle.connection() as connection:
         await connection.execute(
             """INSERT INTO pipeline_runs (
@@ -136,19 +175,39 @@ async def insert_run(lifecycle: SqliteLifecycle, run: PipelineRun) -> None:
 
 
 def utc_text(value: datetime) -> str:
-    """Encode an aware fixture time using canonical SQLite UTC text."""
+    """Encode an aware fixture time using canonical SQLite UTC text.
+
+    Args:
+        value: Aware datetime to encode.
+
+    Returns:
+        Canonical six-microsecond UTC timestamp.
+    """
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def discovered_text() -> str:
-    """Return the fixed fixture timestamp in canonical form."""
+    """Return the fixed fixture timestamp in canonical form.
+
+    Returns:
+        Canonical timestamp for ``NOW``.
+    """
     return utc_text(NOW)
 
 
 async def rows(
     lifecycle: SqliteLifecycle, statement: str, params: tuple[object, ...] = ()
 ) -> list[aiosqlite.Row]:
-    """Fetch raw rows for transaction and ordering assertions."""
+    """Fetch raw rows for transaction and ordering assertions.
+
+    Args:
+        lifecycle: Open database lifecycle.
+        statement: SQL query with positional placeholders.
+        params: Query parameter values.
+
+    Returns:
+        Materialized SQLite rows.
+    """
     async with lifecycle.connection() as connection:
         connection.row_factory = aiosqlite.Row
         cursor = await connection.execute(statement, params)

@@ -29,7 +29,11 @@ def _utc_now() -> datetime:
 
 
 def zero_overview() -> PerformanceOverview:
-    """Return the frozen empty performance aggregate."""
+    """Return the frozen empty performance aggregate.
+
+    Returns:
+        Zero-valued metrics and absent previous-window deltas.
+    """
     return PerformanceOverview(
         avg_scan_duration_ms=0,
         avg_eval_duration_ms=0,

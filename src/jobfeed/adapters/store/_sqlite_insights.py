@@ -57,6 +57,13 @@ def _merge_days(
     evaluated: list[aiosqlite.Row],
     applied: list[aiosqlite.Row],
 ) -> list[InsightsDay]:
+    """Merge three sparse measure series.
+
+    Time complexity: O(n log n) for a linear merge followed by day sorting.
+
+    Returns:
+        Non-empty daily buckets sorted ascending, with missing measures zeroed.
+    """
     by_day: dict[date, dict[str, int]] = {}
     for measure, records in (
         ("discovered", discovered),
