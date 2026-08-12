@@ -3,6 +3,109 @@ set -euo pipefail
 
 REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 2
+}
+
+if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
+    shift 2
+    dump_input=""
+    artifact_input=""
+    forwarded=(migrate capture-postgres-baseline)
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --source-dump)
+                [ "$#" -ge 2 ] || fail "--source-dump requires a path"
+                [ -z "$dump_input" ] || fail "--source-dump may be provided only once"
+                dump_input="$2"
+                shift 2
+                ;;
+            --source-dump=*)
+                [ -z "$dump_input" ] || fail "--source-dump may be provided only once"
+                dump_input="${1#*=}"
+                shift
+                ;;
+            --artifact-dir)
+                [ "$#" -ge 2 ] || fail "--artifact-dir requires a path"
+                [ -z "$artifact_input" ] || fail "--artifact-dir may be provided only once"
+                artifact_input="$2"
+                shift 2
+                ;;
+            --artifact-dir=*)
+                [ -z "$artifact_input" ] || fail "--artifact-dir may be provided only once"
+                artifact_input="${1#*=}"
+                shift
+                ;;
+            *)
+                forwarded+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    [ -n "$dump_input" ] || fail "--source-dump is required"
+    [ -n "$artifact_input" ] || fail "--artifact-dir is required"
+    [ ! -L "$dump_input" ] || fail "--source-dump must not be a symbolic link"
+    [ -f "$dump_input" ] || fail "--source-dump must be an existing regular file"
+    [ ! -e "$artifact_input" ] && [ ! -L "$artifact_input" ] \
+        || fail "--artifact-dir must not already exist"
+
+    dump_parent="$(CDPATH= cd -- "$(dirname -- "$dump_input")" && pwd -P)"
+    dump_host="$dump_parent/$(basename -- "$dump_input")"
+    artifact_parent_input="$(dirname -- "$artifact_input")"
+    mkdir -p -- "$artifact_parent_input"
+    artifact_parent="$(CDPATH= cd -- "$artifact_parent_input" && pwd -P)"
+    artifact_name="$(basename -- "$artifact_input")"
+    [ "$artifact_name" != "." ] && [ "$artifact_name" != ".." ] \
+        || fail "--artifact-dir must name a new child directory"
+
+    case "$dump_host" in
+        "$artifact_parent"/*)
+            fail "read-write artifact mount would expose source dump"
+            ;;
+    esac
+
+    export JOBFEED_MIGRATION_DUMP_HOST="$dump_host"
+    export JOBFEED_MIGRATION_ARTIFACT_PARENT_HOST="$artifact_parent"
+    forwarded+=(
+        --source-dump /migration/input/source.dump
+        --artifact-dir "/migration/artifacts/$artifact_name"
+    )
+
+    project_name="jobfeed-migration-${PPID}-$$-${RANDOM}"
+    compose=(
+        docker compose
+        --project-directory "$REPO_ROOT"
+        --project-name "$project_name"
+        --profile migration
+    )
+
+    cleanup_migration_project() {
+        status=$?
+        trap - EXIT INT TERM HUP
+        if ! "${compose[@]}" down --volumes --remove-orphans --timeout=30; then
+            printf 'error: migration project cleanup failed\n' >&2
+            printf 'Recovery: docker compose --project-directory %q --project-name %q --profile migration down --volumes --remove-orphans --timeout=30\n' \
+                "$REPO_ROOT" "$project_name" >&2
+            exit 70
+        fi
+        exit "$status"
+    }
+    trap cleanup_migration_project EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+
+    migration_args=("${compose[@]}" run --build --rm)
+    if [ ! -t 0 ]; then
+        migration_args+=(-T)
+    fi
+    "${migration_args[@]}" migration-runner jobfeed "${forwarded[@]}"
+    exit $?
+fi
+
 args=(docker compose run --rm)
 if [ ! -t 0 ]; then
     args+=(-T)

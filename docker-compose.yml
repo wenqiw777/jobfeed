@@ -75,7 +75,71 @@ services:
       postgres:
         condition: service_healthy
 
+  restore-source:
+    image: postgres:16
+    profiles: ["migration"]
+    environment:
+      POSTGRES_USER: jobfeed_restore
+      POSTGRES_PASSWORD: jobfeed_restore
+      POSTGRES_DB: jobfeed_restore
+    volumes:
+      - restore_source_data:/var/lib/postgresql/data
+    networks: ["migration-internal"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobfeed_restore -d jobfeed_restore"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  restore-scratch:
+    image: postgres:16
+    profiles: ["migration"]
+    environment:
+      POSTGRES_USER: jobfeed_restore
+      POSTGRES_PASSWORD: jobfeed_restore
+      POSTGRES_DB: jobfeed_restore
+    volumes:
+      - restore_scratch_data:/var/lib/postgresql/data
+    networks: ["migration-internal"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobfeed_restore -d jobfeed_restore"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migration-runner:
+    image: ${JOBFEED_MIGRATION_IMAGE:-jobfeed-migration:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.migration
+    profiles: ["migration"]
+    working_dir: /app
+    environment:
+      JOBFEED_MIGRATION_PG_URL: "postgresql://jobfeed_restore:jobfeed_restore@restore-source:5432/jobfeed_restore"
+      JOBFEED_MIGRATION_SCRATCH_PG_URL: "postgresql://jobfeed_restore:jobfeed_restore@restore-scratch:5432/jobfeed_restore"
+      JOBFEED_BENCH_MACHINE_TOKEN: "${JOBFEED_BENCH_MACHINE_TOKEN:-}"
+    volumes:
+      - type: bind
+        source: ${JOBFEED_MIGRATION_DUMP_HOST:-/dev/null}
+        target: /migration/input/source.dump
+        read_only: true
+      - type: bind
+        source: ${JOBFEED_MIGRATION_ARTIFACT_PARENT_HOST:-.}
+        target: /migration/artifacts
+    networks: ["migration-internal"]
+    depends_on:
+      restore-source:
+        condition: service_healthy
+      restore-scratch:
+        condition: service_healthy
+
+networks:
+  migration-internal:
+    internal: true
+
 volumes:
   pgdata:
   mlcache:
   jaeger_data:
+  restore_source_data:
+  restore_scratch_data:
