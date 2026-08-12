@@ -656,6 +656,18 @@ mypy 全绿。本机未跟踪 `config.toml` 的 `[db]` 已从旧 URL 切为 SQLi
 - **证据：** cutover checklist、恢复记录、7 天运行记录、最终 `make quality` 和 CI。
 - **返回设计：** soak 出现数据损坏、重复付费或无法恢复时立即 rollback，不允许进入 Task 8。
 
+**状态（2026-08-12）：rehearsal 完成 / 正式 cutover 待明确批准。** Canonical
+`./bin/jobfeed migrate import-postgres-snapshot` 已从冻结的 PostgreSQL 0007 dump
+完成隔离 restore、0008 upgrade、14 表导入与 exact parity。最终 SQLite 为
+412,409,856 bytes，包含 56,507 jobs；14 表共迁移 188,276 rows，另有两条
+idle `run_leases`。Cutover 与 provenance validators 均 PASS，SQLite
+`integrity_check=ok`、FK violations=0、`user_version=1`，无 WAL/SHM sidecar。
+正式 `jobfeed-postgres-1` 与 `jobfeed_pgdata` 的迁移前/工作后指纹写入 artifact
+并完全相同；cleanup 后再次核对仍相同，正式 container 保持 exited。隔离
+containers/networks/volumes 残留为 0/0/0。完整 `make quality` 为 1854 passed /
+418 deselected，Ruff、format、mypy 全绿。尚未把 SQLite artifact 安装到正式
+runtime volume，也未启动 7 天 soak；该写操作需要独立明确批准。
+
 ### Task 8：PG-only 清理（独立批准后）
 
 - **结果：** 删除 `PostgresStore`、Postgres compose service、PG Alembic runtime、asyncpg、PG testcontainers/CI lane、旧 PG import path 和过时文档；SQLite 成为唯一正式 backend。
@@ -739,9 +751,9 @@ mypy 全绿。本机未跟踪 `config.toml` 的 `[db]` 已从旧 URL 切为 SQLi
 
 ## 15. Readiness 状态
 
-独立 agent 完成了 Task 0 合同审计；用户已选择第 14 节方案 1。按第
-10.2 节修正后的 milestone cadence，Task 0 的唯一最终 gate 已由真实 canonical
-命令通过，因此当前状态是 **Task 0 COMPLETE / TASK 1 READY**。
+独立 agent 完成了 Task 0 合同审计；用户已选择第 14 节方案 1。Task 0–6
+均已完成，Task 7 的真实 canonical rehearsal 也已通过。因此当前状态是
+**TASK 7 REHEARSAL COMPLETE / FORMAL CUTOVER AWAITING EXPLICIT AUTHORIZATION**。
 
 | 检查 | 状态 |
 |---|---|
@@ -757,6 +769,9 @@ mypy 全绿。本机未跟踪 `config.toml` 的 `[db]` 已从旧 URL 切为 SQLi
 | 真实 0008 snapshot manifest | **PASS**：隔离 0007 dump 升级至 0008；14 表、188,276 rows |
 | 同机 PG benchmark | **PASS**：30 samples × 14 queries；434 successful claims；0 duplicate/data loss |
 | Baseline harness | **PASS**：canonical 命令 155 秒；exact evidence/provenance validators 通过；隔离资源残留 0/0/0；正式 PG 未变化 |
+| Forward cutover rehearsal | **PASS**：14 表 / 188,276 rows；exact parity；SQLite integrity/FK 通过 |
+| 正式 PG 保护 | **PASS**：artifact 绑定迁移前/后正式 container+volume 指纹；cleanup 后复核一致；container 保持 exited |
+| 正式 SQLite install | **WAITING**：需要明确授权后才写入 runtime volume |
 
 ### 15.1 Task 0 implementation reality：migration control-plane
 
@@ -819,3 +834,11 @@ rollback 或长期双写的要求都属于 material plan drift，必须返回设
 - 使用仓库 `.venv/bin` 运行 `make quality`：Ruff、format、mypy 全通过；pytest **1,479 passed、482 deselected**。
 - Codec/manifest/hygiene 定向测试 **54 passed**；PG process/JSON/release 定向测试 **14 passed**。
 - Task 0 已新增行为合同、PostgreSQL characterization tests、versioned canonical codec、14 表/153 列 executable registry 和已运行的 canonical evidence bundle；尚未新增 SQLite runtime adapter 或修改正式 PostgreSQL 数据。
+- Task 7 final rehearsal artifact：
+  `/Users/wenqiwang/wwq/jobfeed-sqlite-rehearsal-evidence/2026-08-12-task7-final-2643adf`。
+  SQLite SHA-256 为
+  `9c6e49a02160530c3378c65a1633ffb61df1f94cf666f3add48adeb393962126`；
+  cutover evidence index SHA-256 为
+  `f4e8824537a06ca15af9a2c20344fe33e0f8ccb79e7f3084b49efcec7bdbd8d3`；
+  formal-resource fingerprint SHA-256 为
+  `4b90af332127975d1167476b63c02b022fc9e6c2359638875c3ed54b9a85dab9`。
