@@ -31,11 +31,11 @@ _SERVICE_KEYS = {
     "project_label",
     "network_name",
 }
-RESTORE_BOOTSTRAP_PATH = Path("/run/jobfeed-migration/bootstrap.json")
+RESTORE_BOOTSTRAP_PATH = Path("/run/jobfeed-migration/input/bootstrap.json")
 RESTORE_DUMP_PATH = Path("/run/jobfeed-migration/source.dump")
-RESTORE_POST_INSPECTION_PATH = Path("/run/jobfeed-migration/post-inspection.json")
-RESTORE_CAPTURE_READY_PATH = Path("/run/jobfeed-migration/capture-ready.json")
-RESTORE_VERIFIED_PATH = Path("/run/jobfeed-migration/provenance-verified.json")
+RESTORE_POST_INSPECTION_PATH = Path("/run/jobfeed-migration/input/post-inspection.json")
+RESTORE_CAPTURE_READY_PATH = Path("/run/jobfeed-migration/output/capture-ready.json")
+RESTORE_VERIFIED_PATH = Path("/run/jobfeed-migration/output/provenance-verified.json")
 SOURCE_RESTORE_DSN = "postgresql://jobfeed@restore-source:5432/jobfeed_restore"
 SCRATCH_RESTORE_DSN = "postgresql://jobfeed@restore-scratch:5432/jobfeed_restore"
 

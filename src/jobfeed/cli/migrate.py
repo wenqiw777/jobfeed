@@ -41,7 +41,7 @@ from jobfeed.adapters.store.parity import verify_import_parity
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.cli import require_app
 
-_RESTORE_PRE_INSPECTION_PATH = Path("/run/jobfeed-migration/pre-inspection.json")
+_RESTORE_PRE_INSPECTION_PATH = Path("/run/jobfeed-migration/input/pre-inspection.json")
 _GIT_COMMIT_LENGTH = 40
 
 
@@ -115,9 +115,47 @@ def _publish_provenance(
     for filename, document in documents.items():
         _write_new_json(staging / filename, document)
     _write_new_json(staging / "provenance-index.json", provenance_index)
-    if artifact_dir.exists():
-        raise FileExistsError(f"artifact bundle appeared concurrently: {artifact_dir}")
-    staging.rename(artifact_dir)
+    _publish_directory_no_replace(staging, artifact_dir)
+
+
+def _publish_directory_no_replace(staging: Path, destination: Path) -> None:
+    """Claim and durably publish a bundle without replacing another run.
+
+    Args:
+        staging: Same-filesystem private directory containing complete files.
+        destination: New public artifact directory claimed with mkdir exclusivity.
+
+    Raises:
+        FileExistsError: If another run already owns the destination.
+        OSError: If moving or syncing any artifact fails.
+    """
+    os.mkdir(destination, mode=0o700)
+    complete = False
+    try:
+        filenames = sorted(
+            path.name
+            for path in staging.iterdir()
+            if path.name != "provenance-index.json"
+        )
+        filenames.append("provenance-index.json")
+        for filename in filenames:
+            (staging / filename).rename(destination / filename)
+        _fsync_directory(destination)
+        staging.rmdir()
+        _fsync_directory(destination.parent)
+        complete = True
+    finally:
+        if not complete:
+            shutil.rmtree(destination, ignore_errors=True)
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 # ---- Helpers ----

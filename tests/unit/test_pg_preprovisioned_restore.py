@@ -10,6 +10,10 @@ from pathlib import Path
 import pytest
 
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
+from jobfeed.adapters.migration.baseline_provenance import (
+    build_provenance_index,
+    validate_provenance_bundle,
+)
 from jobfeed.adapters.migration.pg_preprovisioned_restore import (
     CaptureReady,
     PreprovisionedRestoreConfig,
@@ -166,8 +170,14 @@ def _host_docs(dump_path: Path) -> dict[str, object]:
                 },
                 {
                     "Type": "bind",
-                    "Source": "/host/run",
-                    "Destination": "/run/jobfeed-migration",
+                    "Source": "/host/input",
+                    "Destination": "/run/jobfeed-migration/input",
+                    "RW": False,
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/host/output",
+                    "Destination": "/run/jobfeed-migration/output",
                     "RW": True,
                 },
             ]
@@ -354,6 +364,39 @@ def test_host_verifier_rejects_formal_or_extra_storage_mount(tmp_path: Path) -> 
     mount["Name"] = "jobfeed_pgdata"
     with pytest.raises(ValueError, match="storage mismatch"):
         verify_host_inspection(config.bootstrap, documents, documents)
+
+
+def test_final_provenance_index_rejects_nested_tampering(tmp_path: Path) -> None:
+    """Persisted host evidence has exact coverage, hashes, and marker links."""
+    config = _config(tmp_path)
+    host_docs = _host_docs(config.dump_path)
+    bootstrap_document = _bootstrap(config.dump_path)
+    bootstrap_hash = bootstrap_sha256(config.bootstrap)
+    evidence_index = {"evidence_version": 1}
+    documents = {
+        "restore-bootstrap.json": bootstrap_document,
+        "pre-inspection.json": host_docs,
+        "post-inspection.json": copy.deepcopy(host_docs),
+        "capture-ready.json": {
+            "marker_version": 1,
+            "bootstrap_sha256": bootstrap_hash,
+            "evidence_bundle_sha256": "e" * 64,
+        },
+        "provenance-verified.json": {
+            "verified_version": 1,
+            "bootstrap_sha256": bootstrap_hash,
+            "evidence_bundle_sha256": "e" * 64,
+        },
+    }
+    index = build_provenance_index(documents, evidence_index)
+    validate_provenance_bundle(documents, evidence_index, index)
+
+    tampered = copy.deepcopy(documents)
+    verified = tampered["provenance-verified.json"]
+    assert isinstance(verified, dict)
+    verified["extra"] = "forged"
+    with pytest.raises(ValueError, match=r"hash mismatch|exact schema"):
+        validate_provenance_bundle(tampered, evidence_index, index)
 
 
 def test_two_phase_markers_bind_resources_and_evidence_bundle(tmp_path: Path) -> None:

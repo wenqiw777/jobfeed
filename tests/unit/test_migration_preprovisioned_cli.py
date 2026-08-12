@@ -14,6 +14,27 @@ from jobfeed.adapters.migration._pg_preprovisioned_markers import CaptureReady
 migrate_module = importlib.import_module("jobfeed.cli.migrate")
 
 
+def test_final_publish_never_replaces_concurrent_destination(tmp_path: Path) -> None:
+    """A competing artifact directory remains byte-for-byte untouched."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "evidence-index.json").write_text("new", encoding="utf-8")
+    destination = tmp_path / "bundle"
+    destination.mkdir()
+    sentinel = destination / "owned-by-other-run"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    try:
+        migrate_module._publish_directory_no_replace(staging, destination)
+    except FileExistsError:
+        pass
+    else:
+        raise AssertionError("concurrent destination was replaced")
+
+    assert sentinel.read_text("utf-8") == "keep"
+    assert (staging / "evidence-index.json").read_text("utf-8") == "new"
+
+
 def test_hidden_runner_captures_then_verifies_host_inspection(
     tmp_path: Path, monkeypatch: object
 ) -> None:

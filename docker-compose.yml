@@ -131,8 +131,12 @@ services:
         source: ${JOBFEED_MIGRATION_ARTIFACT_PARENT_HOST:-.}
         target: /migration/artifacts
       - type: bind
-        source: ${JOBFEED_MIGRATION_RUN_HOST:-.}
-        target: /run/jobfeed-migration
+        source: ${JOBFEED_MIGRATION_INPUT_HOST:-.}
+        target: /run/jobfeed-migration/input
+        read_only: true
+      - type: bind
+        source: ${JOBFEED_MIGRATION_OUTPUT_HOST:-.}
+        target: /run/jobfeed-migration/output
     networks: ["migration-internal"]
     depends_on:
       restore-source:

@@ -14,7 +14,11 @@ _INSPECTION_KEYS = {"network", "source", "scratch", "runner"}
 _PROJECT_LABEL = "com.docker.compose.project"
 _SERVICE_LABEL = "com.docker.compose.service"
 _PGDATA_DESTINATION = "/var/lib/postgresql/data"
-_RUNNER_WRITABLE_DESTINATIONS = {"/run/jobfeed-migration", "/migration/artifacts"}
+_RUNNER_INPUT_DESTINATION = "/run/jobfeed-migration/input"
+_RUNNER_WRITABLE_DESTINATIONS = {
+    "/run/jobfeed-migration/output",
+    "/migration/artifacts",
+}
 
 
 def verify_host_inspection(
@@ -108,7 +112,8 @@ def _verify_container(
         raise ValueError(f"{phase} host {expected.service} mounts missing")
     if needs_dump_mount:
         expected_destinations = _RUNNER_WRITABLE_DESTINATIONS | {
-            str(bootstrap.dump_mount.runner_path)
+            _RUNNER_INPUT_DESTINATION,
+            str(bootstrap.dump_mount.runner_path),
         }
         if (
             len(mounts) != len(expected_destinations)
@@ -123,7 +128,14 @@ def _verify_container(
         )
         if dump.get("Type") != "bind" or dump.get("RW") is not False:
             raise ValueError(f"{phase} host runner dump mount is not read-only")
-        writable = [mount for mount in mounts if mount is not dump]
+        host_input = next(
+            mount
+            for mount in mounts
+            if _mount_destination(mount, phase) == _RUNNER_INPUT_DESTINATION
+        )
+        if host_input.get("Type") != "bind" or host_input.get("RW") is not False:
+            raise ValueError(f"{phase} host runner input mount is not read-only")
+        writable = [mount for mount in mounts if mount not in (dump, host_input)]
         if any(
             _mapping(mount, f"{phase} runner writable mount").get("Type") != "bind"
             or _mapping(mount, f"{phase} runner writable mount").get("RW") is not True

@@ -39,7 +39,7 @@ def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
         "network = project + '_migration-internal'\n"
         "if 'run' in args and '-d' in args:\n"
         "    print(ids['migration-runner'])\n"
-        "    root = os.environ['JOBFEED_MIGRATION_RUN_HOST']\n"
+        "    root = os.environ['JOBFEED_MIGRATION_OUTPUT_HOST']\n"
         "    open(os.path.join(root, 'capture-ready.json'), 'w').write('{}')\n"
         "elif 'ps' in args and '-q' in args:\n"
         "    print(ids[args[-1]])\n"
@@ -59,7 +59,7 @@ def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
         "    elif template == '{{.Image}}': print(doc['Image'])\n"
         "    elif template == '{{.State.Running}}':\n"
         "      print('false' if os.path.exists(os.path.join(\n"
-        "       os.environ['JOBFEED_MIGRATION_RUN_HOST'], 'post-inspection.json'))\n"
+        "       os.environ['JOBFEED_MIGRATION_INPUT_HOST'], 'post-inspection.json'))\n"
         "       else 'true')\n"
         "    elif 'compose.project' in template: print(project)\n"
         "    elif 'compose.service' in template: print(service)\n"
@@ -75,7 +75,7 @@ def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
         "    elif template == '{{.Internal}}': print('true')\n"
         "    else: print(json.dumps(doc))\n"
         "elif args[:1] == ['wait']:\n"
-        "    root = os.environ['JOBFEED_MIGRATION_RUN_HOST']\n"
+        "    root = os.environ['JOBFEED_MIGRATION_OUTPUT_HOST']\n"
         "    open(os.path.join(root, 'provenance-verified.json'), 'w').write('{}')\n"
         "    print('0')\n"
         "if 'down' in sys.argv and os.environ.get('FAKE_DOCKER_DOWN_FAIL') == '1':\n"
@@ -331,6 +331,13 @@ def test_migration_compose_services_are_socket_free_and_formal_db_independent() 
         "JOBFEED_MIGRATION_TIMEOUT_SECONDS",
     }
     assert all("API_KEY" not in key for key in runner["environment"])
+    mounts = {volume["target"]: volume for volume in runner["volumes"]}
+    assert mounts["/run/jobfeed-migration/input"]["read_only"] is True
+    assert mounts["/run/jobfeed-migration/output"].get("read_only") is not True
+    assert (
+        mounts["/run/jobfeed-migration/input"]["source"]
+        != mounts["/run/jobfeed-migration/output"]["source"]
+    )
     assert document["networks"]["migration-internal"]["internal"] is True
     assert all("pgdata" not in str(volume) for volume in source["volumes"])
     assert all("pgdata" not in str(volume) for volume in scratch["volumes"])

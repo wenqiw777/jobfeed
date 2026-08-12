@@ -108,6 +108,11 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     export JOBFEED_MIGRATION_TIMEOUT_SECONDS="$migration_timeout"
     run_host="$(mktemp -d "$artifact_parent/.jobfeed-migration-control.XXXXXX")"
     export JOBFEED_MIGRATION_RUN_HOST="$run_host"
+    input_host="$run_host/input"
+    output_host="$run_host/output"
+    mkdir -m 0700 "$input_host" "$output_host"
+    export JOBFEED_MIGRATION_INPUT_HOST="$input_host"
+    export JOBFEED_MIGRATION_OUTPUT_HOST="$output_host"
     forwarded+=(
         --artifact-dir "/migration/artifacts/$artifact_name"
     )
@@ -152,7 +157,7 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
 
     write_inspection() {
         destination="$1"
-        temporary="$destination.tmp"
+        temporary="$(mktemp "$input_host/.inspection.XXXXXX")"
         {
             printf '{"network":'
             docker network inspect --format '{{json .}}' "$network_name"
@@ -168,12 +173,12 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
         mv "$temporary" "$destination"
     }
 
-    write_inspection "$run_host/pre-inspection.json"
+    write_inspection "$input_host/pre-inspection.json"
     dump_sha="$(shasum -a 256 "$dump_host" | awk '{print $1}')"
     source_image="$(docker inspect --format '{{.Image}}' "$source_id")"
     scratch_image="$(docker inspect --format '{{.Image}}' "$scratch_id")"
     runner_image="$(docker inspect --format '{{.Image}}' "$runner_id")"
-    bootstrap_tmp="$run_host/bootstrap.json.tmp"
+    bootstrap_tmp="$(mktemp "$input_host/.bootstrap.XXXXXX")"
     printf '{"bootstrap_version":1,"project_label":"%s","network":{"name":"%s","internal":true},"dump_mount":{"runner_path":"/run/jobfeed-migration/source.dump","read_only":true,"sha256":"%s"},"source":{"service":"restore-source","container_id":"%s","image_digest":"%s","project_label":"%s","network_name":"%s"},"scratch":{"service":"restore-scratch","container_id":"%s","image_digest":"%s","project_label":"%s","network_name":"%s"},"runner":{"service":"migration-runner","container_id":"%s","image_digest":"%s","project_label":"%s","network_name":"%s"}}\n' \
         "$project_name" "$network_name" "$dump_sha" \
         "$source_id" "$source_image" "$project_name" "$network_name" \
@@ -181,11 +186,11 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
         "$runner_id" "$runner_image" "$project_name" "$network_name" \
         >"$bootstrap_tmp"
     chmod 0400 "$bootstrap_tmp"
-    mv "$bootstrap_tmp" "$run_host/bootstrap.json"
+    mv "$bootstrap_tmp" "$input_host/bootstrap.json"
 
     deadline=$((SECONDS + migration_timeout))
     while [ "$SECONDS" -lt "$deadline" ]; do
-        [ -f "$run_host/capture-ready.json" ] && break
+        [ -f "$output_host/capture-ready.json" ] && break
         runner_running="$(docker inspect --format '{{.State.Running}}' "$runner_id")"
         if [ "$runner_running" != "true" ]; then
             runner_status="$(docker wait "$runner_id")"
@@ -194,8 +199,8 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
         fi
         sleep 0.25
     done
-    [ -f "$run_host/capture-ready.json" ] || fail "migration runner capture timed out"
-    write_inspection "$run_host/post-inspection.json"
+    [ -f "$output_host/capture-ready.json" ] || fail "migration runner capture timed out"
+    write_inspection "$input_host/post-inspection.json"
     deadline=$((SECONDS + migration_timeout))
     while [ "$SECONDS" -lt "$deadline" ]; do
         runner_running="$(docker inspect --format '{{.State.Running}}' "$runner_id")"
@@ -206,7 +211,7 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     runner_status="$(docker wait "$runner_id")"
     docker logs "$runner_id"
     [ "$runner_status" = "0" ] || fail "migration runner failed with $runner_status"
-    [ -f "$run_host/provenance-verified.json" ] \
+    [ -f "$output_host/provenance-verified.json" ] \
         || fail "migration provenance verification marker missing"
     exit 0
 fi
