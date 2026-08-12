@@ -86,6 +86,7 @@ async def test_followup_note_list_decay_and_attention_use_application_utc(
     assert [row.job_id for row in due] == [job_id]
     attention = await status.workflow_attention()
     assert [row.job_id for row in attention.follow_up_today] == [job_id]
+    assert attention.follow_up_today[0].days_since == 0
 
     async with lifecycle.connection() as connection:
         await connection.execute(

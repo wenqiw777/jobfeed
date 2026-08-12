@@ -551,5 +551,5 @@ def _attention_item(
         next_followup_at=followup,
         notes=row["notes"],
         reason=reason,
-        days_since=(now - baseline).days,
+        days_since=int((now - baseline).total_seconds() / 86_400),
     )
