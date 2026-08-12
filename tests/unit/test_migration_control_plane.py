@@ -28,7 +28,50 @@ def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
         "        'dump': os.environ.get('JOBFEED_MIGRATION_DUMP_HOST'),\n"
         "        'artifacts': os.environ.get(\n"
         "            'JOBFEED_MIGRATION_ARTIFACT_PARENT_HOST'),\n"
+        "        'run_root': os.environ.get('JOBFEED_MIGRATION_RUN_HOST'),\n"
         "    }}, ensure_ascii=False) + '\\n')\n"
+        "args = sys.argv[1:]\n"
+        "ids = {'restore-source': 'a' * 64, 'restore-scratch': 'b' * 64,\n"
+        "       'migration-runner': 'c' * 64}\n"
+        "project = os.environ.get('JOBFEED_MIGRATION_PROJECT', 'missing')\n"
+        "network = project + '_migration-internal'\n"
+        "if 'run' in args and '-d' in args:\n"
+        "    print(ids['migration-runner'])\n"
+        "    root = os.environ['JOBFEED_MIGRATION_RUN_HOST']\n"
+        "    open(os.path.join(root, 'capture-ready.json'), 'w').write('{}')\n"
+        "elif 'ps' in args and '-q' in args:\n"
+        "    print(ids[args[-1]])\n"
+        "elif args[:1] == ['inspect']:\n"
+        "    cid = args[-1]\n"
+        "    service = next(name for name, value in ids.items() if value == cid)\n"
+        "    mounts = [] if service != 'migration-runner' else [\n"
+        "      {'Type': 'bind', 'Destination':\n"
+        "       '/run/jobfeed-migration/source.dump', 'RW': False}]\n"
+        "    doc = {'Id': cid, 'Image': 'sha256:' + cid,\n"
+        "      'Config': {'Labels': {'com.docker.compose.project': project,\n"
+        "       'com.docker.compose.service': service}}, 'NetworkSettings':\n"
+        "      {'Networks': {network: {}}}, 'Mounts': mounts}\n"
+        "    template = (args[args.index('--format') + 1]\n"
+        "                if '--format' in args else '')\n"
+        "    if template == '{{.Id}}': print(doc['Id'])\n"
+        "    elif template == '{{.Image}}': print(doc['Image'])\n"
+        "    elif 'compose.project' in template: print(project)\n"
+        "    elif 'compose.service' in template: print(service)\n"
+        "    elif 'NetworkSettings.Networks' in template: print(network)\n"
+        "    else: print(json.dumps(doc))\n"
+        "elif args[:2] == ['network', 'inspect']:\n"
+        "    doc = {'Id': 'd' * 64, 'Name': network,\n"
+        "      'Internal': True, 'Labels':\n"
+        "      {'com.docker.compose.project': project}}\n"
+        "    template = (args[args.index('--format') + 1]\n"
+        "                if '--format' in args else '')\n"
+        "    if template == '{{.Name}}': print(network)\n"
+        "    elif template == '{{.Internal}}': print('true')\n"
+        "    else: print(json.dumps(doc))\n"
+        "elif args[:1] == ['wait']:\n"
+        "    root = os.environ['JOBFEED_MIGRATION_RUN_HOST']\n"
+        "    open(os.path.join(root, 'provenance-verified.json'), 'w').write('{}')\n"
+        "    print('0')\n"
         "if 'down' in sys.argv and os.environ.get('FAKE_DOCKER_DOWN_FAIL') == '1':\n"
         "    raise SystemExit(42)\n",
         encoding="utf-8",
@@ -88,7 +131,7 @@ def test_capture_route_uses_run_scoped_profile_and_rewrites_unicode_paths(
     )
 
     assert result.returncode == 0, result.stderr
-    assert len(calls) == _RUN_AND_DOWN_CALLS
+    assert len(calls) > _RUN_AND_DOWN_CALLS
     run = calls[0]
     argv = run["argv"]
     assert argv[:2] == ["compose", "--project-directory"]
@@ -99,23 +142,36 @@ def test_capture_route_uses_run_scoped_profile_and_rewrites_unicode_paths(
         "--profile",
         "migration",
     ]
-    assert argv[argv.index("run") : argv.index("run") + 5] == [
+    assert argv[argv.index("up") : argv.index("up") + 5] == [
+        "up",
+        "-d",
+        "--wait",
+        "restore-source",
+        "restore-scratch",
+    ]
+    detached = next(call for call in calls if "run" in call["argv"])
+    detached_argv = detached["argv"]
+    assert detached_argv[
+        detached_argv.index("run") : detached_argv.index("run") + 4
+    ] == [
         "run",
         "--build",
-        "--rm",
-        "-T",
-        "migration-runner",
+        "-d",
+        "--no-deps",
     ]
-    assert argv[
-        argv.index("migration-runner") + 1 : argv.index("migration-runner") + 4
-    ] == ["jobfeed", "migrate", "capture-postgres-baseline"]
-    assert "/migration/input/source.dump" in argv
-    assert "/migration/artifacts/输出 bundle" in argv
-    assert run["env"] == {
+    assert "_capture-preprovisioned-baseline" in detached_argv
+    assert "/migration/artifacts/输出 bundle" in detached_argv
+    assert run["env"]["dump"] == str(dump.resolve())
+    assert run["env"]["artifacts"] == str(output_workspace.resolve())
+    assert run["env"]["run_root"]
+    assert any(call["argv"][:1] == ["inspect"] for call in calls)
+    assert any(call["argv"][:1] == ["wait"] for call in calls)
+    assert detached["env"] == {
         "dump": str(dump.resolve()),
         "artifacts": str(output_workspace.resolve()),
+        "run_root": detached["env"]["run_root"],
     }
-    down = calls[1]["argv"]
+    down = calls[-1]["argv"]
     assert project in down
     assert down[-3:] == ["--volumes", "--remove-orphans", "--timeout=30"]
 
@@ -142,7 +198,7 @@ def test_capture_cleanup_failure_is_nonzero_and_prints_recovery_command(
         cleanup_fails=True,
     )
 
-    assert len(calls) == _RUN_AND_DOWN_CALLS
+    assert len(calls) > _RUN_AND_DOWN_CALLS
     assert result.returncode != 0
     assert "cleanup failed" in result.stderr
     assert "docker compose" in result.stderr
@@ -174,6 +230,32 @@ def test_capture_rejects_rw_alias_to_dump_and_normal_route_is_unchanged(
     assert normal.returncode == 0
     assert len(calls) == 1
     assert calls[0]["argv"][-3:] == ["jobfeed-cli", "jobfeed", "digest"]
+
+
+def test_capture_rejects_user_supplied_attestation_before_docker(
+    tmp_path: Path,
+) -> None:
+    """The public route derives provenance and never forwards user evidence."""
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    dump = input_dir / "source.dump"
+    dump.write_bytes(b"pgdump")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    result, calls = _run_wrapper(
+        tmp_path,
+        "migrate",
+        "capture-postgres-baseline",
+        "--source-dump",
+        str(dump),
+        "--artifact-dir",
+        str(output_dir / "bundle"),
+        "--source-restore-attestation",
+        "forged.json",
+    )
+    assert result.returncode != 0
+    assert "not accepted" in result.stderr
+    assert calls == []
 
 
 def test_migration_compose_services_are_socket_free_and_formal_db_independent() -> None:

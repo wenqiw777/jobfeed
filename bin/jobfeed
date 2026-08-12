@@ -12,7 +12,11 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     shift 2
     dump_input=""
     artifact_input=""
-    forwarded=(migrate capture-postgres-baseline)
+    forwarded=(
+        migrate capture-postgres-baseline
+        --workload /app/docs/contracts/fixtures/sqlite-store-benchmark-v1.json
+        --machine-token-env JOBFEED_BENCH_MACHINE_TOKEN
+    )
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -37,6 +41,23 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
                 [ -z "$artifact_input" ] || fail "--artifact-dir may be provided only once"
                 artifact_input="${1#*=}"
                 shift
+                ;;
+            --machine-token-env)
+                [ "$#" -ge 2 ] || fail "--machine-token-env requires a name"
+                [ "$2" = "JOBFEED_BENCH_MACHINE_TOKEN" ] \
+                    || fail "--machine-token-env must use JOBFEED_BENCH_MACHINE_TOKEN"
+                shift 2
+                ;;
+            --machine-token-env=JOBFEED_BENCH_MACHINE_TOKEN)
+                shift
+                ;;
+            --machine-token-env=*|--workload|--workload=*)
+                fail "benchmark workload and machine token contract are fixed"
+                ;;
+            --source-restore-attestation|--source-restore-attestation=*|\
+            --scratch-restore-attestation|--scratch-restore-attestation=*|\
+            --dsn-env|--dsn-env=*|--scratch-dsn-env|--scratch-dsn-env=*)
+                fail "user-provided DSNs and restore attestations are not accepted"
                 ;;
             *)
                 forwarded+=("$1")
@@ -69,8 +90,9 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
 
     export JOBFEED_MIGRATION_DUMP_HOST="$dump_host"
     export JOBFEED_MIGRATION_ARTIFACT_PARENT_HOST="$artifact_parent"
+    run_host="$(mktemp -d "$artifact_parent/.jobfeed-migration-control.XXXXXX")"
+    export JOBFEED_MIGRATION_RUN_HOST="$run_host"
     forwarded+=(
-        --source-dump /migration/input/source.dump
         --artifact-dir "/migration/artifacts/$artifact_name"
     )
 
@@ -81,6 +103,7 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
         --project-name "$project_name"
         --profile migration
     )
+    export JOBFEED_MIGRATION_PROJECT="$project_name"
 
     cleanup_migration_project() {
         status=$?
@@ -91,6 +114,7 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
                 "$REPO_ROOT" "$project_name" >&2
             exit 70
         fi
+        rm -rf -- "$run_host"
         exit "$status"
     }
     trap cleanup_migration_project EXIT
@@ -98,12 +122,61 @@ if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "capture-postgres-baseline" ]; then
     trap 'exit 143' TERM
     trap 'exit 129' HUP
 
-    migration_args=("${compose[@]}" run --build --rm)
-    if [ ! -t 0 ]; then
-        migration_args+=(-T)
-    fi
-    "${migration_args[@]}" migration-runner jobfeed "${forwarded[@]}"
-    exit $?
+    "${compose[@]}" up -d --wait restore-source restore-scratch
+    source_id="$("${compose[@]}" ps -q restore-source)"
+    scratch_id="$("${compose[@]}" ps -q restore-scratch)"
+    runner_name="${project_name}-migration-runner"
+    runner_ref="$("${compose[@]}" run --build -d --no-deps --name "$runner_name" \
+        migration-runner jobfeed migrate _capture-preprovisioned-baseline \
+        "${forwarded[@]:2}")"
+    runner_id="$(docker inspect --format '{{.Id}}' "$runner_ref")"
+    network_name="${project_name}_migration-internal"
+
+    write_inspection() {
+        destination="$1"
+        temporary="$destination.tmp"
+        {
+            printf '{"network":'
+            docker network inspect --format '{{json .}}' "$network_name"
+            printf ',"source":'
+            docker inspect --format '{{json .}}' "$source_id"
+            printf ',"scratch":'
+            docker inspect --format '{{json .}}' "$scratch_id"
+            printf ',"runner":'
+            docker inspect --format '{{json .}}' "$runner_id"
+            printf '}\n'
+        } >"$temporary"
+        chmod 0400 "$temporary"
+        mv "$temporary" "$destination"
+    }
+
+    write_inspection "$run_host/pre-inspection.json"
+    dump_sha="$(shasum -a 256 "$dump_host" | awk '{print $1}')"
+    source_image="$(docker inspect --format '{{.Image}}' "$source_id")"
+    scratch_image="$(docker inspect --format '{{.Image}}' "$scratch_id")"
+    runner_image="$(docker inspect --format '{{.Image}}' "$runner_id")"
+    bootstrap_tmp="$run_host/bootstrap.json.tmp"
+    printf '{"bootstrap_version":1,"project_label":"%s","network":{"name":"%s","internal":true},"dump_mount":{"runner_path":"/run/jobfeed-migration/source.dump","read_only":true,"sha256":"%s"},"source":{"service":"restore-source","container_id":"%s","image_digest":"%s","project_label":"%s","network_name":"%s"},"scratch":{"service":"restore-scratch","container_id":"%s","image_digest":"%s","project_label":"%s","network_name":"%s"},"runner":{"service":"migration-runner","container_id":"%s","image_digest":"%s","project_label":"%s","network_name":"%s"}}\n' \
+        "$project_name" "$network_name" "$dump_sha" \
+        "$source_id" "$source_image" "$project_name" "$network_name" \
+        "$scratch_id" "$scratch_image" "$project_name" "$network_name" \
+        "$runner_id" "$runner_image" "$project_name" "$network_name" \
+        >"$bootstrap_tmp"
+    chmod 0400 "$bootstrap_tmp"
+    mv "$bootstrap_tmp" "$run_host/bootstrap.json"
+
+    for _ in {1..240}; do
+        [ -f "$run_host/capture-ready.json" ] && break
+        sleep 0.25
+    done
+    [ -f "$run_host/capture-ready.json" ] || fail "migration runner capture timed out"
+    write_inspection "$run_host/post-inspection.json"
+    runner_status="$(docker wait "$runner_id")"
+    docker logs "$runner_id"
+    [ "$runner_status" = "0" ] || fail "migration runner failed with $runner_status"
+    [ -f "$run_host/provenance-verified.json" ] \
+        || fail "migration provenance verification marker missing"
+    exit 0
 fi
 
 args=(docker compose run --rm)
