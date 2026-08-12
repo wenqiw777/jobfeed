@@ -104,6 +104,13 @@ async def test_performance_overview_windows_deltas_and_empty_semantics(
                 status="succeeded",
             ),
             PipelineRun(
+                run_id="current-evaluation",
+                started_at=NOW - timedelta(seconds=1),
+                finished_at=NOW,
+                source="Evaluation Retry",
+                status="succeeded",
+            ),
+            PipelineRun(
                 run_id="previous-scan",
                 started_at=NOW - timedelta(days=8),
                 finished_at=NOW - timedelta(days=8) + timedelta(seconds=2),
@@ -124,11 +131,11 @@ async def test_performance_overview_windows_deltas_and_empty_semantics(
 
         overview = await store.get_performance_overview(7)
 
-        assert overview.avg_scan_duration_ms == 86_400_000
-        assert overview.avg_eval_duration_ms == 0
+        assert overview.avg_scan_duration_ms == 43_200_500
+        assert overview.avg_eval_duration_ms == 500
         assert overview.total_llm_cost_usd == 8
-        assert overview.error_rate == 0.5
-        assert overview.scan_duration_delta == 43_199
+        assert overview.error_rate == pytest.approx(1 / 3)
+        assert overview.scan_duration_delta == 21_599.25
         assert overview.eval_duration_delta is None
         assert overview.cost_delta == 3
         assert overview.error_rate_delta is None
@@ -197,7 +204,7 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
                         "c",
                         3,
                         0,
-                        utc_text(NOW + timedelta(seconds=1)),
+                        utc_text(NOW - timedelta(days=3)),
                     ),
                 ],
             )
@@ -214,7 +221,7 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
                     (30, 40, 30, utc_text(NOW)),
                     (40, 50, 40, utc_text(NOW)),
                     (50, 60, 50, utc_text(NOW)),
-                    (999, 999, 999, utc_text(NOW + timedelta(seconds=1))),
+                    (999, 999, 999, utc_text(NOW - timedelta(days=3))),
                 ],
             )
 
