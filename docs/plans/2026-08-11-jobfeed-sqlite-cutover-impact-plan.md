@@ -599,6 +599,18 @@ P95 低于 2 秒。Task 3 唯一一次 acceptance review 定向验证 38 passed�
 - **证据：** 当前 413 MB 数据 rehearsal、故意中断、损坏输入、checksum mismatch tests。
 - **返回设计：** 任一关键字段无法一一映射时停止，不允许静默 coerce 或丢弃。
 
+**状态（2026-08-12）：完成 / GO。** Forward importer 从已打开的 PostgreSQL
+repeatable-read/read-only revision `0008` snapshot 流式导入 14 表、153 列，
+不迁移 source run lease，而是生成两条 idle seed；任一 source、insert、
+checksum 或 durability 失败都不发布目标。Parity verifier 在单个 SQLite
+read transaction 内验证 exact v1 schema、integrity/FK、14 表 count/max-id/hash
+与全部冻结 aggregate。真实 PostgreSQL 16 `0008` → SQLite → parity 组合
+测试 2 passed / 5.74s；它直接发现并修正 PostgreSQL `Decimal` 序列化
+与 PostgreSQL `GREATEST` / SQLite scalar `max` 的 NULL 语义差异。Task 4
+focused 32 passed；完整 `make quality` 为 1708 passed / 484 deselected，
+Ruff、format、mypy 全绿。未替换 production DB，也未提前进入 Task 6
+runtime/config 切换。
+
 ### Task 5：无损 rollback importer（选择回滚等级 1 时）
 
 - **结果：** cutover 后的 SQLite 新写入可回灌到 schema 0008 PostgreSQL 并恢复服务。
