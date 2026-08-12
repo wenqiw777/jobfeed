@@ -62,6 +62,7 @@ _OPERATION_PARAMS: Final = {
 _CONTENTION_PROCESSES = 2
 _CONTENTION_COROUTINES = 8
 _MIN_CONTENTION_ROUNDS = 100
+_MIN_SAMPLE_COUNT = 30
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -185,6 +186,8 @@ def validate_benchmark_workload(document: object) -> BenchmarkWorkload:
         raise ValueError("unknown benchmark workload version")
     warmups = _positive_int(document.get("warmup_count"), "warmup_count")
     samples = _positive_int(document.get("sample_count"), "sample_count")
+    if samples < _MIN_SAMPLE_COUNT:
+        raise ValueError("benchmark sample_count must be at least 30")
     operations = _parse_operations(document.get("operations"))
     contention = _parse_contention(document.get("contention"))
     return BenchmarkWorkload(

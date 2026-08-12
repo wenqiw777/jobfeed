@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, date, datetime
 from enum import Enum
@@ -54,6 +55,7 @@ class SnapshotManifestContext:
     revision: str
     active_writers: int
     running_runs: int
+    restore_attestations: dict[str, object]
 
 
 def timestamp_value(value: object) -> str | None:
@@ -113,7 +115,13 @@ def _json_value(value: object) -> object:
     if isinstance(value, dict):
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
+        normalized = [_json_value(item) for item in value]
+        return sorted(
+            normalized,
+            key=lambda item: json.dumps(
+                item, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ),
+        )
     if isinstance(value, datetime):
         return timestamp_value(value)
     if isinstance(value, date):
@@ -123,7 +131,15 @@ def _json_value(value: object) -> object:
     return value
 
 
-def _aggregate_manifest(raw: dict[str, object]) -> dict[str, object]:
+def aggregate_manifest(raw: dict[str, object]) -> dict[str, object]:
+    """Hash unordered aggregate outputs after stable recursive sorting.
+
+    Args:
+        raw: Exact store aggregate outputs.
+
+    Returns:
+        Counts and backend-order-independent aggregate hashes.
+    """
     return {
         "window_days": 30,
         "pending_stage_a": raw["pending_stage_a"],
@@ -168,6 +184,7 @@ def build_snapshot_manifest(
             ),
             "jobs_size_bytes": reader.scalar("SELECT pg_total_relation_size('jobs')"),
         },
+        "restore_attestations": context.restore_attestations,
         "writer_quiescence": {
             "checked_at_utc": context.captured_at,
             "active_jobfeed_writers": context.active_writers,
@@ -183,7 +200,7 @@ def build_snapshot_manifest(
             }
             for table, columns in _ACTIVITY_COLUMNS.items()
         },
-        "aggregates": _aggregate_manifest(
+        "aggregates": aggregate_manifest(
             asyncio.run(capture_postgres_store_aggregates(context.dsn))
         ),
         "target": {

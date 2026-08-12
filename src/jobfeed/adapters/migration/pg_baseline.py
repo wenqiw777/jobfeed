@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import platform
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from jobfeed.adapters.migration._baseline_evidence import component_fingerprints
 from jobfeed.adapters.migration._baseline_workload import (
-    _summary,
     artifact_sha256,
     validate_benchmark_workload,
 )
@@ -19,10 +19,17 @@ from jobfeed.adapters.migration._pg_baseline_manifest import (
     table_metrics,
 )
 from jobfeed.adapters.migration._pg_baseline_reader import PostgresBaselineReader
+from jobfeed.adapters.migration._pg_baseline_report import (
+    ReportContext,
+    build_benchmark_report,
+)
 from jobfeed.adapters.migration._pg_benchmark_runner import (
     run_postgres_store_benchmarks,
 )
-from jobfeed.adapters.migration._pg_claim_contention import run_pg_claim_contention
+from jobfeed.adapters.migration._pg_claim_contention import (
+    run_pg_claim_contention,
+    validate_claim_contention_outcome,
+)
 from jobfeed.adapters.migration.canonical_schema_manifest import (
     CANONICAL_SCHEMA_MANIFEST_V1,
     validate_schema_manifest,
@@ -38,6 +45,7 @@ class PgDumpEvidence:
     git_commit: str
     sha256: str
     size_bytes: int
+    restore_attestations: dict[str, object]
 
 
 def assert_capture_allowed(
@@ -149,12 +157,34 @@ def capture_pg_baseline(
         raise ValueError("source pg_dump SHA-256 must be lowercase hexadecimal")
     if source.size_bytes <= 0:
         raise ValueError("source pg_dump must be non-empty")
+    return _capture_validated_baseline(
+        dsn, contention_dsn, workload_document, source=source, chunk_size=chunk_size
+    )
+
+
+def _capture_validated_baseline(
+    dsn: str,
+    contention_dsn: str,
+    workload_document: object,
+    *,
+    source: PgDumpEvidence,
+    chunk_size: int,
+) -> tuple[dict[str, object], dict[str, object]]:
     workload = validate_benchmark_workload(workload_document)
     captured_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    source_attestation = source.restore_attestations.get("source")
+    scratch_attestation = source.restore_attestations.get("scratch")
+    if not isinstance(source_attestation, dict) or not isinstance(
+        scratch_attestation, dict
+    ):
+        raise ValueError("validated source and scratch attestations are required")
     with PostgresBaselineReader(dsn) as reader:
-        revision, active_writers, running_runs = _gate_state(reader)
+        source_gate = _gate_state(reader)
         validate_public_tables(reader.public_base_tables())
         validate_live_schema(reader.live_schema_document())
+        source_identity = reader.database_identity()
+        if source_identity != source_attestation.get("database_identity"):
+            raise ValueError("source database identity differs from attestation")
         manifest = build_snapshot_manifest(
             reader,
             context=SnapshotManifestContext(
@@ -163,94 +193,74 @@ def capture_pg_baseline(
                 git_commit=source.git_commit,
                 dump_sha256=source.sha256,
                 dump_size_bytes=source.size_bytes,
-                revision=revision,
-                active_writers=active_writers,
-                running_runs=running_runs,
+                revision=source_gate[0],
+                active_writers=source_gate[1],
+                running_runs=source_gate[2],
+                restore_attestations=source.restore_attestations,
             ),
             chunk_size=chunk_size,
         )
-        store_results = asyncio.run(
-            run_postgres_store_benchmarks(
-                dsn,
-                workload.operations,
-                warmups=workload.warmup_count,
-                samples=workload.sample_count,
-            )
+    store_results = asyncio.run(
+        run_postgres_store_benchmarks(
+            dsn,
+            workload.operations,
+            warmups=workload.warmup_count,
+            samples=workload.sample_count,
         )
-        query_reports = []
-        for query, result in zip(workload.operations, store_results, strict=True):
-            query_reports.append(
-                {
-                    "name": query.name,
-                    "coverage": query.coverage,
-                    "row_count": result.row_count,
-                    **_summary(result.samples_ms),
-                }
-            )
-        mid_revision, mid_writers, mid_running = _gate_state(reader)
-        post_revision, post_writers, post_running = _gate_state(reader)
+    )
+    with PostgresBaselineReader(dsn) as fresh_reader:
+        source_post_gate = _gate_state(fresh_reader)
+        validate_public_tables(fresh_reader.public_base_tables())
+        validate_live_schema(fresh_reader.live_schema_document())
+        if fresh_reader.database_identity() != source_identity:
+            raise ValueError("source database identity changed during benchmark")
+        if table_metrics(fresh_reader, chunk_size) != manifest["tables"]:
+            raise ValueError("source data changed during store read benchmark")
     manifest_sha256 = artifact_sha256(manifest)
     with PostgresBaselineReader(contention_dsn) as scratch:
-        scratch_revision, scratch_writers, scratch_running = _gate_state(scratch)
+        scratch_gate = _gate_state(scratch)
         validate_public_tables(scratch.public_base_tables())
         validate_live_schema(scratch.live_schema_document())
+        scratch_identity = scratch.database_identity()
+        if scratch_identity != scratch_attestation.get("database_identity"):
+            raise ValueError("scratch database identity differs from attestation")
+        if scratch_identity == source_identity:
+            raise ValueError("source and scratch database identities must differ")
         if table_metrics(scratch, chunk_size) != manifest["tables"]:
             raise ValueError("contention scratch clone differs from initial manifest")
+        initial_claim_count = scratch.stage_a_in_progress_count()
     contention = run_pg_claim_contention(contention_dsn, workload.contention)
     with PostgresBaselineReader(contention_dsn) as scratch:
-        scratch_post_revision, scratch_post_writers, scratch_post_running = _gate_state(
-            scratch
+        scratch_post_gate = _gate_state(scratch)
+        final_claim_count = scratch.stage_a_in_progress_count()
+    database_claim_delta = final_claim_count - initial_claim_count
+    validate_claim_contention_outcome(
+        claimed_by_process=contention.claimed_by_process,
+        errors=contention.errors,
+        database_claim_delta=database_claim_delta,
+    )
+    host_identifier = f"{platform.node()}|{uuid.getnode()}"
+    cpu_identifier = platform.processor() or platform.machine()
+    machine, host_hash, cpu_hash = component_fingerprints(
+        host_identifier, cpu_identifier
+    )
+    benchmark = build_benchmark_report(
+        ReportContext(
+            captured_at=captured_at,
+            git_commit=source.git_commit,
+            manifest_sha256=manifest_sha256,
+            workload_document=workload_document,
+            workload=workload,
+            store_results=store_results,
+            machine_fingerprint=machine,
+            host_identifier_sha256=host_hash,
+            cpu_identifier_sha256=cpu_hash,
+            source_gate=source_gate,
+            source_post_gate=source_post_gate,
+            scratch_gate=scratch_gate,
+            scratch_post_gate=scratch_post_gate,
+            contention=contention,
+            database_claim_delta=database_claim_delta,
         )
-    machine = "|".join((platform.system(), platform.release(), platform.machine()))
-    benchmark: dict[str, object] = {
-        "report_version": 1,
-        "created_at_utc": captured_at,
-        "git_commit": source.git_commit,
-        "snapshot_manifest_sha256": manifest_sha256,
-        "workload_sha256": artifact_sha256(workload_document),
-        "machine_fingerprint": hashlib.sha256(machine.encode()).hexdigest(),
-        "warmup_count": workload.warmup_count,
-        "sample_count": workload.sample_count,
-        "read_consistency": {
-            "mode": "quiescent_pre_post_gate",
-            "canonical_manifest": "repeatable-read read-only transaction",
-            "store_metrics": "separate connections while writers/runs remain zero",
-            "contention": "runs after read metrics and mutates only rehearsal",
-            "pre_revision": revision,
-            "pre_active_writers": active_writers,
-            "pre_running_runs": running_runs,
-            "mid_revision": mid_revision,
-            "mid_active_writers": mid_writers,
-            "mid_running_runs": mid_running,
-            "post_revision": post_revision,
-            "post_active_writers": post_writers,
-            "post_running_runs": post_running,
-        },
-        "queries": query_reports,
-        "contention": {
-            "mode": workload.contention.mode,
-            "processes": workload.contention.processes,
-            "worker_pids": contention.worker_pids,
-            "coroutines_per_process": workload.contention.coroutines_per_process,
-            "rounds_per_coroutine": workload.contention.rounds_per_coroutine,
-            "attempted_short_writes": (
-                workload.contention.processes
-                * workload.contention.coroutines_per_process
-                * workload.contention.rounds_per_coroutine
-            ),
-            "successful_claims": len(contention.claimed_ids),
-            "empty_claims": contention.empty_claims,
-            "duplicate_claims": 0,
-            "data_loss": 0,
-            "retry_exhausted_busy": 0,
-            "scratch_initial_manifest_sha256": manifest_sha256,
-            "scratch_pre_revision": scratch_revision,
-            "scratch_pre_active_writers": scratch_writers,
-            "scratch_pre_running_runs": scratch_running,
-            "scratch_post_revision": scratch_post_revision,
-            "scratch_post_active_writers": scratch_post_writers,
-            "scratch_post_running_runs": scratch_post_running,
-            **_summary(contention.samples_ms),
-        },
-    }
+    )
     return manifest, benchmark

@@ -9,10 +9,16 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from jobfeed.adapters.migration._baseline_evidence import (
+    machine_fingerprint,
+    validate_evidence_bundle,
+    validate_restore_attestations,
+)
 from jobfeed.adapters.migration._baseline_workload import (
     REQUIRED_BENCHMARK_COVERAGE,
     validate_benchmark_workload,
 )
+from jobfeed.adapters.migration._pg_baseline_manifest import aggregate_manifest
 from jobfeed.adapters.migration._pg_baseline_reader import _primary_key_order
 from jobfeed.adapters.migration._pg_claim_contention import (
     validate_claim_contention_outcome,
@@ -62,16 +68,34 @@ def test_claim_contention_outcome_rejects_duplicates_or_errors() -> None:
     """Contention succeeds only with real unique claims and no worker errors."""
     unique_claims = [str(index) for index in range(_MINIMUM_ROUNDS)]
     validate_claim_contention_outcome(
-        worker_pids=[101, 102], claimed_ids=unique_claims, errors=[]
+        claimed_by_process={101: unique_claims[:50], 102: unique_claims[50:]},
+        errors=[],
+        database_claim_delta=len(unique_claims),
     )
 
     with pytest.raises(ValueError, match="duplicate"):
         validate_claim_contention_outcome(
-            worker_pids=[101, 102], claimed_ids=["1", "1"], errors=[]
+            claimed_by_process={101: ["1"], 102: ["1"]},
+            errors=[],
+            database_claim_delta=2,
         )
     with pytest.raises(ValueError, match="error"):
         validate_claim_contention_outcome(
-            worker_pids=[101, 102], claimed_ids=["1"], errors=["boom"]
+            claimed_by_process={101: ["1"], 102: []},
+            errors=["boom"],
+            database_claim_delta=1,
+        )
+    with pytest.raises(ValueError, match="process"):
+        validate_claim_contention_outcome(
+            claimed_by_process={101: unique_claims, 102: []},
+            errors=[],
+            database_claim_delta=len(unique_claims),
+        )
+    with pytest.raises(ValueError, match="delta"):
+        validate_claim_contention_outcome(
+            claimed_by_process={101: unique_claims[:50], 102: unique_claims[50:]},
+            errors=[],
+            database_claim_delta=len(unique_claims) - 1,
         )
 
 
@@ -81,6 +105,7 @@ def test_claim_contention_outcome_rejects_duplicates_or_errors() -> None:
         ("workload_version", 2, "version"),
         ("warmup_count", 0, "warmup"),
         ("sample_count", 0, "sample"),
+        ("sample_count", 29, "at least 30"),
     ],
 )
 def test_invalid_workload_metadata_fails_closed(
@@ -162,6 +187,103 @@ def test_text_primary_keys_use_explicit_binary_postgres_order() -> None:
     ]
 
 
+def test_unordered_aggregate_rows_hash_independently_of_backend_order() -> None:
+    """Golden aggregate hashes sort nested rows by stable serialized keys."""
+    first = {
+        "pending_stage_a": 1,
+        "pending_stage_b": 2,
+        "needs_attention": {"enrich_errors": [{"job_id": "2"}, {"job_id": "1"}]},
+        "funnel": [{"run_id": "b"}, {"run_id": "a"}],
+        "daily_cost": [{"day": "2026-08-02"}, {"day": "2026-08-01"}],
+        "llm_percentiles": [{"day": "2026-08-02"}, {"day": "2026-08-01"}],
+    }
+    second = copy.deepcopy(first)
+    second["needs_attention"]["enrich_errors"].reverse()
+    second["funnel"].reverse()
+    second["daily_cost"].reverse()
+    second["llm_percentiles"].reverse()
+
+    assert aggregate_manifest(first) == aggregate_manifest(second)
+
+
+def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic() -> None:
+    """Two distinct restores bind one dump; index hashes only prior artifacts."""
+    digest = "a" * 64
+    base = {
+        "attestation_version": 1,
+        "dump_sha256": digest,
+        "container_id": "container-source",
+        "database_identity": "b" * 64,
+        "restore_tool": "pg_restore",
+        "restore_tool_version": "16.4",
+        "restore_command_sha256": "c" * 64,
+        "pre_upgrade_revision": "0007",
+        "post_upgrade_revision": "0008",
+    }
+    scratch = {
+        **base,
+        "container_id": "container-scratch",
+        "database_identity": "d" * 64,
+    }
+    attestations = validate_restore_attestations(base, scratch, dump_sha256=digest)
+    manifest = {
+        "format_version": 1,
+        "created_at_utc": "2026-08-12T00:00:00Z",
+        "git_commit": "deadbeef",
+        "schema_registry": {},
+        "source": {"source_dump_sha256": digest},
+        "restore_attestations": attestations,
+        "writer_quiescence": {},
+        "tables": {},
+        "activity_maxima": {},
+        "aggregates": {},
+        "target": {},
+    }
+    benchmark = {
+        "report_version": 1,
+        "created_at_utc": "2026-08-12T00:00:00Z",
+        "git_commit": "deadbeef",
+        "snapshot_manifest_sha256": "e" * 64,
+        "workload_sha256": "f" * 64,
+        "machine_fingerprint": "2" * 64,
+        "host_identifier_sha256": "3" * 64,
+        "cpu_identifier_sha256": "4" * 64,
+        "warmup_count": 1,
+        "sample_count": 30,
+        "read_consistency": {},
+        "queries": [],
+        "contention": {},
+        "open_workloads": [],
+    }
+    index = {
+        "evidence_version": 1,
+        "source_dump_sha256": digest,
+        "manifest_sha256": "e" * 64,
+        "benchmark_sha256": "1" * 64,
+        "workload_sha256": "f" * 64,
+        "git_commit": "deadbeef",
+    }
+    validate_evidence_bundle(manifest, benchmark, index, verify_hashes=False)
+
+    with pytest.raises(ValueError, match="distinct"):
+        validate_restore_attestations(base, base, dump_sha256=digest)
+    with pytest.raises(ValueError, match="exact keys"):
+        validate_evidence_bundle(
+            {**manifest, "benchmark_sha256": "2" * 64},
+            benchmark,
+            index,
+            verify_hashes=False,
+        )
+
+
+def test_machine_fingerprint_hashes_stable_host_and_cpu_without_plaintext() -> None:
+    """Hardware comparison binds host and CPU identifiers without exposing them."""
+    result = machine_fingerprint("host-uuid-secret", "Apple M4 Max")
+    assert result == machine_fingerprint("host-uuid-secret", "Apple M4 Max")
+    assert result != machine_fingerprint("other-host", "Apple M4 Max")
+    assert "host-uuid-secret" not in result
+
+
 def test_cli_requires_named_dsn_environment_without_creating_outputs(
     tmp_path: Path,
 ) -> None:
@@ -169,6 +291,10 @@ def test_cli_requires_named_dsn_environment_without_creating_outputs(
     artifact_dir = tmp_path / "bundle"
     source_dump = tmp_path / "source.dump"
     source_dump.write_bytes(b"pgdump")
+    source_attestation = tmp_path / "source-attestation.json"
+    scratch_attestation = tmp_path / "scratch-attestation.json"
+    source_attestation.write_text("{}", encoding="utf-8")
+    scratch_attestation.write_text("{}", encoding="utf-8")
 
     result = CliRunner().invoke(
         migrate,
@@ -186,6 +312,10 @@ def test_cli_requires_named_dsn_environment_without_creating_outputs(
             str(artifact_dir),
             "--source-dump",
             str(source_dump),
+            "--source-restore-attestation",
+            str(source_attestation),
+            "--scratch-restore-attestation",
+            str(scratch_attestation),
         ],
         env={"MISSING_BASELINE_DSN": "", "MISSING_SCRATCH_DSN": ""},
     )

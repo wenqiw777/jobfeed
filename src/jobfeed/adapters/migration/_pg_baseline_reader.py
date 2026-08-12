@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager
 from typing import Any
@@ -218,3 +219,43 @@ class PostgresBaselineReader(AbstractContextManager["PostgresBaselineReader"]):
                 "ORDER BY table_name"
             )
         ]
+
+    def database_identity(self) -> str:
+        """Hash PostgreSQL cluster and database identifiers.
+
+        Returns:
+            Non-secret identity digest used to prove distinct restores.
+
+        Raises:
+            ValueError: If PostgreSQL does not return exactly one identity row.
+        """
+        row = self.rows(
+            "SELECT current_database() AS database_name, "
+            "(SELECT oid::text FROM pg_database WHERE datname=current_database()) "
+            "AS database_oid, "
+            "(SELECT system_identifier::text FROM pg_control_system()) "
+            "AS system_identifier"
+        )
+        if len(row) != 1:
+            raise ValueError("database identity query returned unexpected rows")
+        identity = "\0".join(
+            str(row[0][key])
+            for key in ("database_name", "database_oid", "system_identifier")
+        )
+        return hashlib.sha256(identity.encode()).hexdigest()
+
+    def stage_a_in_progress_count(self) -> int:
+        """Return the exact persisted Stage A in-progress row count.
+
+        Returns:
+            Count of evaluation rows currently claimed for Stage A.
+
+        Raises:
+            ValueError: If PostgreSQL does not return an integer count.
+        """
+        value = self.scalar(
+            "SELECT COUNT(*) FROM evaluations WHERE stage_a_status='in_progress'"
+        )
+        if type(value) is not int:
+            raise ValueError("Stage A in-progress count is not an integer")
+        return value

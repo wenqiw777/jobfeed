@@ -22,34 +22,54 @@ _MINIMUM_SUCCESSFUL_WRITES = 100
 class ClaimContentionResult:
     """Observed process, claim identity, timing, and error evidence."""
 
-    worker_pids: list[int]
-    claimed_ids: list[str]
+    claimed_by_process: dict[int, list[str]]
     samples_ms: list[float]
     empty_claims: int
     errors: list[str]
 
 
+@dataclass(frozen=True, kw_only=True)
+class _WorkerConfig:
+    dsn: str
+    coroutines: int
+    rounds: int
+    claim_limit: int
+
+
 def validate_claim_contention_outcome(
-    *, worker_pids: list[int], claimed_ids: list[str], errors: list[str]
+    *,
+    claimed_by_process: dict[int, list[str]],
+    errors: list[str],
+    database_claim_delta: int,
 ) -> None:
     """Fail closed on missing processes, duplicate claims, or worker errors.
 
     Args:
-        worker_pids: OS process identifiers reported by workers.
-        claimed_ids: Every job identity returned by a claim.
+        claimed_by_process: Claimed identities grouped by reporting OS process.
         errors: Worker exception summaries.
+        database_claim_delta: Exact increase in persisted in-progress claims.
 
     Raises:
         ValueError: If the workload did not prove its correctness gates.
     """
-    if len(set(worker_pids)) != _EXPECTED_PROCESSES:
+    if len(claimed_by_process) != _EXPECTED_PROCESSES:
         raise ValueError("claim contention did not use two distinct OS processes")
-    if len(set(claimed_ids)) != len(claimed_ids):
-        raise ValueError("claim contention produced a duplicate claim")
     if errors:
         raise ValueError(f"claim contention worker error: {errors[0]}")
+    if any(not claims for claims in claimed_by_process.values()):
+        raise ValueError("each contention process must claim at least one job")
+    claimed_ids = [
+        job_id for claims in claimed_by_process.values() for job_id in claims
+    ]
+    if len(set(claimed_ids)) != len(claimed_ids):
+        raise ValueError("claim contention produced a duplicate claim")
     if len(claimed_ids) < _MINIMUM_SUCCESSFUL_WRITES:
         raise ValueError("claim contention produced fewer than 100 short writes")
+    if database_claim_delta != len(claimed_ids):
+        raise ValueError(
+            "claim contention database delta mismatch: "
+            f"delta={database_claim_delta}, claims={len(claimed_ids)}"
+        )
 
 
 async def _run_worker_async(
@@ -91,14 +111,22 @@ async def _run_worker_async(
 
 
 def _claim_worker(
-    dsn: str,
-    coroutines: int,
-    rounds: int,
-    claim_limit: int,
+    config: _WorkerConfig,
+    start_barrier: Any,
     output: Any,
 ) -> None:
     try:
-        output.put(asyncio.run(_run_worker_async(dsn, coroutines, rounds, claim_limit)))
+        start_barrier.wait(timeout=30)
+        output.put(
+            asyncio.run(
+                _run_worker_async(
+                    config.dsn,
+                    config.coroutines,
+                    config.rounds,
+                    config.claim_limit,
+                )
+            )
+        )
     except Exception as exc:  # parent converts bootstrap failures into gate evidence
         output.put(
             {
@@ -130,14 +158,18 @@ def run_pg_claim_contention(
     """
     context = multiprocessing.get_context("spawn")
     output = context.Queue()
+    start_barrier = context.Barrier(workload.processes)
     processes = [
         context.Process(
             target=_claim_worker,
             args=(
-                dsn,
-                workload.coroutines_per_process,
-                workload.rounds_per_coroutine,
-                workload.claim_limit,
+                _WorkerConfig(
+                    dsn=dsn,
+                    coroutines=workload.coroutines_per_process,
+                    rounds=workload.rounds_per_coroutine,
+                    claim_limit=workload.claim_limit,
+                ),
+                start_barrier,
                 output,
             ),
         )
@@ -158,20 +190,16 @@ def run_pg_claim_contention(
                 process.terminate()
                 process.join(timeout=5)
         output.close()
-    worker_pids = [int(document["pid"]) for document in documents]
-    claimed_ids = [
-        str(job_id) for document in documents for job_id in document["claimed_ids"]
-    ]
+    claimed_by_process = {
+        int(document["pid"]): [str(job_id) for job_id in document["claimed_ids"]]
+        for document in documents
+    }
     samples_ms = [
         float(sample) for document in documents for sample in document["samples_ms"]
     ]
     errors = [str(error) for document in documents for error in document["errors"]]
-    validate_claim_contention_outcome(
-        worker_pids=worker_pids, claimed_ids=claimed_ids, errors=errors
-    )
     return ClaimContentionResult(
-        worker_pids=worker_pids,
-        claimed_ids=claimed_ids,
+        claimed_by_process=claimed_by_process,
         samples_ms=samples_ms,
         empty_claims=sum(int(document["empty_claims"]) for document in documents),
         errors=errors,
