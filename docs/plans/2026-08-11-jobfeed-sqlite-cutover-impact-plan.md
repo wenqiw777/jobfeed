@@ -582,6 +582,16 @@ bridge 保持现有运行能力，最终 SQLite wiring 时删除。
 - **证据：** fixed datasets 下的 percentile interpolation、empty window、time window 和 P95 benchmark。
 - **返回设计：** 若 56k snapshot 聚合超过 2 秒且 index/query 无法满足，再决定预聚合是否进入范围。
 
+**Task 3 状态（2026-08-12）：完成 / GO。** 三个独立 capability slice
+已由单个 `SQLiteStore` 共享同一 lifecycle 组合，未生成转发型 god
+object。3A 保留 21 个 status/application/interview operations；3B 保留
+24 个 ops operations 并不重新引入 5 个已退休入口；3C/3D 完成
+views、pagination、insights 和 performance。Facade 组合 RED 为缺少
+`set_state`，组合后 focused 37 passed。完整 `make quality` 为 1676 passed /
+482 deselected，Ruff、format、mypy 全绿；56k 数据的 views/insights 30 次
+P95 低于 2 秒。Task 3 唯一一次 acceptance review 定向验证 38 passed，
+未发现 P0/P1，结论 GO；未做新一轮系统扫描。
+
 ### Task 4：迁移与 parity
 
 - **结果：** PostgreSQL snapshot 可迁移到临时 SQLite，14 表和业务聚合全部校验。
