@@ -16,7 +16,7 @@ _WRAPPER = _ROOT / "bin" / "jobfeed"
 _COMPOSE = _ROOT / "docker-compose.yml"
 _RUN_AND_DOWN_CALLS = 2
 _GIT_COMMIT_LENGTH = 40
-_FORMAL_FINGERPRINT_READS = 2
+_FORMAL_FINGERPRINT_READS = 3
 
 
 def _fake_docker(tmp_path: Path) -> tuple[Path, Path]:
@@ -277,6 +277,16 @@ def test_import_requires_stable_read_only_formal_fingerprint(
     assert [call["argv"][:3] for call in calls].count(
         ["volume", "inspect", "jobfeed_pgdata"]
     ) == _FORMAL_FINGERPRINT_READS
+
+
+def test_formal_after_fingerprint_is_captured_after_work_before_provenance() -> None:
+    """Persist the observed post-work state rather than a seeded before copy."""
+    wrapper = _WRAPPER.read_text("utf-8")
+    capture_ready = wrapper.index('[ -f "$output_host/capture-ready.json" ] || fail')
+    post_work = wrapper.index('formal_after_work="$(fingerprint_formal_resources)"')
+    publish_gate = wrapper.index('write_inspection "$input_host/post-inspection.json"')
+
+    assert capture_ready < post_work < publish_gate
 
 
 def test_import_rejects_changed_formal_fingerprint_after_cleanup(

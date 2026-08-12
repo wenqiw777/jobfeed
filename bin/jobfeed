@@ -163,12 +163,6 @@ if [ "${1:-}" = "migrate" ] && { \
     }
 
     formal_before="$(fingerprint_formal_resources)"
-    formal_tmp="$(mktemp "$input_host/.formal-resources.XXXXXX")"
-    jq -cnS --argjson resources "$formal_before" \
-        '{fingerprint_version: 1, before: $resources, after: $resources}' \
-        >"$formal_tmp"
-    chmod 0400 "$formal_tmp"
-    mv "$formal_tmp" "$input_host/formal-resource-fingerprints.json"
 
     project_name="jobfeed-migration-${PPID}-$$-${RANDOM}"
     compose=(
@@ -255,6 +249,17 @@ if [ "${1:-}" = "migrate" ] && { \
         sleep 0.25
     done
     [ -f "$output_host/capture-ready.json" ] || fail "migration runner capture timed out"
+    formal_after_work="$(fingerprint_formal_resources)"
+    if [ "$formal_before" != "$formal_after_work" ]; then
+        fail "formal PostgreSQL resources changed during migration work"
+    fi
+    formal_tmp="$(mktemp "$input_host/.formal-resources.XXXXXX")"
+    jq -cnS --argjson before "$formal_before" \
+        --argjson after "$formal_after_work" \
+        '{fingerprint_version: 1, before: $before, after: $after}' \
+        >"$formal_tmp"
+    chmod 0400 "$formal_tmp"
+    mv "$formal_tmp" "$input_host/formal-resource-fingerprints.json"
     write_inspection "$input_host/post-inspection.json"
     deadline=$((SECONDS + migration_timeout))
     while [ "$SECONDS" -lt "$deadline" ]; do
