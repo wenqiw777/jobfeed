@@ -355,8 +355,23 @@ fields are:
     "alembic_revision": "0008",
     "server_version": "16.x",
     "database_size_bytes": 0,
-    "consistent_snapshot": "opaque-id",
-    "pg_dump_sha256": "sha256"
+    "consistent_snapshot_id": "pgdump-sha256:<sha256>",
+    "source_dump_sha256": "sha256",
+    "source_dump_size_bytes": 0
+  },
+  "restore_attestations": {
+    "source": {
+      "attestation_version": 1,
+      "dump_sha256": "sha256",
+      "container_id": "isolated-source-container",
+      "database_identity": "sha256",
+      "restore_tool": "pg_restore",
+      "restore_tool_version": "16.x",
+      "restore_command_sha256": "sha256",
+      "pre_upgrade_revision": "0007",
+      "post_upgrade_revision": "0008"
+    },
+    "scratch": "same exact keys; distinct container/database identity"
   },
   "writer_quiescence": {
     "checked_at_utc": "...",
@@ -421,18 +436,24 @@ fields are:
     "llm_percentiles_sha256": "sha256"
   },
   "target": {
+    "status": "not_applicable_postgres_baseline",
+    "backend": "sqlite",
     "sqlite_schema_version": 1,
     "minimum_sqlite_version": "3.35.0",
     "migrated_table_count": 14,
     "total_table_count": 15,
-    "sqlite_file_sha256": "sha256"
-  },
-  "benchmark": {
-    "machine_fingerprint": "non-secret-id",
-    "report_sha256": "sha256"
+    "sqlite_file_sha256": null
   }
 }
 ```
+
+The manifest never contains its benchmark hash. The benchmark points one-way to
+the manifest SHA and workload SHA. A final `evidence-index.json` points to the
+dump, manifest, benchmark, and workload hashes. Exact validators reject unknown,
+missing, or extra fields, avoiding a manifest/benchmark hash cycle. Restore
+provenance is orchestrator evidence: both attestation files name the same dump
+SHA and 0007→0008 upgrade, while their container and live database identities
+must differ. This is a restored-dump identity, not `pg_export_snapshot` proof.
 
 The example expands the complete 0008 `jobs` schema. The executable source of
 truth for all 14 tables and 153 columns is
@@ -497,21 +518,32 @@ workload manifest for both backends:
 ./bin/jobfeed migrate benchmark-store \
   --backend postgres \
   --dsn-env JOBFEED_MIGRATION_PG_URL \
+  --scratch-dsn-env JOBFEED_MIGRATION_SCRATCH_PG_URL \
+  --source-dump artifacts/jobfeed-0007.dump \
+  --source-restore-attestation artifacts/source-restore.json \
+  --scratch-restore-attestation artifacts/scratch-restore.json \
   --workload docs/contracts/fixtures/sqlite-store-benchmark-v1.json \
-  --output artifacts/postgres-store-baseline.json
+  --artifact-dir artifacts/postgres-store-baseline
 
-./bin/jobfeed migrate benchmark-store \
-  --backend sqlite \
-  --path /data/jobfeed.next.sqlite \
-  --workload docs/contracts/fixtures/sqlite-store-benchmark-v1.json \
-  --output artifacts/sqlite-store-candidate.json
+# Task 4 pending: the same command gains --backend sqlite and --path only after
+# the SQLite adapter and scratch-copy lifecycle exist.
 ```
 
 The report records machine fingerprint, git SHA, snapshot manifest SHA, warmup
 count, sample count, per-query P50/P95/max, contention outcomes, and migration
 duration. It covers list/detail/status hot paths, all five Views methods, all four
 Performance read methods, insights, scan/evaluate DB-only overhead, and the
-approved two-process contention workload.
+approved two-process contention workload. P95 uses at least 30 measured samples.
+Text primary keys use PostgreSQL `COLLATE "C"` and SQLite byte order. Unordered
+aggregate goldens are recursively sorted by stable serialized keys before hash.
+The source is freshly gated and fully rehashed after read benchmarks; contention
+runs only on a distinct scratch restore behind a simultaneous process barrier.
+
+Task 0 remains **OPEN** for two real scratch mutation workloads: scan must measure
+`save_job` insert plus quality-upgrade on the same natural key, and evaluate must
+measure claim plus release/result/error persistence paths. The current bounded
+`job_exists` and claim-candidate reads must not be presented as those overhead
+baselines.
 
 Real-data metrics are rechecked from the stopped 0008 source, never copied from a
 document. The evidence bundle includes:

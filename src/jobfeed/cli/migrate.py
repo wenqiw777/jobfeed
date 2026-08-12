@@ -15,6 +15,10 @@ from typing import Any, cast
 
 import click
 
+from jobfeed.adapters.migration._baseline_evidence import (
+    validate_evidence_bundle,
+    validate_restore_attestations,
+)
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
 from jobfeed.adapters.migration.pg_baseline import PgDumpEvidence, capture_pg_baseline
 from jobfeed.adapters.store.legacy_import import ImportReport, import_legacy_sqlite
@@ -218,6 +222,16 @@ def _file_sha256(path: Path) -> str:
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Read-only pg_dump artifact restored into this rehearsal database.",
 )
+@click.option(
+    "--source-restore-attestation",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--scratch-restore-attestation",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
 def benchmark_store_command(**options: object) -> None:
     """Capture an atomic evidence bundle without writing to the source.
 
@@ -233,6 +247,8 @@ def benchmark_store_command(**options: object) -> None:
     workload = cast(Path, options["workload"])
     artifact_dir = cast(Path, options["artifact_dir"])
     source_dump = cast(Path, options["source_dump"])
+    source_attestation_path = cast(Path, options["source_restore_attestation"])
+    scratch_attestation_path = cast(Path, options["scratch_restore_attestation"])
     if backend != "postgres":
         raise click.ClickException("SQLite benchmark implementation is not available")
     if not dsn_env or not scratch_dsn_env:
@@ -264,6 +280,11 @@ def benchmark_store_command(**options: object) -> None:
             text=True,
         ).stdout.strip()
         dump_sha256 = _file_sha256(source_dump)
+        restore_attestations = validate_restore_attestations(
+            json.loads(source_attestation_path.read_text("utf-8")),
+            json.loads(scratch_attestation_path.read_text("utf-8")),
+            dump_sha256=dump_sha256,
+        )
         manifest, benchmark = capture_pg_baseline(
             dsn,
             scratch_dsn,
@@ -272,6 +293,7 @@ def benchmark_store_command(**options: object) -> None:
                 git_commit=git_commit,
                 sha256=dump_sha256,
                 size_bytes=source_dump.stat().st_size,
+                restore_attestations=restore_attestations,
             ),
         )
         evidence_index = {
@@ -282,6 +304,7 @@ def benchmark_store_command(**options: object) -> None:
             "workload_sha256": artifact_sha256(workload_document),
             "git_commit": git_commit,
         }
+        validate_evidence_bundle(manifest, benchmark, evidence_index)
         _write_new_json(staging / "snapshot-manifest.json", manifest)
         _write_new_json(staging / "store-benchmark.json", benchmark)
         _write_new_json(staging / "evidence-index.json", evidence_index)
