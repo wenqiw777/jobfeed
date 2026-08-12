@@ -66,6 +66,9 @@ _MIN_SAMPLE_COUNT = 30
 _ALLOW_EMPTY_OPERATIONS: Final = frozenset(
     {"get_step_timings", "get_llm_daily_stats", "get_funnel_stats"}
 )
+ALLOW_EMPTY_BENCHMARK_COVERAGE: Final = frozenset(
+    _OPERATION_COVERAGE[operation] for operation in _ALLOW_EMPTY_OPERATIONS
+)
 
 
 @dataclass(frozen=True, kw_only=True)

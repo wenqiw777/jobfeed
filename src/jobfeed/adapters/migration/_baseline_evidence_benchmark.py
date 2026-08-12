@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from jobfeed.adapters.migration import _baseline_evidence_shape as shape
-from jobfeed.adapters.migration._baseline_workload import REQUIRED_BENCHMARK_COVERAGE
+from jobfeed.adapters.migration._baseline_workload import (
+    ALLOW_EMPTY_BENCHMARK_COVERAGE,
+    REQUIRED_BENCHMARK_COVERAGE,
+)
 
 _MIN_SAMPLES = 30
 _EXPECTED_PROCESSES = 2
@@ -26,8 +29,10 @@ def _validate_queries(document: dict[str, object]) -> None:
         query = shape.mapping(query_value, name)
         shape.exact_keys(query, shape.QUERY_KEYS, name)
         names.add(shape.text(query["name"], f"{name}.name"))
-        coverages.add(shape.text(query["coverage"], f"{name}.coverage"))
-        shape.integer(query["row_count"], f"{name}.row_count", minimum=1)
+        coverage = shape.text(query["coverage"], f"{name}.coverage")
+        coverages.add(coverage)
+        minimum = 0 if coverage in ALLOW_EMPTY_BENCHMARK_COVERAGE else 1
+        shape.integer(query["row_count"], f"{name}.row_count", minimum=minimum)
         shape.timing_summary(query, name)
     if len(names) != len(queries):
         raise ValueError("benchmark query names must be unique")

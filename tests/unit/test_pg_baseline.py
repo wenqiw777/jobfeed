@@ -414,6 +414,12 @@ def test_restore_attestations_and_evidence_bundle_are_exact_and_acyclic(
     malicious["queries"][0]["row_count"] = 0
     with pytest.raises(ValueError, match="row_count"):
         validate_evidence_bundle(manifest, malicious, index, verify_hashes=False)
+    sparse = copy.deepcopy(benchmark)
+    step_timings = next(
+        query for query in sparse["queries"] if query["coverage"] == "perf.step_timings"
+    )
+    step_timings["row_count"] = 0
+    validate_evidence_bundle(manifest, sparse, index, verify_hashes=False)
     malicious = copy.deepcopy(benchmark)
     malicious["contention"]["database_claim_count"] = 99
     with pytest.raises(ValueError, match="claim count"):
