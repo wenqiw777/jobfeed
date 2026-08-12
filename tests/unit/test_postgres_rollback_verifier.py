@@ -9,10 +9,9 @@ from typing import Any
 
 import pytest
 
-from jobfeed.adapters.migration import postgres_rollback_verifier as verifier_module
+from jobfeed.adapters.migration import _pg_rollback_capture as capture_module
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
 from jobfeed.adapters.migration.canonical_schema_manifest import (
-    CANONICAL_SCHEMA_MANIFEST_V1,
     MIGRATED_TABLE_ORDER_V1,
     canonical_schema_manifest_document,
 )
@@ -50,8 +49,7 @@ class FakeRollbackReader:
         self.schema = canonical_schema_manifest_document()
         self.tables = sorted((*MIGRATED_TABLE_ORDER_V1, "alembic_version"))
         self.sequence_values = {
-            name: int(self.table_rows[name][0]["id"])
-            for name in _GENERATED_IDS
+            name: int(self.table_rows[name][0]["id"]) for name in _GENERATED_IDS
         }
         self.sql: list[str] = []
 
@@ -70,7 +68,7 @@ class FakeRollbackReader:
         self.sql.append(sql)
         if "FROM pg_trigger" in sql:
             return [{"tgenabled": self.trigger_code}]
-        if "FROM pg_sequences" in sql:
+        if "pg_sequences" in sql:
             table_name = str(params[0])
             return [
                 {
@@ -105,7 +103,7 @@ def _source_manifest(cutover: dict[str, object]) -> dict[str, object]:
             "file_sha256": "8" * 64,
             "device": 1,
             "inode": 2,
-            "journal_mode": "wal",
+            "journal_mode": "delete",
             "has_wal": False,
         },
         "tables": [
@@ -173,7 +171,7 @@ def test_exact_rollback_returns_typed_read_only_report(
     reader, source, provenance = _evidence()
     aggregate_document = copy.deepcopy(source["aggregates"])
     monkeypatch.setattr(
-        verifier_module,
+        capture_module,
         "_capture_aggregate_manifest",
         lambda _reader, _as_of: aggregate_document,
     )
@@ -191,7 +189,8 @@ def test_exact_rollback_returns_typed_read_only_report(
     )
     assert {sequence.table_name for sequence in report.sequences} == _GENERATED_IDS
     assert all(
-        query.lstrip().upper().startswith(("SELECT", "SHOW")) for query in reader.sql
+        query.lstrip().upper().startswith(("SELECT", "SHOW", "WITH"))
+        for query in reader.sql
     )
 
 
@@ -230,7 +229,7 @@ def test_target_drift_fails_closed_with_typed_mismatch(
     else:
         aggregate_document["pending_stage_a"] = 99
     monkeypatch.setattr(
-        verifier_module,
+        capture_module,
         "_capture_aggregate_manifest",
         lambda _reader, _as_of: aggregate_document,
     )
@@ -277,3 +276,17 @@ def test_source_manifest_unknown_shape_and_active_wal_fail_before_postgres() -> 
     with pytest.raises(PostgresRollbackVerificationError):
         verify_postgres_rollback(reader, source, provenance)
     assert reader.sql == []
+
+
+def test_postgres_read_failure_returns_typed_fail_closed_report() -> None:
+    """Database read errors never become a partial success or untyped result."""
+    reader, source, provenance = _evidence()
+
+    def fail_tables() -> list[str]:
+        raise RuntimeError("connection lost")
+
+    reader.public_base_tables = fail_tables  # type: ignore[method-assign]
+    with pytest.raises(PostgresRollbackVerificationError) as raised:
+        verify_postgres_rollback(reader, source, provenance)
+    assert raised.value.report.mismatches[0].scope == "postgres_schema"
+    assert "connection lost" in str(raised.value.report.mismatches[0].actual)
