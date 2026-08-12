@@ -28,6 +28,7 @@ from jobfeed.cli import _resolve_config_path, cli
 from jobfeed.domain.models import JobPosting, SaveJobResult
 from jobfeed.domain.quality import assess_quality
 from jobfeed.ports.source import DiscoverResult, EnrichResult
+from tests.support.run_leases import SuccessfulRunLeaseMixin
 
 # ``jobfeed.cli`` rebinds the ``scan`` attribute to the Click command, so the
 # submodules are reached via ``sys.modules``: ``scan`` holds the command,
@@ -45,7 +46,7 @@ _EXPECTED_CLIENTS = 2
 # ---------------------------------------------------------------------------
 
 
-class FakeStore:
+class FakeStore(SuccessfulRunLeaseMixin):
     """Minimal JobStore covering only the scan path (connect/save/record).
 
     ``StoreOpsMixin``'s company helpers back the ATS seeding step so the ATS
