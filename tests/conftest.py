@@ -1,10 +1,9 @@
 """Shared pytest fixtures for Jobfeed tests.
 
-PostgreSQL is the only supported store backend. PG-backed fixtures resolve a
-DSN once per session — preferring ``PGTEST_DSN`` (a CI service or local
-Postgres), otherwise starting a single testcontainers Postgres for the run.
-When neither is available the PG fixtures skip (so the pure-unit suite still
-runs without Docker), unless ``JOBFEED_REQUIRE_POSTGRES=1`` forces a failure.
+SQLite is the default runtime and shared store-contract backend. PostgreSQL
+fixtures belong to the explicitly selected compatibility/migration lane and
+resolve a DSN once per session — preferring ``PGTEST_DSN`` (a CI service or
+local Postgres), otherwise starting one testcontainers Postgres for the run.
 
 Schema is migrated **once per session** (``migrated_pg_url``); each PG-backed
 test then resets only the *data* via a fast ``TRUNCATE ... RESTART IDENTITY
@@ -19,13 +18,19 @@ import asyncio
 import os
 import subprocess
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 import structlog
 
+from jobfeed.adapters.store.legacy_run_leases import LegacyRunLeaseStore
 from jobfeed.adapters.store.postgres import PostgresStore
-from tests.support.store_contract_control import PostgresStoreContractControl
+from jobfeed.adapters.store.sqlite import SQLiteStore
+from tests.support.store_contract_control import (
+    PostgresStoreContractControl,
+    SqliteStoreContractControl,
+)
 
 
 def _alembic_upgrade(url: str) -> None:
@@ -188,6 +193,10 @@ async def _fresh_connected_store(url: str) -> PostgresStore:
     await _truncate_all_data(url)
     store = PostgresStore(url)
     await store.connect()
+    bridge = LegacyRunLeaseStore(store)
+    store.start_run_with_lease = bridge.start_run_with_lease  # type: ignore[attr-defined]
+    store.renew_run_lease = bridge.renew_run_lease  # type: ignore[attr-defined]
+    store.finalize_run_with_lease = bridge.finalize_run_with_lease  # type: ignore[attr-defined]
     return store
 
 
@@ -208,27 +217,45 @@ async def store(migrated_pg_url: str) -> AsyncIterator[PostgresStore]:
         await s.close()
 
 
+@pytest.fixture
+def contract_backend_config(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> tuple[str, str | Path]:
+    """Resolve the contract backend without touching PostgreSQL by default."""
+    backend = os.environ.get("JOBFEED_CONTRACT_BACKEND", "sqlite")
+    if backend == "sqlite":
+        return (backend, tmp_path / "store-contract.sqlite3")
+    if backend == "postgres":
+        return (backend, request.getfixturevalue("migrated_pg_url"))
+    raise pytest.UsageError(f"unknown JOBFEED_CONTRACT_BACKEND={backend!r}")
+
+
 @pytest_asyncio.fixture
-async def contract_store(migrated_pg_url: str) -> AsyncIterator[PostgresStore]:
-    """Yield a connected store for the shared store-contract suite.
-
-    Args:
-        migrated_pg_url: Session PostgreSQL DSN (migrated once per session).
-
-    Yields:
-        Connected store implementing the JobStore protocol.
-    """
-    s = await _fresh_connected_store(migrated_pg_url)
+async def contract_store(
+    contract_backend_config: tuple[str, str | Path],
+) -> AsyncIterator[object]:
+    """Yield the selected connected store for the shared contract suite."""
+    backend, location = contract_backend_config
+    if backend == "postgres":
+        selected_store = await _fresh_connected_store(str(location))
+    else:
+        selected_store = SQLiteStore(Path(location))
+        await selected_store.connect()
     try:
-        yield s
+        yield selected_store
     finally:
-        await s.close()
+        await selected_store.close()
 
 
 @pytest.fixture
-def contract_control(migrated_pg_url: str) -> PostgresStoreContractControl:
-    """Yield backend setup controls for the shared store contract."""
-    return PostgresStoreContractControl(migrated_pg_url)
+def contract_control(
+    contract_backend_config: tuple[str, str | Path],
+) -> PostgresStoreContractControl | SqliteStoreContractControl:
+    """Yield setup controls paired with the selected contract backend."""
+    backend, location = contract_backend_config
+    if backend == "postgres":
+        return PostgresStoreContractControl(str(location))
+    return SqliteStoreContractControl(Path(location))
 
 
 @pytest.fixture

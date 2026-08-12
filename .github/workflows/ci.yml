@@ -64,26 +64,10 @@ jobs:
       - name: Run PostgreSQL-backed tests
         env:
           PGTEST_DSN: "postgresql://jobfeed:jobfeed@localhost:5432/jobfeed_test"
-          JOBFEED_REQUIRE_POSTGRES: "1"
-        run: pytest -m postgres -o "addopts=" -v --tb=short
+        run: make test-postgres
 
   browser-tests:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: jobfeed
-          POSTGRES_PASSWORD: jobfeed
-          POSTGRES_DB: jobfeed_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U jobfeed"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -105,9 +89,6 @@ jobs:
         run: python -m playwright install chromium
 
       - name: Run browser tests
-        env:
-          PGTEST_DSN: "postgresql://jobfeed:jobfeed@localhost:5432/jobfeed_test"
-          JOBFEED_REQUIRE_POSTGRES: "1"
         run: pytest -m browser -o "addopts=" -v --tb=short
 
   docker-build:

@@ -1,9 +1,13 @@
-.PHONY: test lint fmt quality e2e docker-build docker-quality update-prices web-schema web-build
+.PHONY: test test-postgres lint fmt quality e2e docker-build docker-quality update-prices web-schema web-build
 
 SOURCE ?= indeed
 
 test:
 	pytest
+
+# Explicit compatibility/migration lane. The default pytest addopts excludes it.
+test-postgres:
+	JOBFEED_REQUIRE_POSTGRES=1 JOBFEED_CONTRACT_BACKEND=postgres pytest -m postgres -o "addopts=" -v --tb=short
 
 lint:
 	ruff check . && ruff format --check . && mypy src/

@@ -1,11 +1,13 @@
-"""Shared contract test suite for the JobStore protocol (PostgreSQL backend).
+"""Shared contract test suite for the runtime store protocol.
 
 Every test uses the ``contract_store`` fixture defined in ``tests/conftest.py``.
-Tests exercise **Protocol methods only** — no adapter-specific SQL.
+The default lane exercises SQLite; the explicit compatibility lane exercises
+PostgreSQL. Tests use only protocol methods plus backend-neutral test controls.
 """
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -26,7 +28,11 @@ from jobfeed.domain.models import (
 from jobfeed.domain.scoring import parse_stage_b_response
 from tests.support.factories import FIXED_TIME, make_job
 
-pytestmark = pytest.mark.postgres
+pytestmark = (
+    pytest.mark.postgres
+    if os.environ.get("JOBFEED_CONTRACT_BACKEND") == "postgres"
+    else pytest.mark.sqlite
+)
 
 # ---------------------------------------------------------------------------
 # Constants (no magic numbers)
@@ -434,7 +440,7 @@ class TestEvaluationPipeline:
         assert ev.stage_b.cost_usd == STAGE_B_COST
 
     async def test_completed_stage_b_with_null_verdict_yields_none(
-        self, contract_store
+        self, contract_store, contract_control
     ):
         """Legacy 'completed' rows with NULL verdict must not crash digest loading.
 
@@ -444,13 +450,7 @@ class TestEvaluationPipeline:
         """
         job_id, _ = await _insert_job(contract_store, "null-verdict-eval")
         await contract_store.save_stage_a(job_id, _make_stage_a())
-        pool = contract_store._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE evaluations SET stage_b_status = 'completed', "
-                "stage_b_verdict = NULL WHERE job_id = $1",
-                int(job_id),
-            )
+        await contract_control.set_stage_b_completed_without_verdict(job_id=job_id)
 
         evals = await contract_store.list_evaluated_jobs()
         ev = next(e for e in evals if e.job.id == job_id)
@@ -562,6 +562,7 @@ class TestStatusLifecycle:
         )
         assert result == "new"
 
+    @pytest.mark.postgres
     async def test_restore_from_archived(self, contract_store):
         """restore_from_archived should return job to pre-archive status."""
         job_id = await _insert_scored_job(contract_store, "restore-1")
@@ -694,6 +695,7 @@ class TestStatusLifecycle:
 class TestApplicationAudit:
     """Contract tests for record_application, list_applications, application_stats."""
 
+    @pytest.mark.postgres
     async def test_record_application_creates_and_transitions(self, contract_store):
         """record_application should create audit record and transition to applied."""
         job_id, _ = await _insert_job(contract_store, "app-1")
@@ -712,6 +714,7 @@ class TestApplicationAudit:
         assert status is not None
         assert status.status == "applied"
 
+    @pytest.mark.postgres
     async def test_duplicate_application_is_noop(self, contract_store):
         """record_application on already-applied job returns False."""
         job_id, _ = await _insert_job(contract_store, "app-dup")
@@ -731,6 +734,7 @@ class TestApplicationAudit:
         second = await contract_store.record_application(second_record)
         assert second is False
 
+    @pytest.mark.postgres
     async def test_duplicate_preserves_original_record(self, contract_store):
         """After duplicate record_application, original audit data is preserved."""
         job_id, _ = await _insert_job(contract_store, "app-preserve")
@@ -753,6 +757,7 @@ class TestApplicationAudit:
         assert len(matching) == 1
         assert matching[0].notes == "Original notes"
 
+    @pytest.mark.postgres
     async def test_list_applications_with_snapshot_fields(self, contract_store):
         """list_applications should return records with all snapshot fields."""
         job_id, _ = await _insert_job(contract_store, "app-fields")
@@ -777,6 +782,7 @@ class TestApplicationAudit:
         assert app.application_method == "easy_apply"
         assert app.cover_letter == "Dear Hiring Manager..."
 
+    @pytest.mark.postgres
     async def test_application_stats_basic(self, contract_store):
         """application_stats should return correct basic counts."""
         job_id, _ = await _insert_job(contract_store, "stats-1")
@@ -786,6 +792,7 @@ class TestApplicationAudit:
         stats = await contract_store.application_stats(since_days_ago=365)
         assert stats.applied_count >= 1
 
+    @pytest.mark.postgres
     async def test_application_stats_by_resume(self, contract_store):
         """application_stats(by_resume=True) returns per-variant counts.
 
@@ -944,6 +951,7 @@ class TestApplicationAudit:
         assert stats.rejection_count == 0
         assert stats.median_days_to_response == MEDIAN_RESPONSE_DAYS
 
+    @pytest.mark.postgres
     async def test_duplicate_application_after_terminal_is_noop(self, contract_store):
         """A duplicate record_application after a terminal status stays a no-op.
 
@@ -1045,6 +1053,7 @@ class TestApplicationAudit:
 class TestResumeSnapshots:
     """Contract tests for save/get resume_snapshot and register_resume_variant."""
 
+    @pytest.mark.postgres
     async def test_save_and_get_snapshot(self, contract_store):
         """save_resume_snapshot then get_resume_snapshot should round-trip."""
         snapshot = ResumeSnapshot(
@@ -1063,6 +1072,7 @@ class TestResumeSnapshots:
         assert loaded.content == "# My Resume\n\nExperience: ..."
         assert loaded.notes == "Version 1"
 
+    @pytest.mark.postgres
     async def test_snapshot_idempotent(self, contract_store):
         """Saving same hash twice should not error or change content."""
         snapshot = ResumeSnapshot(
@@ -1336,6 +1346,7 @@ class TestStateCostPipeline:
         assert abs(entry.spent_usd - COST_AMOUNT_FIRST) < FLOAT_TOLERANCE
         assert entry.calls == 1
 
+    @pytest.mark.postgres
     async def test_get_cost_range_includes_boundary_day(self, contract_store):
         """get_cost_range(since_days=0) includes today's row (lower bound inclusive).
 
@@ -1353,6 +1364,7 @@ class TestStateCostPipeline:
         result = await contract_store.get_cost("1999-01-01")
         assert result is None
 
+    @pytest.mark.postgres
     async def test_get_cost_range(self, contract_store):
         """get_cost_range should return entries within the range."""
         today = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -1362,6 +1374,7 @@ class TestStateCostPipeline:
         assert len(entries) >= 1
         assert entries[0].day == today
 
+    @pytest.mark.postgres
     async def test_pipeline_run_round_trip(self, contract_store):
         """record_pipeline_run then get_pipeline_run should round-trip."""
         run = PipelineRun(
@@ -1407,6 +1420,7 @@ class TestWorkflowQueries:
         assert isinstance(result.interview_prep, list)
         assert isinstance(result.going_ghosted, list)
 
+    @pytest.mark.postgres
     async def test_reapply_notice_none_without_norm(self, contract_store):
         """compute_reapply_notice requires company_norm to detect overlap.
 
@@ -1444,6 +1458,7 @@ class TestWorkflowQueries:
 class TestInterviewRoundQueries:
     """Contract tests for user-visible interview round selection."""
 
+    @pytest.mark.postgres
     async def test_upcoming_requires_future_round_and_interviewing_parent(
         self,
         contract_store,
@@ -1887,6 +1902,7 @@ class TestEvaluationReads:
             older_id,
         ]
 
+    @pytest.mark.postgres
     async def test_digest_stats_structure(self, contract_store):
         """digest_stats should return a complete DigestStats object."""
         # Seed some data

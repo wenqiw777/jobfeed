@@ -160,7 +160,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [
-    "postgres: requires PostgreSQL (Docker)",
+    "sqlite: default SQLite runtime and store-contract lane",
+    "postgres: explicit PostgreSQL migration, rollback, or compatibility lane",
     "live: requires real HTTP to external APIs (manual only)",
     "browser: requires Playwright browser binaries",
     "mlmodel: requires the real ML model + embedder download",
