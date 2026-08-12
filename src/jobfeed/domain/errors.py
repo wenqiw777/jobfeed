@@ -61,10 +61,15 @@ class RunConflictError(Exception):
     """A pipeline run of the requested type is already active."""
 
 
+class RunLeaseLostError(JobfeedError):
+    """The current worker no longer owns its pipeline-run fencing token."""
+
+
 __all__ = [
     "JobfeedError",
     "ResumeNotConfiguredError",
     "RunConflictError",
+    "RunLeaseLostError",
     "ScoringParseError",
     "SnapshotAmbiguousError",
     "SnapshotNotFoundError",
