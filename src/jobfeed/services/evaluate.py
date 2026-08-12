@@ -163,7 +163,9 @@ class EvaluateService:
         if limit <= 0:
             return  # "max jobs"=0 means do no funnel work (mirrors _run_stage_b)
         lease_session.ensure_active()
-        if not await self._budget.has_budget():
+        has_budget = await self._budget.has_budget()
+        lease_session.ensure_active()
+        if not has_budget:
             return
         async with self._st(run.run_id, "stage", "funnel"):
             survivors = await run_funnel(
@@ -183,6 +185,7 @@ class EvaluateService:
             jobs = await load_stage_a_for_run(
                 self._deps.store, corpus, limit, max_days, survivors
             )
+            lease_session.ensure_active()
             self._logger.info("stage_a_queued", count=len(jobs))
             sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
 
@@ -216,6 +219,7 @@ class EvaluateService:
             return
         lease_session.ensure_active()
         await self._deps.store.save_stage_a(job_id, result)
+        lease_session.ensure_active()
         run.stage_a_scored += 1
         self._logger.info("stage_a_scored", job_id=job_id, score=result.score)
         if result.score < self._config.stage_a_threshold:
@@ -232,6 +236,7 @@ class EvaluateService:
         for attempt in range(2):
             lease_session.ensure_active()
             ledger_day = await self._budget.reserve()
+            lease_session.ensure_active()
             if ledger_day is None:
                 await release_stage_a_for_run(self._deps.store, job_id)
                 return None
@@ -241,6 +246,7 @@ class EvaluateService:
             except RunLeaseLostError:
                 raise
             except Exception as exc:
+                lease_session.ensure_active()
                 if attempt == 0:
                     self._logger.warning(
                         "stage_a_runtime_retry", job_id=job_id, error=str(exc)

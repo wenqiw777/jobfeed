@@ -43,7 +43,9 @@ async def _run_stage_b(
         service._deps.store, service._config.stage_a_threshold, max_days
     )
     lease_session.ensure_active()
-    if not await service._budget.has_budget():
+    has_budget = await service._budget.has_budget()
+    lease_session.ensure_active()
+    if not has_budget:
         return
     jobs = await load_stage_b_for_run(
         service._deps.store,
@@ -51,8 +53,10 @@ async def _run_stage_b(
         max_days,
         service._config.stage_a_threshold,
     )
+    lease_session.ensure_active()
     service._logger.info("stage_b_queued", count=len(jobs))
     stage_a_scores = await load_stage_a_scores(service._deps.store, jobs)
+    lease_session.ensure_active()
     sem = asyncio.Semaphore(max(1, service._config.llm.max_concurrent))
     failed: list[JobPosting] = []
 
@@ -122,16 +126,19 @@ async def _score_stage_b(  # noqa: PLR0913 - scorer inputs plus lease guard
     for attempt in range(parse_attempts):
         lease_session.ensure_active()
         ledger_day = await service._budget.reserve()
+        lease_session.ensure_active()
         if ledger_day is None:
             await release_stage_b_for_run(service._deps.store, job_id)
             return "skipped"
         try:
             async with maintain_stage_b_claim(service._deps.store, job_id):
+                lease_session.ensure_active()
                 resp = await llm.complete(req)
             lease_session.ensure_active()
         except RunLeaseLostError:
             raise
         except Exception as exc:
+            lease_session.ensure_active()
             service._logger.error(
                 "stage_b_runtime_failed", job_id=job_id, error=str(exc)
             )
