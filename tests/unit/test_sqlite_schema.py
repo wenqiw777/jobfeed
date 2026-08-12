@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -126,6 +128,58 @@ async def test_schema_migration_rejects_an_active_caller_transaction() -> None:
             await ensure_sqlite_schema(connection)
         assert connection.in_transaction
         await connection.rollback()
+
+
+@pytest.mark.asyncio
+async def test_two_connections_serialize_empty_schema_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two starters that both observe version zero converge on exact v1."""
+    database_path = tmp_path / "concurrent-schema.db"
+    contender = await aiosqlite.connect(database_path)
+    migrator = await aiosqlite.connect(database_path)
+    await contender.execute("PRAGMA busy_timeout=5000")
+    await migrator.execute("PRAGMA busy_timeout=5000")
+    original_user_objects = sqlite_schema._user_objects
+    prelock_check_reached = asyncio.Event()
+    migration_finished = asyncio.Event()
+
+    async def hold_legacy_prelock_check(
+        connection: aiosqlite.Connection,
+    ) -> tuple[str, ...]:
+        objects = await original_user_objects(connection)
+        if connection is contender and not connection.in_transaction:
+            prelock_check_reached.set()
+            await migration_finished.wait()
+        return objects
+
+    monkeypatch.setattr(sqlite_schema, "_user_objects", hold_legacy_prelock_check)
+    contender_task = asyncio.create_task(ensure_sqlite_schema(contender))
+    prelock_task = asyncio.create_task(prelock_check_reached.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {contender_task, prelock_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if prelock_task in done:
+            await ensure_sqlite_schema(migrator)
+            migration_finished.set()
+        else:
+            prelock_task.cancel()
+            await contender_task
+            await ensure_sqlite_schema(migrator)
+        await contender_task
+
+        assert await _scalar(contender, "PRAGMA user_version") == 1
+        assert await _scalar(migrator, "PRAGMA user_version") == 1
+        assert await _table_names(contender) == tuple(sorted(SQLITE_TABLE_NAMES))
+        assert await _table_names(migrator) == tuple(sorted(SQLITE_TABLE_NAMES))
+    finally:
+        migration_finished.set()
+        prelock_task.cancel()
+        await contender.close()
+        await migrator.close()
 
 
 @pytest.mark.asyncio

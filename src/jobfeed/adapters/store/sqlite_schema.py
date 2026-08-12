@@ -33,10 +33,7 @@ async def ensure_sqlite_schema(connection: aiosqlite.Connection) -> None:
     """
     if connection.in_transaction:
         raise RuntimeError("SQLite schema migration requires no active transaction")
-    version_value = await _scalar(connection, "PRAGMA user_version")
-    if type(version_value) is not int:
-        raise ValueError("SQLite user_version is not an integer")
-    version = version_value
+    version = await _schema_version(connection)
     if version == 0:
         await _migrate_zero_to_one(connection)
         return
@@ -47,10 +44,17 @@ async def ensure_sqlite_schema(connection: aiosqlite.Connection) -> None:
 
 
 async def _migrate_zero_to_one(connection: aiosqlite.Connection) -> None:
-    if await _user_objects(connection):
-        raise ValueError("SQLite version 0 database is not empty")
     await connection.execute("BEGIN IMMEDIATE")
     try:
+        version = await _schema_version(connection)
+        if version == SQLITE_SCHEMA_VERSION:
+            await _validate_v1(connection)
+            await connection.commit()
+            return
+        if version != 0:
+            raise ValueError(f"unsupported SQLite schema version: {version}")
+        if await _user_objects(connection):
+            raise ValueError("SQLite version 0 database is not empty")
         for statement in schema_ddl_statements():
             await _execute_schema_statement(connection, statement)
         await connection.execute(_SEED_LEASE_SQL)
@@ -60,6 +64,13 @@ async def _migrate_zero_to_one(connection: aiosqlite.Connection) -> None:
     except BaseException:
         await connection.rollback()
         raise
+
+
+async def _schema_version(connection: aiosqlite.Connection) -> int:
+    version = await _scalar(connection, "PRAGMA user_version")
+    if type(version) is not int:
+        raise ValueError("SQLite user_version is not an integer")
+    return version
 
 
 async def _execute_schema_statement(connection: aiosqlite.Connection, sql: str) -> None:
