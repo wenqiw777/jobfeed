@@ -542,6 +542,18 @@ mypy 全绿。该 milestone 唯一一次 review 的 3 个 P1（错误 schema res
 - **证据：** contract tests、双进程 contention、crash/stale takeover、reader-during-writer；旧 generation 在 takeover 或正常 finalize→reacquire 后不能 renew/finalize。
 - **返回设计：** 若真实 workload 的 busy rate 超过验收阈值，不允许通过无限 retry 掩盖，返回评估 transaction shape。
 
+**状态（2026-08-12）：完成 / GO。** SQLite core facade 组合 jobs/evaluations、
+claims 和 run fencing capability；简单方法由模块化 facade 暴露，未复制 PostgreSQL
+god object。Stage A/B claim、自然键 upsert、generation fencing、expired-only
+recovery、rollback injection、两个 OS 进程竞争、100 轮 run race 和 WAL
+reader-during-writer 全部通过。Scan、Evaluate 和 Web RunManager 共用 lease
+orchestration；heartbeat 在外部工作前启动，lease loss 阻止后续 LLM/写调度，dry-run
+不产生 lease/run row。完整 `make quality` 为 1640 passed / 482 deselected，
+Ruff、format、mypy 全绿。该 milestone 唯一一次 review 的 2 个 P1（await
+后的 lease fencing、Stage B threshold 原子 sync）修复后定向复查 9 passed，
+结论 GO；未做新一轮扫描。PostgreSQL 在 cutover 前只通过明确标记的 transition
+bridge 保持现有运行能力，最终 SQLite wiring 时删除。
+
 ### Task 3A：Status/apply 原子性
 
 - **结果：** status/history、follow-up、bulk/twin transition、application audit 与关联 snapshots 保持原子和幂等。
