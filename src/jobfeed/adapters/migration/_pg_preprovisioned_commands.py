@@ -145,7 +145,10 @@ def restore_tool_version(runner: CommandRunner) -> str:
     match = re.search(r"PostgreSQL\)\s+(\d+(?:\.\d+)*)\b", result.stdout.strip())
     if match is None:
         raise ValueError("pg_restore version output is unrecognized")
-    return match.group(1)
+    version = match.group(1)
+    if version.partition(".")[0] != "16":
+        raise ValueError("pg_restore must be PostgreSQL 16 for the frozen archive")
+    return version
 
 
 def _restore_command(dsn: str, dump_path: Path) -> tuple[str, ...]:

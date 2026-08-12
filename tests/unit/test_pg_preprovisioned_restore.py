@@ -10,6 +10,9 @@ from pathlib import Path
 import pytest
 
 from jobfeed.adapters.migration._baseline_workload import artifact_sha256
+from jobfeed.adapters.migration._pg_preprovisioned_commands import (
+    restore_tool_version,
+)
 from jobfeed.adapters.migration.baseline_provenance import (
     build_provenance_index,
     validate_provenance_bundle,
@@ -70,7 +73,7 @@ class FakePreprovisionedRunner:
         if command[:2] == ("pg_restore", "--version"):
             return CommandResult(
                 0,
-                "pg_restore (PostgreSQL) 17.10 (Debian 17.10-0+deb13u1)",
+                "pg_restore (PostgreSQL) 16.13 (Debian 16.13-1.pgdg13+1)",
                 "",
             )
         if command[0] == "pg_restore":
@@ -264,6 +267,31 @@ def test_socket_free_restore_binds_bootstrap_and_live_database_identity(
     restores = [command for command in runner.calls if command[0] == "pg_restore"]
     assert len(restores) == _PG_RESTORE_CALLS
     assert all("docker" not in command for command in restores)
+
+
+def test_restore_tool_rejects_pg17_before_archive_restore(tmp_path: Path) -> None:
+    """The PG16 archive contract fails closed on a newer client major."""
+    config = _config(tmp_path)
+
+    class Pg17Runner(FakePreprovisionedRunner):
+        def run(
+            self,
+            argv: Sequence[str],
+            *,
+            cwd: Path | None = None,
+            env: Mapping[str, str] | None = None,
+        ) -> CommandResult:
+            if tuple(argv) == ("pg_restore", "--version"):
+                return CommandResult(
+                    0,
+                    "pg_restore (PostgreSQL) 17.10 (Debian 17.10-0+deb13u1)",
+                    "",
+                )
+            return super().run(argv, cwd=cwd, env=env)
+
+    runner = Pg17Runner(config)
+    with pytest.raises(ValueError, match="PostgreSQL 16"):
+        restore_tool_version(runner)
 
 
 def test_host_mode_0600_is_accepted_when_mount_provenance_is_read_only(
