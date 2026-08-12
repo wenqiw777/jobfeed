@@ -72,7 +72,11 @@ def canonical_source_rows() -> dict[str, list[dict[str, object]]]:
             "ml_gate_score": 0.75,
             "ml_gate_result": "pass",
         },
-        "evaluations": {"id": 51, "job_id": 41},
+        "evaluations": {
+            "id": 51,
+            "job_id": 41,
+            "stage_b_fit_json": '{"score":0.10000000000000001,"zero":-0.0}',
+        },
         "pipeline_runs": {
             "id": 61,
             "run_id": "run-雪",
