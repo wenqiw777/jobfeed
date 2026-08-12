@@ -32,7 +32,7 @@ class _SqliteEvaluationClaims:
     async def claim_pending_stage_a(
         self,
         *,
-        now: datetime,
+        now: datetime | None = None,
         limit: int = 100,
         quality_bands: frozenset[str] | None = None,
         corpus: str = "unrated",
@@ -40,7 +40,7 @@ class _SqliteEvaluationClaims:
     ) -> list[JobPosting]:
         """Claim ordered Stage A work using caller-supplied UTC time."""
         query = StageAQuery(
-            now=now,
+            now=self._claim_time(now),
             limit=limit,
             quality_bands=quality_bands,
             corpus=corpus,
@@ -51,7 +51,7 @@ class _SqliteEvaluationClaims:
     async def preview_claimable_stage_a(
         self,
         *,
-        now: datetime,
+        now: datetime | None = None,
         limit: int = 100,
         quality_bands: frozenset[str] | None = None,
         corpus: str = "unrated",
@@ -59,7 +59,7 @@ class _SqliteEvaluationClaims:
     ) -> list[JobPosting]:
         """Preview the exact ordered Stage A eligibility set without mutation."""
         query = StageAQuery(
-            now=now,
+            now=self._claim_time(now),
             limit=limit,
             quality_bands=quality_bands,
             corpus=corpus,
@@ -73,7 +73,7 @@ class _SqliteEvaluationClaims:
     async def load_gate_candidates(  # noqa: PLR0913
         self,
         *,
-        now: datetime,
+        now: datetime | None = None,
         corpus: str = "unrated",
         quality_bands: frozenset[str] | None = None,
         max_days: int | None = None,
@@ -83,7 +83,7 @@ class _SqliteEvaluationClaims:
     ) -> list[GateCandidate]:
         """Load a keyset page of read-only ML-gate candidates."""
         query = StageAQuery(
-            now=now,
+            now=self._claim_time(now),
             limit=limit,
             quality_bands=quality_bands,
             corpus=corpus,
@@ -104,7 +104,7 @@ class _SqliteEvaluationClaims:
         self,
         job_ids: list[str],
         *,
-        now: datetime,
+        now: datetime | None = None,
         quality_bands: frozenset[str] | None = None,
         corpus: str = "unrated",
         max_days: int | None = None,
@@ -115,7 +115,7 @@ class _SqliteEvaluationClaims:
         if not numeric_ids:
             return []
         query = StageAQuery(
-            now=now,
+            now=self._claim_time(now),
             limit=limit,
             quality_bands=quality_bands,
             corpus=corpus,
@@ -127,20 +127,21 @@ class _SqliteEvaluationClaims:
     async def claim_pending_stage_b(
         self,
         *,
-        now: datetime,
+        now: datetime | None = None,
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
     ) -> list[JobPosting]:
         """Claim ordered Stage B work using strict one-hour stale recovery."""
+        claim_time = self._claim_time(now)
         query = StageBQuery(
-            now=now,
+            now=claim_time,
             limit=limit,
             max_days=max_days,
             stage_a_threshold=stage_a_threshold,
         )
         sql, params = _build_stage_b_select(query)
-        timestamp = _require_utc_timestamp(now)
+        timestamp = _require_utc_timestamp(claim_time)
         async with (
             self._lifecycle.connection() as connection,
             _immediate_transaction(connection),
@@ -156,18 +157,24 @@ class _SqliteEvaluationClaims:
             await self._after_claim_selection("stage_b", connection)
         return [_hydrate_job(row) for row in rows]
 
-    async def release_stage_a_claim(self, job_id: str, *, now: datetime) -> None:
+    async def release_stage_a_claim(
+        self, job_id: str, *, now: datetime | None = None
+    ) -> None:
         """Idempotently restore the prior observable Stage A claim state."""
-        await self._release_claim(job_id, now=now, stage="a")
+        await self._release_claim(job_id, now=self._claim_time(now), stage="a")
 
-    async def release_stage_b_claim(self, job_id: str, *, now: datetime) -> None:
+    async def release_stage_b_claim(
+        self, job_id: str, *, now: datetime | None = None
+    ) -> None:
         """Idempotently restore the prior observable Stage B claim state."""
-        await self._release_claim(job_id, now=now, stage="b")
+        await self._release_claim(job_id, now=self._claim_time(now), stage="b")
 
-    async def refresh_stage_b_claim(self, job_id: str, *, now: datetime) -> None:
+    async def refresh_stage_b_claim(
+        self, job_id: str, *, now: datetime | None = None
+    ) -> None:
         """Advance caller-owned time only for an active Stage B claim."""
         numeric_id = int(job_id)
-        timestamp = _require_utc_timestamp(now)
+        timestamp = _require_utc_timestamp(self._claim_time(now))
         async with self._lifecycle.connection() as connection:
             await connection.execute(
                 "UPDATE evaluations SET updated_at=? "
@@ -239,6 +246,11 @@ class _SqliteEvaluationClaims:
         connection: aiosqlite.Connection,
     ) -> None:
         del stage, connection
+
+    def _claim_time(self, value: datetime | None) -> datetime:
+        if value is None:
+            raise ValueError("claim time requires an injected application clock")
+        return value
 
 
 def _numeric_ids(job_ids: list[str]) -> tuple[int, ...]:
