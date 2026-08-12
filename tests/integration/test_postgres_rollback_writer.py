@@ -12,8 +12,15 @@ import psycopg2  # type: ignore[import-untyped]
 import pytest
 
 import jobfeed.adapters.migration.postgres_rollback_writer as writer_module
-from jobfeed.adapters.migration._pg_baseline_manifest import table_metrics
+from jobfeed.adapters.migration._baseline_workload import artifact_sha256
+from jobfeed.adapters.migration._pg_baseline_manifest import (
+    aggregate_manifest,
+    table_metrics,
+)
 from jobfeed.adapters.migration._pg_baseline_reader import PostgresBaselineReader
+from jobfeed.adapters.migration._pg_canonical_aggregates import (
+    capture_canonical_aggregates,
+)
 from jobfeed.adapters.migration._sqlite_rollback_types import (
     SqliteRollbackTableMetric,
 )
@@ -21,6 +28,11 @@ from jobfeed.adapters.migration.canonical_row import canonical_rows_sha256
 from jobfeed.adapters.migration.canonical_schema_manifest import (
     CANONICAL_ROW_SCHEMAS_V1,
     CANONICAL_SCHEMA_MANIFEST_V1,
+)
+from jobfeed.adapters.migration.postgres_rollback_verifier import (
+    ExpectedCutoverProvenance,
+    TableVerificationResult,
+    verify_postgres_rollback,
 )
 from jobfeed.adapters.migration.postgres_rollback_writer import (
     PostgresRollbackError,
@@ -42,6 +54,7 @@ from tests.unit._sqlite_forward_import_fixture import (
 )
 
 _CUTOVER_JOB_ID = 41
+_ROLLBACK_AS_OF = datetime(2026, 8, 12, 13, 14, 15, tzinfo=UTC)
 
 
 class CanonicalSnapshot:
@@ -196,6 +209,74 @@ async def test_typed_sqlite_snapshot_replays_into_empty_postgres_target(
     with PostgresBaselineReader(fresh_pg_dsn) as reader:
         assert table_metrics(reader, 1) == report.final_table_metrics
     assert await _trigger_enabled(fresh_pg_dsn)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_sqlite_changes_replay_and_pass_read_only_postgres_verifier(
+    fresh_pg_dsn: str, tmp_path: Path
+) -> None:
+    """A changed SQLite snapshot round-trips with exact reverse parity."""
+    cutover_rows = canonical_source_rows()
+    _seed_postgres(fresh_pg_dsn, cutover_rows)
+    cutover = snapshot_manifest(cutover_rows)
+    with PostgresBaselineReader(fresh_pg_dsn) as reader:
+        cutover["tables"] = table_metrics(reader, 1)
+        cutover["aggregates"] = aggregate_manifest(
+            capture_canonical_aggregates(reader, _ROLLBACK_AS_OF)
+        )
+        database_identity = reader.database_identity()
+
+    final_rows = canonical_source_rows()
+    final_rows["jobs"][0]["title"] = "Changed while on SQLite"
+    final_rows["state"] = []
+    sqlite_path = tmp_path / "final-sqlite.db"
+    import_postgres_snapshot_to_sqlite(
+        FakeSnapshotSource(final_rows),
+        snapshot_manifest(final_rows),
+        sqlite_path,
+        chunk_size=1,
+    )
+
+    async with open_sqlite_rollback_snapshot(
+        sqlite_path,
+        as_of_utc=_ROLLBACK_AS_OF,
+        chunk_size=1,
+    ) as source:
+        writer_report = await replay_snapshot_to_postgres(
+            source,
+            cutover_manifest=cutover,
+            config=RollbackWriterConfig(dsn=fresh_pg_dsn, chunk_size=1),
+        )
+        proof = ExpectedCutoverProvenance(
+            proof_version=1,
+            cutover_manifest=cutover,
+            cutover_manifest_sha256=artifact_sha256(cutover),
+            target_database_identity=database_identity,
+            target_alembic_revision="0008",
+            trigger_name="trg_jobs_seed_status",
+            trigger_enabled=True,
+            pre_import_tables=tuple(
+                TableVerificationResult(
+                    table_name=name,
+                    row_count=int(metric["row_count"]),
+                    max_identity=metric["max_identity"],
+                    canonical_sha256=str(metric["canonical_sha256"]),
+                )
+                for name, metric in writer_report.pre_import_table_metrics.items()
+            ),
+        )
+        with PostgresBaselineReader(fresh_pg_dsn) as reader:
+            verification = verify_postgres_rollback(
+                reader,
+                source.manifest,
+                proof,
+                chunk_size=1,
+            )
+
+    assert verification.is_match
+    assert verification.mismatches == ()
+    assert writer_report.deleted_rows == {"state": 1}
 
 
 @pytest.mark.postgres

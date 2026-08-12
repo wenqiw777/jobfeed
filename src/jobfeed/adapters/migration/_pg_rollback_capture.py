@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol
 
 from jobfeed.adapters.migration._baseline_evidence_shape import mapping
@@ -137,13 +138,18 @@ def _capture_sequence_results(
             raise ValueError(f"sequence lookup mismatch: {table_name}")
         name = rows[0].get("sequence_name")
         value = rows[0].get("last_value")
-        if not isinstance(name, str) or type(value) is not int:
+        if not isinstance(name, str):
             raise ValueError(f"sequence state missing: {table_name}")
+        if value is None:
+            value = reader.scalar(
+                f'SELECT last_value FROM "public"."{table_name}_id_seq"'
+            )
+        last_value = _integral(value, f"{table_name} sequence")
         results.append(
             SequenceVerificationResult(
                 table_name=table_name,
                 sequence_name=name,
-                last_value=value,
+                last_value=last_value,
                 max_identity=maxima[table_name],
             )
         )
@@ -183,3 +189,11 @@ def _integer(value: object, name: str) -> int:
     if type(value) is not int:
         raise ValueError(f"{name} is not an integer: {value!r}")
     return value
+
+
+def _integral(value: object, name: str) -> int:
+    if type(value) is int:
+        return value
+    if isinstance(value, Decimal) and value == value.to_integral_value():
+        return int(value)
+    raise ValueError(f"{name} is not an integer: {value!r}")
