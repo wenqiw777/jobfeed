@@ -619,6 +619,18 @@ runtime/config 切换。
 - **冲突规则：** rollback 目标必须匹配 cutover snapshot manifest；任何目标侧额外写入或 checksum 分叉均 fail closed，不做 last-write-wins。
 - **返回设计：** 若不能证明 rollback target 未被写入，停止自动回灌，转人工数据合并方案。
 
+**状态（2026-08-12）：完成 / GO。** 回滚源以 immutable read-only SQLite v1
+snapshot 工作，入口验证 exact schema、idle leases、integrity/FK、无 active WAL
+和文件身份，并提供 14 表 canonical stream/manifest。Writer 只接受空 PG
+目标或与 cutover manifest 完全一致的 schema `0008` 目标，使用单连接
+serializable 全局事务，仅 disable/restore `trg_jobs_seed_status`，回放/删除
+14 表并事务化重置 7 个 sequence。真实组合演练覆盖 PG cutover →
+SQLite update/delete → PG replay → 只读 reverse verifier，1 passed / 4.39s；
+verifier 确认 14 表、trigger、sequence 和 aggregates 全部一致。故障注入
+覆盖 preflight、trigger disable/enable、mid replay 和 sequence，失败均恢复 cutover
+数据/序列/trigger。Task 5 focused 29 passed；完整 `make quality` 为 1737
+passed / 502 deselected，Ruff、format、mypy 全绿。
+
 ### Task 6：运行时与 CI 切换
 
 - **结果：** `./bin/jobfeed`、Web 和 CI 使用共享、持久化 SQLite 文件。
