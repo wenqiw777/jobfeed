@@ -10,14 +10,27 @@ from jobfeed.adapters.store._sqlite_runs import _get_pipeline_run
 from jobfeed.adapters.store.sqlite_claims_runs import SqliteClaimsRuns
 from jobfeed.adapters.store.sqlite_jobs_evaluations import SqliteJobsEvaluations
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.adapters.store.sqlite_ops import SqliteOps
 from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
+from jobfeed.adapters.store.sqlite_status_applications import (
+    SqliteStatusApplications,
+)
+from jobfeed.adapters.store.sqlite_views_performance import (
+    SqliteViewsPerformance,
+)
 from jobfeed.domain.models import PipelineRun
 
 Clock = Callable[[], datetime]
 
 
-class SQLiteStore(SqliteJobsEvaluations, SqliteClaimsRuns):
-    """Own SQLite lifecycle and compose typed core persistence capabilities."""
+class SQLiteStore(
+    SqliteJobsEvaluations,
+    SqliteClaimsRuns,
+    SqliteStatusApplications,
+    SqliteOps,
+    SqliteViewsPerformance,
+):
+    """Own one lifecycle and compose the complete typed SQLite runtime."""
 
     def __init__(self, path: Path, *, clock: Clock | None = None) -> None:
         """Create a closed store for one database file.
@@ -69,6 +82,9 @@ class SQLiteStore(SqliteJobsEvaluations, SqliteClaimsRuns):
 
     def _claim_time(self, value: datetime | None) -> datetime:
         return self._now() if value is None else super()._claim_time(value)
+
+    def _application_time(self, value: datetime | None = None) -> datetime:
+        return self._now() if value is None else super()._application_time(value)
 
 
 def _utc_now() -> datetime:
