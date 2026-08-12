@@ -1,4 +1,9 @@
-FROM postgres:16-bookworm
+FROM postgres:16-bookworm AS pg16
+
+# Flatten the PG16 filesystem into a fresh image so the migration runner gets
+# the matching client binaries without inheriting PostgreSQL's PGDATA VOLUME.
+FROM scratch
+COPY --from=pg16 / /
 
 ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"

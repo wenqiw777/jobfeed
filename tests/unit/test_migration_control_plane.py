@@ -344,7 +344,9 @@ def test_migration_compose_services_are_socket_free_and_formal_db_independent() 
     assert all("pgdata" not in str(volume) for volume in source["volumes"])
     assert all("pgdata" not in str(volume) for volume in scratch["volumes"])
     migration_dockerfile = (_ROOT / "Dockerfile.migration").read_text("utf-8")
-    assert migration_dockerfile.startswith("FROM postgres:16-bookworm\n")
+    assert migration_dockerfile.startswith("FROM postgres:16-bookworm AS pg16\n")
+    assert "FROM scratch\n" in migration_dockerfile
+    assert "COPY --from=pg16 / /" in migration_dockerfile
     assert "postgresql-client" not in migration_dockerfile
     assert "docker.io" not in migration_dockerfile
     assert "docker-cli" not in migration_dockerfile
