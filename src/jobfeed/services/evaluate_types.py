@@ -9,6 +9,7 @@ from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.ml_gate import MLGate
 from jobfeed.ports.prompts import PromptRenderer
 from jobfeed.ports.store import JobStore
+from jobfeed.ports.store_ext import StageBThresholdSync
 from jobfeed.ports.store_ops import StoreOpsMixin
 from jobfeed.ports.store_status import StoreStatusMixin
 
@@ -26,6 +27,7 @@ class EvaluateDependencies:
     llm_stage_b_sweep: LLMClient | None = None
     ml_gate: MLGate | None = None
     hard_filters: HardFilters | None = None
+    stage_b_threshold_sync: StageBThresholdSync | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

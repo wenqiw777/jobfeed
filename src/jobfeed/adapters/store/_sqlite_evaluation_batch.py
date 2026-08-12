@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
+from jobfeed.adapters.store._sqlite_capability_support import _immediate_transaction
 from jobfeed.adapters.store._sqlite_values import (
     _job_from_row,
     _utc_now_text,
@@ -64,6 +65,22 @@ async def _mark_stage_b_below_threshold(
 ) -> int:
     """Skip eligible Stage B rows below the active Stage A threshold."""
     now = datetime.now(UTC)
+    async with lifecycle.connection() as connection:
+        return await _skip_threshold_rows(
+            connection,
+            threshold,
+            max_days=max_days,
+            now=now,
+        )
+
+
+async def _skip_threshold_rows(
+    connection: aiosqlite.Connection,
+    threshold: int,
+    *,
+    max_days: int | None,
+    now: datetime,
+) -> int:
     conditions = [
         "evaluations.job_id=jobs.id",
         "evaluations.stage_a_status='completed'",
@@ -78,16 +95,15 @@ async def _mark_stage_b_below_threshold(
     if max_days is not None:
         conditions.append("jobs.discovered_at>=?")
         params.append(_utc_text(now - timedelta(days=max_days)))
-    async with lifecycle.connection() as connection:
-        cursor = await connection.execute(
-            "UPDATE evaluations SET stage_b_status='skipped_below_threshold', "
-            "updated_at=? FROM jobs WHERE "
-            + " AND ".join(conditions)
-            + " RETURNING evaluations.job_id",
-            (_utc_text(now), *params),
-        )
-        rows = list(await cursor.fetchall())
-        await cursor.close()
+    cursor = await connection.execute(
+        "UPDATE evaluations SET stage_b_status='skipped_below_threshold', "
+        "updated_at=? FROM jobs WHERE "
+        + " AND ".join(conditions)
+        + " RETURNING evaluations.job_id",
+        (_utc_text(now), *params),
+    )
+    rows = list(await cursor.fetchall())
+    await cursor.close()
     return len(rows)
 
 
@@ -99,6 +115,22 @@ async def _reopen_stage_b_at_or_above_threshold(
 ) -> int:
     """Reopen threshold-skipped rows that meet the active threshold."""
     now = datetime.now(UTC)
+    async with lifecycle.connection() as connection:
+        return await _reopen_threshold_rows(
+            connection,
+            threshold,
+            max_days=max_days,
+            now=now,
+        )
+
+
+async def _reopen_threshold_rows(
+    connection: aiosqlite.Connection,
+    threshold: int,
+    *,
+    max_days: int | None,
+    now: datetime,
+) -> int:
     conditions = [
         "evaluations.job_id=jobs.id",
         "evaluations.stage_a_status='completed'",
@@ -109,17 +141,49 @@ async def _reopen_stage_b_at_or_above_threshold(
     if max_days is not None:
         conditions.append("jobs.discovered_at>=?")
         params.append(_utc_text(now - timedelta(days=max_days)))
-    async with lifecycle.connection() as connection:
-        cursor = await connection.execute(
-            "UPDATE evaluations SET stage_b_status=NULL, stage_b_error=NULL, "
-            "updated_at=? FROM jobs WHERE "
-            + " AND ".join(conditions)
-            + " RETURNING evaluations.job_id",
-            (_utc_text(now), *params),
-        )
-        rows = list(await cursor.fetchall())
-        await cursor.close()
+    cursor = await connection.execute(
+        "UPDATE evaluations SET stage_b_status=NULL, stage_b_error=NULL, "
+        "updated_at=? FROM jobs WHERE "
+        + " AND ".join(conditions)
+        + " RETURNING evaluations.job_id",
+        (_utc_text(now), *params),
+    )
+    rows = list(await cursor.fetchall())
+    await cursor.close()
     return len(rows)
+
+
+async def _sync_stage_b_threshold(
+    lifecycle: SqliteLifecycle,
+    threshold: int,
+    *,
+    max_days: int | None,
+) -> tuple[int, int]:
+    """Reopen and skip threshold populations in one immediate transaction."""
+    now = datetime.now(UTC)
+    async with (
+        lifecycle.connection() as connection,
+        _immediate_transaction(connection),
+    ):
+        reopened = await _reopen_threshold_rows(
+            connection,
+            threshold,
+            max_days=max_days,
+            now=now,
+        )
+        await _after_threshold_reopen(connection)
+        skipped = await _skip_threshold_rows(
+            connection,
+            threshold,
+            max_days=max_days,
+            now=now,
+        )
+    return reopened, skipped
+
+
+async def _after_threshold_reopen(connection: aiosqlite.Connection) -> None:
+    """Provide a deterministic rollback injection boundary for contract tests."""
+    del connection
 
 
 async def _preview_pending_stage_b_after_threshold_sync(

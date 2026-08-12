@@ -159,6 +159,7 @@ def build_evaluate_service(
             llm_stage_b_sweep=llm_b_sweep,
             ml_gate=build_ml_gate(settings) if needs_gate else None,
             hard_filters=build_hard_filters(settings),
+            stage_b_threshold_sync=app.get("stage_b_threshold_sync"),
         ),
         config=EvaluateRuntimeConfig(
             llm=EvaluateLLMConfig(

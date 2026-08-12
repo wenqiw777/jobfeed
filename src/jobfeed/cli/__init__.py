@@ -10,6 +10,9 @@ import click
 
 from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.adapters.store.legacy_run_leases import LegacyRunLeaseStore
+from jobfeed.adapters.store.legacy_stage_b_threshold import (
+    LegacyPostgresStageBThresholdSync,
+)
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.cli._probe import ProbeVendorFn, build_probe_company
 from jobfeed.config import Settings, load_settings
@@ -22,6 +25,7 @@ from jobfeed.observability import (
 )
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
+from jobfeed.ports.store_ext import StageBThresholdSync, StoreEvaluationBatchMixin
 from jobfeed.services.digest import DigestService, DigestStore
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator
 from jobfeed.services.scan import ScanService
@@ -37,6 +41,7 @@ class AppContext(TypedDict):
     sources: dict[str, SimpleSource]
     scan_service: ScanService
     run_orchestrator: NotRequired[RunLeaseOrchestrator]
+    stage_b_threshold_sync: NotRequired[StageBThresholdSync]
     digest_service: DigestService
     probe_company: ProbeVendorFn
     logger: JobfeedLogger
@@ -72,6 +77,9 @@ def create_app(config_path: Path | None = None) -> AppContext:
     logger = get_logger()
     store = _create_store(settings)
     run_orchestrator = RunLeaseOrchestrator(LegacyRunLeaseStore(store))
+    stage_b_threshold_sync = LegacyPostgresStageBThresholdSync(
+        cast(StoreEvaluationBatchMixin, store)
+    )
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
     return AppContext(
         settings=settings,
@@ -83,6 +91,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
             run_orchestrator,
         ),
         run_orchestrator=run_orchestrator,
+        stage_b_threshold_sync=stage_b_threshold_sync,
         digest_service=DigestService(cast(DigestStore, store), logger),
         probe_company=build_probe_company(settings),
         logger=logger,

@@ -236,6 +236,23 @@ class SqliteJobsEvaluations:
             max_days=max_days,
         )
 
+    async def sync_stage_b_threshold(
+        self,
+        threshold: int,
+        *,
+        max_days: int | None = None,
+    ) -> tuple[int, int]:
+        """Atomically reopen eligible rows and skip ineligible rows.
+
+        Args: active Stage A threshold and optional discovery freshness window.
+        Returns: reopened-row count followed by skipped-row count.
+        """
+        return await _sqlite_evaluation_batch._sync_stage_b_threshold(
+            self._lifecycle,
+            threshold,
+            max_days=max_days,
+        )
+
     async def preview_pending_stage_b_after_threshold_sync(
         self,
         *,

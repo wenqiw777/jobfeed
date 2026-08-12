@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from jobfeed.adapters.store import _sqlite_evaluation_batch
 from jobfeed.domain.models import QualityBand
 from tests.support.sqlite_jobs_evaluations import (
     make_job,
@@ -233,5 +234,58 @@ async def test_threshold_mutations_and_preview_preserve_exact_guards(
         assert await store.reopen_stage_b_at_or_above_threshold(70) == 1
         assert await store.reopen_stage_b_at_or_above_threshold(70) == 0
         assert await _stage_b_status(lifecycle, high_skip.job_id) is None
+    finally:
+        await lifecycle.close()
+
+
+async def test_threshold_sync_atomically_reopens_and_skips_with_counts(
+    tmp_path: Path,
+) -> None:
+    """One threshold sync returns reopened/skipped counts from one transition."""
+    lifecycle, store = await open_sqlite_store(tmp_path / "threshold-sync.db")
+    try:
+        below = await store.save_job(make_job("below"))
+        above = await store.save_job(make_job("above"))
+        await store.save_stage_a(below.job_id, stage_a(69))
+        await store.save_stage_a(above.job_id, stage_a(70))
+        await store.mark_stage_b_skipped(above.job_id)
+
+        assert await store.sync_stage_b_threshold(70) == (1, 1)
+        assert await _stage_b_status(lifecycle, above.job_id) is None
+        assert await _stage_b_status(lifecycle, below.job_id) == (
+            "skipped_below_threshold"
+        )
+        assert await store.sync_stage_b_threshold(70) == (0, 0)
+    finally:
+        await lifecycle.close()
+
+
+async def test_threshold_sync_rolls_back_both_halves_on_injected_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure after reopen leaves both threshold populations unchanged."""
+    lifecycle, store = await open_sqlite_store(tmp_path / "threshold-rollback.db")
+    below = await store.save_job(make_job("below"))
+    above = await store.save_job(make_job("above"))
+    await store.save_stage_a(below.job_id, stage_a(69))
+    await store.save_stage_a(above.job_id, stage_a(70))
+    await store.mark_stage_b_skipped(above.job_id)
+
+    async def reject_second_half(*_args: object) -> None:
+        raise RuntimeError("injected threshold sync failure")
+
+    monkeypatch.setattr(
+        _sqlite_evaluation_batch,
+        "_after_threshold_reopen",
+        reject_second_half,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="injected threshold sync"):
+            await store.sync_stage_b_threshold(70)
+        assert await _stage_b_status(lifecycle, above.job_id) == (
+            "skipped_below_threshold"
+        )
+        assert await _stage_b_status(lifecycle, below.job_id) is None
     finally:
         await lifecycle.close()

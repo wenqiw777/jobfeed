@@ -34,6 +34,9 @@ import pytest
 
 from jobfeed.adapters.llm.mock import MockLLM
 from jobfeed.adapters.ml.mock import MockGate
+from jobfeed.adapters.store.legacy_stage_b_threshold import (
+    LegacyPostgresStageBThresholdSync,
+)
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import Settings
 from jobfeed.domain.filtering import HardFilters
@@ -312,6 +315,7 @@ def _service(  # noqa: PLR0913 - keyword-only test knobs; readability over a wra
         llm_stage_b=MockLLM(),
         ml_gate=ml_gate or MockGate(default_result="pass", fail_if=fail_if),  # type: ignore[arg-type]
         hard_filters=_hard_filters(),
+        stage_b_threshold_sync=LegacyPostgresStageBThresholdSync(store),
     )
     return EvaluateService(
         deps=deps,

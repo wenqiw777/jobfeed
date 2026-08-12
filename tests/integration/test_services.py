@@ -10,6 +10,9 @@ import pytest
 
 from jobfeed.adapters.llm.mock import MockLLM
 from jobfeed.adapters.sources.mock import MockSource
+from jobfeed.adapters.store.legacy_stage_b_threshold import (
+    LegacyPostgresStageBThresholdSync,
+)
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import LLMSettings, ScoringSettings, Settings
 from jobfeed.domain.models import (
@@ -367,6 +370,7 @@ def _make_deps(
         llm_stage_a=llm,  # type: ignore[arg-type]
         llm_stage_b=llm,  # type: ignore[arg-type]
         llm_stage_b_sweep=sweep,  # type: ignore[arg-type]
+        stage_b_threshold_sync=LegacyPostgresStageBThresholdSync(store),
     )
 
 

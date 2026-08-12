@@ -14,6 +14,28 @@ from jobfeed.domain.models import JobPosting
 
 
 @runtime_checkable
+class StageBThresholdSync(Protocol):
+    """Synchronize Stage B eligibility to one active Stage A threshold."""
+
+    async def sync_stage_b_threshold(
+        self,
+        threshold: int,
+        *,
+        max_days: int | None = None,
+    ) -> tuple[int, int]:
+        """Reopen eligible rows and skip ineligible rows.
+
+        Args:
+            threshold: Minimum Stage A score allowed into Stage B.
+            max_days: Optional freshness window on discovered_at.
+
+        Returns:
+            Reopened-row count followed by skipped-row count.
+        """
+        ...
+
+
+@runtime_checkable
 class StoreEvaluationBatchMixin(Protocol):
     """Batch evaluation queries for service-layer efficiency."""
 

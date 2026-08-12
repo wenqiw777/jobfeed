@@ -40,7 +40,10 @@ async def _run_stage_b(
         return
     lease_session.ensure_active()
     await sync_stage_b_threshold(
-        service._deps.store, service._config.stage_a_threshold, max_days
+        service._deps.store,
+        service._config.stage_a_threshold,
+        max_days,
+        transition_sync=service._deps.stage_b_threshold_sync,
     )
     lease_session.ensure_active()
     has_budget = await service._budget.has_budget()

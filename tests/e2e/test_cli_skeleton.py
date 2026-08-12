@@ -8,6 +8,9 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner, Result
 
+from jobfeed.adapters.store.legacy_stage_b_threshold import (
+    LegacyPostgresStageBThresholdSync,
+)
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.cli import cli, create_app
 
@@ -251,6 +254,7 @@ def test_create_app_wires_postgres_store(tmp_path: Path) -> None:
     app = create_app(config_path)
 
     assert isinstance(app["store"], PostgresStore)
+    assert isinstance(app["stage_b_threshold_sync"], LegacyPostgresStageBThresholdSync)
 
 
 def test_cli_migrate_dry_run_needs_no_target_store(tmp_path: Path) -> None:

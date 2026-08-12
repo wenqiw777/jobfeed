@@ -10,7 +10,7 @@ from datetime import datetime
 from jobfeed.domain.models import JobPosting
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_claims import GateCandidate, StoreEvaluationClaimMixin
-from jobfeed.ports.store_ext import StoreEvaluationBatchMixin
+from jobfeed.ports.store_ext import StageBThresholdSync
 
 VALID_EVALUATE_STAGES = frozenset({"a", "b", "both"})
 STAGE_A_QUALITY_BANDS = frozenset({"full", "good"})
@@ -214,23 +214,31 @@ async def release_stage_b_for_run(store: JobStore, job_id: str) -> None:
 
 
 async def sync_stage_b_threshold(
-    store: JobStore, threshold: int, max_days: int | None
-) -> None:
+    store: JobStore,
+    threshold: int,
+    max_days: int | None,
+    *,
+    transition_sync: StageBThresholdSync | None = None,
+) -> tuple[int, int]:
     """Reopen/skip Stage B rows to match the current Stage A threshold.
 
     Reopens rows now at/above the threshold and marks below-threshold rows
-    skipped, scoped to ``max_days`` freshness. A no-op when the store lacks the
-    evaluation-batch capability.
+    skipped, scoped to ``max_days`` freshness. SQLite exposes that behavior as
+    one atomic store capability. PostgreSQL uses only the explicitly injected
+    transition bridge until cutover; other stores are a no-op.
 
     Args:
         store: Job store, optionally with evaluation-batch support.
         threshold: Current Stage A score threshold.
         max_days: Freshness window applied to both batch updates.
+
+    Returns:
+        Reopened-row count followed by skipped-row count.
     """
-    if not isinstance(store, StoreEvaluationBatchMixin):
-        return
-    await store.reopen_stage_b_at_or_above_threshold(threshold, max_days=max_days)
-    await store.mark_stage_b_below_threshold(threshold, max_days=max_days)
+    synchronizer = store if isinstance(store, StageBThresholdSync) else transition_sync
+    if synchronizer is None:
+        return (0, 0)
+    return await synchronizer.sync_stage_b_threshold(threshold, max_days=max_days)
 
 
 @asynccontextmanager
