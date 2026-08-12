@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import aiosqlite
 import pytest
 
-from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
+from jobfeed.adapters.store.sqlite_schema import SQLITE_METADATA, ensure_sqlite_schema
 
 _EXPLICIT_INDEXES = {
     "idx_companies_vendor",
@@ -26,6 +28,20 @@ _EXPLICIT_INDEXES = {
     "idx_step_timings_run",
     "idx_step_timings_type_created",
 }
+_TIMESTAMP_DEFAULT_COLUMNS = {
+    ("evaluations", "created_at"),
+    ("evaluations", "updated_at"),
+    ("resume_variants", "created_at"),
+    ("job_status", "last_status_change_at"),
+    ("job_status_history", "changed_at"),
+    ("applied", "applied_at"),
+    ("resume_snapshots", "captured_at"),
+    ("cost_ledger", "last_updated"),
+    ("llm_usage", "timestamp"),
+    ("interview_rounds", "created_at"),
+    ("step_timings", "created_at"),
+}
+_CANONICAL_UTC = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 
 
 async def _new_database() -> aiosqlite.Connection:
@@ -130,6 +146,46 @@ async def test_enum_score_boolean_and_usage_checks_are_enforced() -> None:
         for statement, params in invalid_statements:
             with pytest.raises(aiosqlite.IntegrityError, match="CHECK"):
                 await connection.execute(statement, params)
+    finally:
+        await connection.close()
+
+
+def test_all_database_timestamp_defaults_use_canonical_utc_expression() -> None:
+    """Every v1 DB clock default emits the frozen UTC microsecond shape."""
+    for table_name, column_name in _TIMESTAMP_DEFAULT_COLUMNS:
+        default = SQLITE_METADATA.tables[table_name].c[column_name].server_default
+        assert default is not None
+        assert str(default.arg) == "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
+
+
+@pytest.mark.asyncio
+async def test_trigger_timestamps_are_canonical_and_lexical_cutoffs_work() -> None:
+    """Trigger timestamps sort after a same-day canonical midnight cutoff."""
+    connection = await _new_database()
+    try:
+        job_id = await _insert_job(connection, "canonical-clock")
+        cursor = await connection.execute(
+            "SELECT js.last_status_change_at, h.changed_at "
+            "FROM job_status js JOIN job_status_history h ON h.job_id=js.job_id "
+            "WHERE js.job_id=?",
+            (job_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        assert row is not None
+        status_timestamp, history_timestamp = row
+        assert _CANONICAL_UTC.fullmatch(status_timestamp)
+        assert _CANONICAL_UTC.fullmatch(history_timestamp)
+
+        same_day_cutoff = f"{history_timestamp[:10]}T00:00:00.000000Z"
+        cursor = await connection.execute(
+            "SELECT changed_at FROM job_status_history "
+            "WHERE changed_at >= ? ORDER BY changed_at, id",
+            (same_day_cutoff,),
+        )
+        assert await cursor.fetchall() == [(history_timestamp,)]
+        await cursor.close()
+        assert same_day_cutoff <= status_timestamp
     finally:
         await connection.close()
 

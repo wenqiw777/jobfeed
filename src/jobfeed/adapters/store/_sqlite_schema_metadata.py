@@ -18,10 +18,11 @@ SQLITE_TABLE_NAMES: Final = (
     *(table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables),
     "run_leases",
 )
+_UTC_TIMESTAMP_SQL: Final = "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
 
 _DEFAULTS: Final[dict[tuple[str, str], str]] = {
-    ("evaluations", "created_at"): "CURRENT_TIMESTAMP",
-    ("evaluations", "updated_at"): "CURRENT_TIMESTAMP",
+    ("evaluations", "created_at"): _UTC_TIMESTAMP_SQL,
+    ("evaluations", "updated_at"): _UTC_TIMESTAMP_SQL,
     ("evaluations", "stage_a_error_count"): "0",
     ("evaluations", "stage_b_error_count"): "0",
     ("pipeline_runs", "jobs_discovered"): "0",
@@ -35,25 +36,25 @@ _DEFAULTS: Final[dict[tuple[str, str], str]] = {
     ("pipeline_runs", "total_llm_cost_usd"): "0.0",
     ("pipeline_runs", "errors"): "0",
     ("pipeline_runs", "jobs_gate_passed"): "0",
-    ("resume_variants", "created_at"): "CURRENT_TIMESTAMP",
+    ("resume_variants", "created_at"): _UTC_TIMESTAMP_SQL,
     ("job_status", "status"): "'new'",
-    ("job_status", "last_status_change_at"): "CURRENT_TIMESTAMP",
-    ("job_status_history", "changed_at"): "CURRENT_TIMESTAMP",
-    ("applied", "applied_at"): "CURRENT_TIMESTAMP",
-    ("resume_snapshots", "captured_at"): "CURRENT_TIMESTAMP",
+    ("job_status", "last_status_change_at"): _UTC_TIMESTAMP_SQL,
+    ("job_status_history", "changed_at"): _UTC_TIMESTAMP_SQL,
+    ("applied", "applied_at"): _UTC_TIMESTAMP_SQL,
+    ("resume_snapshots", "captured_at"): _UTC_TIMESTAMP_SQL,
     ("companies", "ats_override"): "0",
     ("companies", "job_count_last_scan"): "0",
     ("companies", "consecutive_discover_failures"): "0",
     ("cost_ledger", "spent_usd"): "0.0",
     ("cost_ledger", "calls"): "0",
-    ("cost_ledger", "last_updated"): "CURRENT_TIMESTAMP",
+    ("cost_ledger", "last_updated"): _UTC_TIMESTAMP_SQL,
     ("llm_usage", "cost_usd"): "0.0",
     ("llm_usage", "cached"): "0",
     ("llm_usage", "latency_ms"): "0",
-    ("llm_usage", "timestamp"): "CURRENT_TIMESTAMP",
-    ("interview_rounds", "created_at"): "CURRENT_TIMESTAMP",
+    ("llm_usage", "timestamp"): _UTC_TIMESTAMP_SQL,
+    ("interview_rounds", "created_at"): _UTC_TIMESTAMP_SQL,
     ("step_timings", "is_error"): "0",
-    ("step_timings", "created_at"): "CURRENT_TIMESTAMP",
+    ("step_timings", "created_at"): _UTC_TIMESTAMP_SQL,
 }
 _FOREIGN_KEYS: Final = {
     "evaluations": (("job_id", "jobs", "id", None),),
@@ -298,9 +299,15 @@ CREATE TRIGGER trg_jobs_seed_status
 AFTER INSERT ON jobs
 FOR EACH ROW
 BEGIN
-    INSERT OR IGNORE INTO job_status (job_id, status) VALUES (NEW.id, 'new');
-    INSERT INTO job_status_history (job_id, from_status, to_status)
-        VALUES (NEW.id, NULL, 'new');
+    INSERT OR IGNORE INTO job_status (job_id, status, last_status_change_at)
+        VALUES (NEW.id, 'new', strftime('%Y-%m-%dT%H:%M:%f000Z','now'));
+    INSERT INTO job_status_history (job_id, from_status, to_status, changed_at)
+        VALUES (
+            NEW.id,
+            NULL,
+            'new',
+            strftime('%Y-%m-%dT%H:%M:%f000Z','now')
+        );
 END
 """.strip()
 
