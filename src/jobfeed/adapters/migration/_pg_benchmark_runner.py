@@ -42,7 +42,16 @@ async def _seed_inputs(store: PostgresStore, limit: int) -> _Seeds:
     )
     if not jobs or not page.rows or not keys:
         raise ValueError("benchmark seed corpus is empty or has no non-blank twin key")
-    job_id = str(jobs[0].id) if jobs and jobs[0].id is not None else "0"
+    job_id = None
+    for row in page.rows:
+        candidate_id = row.job.id
+        if candidate_id is not None and await store.list_twin_statuses(
+            str(candidate_id)
+        ):
+            job_id = str(candidate_id)
+            break
+    if job_id is None:
+        raise ValueError("benchmark seed corpus has no job with a persisted twin")
     return _Seeds(job_id=job_id, jobs=jobs, twin_keys=keys)
 
 
