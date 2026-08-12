@@ -7,7 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from jobfeed.adapters.migration._pg_benchmark_runner import _seed_inputs
+from jobfeed.adapters.migration._baseline_workload import BenchmarkQuery
+from jobfeed.adapters.migration._pg_benchmark_runner import (
+    _require_nonempty_result,
+    _seed_inputs,
+)
 
 _SEED_LIMIT = 100
 
@@ -58,3 +62,25 @@ async def test_seed_inputs_selects_a_job_proven_to_have_persisted_twins() -> Non
 
     assert seeds.job_id == "2"
     assert store.checked_ids == ["1", "2"]
+
+
+def test_only_explicit_empty_aggregate_accepts_zero_rows() -> None:
+    """Empty step metrics are valid without weakening hot-path gates."""
+    step_timings = BenchmarkQuery(
+        name="step_timings",
+        coverage="perf.step_timings",
+        operation="get_step_timings",
+        params={"window_days": 30},
+        allow_empty=True,
+    )
+    _require_nonempty_result(step_timings, 0)
+
+    hot_path = BenchmarkQuery(
+        name="jobs_view",
+        coverage="hot.list",
+        operation="jobs_view_list",
+        params={"limit": _SEED_LIMIT},
+        allow_empty=False,
+    )
+    with pytest.raises(ValueError, match="returned zero rows"):
+        _require_nonempty_result(hot_path, 0)

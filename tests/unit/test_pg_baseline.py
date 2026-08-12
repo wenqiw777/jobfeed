@@ -62,6 +62,9 @@ def test_frozen_benchmark_workload_covers_every_required_path() -> None:
     assert workload.contention.coroutines_per_process == _EXPECTED_COROUTINES
     assert workload.contention.rounds_per_coroutine >= _MINIMUM_ROUNDS
     assert workload.contention.claim_limit == 1
+    assert [query.operation for query in workload.operations if query.allow_empty] == [
+        "get_step_timings"
+    ]
 
 
 def test_claim_contention_outcome_rejects_duplicates_or_errors() -> None:
@@ -129,6 +132,11 @@ def test_unknown_or_incomplete_benchmark_operation_fails_closed() -> None:
     document = json.loads(_WORKLOAD.read_text("utf-8"))
     document["operations"].pop()
     with pytest.raises(ValueError, match="coverage"):
+        validate_benchmark_workload(document)
+
+    document = json.loads(_WORKLOAD.read_text("utf-8"))
+    document["operations"][0]["allow_empty"] = True
+    with pytest.raises(ValueError, match="allow_empty"):
         validate_benchmark_workload(document)
 
 

@@ -65,6 +65,11 @@ def _count_rows(result: object) -> int:
     return 1
 
 
+def _require_nonempty_result(query: BenchmarkQuery, row_count: int) -> None:
+    if row_count == 0 and not query.allow_empty:
+        raise ValueError(f"benchmark operation {query.operation} returned zero rows")
+
+
 def _views_operation_call(
     store: PostgresStore,
     detail: JobsViewService,
@@ -171,10 +176,7 @@ async def run_postgres_store_benchmarks(
                 result = await call()
                 elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
                 row_count = _count_rows(result)
-                if row_count == 0:
-                    raise ValueError(
-                        f"benchmark operation {query.operation} returned zero rows"
-                    )
+                _require_nonempty_result(query, row_count)
                 if index >= warmups:
                     durations.append(elapsed_ms)
             reports.append(

@@ -63,6 +63,7 @@ _CONTENTION_PROCESSES = 2
 _CONTENTION_COROUTINES = 8
 _MIN_CONTENTION_ROUNDS = 100
 _MIN_SAMPLE_COUNT = 30
+_ALLOW_EMPTY_OPERATIONS: Final = frozenset({"get_step_timings"})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -73,6 +74,7 @@ class BenchmarkQuery:
     coverage: str
     operation: str
     params: Mapping[str, int]
+    allow_empty: bool
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -110,6 +112,7 @@ def _parse_operation(raw: object) -> BenchmarkQuery:
     coverage = raw.get("coverage")
     operation = raw.get("operation")
     params = raw.get("params")
+    allow_empty = raw.get("allow_empty", False)
     if not isinstance(name, str) or not isinstance(coverage, str):
         raise ValueError("benchmark operation name and coverage must be text")
     if not isinstance(operation, str) or operation not in _OPERATION_COVERAGE:
@@ -123,11 +126,16 @@ def _parse_operation(raw: object) -> BenchmarkQuery:
         raise ValueError("benchmark operation params must be positive integers")
     if set(params) != _OPERATION_PARAMS[operation]:
         raise ValueError(f"benchmark operation {operation} params mismatch")
+    if type(allow_empty) is not bool or (
+        allow_empty and operation not in _ALLOW_EMPTY_OPERATIONS
+    ):
+        raise ValueError(f"benchmark operation {operation} allow_empty mismatch")
     return BenchmarkQuery(
         name=name,
         coverage=coverage,
         operation=operation,
         params=params,
+        allow_empty=allow_empty,
     )
 
 
