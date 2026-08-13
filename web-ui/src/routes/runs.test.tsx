@@ -140,6 +140,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test("renders the Cloudscape run operations workspace and history table", async () => {
+  renderRuns();
+
+  expect(await screen.findByTestId("cloudscape-runs")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Run operations", level: 2 })).toBeVisible();
+  expect(screen.getByRole("heading", { name: /Run history/, level: 2 })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Started" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Source" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Activity" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Cost" })).toBeVisible();
+});
+
 test("rows mirror the server's newest-first order with mono timestamps", async () => {
   renderRuns();
   await screen.findByTestId("run-row-r2");
@@ -159,20 +171,22 @@ test("rows mirror the server's newest-first order with mono timestamps", async (
 
 test("rows show only non-zero counter chips; cost only when > 0", async () => {
   renderRuns();
-  const row2 = await screen.findByTestId("run-row-r2");
+  await screen.findByTestId("run-row-r2");
   const row1 = screen.getByTestId("run-row-r1");
+  const activity2 = screen.getByTestId("run-activity-r2");
+  const activity1 = screen.getByTestId("run-activity-r1");
 
   // r2: discovered/inserted/stage A non-zero; the zero counters stay quiet.
-  expect(within(row2).getByText("discovered")).toBeInTheDocument();
-  expect(within(row2).getByText("inserted")).toBeInTheDocument();
-  expect(within(row2).getByText("stage A")).toBeInTheDocument();
-  expect(within(row2).queryByText("updated")).toBeNull();
-  expect(within(row2).queryByText("errors")).toBeNull();
-  expect(within(row2).getByText("$0.42")).toBeInTheDocument();
+  expect(within(activity2).getByText("12 discovered")).toBeInTheDocument();
+  expect(within(activity2).getByText("4 inserted")).toBeInTheDocument();
+  expect(within(activity2).getByText("8 stage A")).toBeInTheDocument();
+  expect(within(activity2).queryByText(/updated/)).toBeNull();
+  expect(within(activity2).queryByText(/errors/)).toBeNull();
+  expect(screen.getByText("$0.42")).toBeInTheDocument();
 
   // r1: only the errors chip — and no cost cell at $0.
-  expect(within(row1).getByText("errors")).toBeInTheDocument();
-  expect(within(row1).queryByText("discovered")).toBeNull();
+  expect(within(activity1).getByText("2 errors")).toBeInTheDocument();
+  expect(within(activity1).queryByText(/discovered/)).toBeNull();
   expect(within(row1).queryByText(/\$/)).toBeNull();
 });
 
@@ -198,12 +212,12 @@ test("pagination drives offset and the mono range label", async () => {
   state.runs = Array.from({ length: 30 }, (_, i) => runRow(`p${30 - i}`));
   renderRuns();
   await screen.findByText("1–25 of 30");
-  expect(screen.getByRole("button", { name: "Prev" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Prev" })).toHaveAttribute("aria-disabled", "true");
 
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("26–30 of 30");
   expect(calls.some((c) => c.url.includes("offset=25"))).toBe(true);
-  expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Next" })).toHaveAttribute("aria-disabled", "true");
 
   fireEvent.click(screen.getByRole("button", { name: "Prev" }));
   await screen.findByText("1–25 of 30");
@@ -241,7 +255,7 @@ test("trigger evaluate dialog opens and submits with defaults", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
   expect(await screen.findByText("Trigger Evaluate")).toBeInTheDocument();
-  expect(screen.getByLabelText("Stage")).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /Both stages/ })).toBeInTheDocument();
   expect(screen.getByLabelText("Limit")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Start evaluate" })).toBeInTheDocument();
 
@@ -262,7 +276,7 @@ test("trigger evaluate submits a non-default stage", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
   await screen.findByText("Trigger Evaluate");
-  fireEvent.change(screen.getByLabelText("Stage"), { target: { value: "b" } });
+  fireEvent.click(screen.getByRole("radio", { name: /Stage B only/ }));
   fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "1" } });
   fireEvent.click(screen.getByRole("button", { name: "Start evaluate" }));
 
@@ -318,7 +332,7 @@ test("invalid limit disables submit, shows inline error, and blocks the POST", a
   await screen.findByText("Trigger Evaluate");
 
   fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "0" } });
-  expect(screen.getByRole("alert")).toHaveTextContent(/at least 1/);
+  expect(screen.getByText(/at least 1/)).toBeInTheDocument();
   expect(screen.getByLabelText("Limit")).toHaveAttribute("aria-invalid", "true");
 
   const submit = screen.getByRole("button", { name: "Start evaluate" });

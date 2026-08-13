@@ -1,136 +1,119 @@
-/**
- * Trigger Evaluate: dialog with stage + limit → POST /api/runs/evaluate.
- *
- * The evaluate trigger has parameters (stage, limit) that benefit from a
- * form, so this uses the Dialog primitive rather than a dropdown.
- */
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import Form from "@cloudscape-design/components/form";
+import FormField from "@cloudscape-design/components/form-field";
+import Input from "@cloudscape-design/components/input";
+import Modal from "@cloudscape-design/components/modal";
+import RadioGroup from "@cloudscape-design/components/radio-group";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useState } from "react";
-import { FlaskConical } from "lucide-react";
 
-import { useTriggerEvaluate } from "@/api/queries";
 import { ApiError } from "@/api/client";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { useTriggerEvaluate } from "@/api/queries";
 import { toast } from "@/components/ui/use-toast";
 
 type Stage = "a" | "b" | "both";
 
+const STAGE_OPTIONS = [
+  { label: "Both stages", value: "both", description: "Fast score, then deep review" },
+  { label: "Stage A only", value: "a", description: "Fast score only" },
+  { label: "Stage B only", value: "b", description: "Deep review for eligible jobs" },
+];
+
+/** Cloudscape evaluation form with stage and optional batch limit. */
 export function TriggerEvaluateButton() {
-  const [open, setOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   const [stage, setStage] = useState<Stage>("both");
   const [limitText, setLimitText] = useState("");
   const trigger = useTriggerEvaluate();
-
   const limit = limitText.trim() === "" ? null : Number(limitText);
   const isLimitInvalid = limit !== null && (Number.isNaN(limit) || limit < 1);
 
-  function submit(): void {
+  const submit = () => {
     if (isLimitInvalid) return;
-
     trigger.mutate(
       { stage, limit },
       {
         onSuccess: () => {
-          setOpen(false);
+          setIsOpen(false);
           setStage("both");
           setLimitText("");
           toast({ title: `Evaluate started (stage ${stage})` });
         },
-        onError: (err) => {
-          if (err instanceof ApiError && err.status === 409) {
-            toast({
-              title: "Evaluate already running",
-              description: "Wait for the current evaluation to finish.",
-              variant: "destructive",
-            });
-          } else {
-            toast({
-              title: "Evaluate failed",
-              description: err instanceof Error ? err.message : String(err),
-              variant: "destructive",
-            });
-          }
-        },
+        onError: (error) => handleError(error),
       },
     );
-  }
+  };
+
+  const handleError = (error: unknown) => {
+    if (error instanceof ApiError && error.status === 409) {
+      toast({
+        title: "Evaluate already running",
+        description: "Wait for the current evaluation to finish.",
+        variant: "destructive",
+      });
+      return;
+    }
+    toast({
+      title: "Evaluate failed",
+      description: error instanceof Error ? error.message : String(error),
+      variant: "destructive",
+    });
+  };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm">
-          <FlaskConical className="h-3.5 w-3.5" />
-          Evaluate
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Trigger Evaluate</DialogTitle>
-          <DialogDescription>
-            Score unrated jobs through the LLM evaluation pipeline.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="mt-3 flex flex-col gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-label text-mute">Stage</span>
-            <select
-              value={stage}
-              onChange={(event) => setStage(event.target.value as Stage)}
-              aria-label="Stage"
-              className="h-8 w-full rounded-control border border-border-strong bg-surface px-2.5 text-body-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent"
+    <>
+      <Button iconName="gen-ai" onClick={() => setIsOpen(true)}>Evaluate</Button>
+      <Modal
+        visible={isOpen}
+        onDismiss={() => setIsOpen(false)}
+        closeAriaLabel="Close evaluation form"
+        header="Trigger Evaluate"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => setIsOpen(false)}>Cancel</Button>
+              <Button
+                variant="primary"
+                disabled={isLimitInvalid}
+                loading={trigger.isPending}
+                loadingText="Starting evaluation"
+                onClick={submit}
+              >
+                Start evaluate
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <Form>
+          <SpaceBetween size="l">
+            <FormField label="Stage" description="Choose which evaluation work to schedule.">
+              <RadioGroup
+                value={stage}
+                items={STAGE_OPTIONS}
+                ariaLabel="Stage"
+                onChange={({ detail }) => setStage(detail.value as Stage)}
+              />
+            </FormField>
+            <FormField
+              label="Limit (optional)"
+              description="Leave empty to process every eligible job."
+              errorText={isLimitInvalid ? "Limit must be a number of at least 1." : undefined}
             >
-              <option value="both">Both (A + B)</option>
-              <option value="a">Stage A only</option>
-              <option value="b">Stage B only</option>
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-label text-mute">Limit (optional)</span>
-            <Input
-              type="number"
-              min={1}
-              placeholder="all"
-              value={limitText}
-              onChange={(e) => setLimitText(e.target.value)}
-              aria-label="Limit"
-              aria-invalid={isLimitInvalid}
-            />
-            {isLimitInvalid && (
-              <p role="alert" className="text-micro text-danger">
-                Limit must be a number of at least 1.
-              </p>
-            )}
-          </label>
-        </div>
-
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="ghost" size="sm">
-              Cancel
-            </Button>
-          </DialogClose>
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={trigger.isPending || isLimitInvalid}
-            onClick={submit}
-          >
-            {trigger.isPending ? "Starting…" : "Start evaluate"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+              <Input
+                type="number"
+                value={limitText}
+                placeholder="all"
+                ariaLabel="Limit"
+                invalid={isLimitInvalid}
+                nativeInputAttributes={{ min: 1 }}
+                onChange={({ detail }) => setLimitText(detail.value)}
+              />
+            </FormField>
+          </SpaceBetween>
+        </Form>
+      </Modal>
+    </>
   );
 }
