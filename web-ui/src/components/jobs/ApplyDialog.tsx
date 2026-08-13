@@ -1,16 +1,14 @@
 import { useState } from "react";
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import FileUpload from "@cloudscape-design/components/file-upload";
+import FormField from "@cloudscape-design/components/form-field";
+import Input from "@cloudscape-design/components/input";
+import Modal from "@cloudscape-design/components/modal";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Textarea from "@cloudscape-design/components/textarea";
 
 import { useApply, type JobSummary } from "@/api/queries";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/use-toast";
 
 interface ApplyDialogProps {
@@ -23,28 +21,30 @@ interface ApplyDialogProps {
 
 /** Record-an-application form: optional file snapshots + audit fields. */
 export function ApplyDialog({ job, open, onOpenChange, onApplied }: ApplyDialogProps) {
+  // Cloudscape keeps a hidden dialog landmark mounted when `visible` is false.
+  // Do not mount it at all so global queue shortcuts are suspended only while
+  // the application form is actually open.
+  if (!open) {
+    return null;
+  }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            Apply — {job === null ? "" : `${job.company} · ${job.title}`}
-          </DialogTitle>
-          <DialogDescription>
-            Records the application with resume snapshots; nothing is submitted anywhere.
-          </DialogDescription>
-        </DialogHeader>
-        {/* Keyed on the job: closing (job -> null) or retargeting remounts a
-            blank form, so cancelled fields and file inputs never ride into
-            another job's application audit. */}
-        <ApplyForm
-          key={job?.id ?? "closed"}
-          job={job}
-          onOpenChange={onOpenChange}
-          onApplied={onApplied}
-        />
-      </DialogContent>
-    </Dialog>
+    <Modal
+      visible={open}
+      onDismiss={() => onOpenChange(false)}
+      closeAriaLabel="Close"
+      size="medium"
+      header={`Apply — ${job === null ? "" : `${job.company} · ${job.title}`}`}
+    >
+      {/* Keyed on the job: closing (job -> null) or retargeting remounts a
+          blank form, so cancelled fields and file inputs never ride into
+          another job's application audit. */}
+      <ApplyForm
+        key={job?.id ?? "closed"}
+        job={job}
+        onOpenChange={onOpenChange}
+        onApplied={onApplied}
+      />
+    </Modal>
   );
 }
 
@@ -93,47 +93,48 @@ function ApplyForm({ job, onOpenChange, onApplied }: ApplyFormProps) {
   };
 
   return (
-    <>
-      <div className="mt-3 flex flex-col gap-2.5">
-        <FileField label="Tailored resume" onFile={setTailored} />
-        <FileField label="Cover letter" onFile={setCoverLetter} />
-        <label className="flex flex-col gap-1 text-label text-ink-2">
-          Resume variant
-          <Input value={variant} onChange={(e) => setVariant(e.target.value)} placeholder="e.g. backend" />
-        </label>
-        <label className="flex flex-col gap-1 text-label text-ink-2">
-          Method
-          <Input value={method} onChange={(e) => setMethod(e.target.value)} placeholder="e.g. referral, portal" />
-        </label>
-        <label className="flex flex-col gap-1 text-label text-ink-2">
-          Notes
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            className="w-full resize-y rounded-control border border-border-strong bg-surface px-2.5 py-1.5 text-body-sm text-ink placeholder:text-mute focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          />
-        </label>
-      </div>
-      <DialogFooter>
-        <Button onClick={() => onOpenChange(false)}>Cancel</Button>
-        <Button variant="primary" disabled={apply.isPending || job === null} onClick={submit}>
-          {apply.isPending ? "Recording…" : "Record application"}
-        </Button>
-      </DialogFooter>
-    </>
+    <div data-testid="cloudscape-apply-form">
+      <SpaceBetween size="m">
+        <Box color="text-body-secondary">
+          Records the application with resume snapshots; nothing is submitted anywhere.
+        </Box>
+        <FileField label="Tailored resume" file={tailored} onFile={setTailored} />
+        <FileField label="Cover letter" file={coverLetter} onFile={setCoverLetter} />
+        <FormField label="Resume variant">
+          <Input value={variant} onChange={({ detail }) => setVariant(detail.value)} placeholder="e.g. backend" />
+        </FormField>
+        <FormField label="Method">
+          <Input value={method} onChange={({ detail }) => setMethod(detail.value)} placeholder="e.g. referral, portal" />
+        </FormField>
+        <FormField label="Notes">
+          <Textarea value={notes} onChange={({ detail }) => setNotes(detail.value)} rows={3} />
+        </FormField>
+        <Box float="right">
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button variant="primary" disabled={apply.isPending || job === null} onClick={submit}>
+              {apply.isPending ? "Recording…" : "Record application"}
+            </Button>
+          </SpaceBetween>
+        </Box>
+      </SpaceBetween>
+    </div>
   );
 }
 
-function FileField({ label, onFile }: { label: string; onFile: (file: File | null) => void }) {
+function FileField({ label, file, onFile }: { label: string; file: File | null; onFile: (file: File | null) => void }) {
   return (
-    <label className="flex flex-col gap-1 text-label text-ink-2">
-      {label}
-      <input
-        type="file"
-        onChange={(event) => onFile(event.target.files?.[0] ?? null)}
-        className="text-body-sm text-ink-2 file:mr-2 file:rounded-control file:border file:border-border-strong file:bg-surface file:px-2.5 file:py-1 file:text-body-sm file:text-ink"
+    <FormField label={label}>
+      <FileUpload
+        value={file === null ? [] : [file]}
+        onChange={({ detail }) => onFile(detail.value[0] ?? null)}
+        multiple={false}
+        i18nStrings={{
+          uploadButtonText: () => "Choose file",
+          dropzoneText: () => "Drop file here",
+          removeFileAriaLabel: (_index, fileName) => `Remove ${fileName}`,
+        }}
       />
-    </label>
+    </FormField>
   );
 }

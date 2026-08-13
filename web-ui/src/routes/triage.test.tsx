@@ -404,6 +404,7 @@ test("apply dialog posts multipart and toasts the reapply notice", async () => {
 
   press("a");
   const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByTestId("cloudscape-apply-form")).toBeInTheDocument();
   expect(within(dialog).getByText(/Apply — Co1 · Title1/)).toBeInTheDocument();
 
   fireEvent.change(within(dialog).getByLabelText(/Notes/), {
