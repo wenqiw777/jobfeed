@@ -39,7 +39,7 @@ dependencies = [
     # `proxies` kwarg). Older SDKs pass `proxies` and crash constructing
     # AsyncOpenAI under our httpx floor — see openai-python#1902. The floor keeps
     # locked/constrained installs reproducible, not just fresh latest-resolves.
-    "openai >= 1.57.1",
+    "openai >= 1.57.1, < 3",
     "psycopg2-binary >= 2.9",
     "pydantic",
     "playwright >= 1.48",
