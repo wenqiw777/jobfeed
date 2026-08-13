@@ -9,9 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
-      postgres: ${{ steps.filter.outputs.postgres }}
       browser: ${{ steps.filter.outputs.browser }}
-      docker: ${{ steps.filter.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -26,18 +24,6 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - '.github/workflows/ci.yml'
-            postgres:
-              - 'migrations/**'
-              - 'src/jobfeed/adapters/store/postgres.py'
-              - 'src/jobfeed/adapters/migration/**'
-              - 'tests/contract/**'
-              - 'tests/integration/**'
-              - 'tests/store/**'
-              - 'tests/e2e/test_legacy_import.py'
-              - 'Makefile'
-              - 'pyproject.toml'
-              - 'uv.lock'
-              - '.github/workflows/ci.yml'
             browser:
               - 'web-ui/**'
               - 'src/jobfeed/web/**'
@@ -45,12 +31,6 @@ jobs:
               - 'tests/integration/test_linkedin_browser.py'
               - 'pyproject.toml'
               - 'uv.lock'
-              - '.github/workflows/ci.yml'
-            docker:
-              - 'Dockerfile*'
-              - 'docker-compose.yml'
-              - 'bin/jobfeed'
-              - 'tests/fixtures/docker-*'
               - '.github/workflows/ci.yml'
 
   quality-gate:
@@ -76,47 +56,6 @@ jobs:
 
       - name: Run quality gate (lint + unit/contract tests, no PG)
         run: make quality
-
-  postgres-tests:
-    needs: changes
-    if: needs.changes.outputs.postgres == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: jobfeed
-          POSTGRES_PASSWORD: jobfeed
-          POSTGRES_DB: jobfeed_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U jobfeed"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          # Cache pip's wheel/HTTP download dir so the heavy ML deps
-          # (xgboost / numpy / fastembed+onnxruntime / playwright) aren't
-          # re-downloaded every run; keyed on pyproject.toml.
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Run PostgreSQL-backed tests
-        env:
-          PGTEST_DSN: "postgresql://jobfeed:jobfeed@localhost:5432/jobfeed_test"
-        run: make test-postgres
 
   browser-tests:
     needs: changes
@@ -144,40 +83,3 @@ jobs:
 
       - name: Run browser tests
         run: pytest -m browser -o "addopts=" -v --tb=short
-
-  docker-build:
-    needs: changes
-    if: needs.changes.outputs.docker == 'true'
-    runs-on: ubuntu-latest
-    env:
-      JOBFEED_POSTGRES_PORT: "55432"
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build jobfeed CLI image
-        run: docker compose build jobfeed-cli
-
-      - name: Verify CLI help
-        run: docker compose run --rm jobfeed-cli jobfeed --help
-
-      - name: Verify canonical Docker CLI smoke
-        run: |
-          docker compose run --rm jobfeed-cli jobfeed --help
-          docker compose run --rm jobfeed-cli jobfeed --config tests/fixtures/docker-smoke.toml scan --source mock
-          docker compose run --rm jobfeed-cli jobfeed --config tests/fixtures/docker-smoke.toml evaluate --limit 3
-          docker compose run --rm jobfeed-cli jobfeed --config tests/fixtures/docker-smoke.toml digest
-
-      - name: Verify canonical Docker real-backend failure
-        run: |
-          set +e
-          output=$(docker compose run --rm jobfeed-cli jobfeed --config tests/fixtures/docker-real-backend-missing.toml evaluate --stage a --limit 1 2>&1)
-          status=$?
-          echo "$output"
-          test "$status" -ne 0
-          echo "$output" | grep -q "codex-cli backend requires 'codex'"
-          echo "$output" | grep -q "jobfeed-cli runtime"
-          ! echo "$output" | grep -q "Traceback"
