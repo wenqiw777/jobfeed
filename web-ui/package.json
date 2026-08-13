@@ -18,6 +18,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@cloudscape-design/collection-hooks": "^1.0.106",
+    "@cloudscape-design/components": "^3.0.1345",
+    "@cloudscape-design/global-styles": "^1.0.66",
     "@fontsource/geist": "^5.2.9",
     "@fontsource/geist-mono": "^5.2.8",
     "@radix-ui/react-checkbox": "^1.3.3",
@@ -35,7 +38,7 @@
     "lucide-react": "^1.17.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router": "^7.0.0",
+    "react-router": "^7.18.2",
     "recharts": "^3.8.1",
     "tailwind-merge": "^2.6.0"
   },

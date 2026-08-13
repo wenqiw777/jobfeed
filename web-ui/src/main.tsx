@@ -10,6 +10,7 @@ import "@fontsource/geist/600.css";
 import "@fontsource/geist/700.css";
 import "@fontsource/geist-mono/400.css";
 import "@fontsource/geist-mono/500.css";
+import "@cloudscape-design/global-styles/index.css";
 
 import "./styles.css";
 
@@ -17,6 +18,20 @@ import App from "./App";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DensityProvider } from "@/lib/density";
+import { setGlobalTheme } from "@cloudscape-design/components/theming";
+
+setGlobalTheme({
+  tokens: {
+    fontFamilyBase: "Geist, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+    fontFamilyMonospace: "Geist Mono, ui-monospace, SFMono-Regular, monospace",
+    colorTextAccent: "rgb(39 66 214)",
+    colorBackgroundButtonPrimaryDefault: "rgb(39 66 214)",
+    colorBackgroundButtonPrimaryHover: "rgb(31 55 184)",
+    colorBorderButtonNormalDefault: "rgb(174 183 239)",
+    borderRadiusButton: "6px",
+    borderRadiusContainer: "8px",
+  },
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {

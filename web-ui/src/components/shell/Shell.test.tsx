@@ -119,6 +119,7 @@ afterEach(() => {
 test("renders the six zone links inside a nav landmark", () => {
   renderShell();
 
+  expect(screen.getByTestId("jobfeed-workspace-layout")).toBeInTheDocument();
   const nav = screen.getByRole("navigation", { name: "Zones" });
   for (const label of ["Triage", "Pipeline", "Library", "Insights", "Runs", "Sources"]) {
     expect(within(nav).getByRole("link", { name: new RegExp(label) })).toBeInTheDocument();
@@ -132,9 +133,10 @@ test("shows the queue count on Triage and the workflow attention total on Pipeli
   const triage = within(nav).getByRole("link", { name: /Triage/ });
   const pipeline = within(nav).getByRole("link", { name: /Pipeline/ });
 
-  expect(await within(triage).findByText("12")).toBeInTheDocument();
+  await screen.findByRole("link", { name: /Triage 12/ });
+  expect(triage).toHaveTextContent("12");
   // 2 follow-ups + 1 interview prep + 1 going ghosted = 4.
-  expect(await within(pipeline).findByText("4")).toBeInTheDocument();
+  expect(pipeline).toHaveTextContent("4");
 });
 
 test("/ redirects to /triage and marks it the current zone", () => {
@@ -182,16 +184,12 @@ test("lazy-loaded insights route renders after its chunk resolves", async () => 
 test("view menu density toggle switches the content density attribute", async () => {
   renderShell();
 
-  const main = screen.getByRole("main");
-  expect(main).toHaveAttribute("data-density", "compact");
+  const surface = screen.getByTestId("jobfeed-route-surface");
+  expect(surface).toHaveAttribute("data-density", "compact");
 
-  // Radix dropdown triggers open on pointerdown, not click.
-  fireEvent.pointerDown(
-    screen.getByRole("button", { name: "View" }),
-    { button: 0, ctrlKey: false },
-  );
-  fireEvent.click(await screen.findByRole("menuitemradio", { name: "Comfortable" }));
+  fireEvent.click(screen.getByRole("button", { name: "View" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Comfortable" }));
 
-  expect(main).toHaveAttribute("data-density", "comfortable");
+  expect(surface).toHaveAttribute("data-density", "comfortable");
   expect(window.localStorage.getItem("jobfeed:density")).toBe("comfortable");
 });

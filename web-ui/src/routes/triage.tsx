@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import Box from "@cloudscape-design/components/box";
+import Container from "@cloudscape-design/components/container";
+import Header from "@cloudscape-design/components/header";
+import Tabs from "@cloudscape-design/components/tabs";
 
 import {
   useJobsList,
@@ -11,7 +15,6 @@ import { BulkBar } from "@/components/jobs/BulkBar";
 import { DetailPane, type DecideStatus } from "@/components/jobs/DetailPane";
 import { JobList } from "@/components/jobs/JobList";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/use-toast";
 import { useKeyboardMap } from "@/lib/keyboard";
 import { useSelection } from "@/lib/use-selection";
@@ -199,23 +202,71 @@ export default function TriagePage() {
   };
 
   return (
-    <div className="grid h-full grid-cols-[minmax(0,1fr)_380px]">
-      <div className="flex min-h-0 flex-col border-r border-border">
-        <div className="flex items-center gap-3 px-4 pt-2">
-          <Tabs value={tab} onValueChange={(value) => switchTab(value as TriageTab)}>
-            <TabsList>
-              <TabsTrigger value="queue">
-                Queue <TabCount value={list.data?.tab_counts["queue"]} />
-              </TabsTrigger>
-              <TabsTrigger value="pending_jd">
-                Pending JD <TabCount value={list.data?.tab_counts["pending_jd"]} />
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <span className="ml-auto font-mono text-micro text-mute">
-            {list.data !== undefined && `${list.data.total} postings`}
-          </span>
-        </div>
+    <div className="jobfeed-decision-surface" data-testid="triage-decision-surface">
+      <div className="jobfeed-decision-queue">
+        <Tabs
+          activeTabId={tab}
+          variant="container"
+          fitHeight
+          disableContentPaddings
+          onChange={({ detail }) => switchTab(detail.activeTabId as TriageTab)}
+          tabs={[
+            {
+              id: "queue",
+              label: <TabLabel label="Queue" value={list.data?.tab_counts.queue} />,
+              content: triageListContent(),
+            },
+            {
+              id: "pending_jd",
+              label: <TabLabel label="Pending JD" value={list.data?.tab_counts.pending_jd} />,
+              content: triageListContent(),
+            },
+          ]}
+          actions={
+            <Box variant="small" color="text-body-secondary">
+              {list.data !== undefined ? `${list.data.total} postings` : "Loading"}
+            </Box>
+          }
+        />
+      </div>
+      <section ref={detailRef} tabIndex={-1} aria-label="Job detail" className="jobfeed-evidence-panel">
+        <Container
+          header={
+            <Header variant="h2" description="Scores, source evidence, notes, and next action">
+              {selectedJob ? `${selectedJob.company} · ${selectedJob.title}` : "Job evidence"}
+            </Header>
+          }
+        >
+          <DetailPane
+            jobId={effectiveSelectedId}
+            showJdPaste={tab === "pending_jd"}
+            showIgnore={tab === "pending_jd"}
+            showDecide={tab !== "pending_jd"}
+            isDeciding={transition.isPending}
+            onDecide={decide}
+            onOpenApply={() => {
+              if (selectedJob !== null) setApplyTarget(selectedJob);
+            }}
+            emptyHint={tab === "pending_jd" ? "Select a row — move with j/k, paste a JD or ignore with i." : undefined}
+          />
+        </Container>
+      </section>
+      <ApplyDialog
+        job={applyTarget}
+        open={applyTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setApplyTarget(null);
+          }
+        }}
+        onApplied={handleDecided}
+      />
+    </div>
+  );
+
+  function triageListContent() {
+    return (
+      <div className="jobfeed-tab-content">
         <BulkBar
           selectedIds={selection.selectedIds}
           total={list.data?.total ?? 0}
@@ -237,50 +288,12 @@ export default function TriagePage() {
           onToggle={selection.toggle}
         />
       </div>
-      <section
-        ref={detailRef}
-        tabIndex={-1}
-        aria-label="Job detail"
-        className="min-h-0 focus-visible:outline-none"
-      >
-        <DetailPane
-          jobId={effectiveSelectedId}
-          showJdPaste={tab === "pending_jd"}
-          showIgnore={tab === "pending_jd"}
-          showDecide={tab !== "pending_jd"}
-          isDeciding={transition.isPending}
-          onDecide={decide}
-          onOpenApply={() => {
-            if (selectedJob !== null) {
-              setApplyTarget(selectedJob);
-            }
-          }}
-          emptyHint={
-            tab === "pending_jd"
-              ? "Select a row — move with j/k, paste a JD or ignore with i."
-              : undefined
-          }
-        />
-      </section>
-      <ApplyDialog
-        job={applyTarget}
-        open={applyTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setApplyTarget(null);
-          }
-        }}
-        onApplied={handleDecided}
-      />
-    </div>
-  );
+    );
+  }
 }
 
-function TabCount({ value }: { value: number | undefined }) {
-  if (value === undefined) {
-    return null;
-  }
-  return <span className="font-mono text-micro text-mute">{value}</span>;
+function TabLabel({ label, value }: { label: string; value: number | undefined }) {
+  return <span>{label}{value === undefined ? "" : ` (${value})`}</span>;
 }
 
 interface ListBodyProps {

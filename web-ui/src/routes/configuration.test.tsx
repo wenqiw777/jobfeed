@@ -160,6 +160,7 @@ test("fresh checkout is gated on configuration and saves without TOML editing", 
   renderApp();
 
   expect(await screen.findByRole("heading", { name: "Set up your feed" })).toBeVisible();
+  expect(screen.getByTestId("cloudscape-configuration")).toBeVisible();
   expect(screen.queryByRole("navigation", { name: "Zones" })).toBeNull();
   expect(screen.getByLabelText("Master resume")).toHaveValue("resume.example.md");
 

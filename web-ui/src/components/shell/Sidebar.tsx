@@ -1,88 +1,73 @@
-import { NavLink } from "react-router";
-import { Settings } from "lucide-react";
+import SideNavigation, {
+  type SideNavigationProps,
+} from "@cloudscape-design/components/side-navigation";
+import { useLocation, useNavigate } from "react-router";
 
 import { useAttention, useJobsTabCounts, workflowAttentionTotal } from "@/api/queries";
 import { ZONES, type Zone } from "@/components/shell/zones";
-import { cn } from "@/lib/utils";
 
 function useBadgeCounts(): Record<NonNullable<Zone["badge"]>, number | undefined> {
   const tabCounts = useJobsTabCounts();
   const attention = useAttention();
   return {
-    // Triage badge = the queue tab's global count (neutral request, A4).
-    queue: tabCounts.data?.tab_counts["queue"],
+    queue: tabCounts.data?.tab_counts.queue,
     attention: attention.data ? workflowAttentionTotal(attention.data) : undefined,
   };
 }
 
-export function Sidebar() {
+/** Cloudscape navigation for the application's product zones. */
+export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const badges = useBadgeCounts();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const items: SideNavigationProps.Item[] = [
+    ...ZONES.map((zone) => ({
+      type: "link" as const,
+      text: zoneText(zone, badges),
+      href: zone.path,
+      icon: <ZoneIcon zone={zone.path} />,
+    })),
+    { type: "divider" as const },
+    {
+      type: "link" as const,
+      text: "Settings",
+      href: "/setup",
+      icon: <span aria-hidden="true">⚙</span>,
+    },
+  ];
 
   return (
-    <aside className="flex w-44 shrink-0 flex-col border-r border-border bg-bg">
-      <div className="px-4 pb-2 pt-4">
-        <span className="text-h3 tracking-tight text-ink">jobfeed</span>
-      </div>
-      <nav aria-label="Zones" className="flex flex-col gap-0.5 px-2">
-        {ZONES.map((zone) => (
-          <NavLink
-            key={zone.path}
-            to={zone.path}
-            className={({ isActive }) =>
-              cn(
-                "flex items-center justify-between rounded-control px-2.5 py-1.5 text-body-sm font-medium transition-colors",
-                isActive
-                  ? "bg-accent-bg text-accent"
-                  : "text-ink-2 hover:bg-hairline hover:text-ink",
-              )
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <span>{zone.label}</span>
-                <ZoneBadge zone={zone} badges={badges} isActive={isActive} />
-              </>
-            )}
-          </NavLink>
-        ))}
-      </nav>
-      <div className="mt-auto border-t border-border p-2">
-        <NavLink
-          to="/setup"
-          className="flex items-center gap-2 rounded-control px-2.5 py-1.5 text-body-sm font-medium text-ink-2 transition-colors hover:bg-hairline hover:text-ink"
-        >
-          <Settings aria-hidden="true" className="h-3.5 w-3.5" />
-          Settings
-        </NavLink>
-      </div>
-    </aside>
+    <SideNavigation
+      collapsed={collapsed}
+      activeHref={location.pathname}
+      header={{ href: "/triage", text: "Workspace" }}
+      items={items}
+      onFollow={(event) => {
+        event.preventDefault();
+        navigate(event.detail.href);
+      }}
+    />
   );
 }
 
-function ZoneBadge({
-  zone,
-  badges,
-  isActive,
-}: {
-  zone: Zone;
-  badges: Record<NonNullable<Zone["badge"]>, number | undefined>;
-  isActive: boolean;
-}) {
-  if (zone.badge === null) {
-    return null;
-  }
+function zoneText(
+  zone: Zone,
+  badges: Record<NonNullable<Zone["badge"]>, number | undefined>,
+) {
+  if (zone.badge === null) return zone.label;
   const count = badges[zone.badge];
-  if (count === undefined || count === 0) {
-    return null;
-  }
-  return (
-    <span
-      className={cn(
-        "font-mono text-micro",
-        isActive ? "text-accent" : "text-mute",
-      )}
-    >
-      {count}
-    </span>
-  );
+  return count ? `${zone.label} ${count}` : zone.label;
+}
+
+function ZoneIcon({ zone }: { zone: string }) {
+  const glyph: Record<string, string> = {
+    "/triage": "◆",
+    "/pipeline": "↗",
+    "/library": "▤",
+    "/insights": "◫",
+    "/runs": "▶",
+    "/performance": "⌁",
+    "/sources": "◎",
+  };
+  return <span aria-hidden="true">{glyph[zone]}</span>;
 }
