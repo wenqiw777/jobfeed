@@ -16,6 +16,7 @@ _COMPOSE = _ROOT / "docker-compose.yml"
 _WRAPPER = _ROOT / "bin" / "jobfeed"
 _POWERSHELL_WRAPPER = _ROOT / "bin" / "jobfeed.ps1"
 _SETUP = _ROOT / "setup"
+_SETUP_SH = _ROOT / "setup.sh"
 _SCAN = _ROOT / "scan"
 
 
@@ -67,11 +68,13 @@ def test_powershell_wrapper_executes_repo_host_runtime() -> None:
 def test_setup_and_scan_do_not_require_postgres_or_docker() -> None:
     """Daily host setup and scanning have no Docker/PostgreSQL dependency."""
     setup = _SETUP.read_text("utf-8")
+    setup_sh = _SETUP_SH.read_text("utf-8")
     scan = _SCAN.read_text("utf-8")
 
-    assert "uv sync --extra dev" in setup
-    assert "Docker is required" not in setup
-    assert "docker compose" not in setup
+    assert 'exec "$REPO_ROOT/setup.sh" "$@"' in setup
+    assert "sync --locked --no-dev --python 3.12" in setup_sh
+    assert "--extra dev" not in setup_sh
+    assert "docker compose" not in setup_sh
     assert "Postgres" not in scan
     assert "docker compose" not in scan
 

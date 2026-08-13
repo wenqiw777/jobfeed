@@ -1,0 +1,3 @@
+# Production bundles are generated artifacts; keep diffs compact and prevent
+# whitespace checks from interpreting embedded template-string content.
+web-ui/dist/assets/*.js binary

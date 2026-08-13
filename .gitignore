@@ -37,12 +37,17 @@ pip-wheel-metadata/
 # Web UI (the bare dist/ pattern above also matches web-ui/dist, but keep
 # these explicit so scoping the Python patterns later can't expose them).
 web-ui/node_modules/
-web-ui/dist/
 web-ui/coverage/
 web-ui/.eslintcache
 web-ui/*.tsbuildinfo
 npm-debug.log*
 web-ui/node_modules/
+
+# The production GUI is committed so end users never need Node/npm. Source
+# maps stay developer-local because they make the release checkout much larger.
+!web-ui/dist/
+!web-ui/dist/**
+web-ui/dist/**/*.map
 
 # Local editor and OS metadata
 .DS_Store

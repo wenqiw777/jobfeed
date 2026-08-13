@@ -19,9 +19,8 @@ claude_timeout_s = 210
 # base_url + which env var holds the key + the model in the spec string. Adding
 # a provider is a config change, not code. SECURITY: only the env-var NAME goes
 # in this file (openai_compat_api_key_env) — NEVER the key value itself. The
-# adapter reads os.environ[that name] at build time. DOCKER: ./bin/jobfeed runs
-# in a container; docker-compose.yml forwards JOBFEED_OPENAI_COMPAT_API_KEY plus
-# the common provider-specific names from the host. For custom providers, set
+# adapter reads os.environ[that name] at build time. The normal host runtime
+# reads that environment variable directly. For custom providers, set
 # openai_compat_api_key_env = "JOBFEED_OPENAI_COMPAT_API_KEY" and put the key in
 # that generic host env var.
 #
@@ -49,9 +48,7 @@ claude_timeout_s = 210
 # Local Ollama (no real key; the SDK still requires the env var to be non-empty):
 # openai_compat_base_url = "http://localhost:11434/v1"
 # openai_compat_api_key_env = "JOBFEED_OPENAI_COMPAT_API_KEY"  # set JOBFEED_OPENAI_COMPAT_API_KEY=ollama; then: stage_a = "openai-compat/llama3.1"
-#   DOCKER: localhost is the container, not the host daemon — use
-#   http://host.docker.internal:11434/v1 and forward JOBFEED_OPENAI_COMPAT_API_KEY
-#   in docker-compose.yml (as with the hosted providers above).
+#   The normal host runtime can use this localhost URL directly.
 #
 # Anthropic via its OpenAI-compat endpoint (higher latency; test-only per
 # Anthropic — no prompt caching / extended thinking, but the eval use case

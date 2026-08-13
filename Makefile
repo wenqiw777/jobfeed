@@ -38,7 +38,7 @@ update-prices:
 web-schema:
 	python3 scripts/dump_openapi.py
 
-# Build the SPA bundle (web-ui/dist) that `jobfeed serve` mounts at /.
-# web-ui/dist is gitignored build output, so run this before serving the UI.
+# Rebuild the committed SPA bundle that `jobfeed serve` mounts at /.
+# End users receive this artifact and never need Node/npm.
 web-build:
 	cd web-ui && npm ci && npm run build

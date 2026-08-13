@@ -4,16 +4,25 @@ Jobfeed is a local-first job scanning and evaluation pipeline. The current runti
 
 ## Quick start
 
-A fresh machine needs **Git + `uv`**. Docker is optional and used only for migration, rollback, CI, or deployment checks. Then:
+A fresh machine only needs **Git**. Docker and Node are not required for normal
+use. Then:
 
 ```sh
 git clone https://github.com/wenqiw777/jobfeed.git
 cd jobfeed
-./setup                   # one-time: config + repo-local host runtime
-./scan --source mock      # offline smoke; then ./scan for your configured sources
+./setup.sh
 ```
 
-`./setup` creates `config.toml`, synchronizes `.venv`, and prepares `data/`. `./scan` and every normal `./bin/jobfeed ...` command then open `data/jobfeed.sqlite` directly. SQLite schema initialization is automatic on first use.
+`setup.sh` installs `uv` when needed, creates `config.toml`, installs the
+repo-local runtime, initializes `data/jobfeed.sqlite`, starts Jobfeed, and opens
+the GUI at `http://127.0.0.1:7654`. The production GUI bundle ships in the
+repository, so users do not install Node or build the frontend. Repeating the
+command is safe: it reuses a healthy server instead of starting a duplicate.
+The older `./setup` name remains an alias.
+
+After setup, `./scan --source mock` runs an offline smoke scan; `./scan` uses
+the sources enabled in `config.toml`. Every normal `./bin/jobfeed ...` command
+opens the same repo-local SQLite database directly.
 
 ## Evaluate against your résumé
 

@@ -1,35 +1,5 @@
 #!/usr/bin/env bash
-# One-command setup for a fresh checkout. Creates config.toml and synchronizes
-# the repo-local host runtime. SQLite initializes on the first command.
-#
-#   ./setup
-#
-# `uv` is the only runtime prerequisite. Docker remains optional and is used
-# only by explicit migration/rollback rehearsal commands.
+# Backward-compatible alias for the clone-to-GUI setup entrypoint.
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$REPO_ROOT"
-
-if ! command -v uv >/dev/null 2>&1; then
-  echo "error: uv is required for the host runtime." >&2
-  echo "  install it: https://docs.astral.sh/uv/getting-started/installation/" >&2
-  exit 1
-fi
-
-# 1. Config from template (first run only).
-if [ ! -f config.toml ]; then
-  cp config.example.toml config.toml
-  echo "==> created config.toml from config.example.toml (review sources/keys before a real scan)"
-fi
-
-# 2. Runtime and local data directory.
-echo "==> synchronizing host runtime (python 3.12) ..."
-uv sync --extra dev --python 3.12
-mkdir -p data
-
-echo ""
-echo "setup complete (host runtime). Next:"
-echo "   ./scan --source mock      # offline smoke"
-echo "   ./scan                    # your configured sources"
-echo "   ./bin/jobfeed serve       # local Web UI on 127.0.0.1:7654"
-echo "   (real ML gate? pre-seed once: ./bin/jobfeed ml-gate fetch)"
+REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$REPO_ROOT/setup.sh" "$@"
