@@ -15,7 +15,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { apiDelete, apiFetch, apiPatch, apiPost, apiUpload } from "./client";
+import { apiDelete, apiFetch, apiPost } from "./client";
 import type { components, paths } from "./types.gen";
 
 export type JobsListResponse = components["schemas"]["JobsListResponse"];
@@ -24,12 +24,7 @@ export type JobSummary = components["schemas"]["JobSummary"];
 export type JobDetailResponse = components["schemas"]["JobDetailResponse"];
 export type TransitionResponse = components["schemas"]["TransitionResponse"];
 export type BulkTransitionResponse = components["schemas"]["BulkTransitionResponse"];
-export type JdPasteResponse = components["schemas"]["JdPasteResponse"];
-export type ApplyResponse = components["schemas"]["ApplyResponse"];
 export type TransitionStatus = components["schemas"]["TransitionBody"]["to"];
-export type RestoreResponse = components["schemas"]["RestoreResponse"];
-export type InterviewRound = components["schemas"]["InterviewRoundDetail"];
-export type InterviewsListResponse = components["schemas"]["InterviewsListResponse"];
 export type InsightsOverviewResponse = components["schemas"]["InsightsOverviewResponse"];
 export type RunsListResponse = components["schemas"]["RunsListResponse"];
 export type RunSummary = components["schemas"]["RunSummary"];
@@ -50,9 +45,6 @@ export const jobsKeys = {
   lists: ["jobs"] as const,
   list: (query: JobsQuery) => ["jobs", "list", query] as const,
   detail: (id: string | null) => ["job", id] as const,
-  // Nested under detail(id), so invalidating the detail key refreshes
-  // the rounds too (TanStack prefix matching).
-  interviews: (id: string | null) => ["job", id, "interviews"] as const,
   // Workflow attention buckets — feed the Pipeline chips + sidebar badge,
   // so every workflow-state mutation invalidates this key.
   attention: ["attention"] as const,
@@ -160,115 +152,6 @@ export function useBulkTransition() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
-    },
-  });
-}
-
-/** Append a note (detail-only data — lists don't render notes). */
-export function useNote() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, text }: { id: string; text: string }) =>
-      apiPost<unknown>(`/api/jobs/${id}/note`, { text }),
-    onSuccess: (_data, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
-    },
-  });
-}
-
-/** Set the follow-up time (`at` must be an offset-carrying ISO string).
- * Attention refreshes too: next_followup_at drives the follow-up bucket. */
-export function useFollowup() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, at }: { id: string; at: string }) =>
-      apiPost<unknown>(`/api/jobs/${id}/followup`, { at }),
-    onSuccess: (_data, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
-    },
-  });
-}
-
-/** Paste JD text; the row leaves pending_jd, so lists refresh too. */
-export function usePasteJd() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, text }: { id: string; text: string }) =>
-      apiPost<JdPasteResponse>(`/api/jobs/${id}/jd`, { text }),
-    onSuccess: (_data, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
-    },
-  });
-}
-
-/** Record an application (multipart upload, plan D8). */
-export function useApply() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, form }: { id: string; form: FormData }) =>
-      apiUpload<ApplyResponse>(`/api/jobs/${id}/apply`, form),
-    onSuccess: (_data, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
-    },
-  });
-}
-
-/** Interview rounds of one job; disabled while nothing is selected. */
-export function useInterviews(id: string | null) {
-  return useQuery({
-    queryKey: jobsKeys.interviews(id),
-    queryFn: () => apiFetch<InterviewsListResponse>(`/api/jobs/${id}/interviews`),
-    enabled: id !== null,
-  });
-}
-
-/** Add an interview round. Refreshes lists too: adding to an applied job
- * auto-transitions it to interviewing, which moves its pipeline group —
- * and into interview-prep attention scope. */
-export function useAddInterview() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, label, scheduledAt }: { id: string; label: string; scheduledAt: string | null }) =>
-      apiPost<InterviewRound>(`/api/jobs/${id}/interviews`, {
-        label,
-        scheduled_at: scheduledAt,
-      }),
-    onSuccess: (_data, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
-    },
-  });
-}
-
-/** Complete an interview round with optional notes. Detail-only for lists,
- * but interview-prep attention keys off uncompleted rounds, so refresh it. */
-export function useCompleteInterview() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, roundIndex, notes }: { id: string; roundIndex: number; notes: string | null }) =>
-      apiPatch<InterviewRound>(`/api/jobs/${id}/interviews/${roundIndex}`, { notes }),
-    onSuccess: (_data, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
-    },
-  });
-}
-
-/** Restore a ghosted/archived job to its last non-terminal status (the
- * server derives the target from history — never recomputed here). */
-export function useRestore() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id }: { id: string }) =>
-      apiPost<RestoreResponse>(`/api/jobs/${id}/restore`, {}),
-    onSuccess: (_data, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
-      void queryClient.invalidateQueries({ queryKey: jobsKeys.detail(id) });
       void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
     },
   });

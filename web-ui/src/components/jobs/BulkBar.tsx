@@ -9,10 +9,6 @@ interface BulkBarProps {
   total: number;
   /** Rows actually loaded in the current response — select-all's real reach. */
   loadedCount: number;
-  /** Pending-JD mode: ONLY the forced Ignore (dismiss-as-junk). Un-scored
-   * pending rows are status 'new' (sole legal move: new→scored), so the
-   * queue's Shortlist/Skip would 409 there — and Ignore must force (§15). */
-  ignoreOnly: boolean;
   onSelectPage: () => void;
   onSelectAllMatching: () => void;
   onClear: () => void;
@@ -26,19 +22,16 @@ interface BulkAction {
   force: boolean;
 }
 
-const QUEUE_ACTIONS: BulkAction[] = [
-  { label: "Shortlist", to: "shortlisted", force: false },
-  { label: "Skip", to: "archived", force: false },
+const ACTIONS: BulkAction[] = [
+  { label: "Wait", to: "shortlisted", force: false },
+  { label: "Ignore", to: "ignored", force: false },
 ];
-
-const PENDING_JD_ACTIONS: BulkAction[] = [{ label: "Ignore", to: "ignored", force: true }];
 
 /** Appears while rows are checkbox-selected; runs the bulk endpoint. */
 export function BulkBar({
   selectedIds,
   total,
   loadedCount,
-  ignoreOnly,
   onSelectPage,
   onSelectAllMatching,
   onClear,
@@ -49,8 +42,6 @@ export function BulkBar({
   if (selectedIds.length === 0) {
     return null;
   }
-
-  const actions = ignoreOnly ? PENDING_JD_ACTIONS : QUEUE_ACTIONS;
 
   const run = ({ to, force }: BulkAction) => {
     bulk.mutate(
@@ -83,7 +74,7 @@ export function BulkBar({
         {selectedIds.length} selected
       </span>
       <span className="flex-1" />
-      {actions.map((action) => (
+      {ACTIONS.map((action) => (
         <Button
           key={action.to}
           disabled={bulk.isPending}

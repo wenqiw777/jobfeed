@@ -92,15 +92,6 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return apiFetch<T>(path, { method: "DELETE" });
 }
 
-/**
- * Multipart POST (the apply endpoint). FormData must NOT be JSON-encoded
- * and must not get an explicit Content-Type — the browser sets the
- * multipart boundary itself.
- */
-export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
-  return apiFetch<T>(path, { method: "POST", body: form });
-}
-
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {

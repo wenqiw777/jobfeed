@@ -12,31 +12,22 @@ import { useMemo, useState } from "react";
 
 import {
   useJobsList,
-  useJobTransition,
   type JobsQuery,
   type JobSummary,
 } from "@/api/queries";
-import { ApplyDialog } from "@/components/jobs/ApplyDialog";
-import { DetailPane, type DecideStatus } from "@/components/jobs/DetailPane";
+import { DetailPane } from "@/components/jobs/DetailPane";
 import { LibraryTable } from "@/components/jobs/LibraryTable";
-import { RestoreSection } from "@/components/jobs/RestoreSection";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "@/components/ui/use-toast";
 import { useDebouncedCallback } from "@/lib/use-debounced";
 
-type LibraryTab = Extract<
-  NonNullable<JobsQuery["tab"]>,
-  "all" | "scored" | "shortlisted" | "archived"
->;
+type LibraryTab = "all" | "wait" | "applied" | "ignored";
 type LibrarySort = NonNullable<JobsQuery["sort"]>;
 
 const TABS: { value: LibraryTab; label: string }[] = [
   { value: "all", label: "All" },
-  { value: "scored", label: "Scored" },
-  // Server-side per D13: Shortlisted = {shortlisted, awaiting_referral},
-  // Archived = {archived, ignored}.
-  { value: "shortlisted", label: "Shortlisted" },
-  { value: "archived", label: "Archived" },
+  { value: "wait", label: "Wait" },
+  { value: "applied", label: "Applied" },
+  { value: "ignored", label: "Ignored" },
 ];
 
 /** The four A4 sort values, default first. */
@@ -50,13 +41,11 @@ const SORT_OPTIONS: { value: LibrarySort; label: string }[] = [
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
 
-/** Statuses still in the decide loop — `new` must first be evaluated to
- * `scored`, otherwise every decision endpoint correctly rejects it. */
-const DECIDABLE = new Set(["scored", "shortlisted", "awaiting_referral"]);
-/** Statuses POST /restore accepts — the drawer offers the restore card. */
-function isRestorable(status: string): status is "ghosted" | "archived" {
-  return status === "ghosted" || status === "archived";
-}
+const DECISION_STATUSES = {
+  wait: ["shortlisted", "awaiting_referral"],
+  applied: ["applied", "interviewing", "offer", "rejected", "ghosted"],
+  ignored: ["ignored", "archived"],
+} as const;
 
 interface LibraryQueryState {
   tab: LibraryTab;
@@ -81,7 +70,6 @@ export default function LibraryPage() {
   // background refetch may drop the row from the page, but the open
   // drawer keeps showing the job the user clicked.
   const [drawerJob, setDrawerJob] = useState<JobSummary | null>(null);
-  const [applyTarget, setApplyTarget] = useState<JobSummary | null>(null);
 
   // The settled search commits together with its page reset in ONE state
   // update — no transient request with the new search and a stale offset.
@@ -103,7 +91,8 @@ export default function LibraryPage() {
   // require_verdict — those are triage-ingest concerns (plan A4).
   const query: JobsQuery = useMemo(
     () => ({
-      tab: state.tab,
+      tab: "all",
+      statuses: state.tab === "all" ? undefined : [...DECISION_STATUSES[state.tab]],
       sort: state.sort,
       search: state.search === "" ? undefined : state.search,
       limit: PAGE_SIZE,
@@ -112,7 +101,6 @@ export default function LibraryPage() {
     [state],
   );
   const list = useJobsList(query, { keepPrevious: true });
-  const transition = useJobTransition();
 
   // Stranded page: a decide/restore can empty the trailing page (total
   // shrank under the current offset), leaving a settled empty response
@@ -129,29 +117,13 @@ export default function LibraryPage() {
     }
   }
 
-  const decide = (to: DecideStatus) => {
-    if (drawerJob === null || transition.isPending) {
-      return;
-    }
-    transition.mutate(
-      { id: drawerJob.id, to },
-      {
-        // The decided row may leave the current tab — close the drawer
-        // instead of pointing it at a row that just vanished.
-        onSuccess: () => setDrawerJob(null),
-        onError: (error) =>
-          toast({ variant: "destructive", title: "Action failed", description: error.message }),
-      },
-    );
-  };
-
   return (
     <div className="h-full overflow-y-auto" data-testid="cloudscape-library">
       <ContentLayout
         header={
           <Header
             variant="h1"
-            description="Search, compare, and reopen every posting captured by Jobfeed."
+            description="Search and compare every posting captured by Jobfeed."
             counter={list.data ? `(${list.data.total})` : undefined}
           >
             Job library
@@ -169,11 +141,7 @@ export default function LibraryPage() {
                 }
                 tabs={TABS.map(({ value, label }) => ({
                   id: value,
-                  label: (
-                    <>
-                      {label} <TabCount value={list.data?.tab_counts[value]} />
-                    </>
-                  ),
+                  label,
                   content: null,
                 }))}
               />
@@ -210,7 +178,7 @@ export default function LibraryPage() {
             header={
               <Header
                 variant="h2"
-                description="Open a row for evaluation evidence and available workflow actions."
+                description="Open a row to read its evaluation evidence."
               >
                 {activeTabLabel} postings
               </Header>
@@ -247,49 +215,11 @@ export default function LibraryPage() {
         >
           <DetailPane
             jobId={drawerJob.id}
-            showJdPaste={false}
-            showIgnore={false}
-            showDecide={DECIDABLE.has(drawerJob.status)}
-            isDeciding={transition.isPending}
-            onDecide={decide}
-            onOpenApply={() => setApplyTarget(drawerJob)}
-            extraSections={
-              isRestorable(drawerJob.status) && (
-                <RestoreSection
-                  jobId={drawerJob.id}
-                  status={drawerJob.status}
-                  // The restored row leaves the snapshot's status — close
-                  // the drawer instead of offering a second, stale Restore
-                  // (mirrors decide-closes-drawer above).
-                  onRestored={() => setDrawerJob(null)}
-                />
-              )
-            }
+            showDecide={false}
           />
         </Modal>
       )}
-      <ApplyDialog
-        job={applyTarget}
-        open={applyTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setApplyTarget(null);
-          }
-        }}
-        onApplied={() => setDrawerJob(null)}
-      />
     </div>
-  );
-}
-
-function TabCount({ value }: { value: number | undefined }) {
-  if (value === undefined) {
-    return null;
-  }
-  return (
-    <Box variant="small" color="text-body-secondary" display="inline">
-      {value}
-    </Box>
   );
 }
 

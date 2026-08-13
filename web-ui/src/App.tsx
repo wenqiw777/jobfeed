@@ -6,7 +6,6 @@ import { Shell } from "@/components/shell/Shell";
 import { Skeleton } from "@/components/ui/skeleton";
 import ConfigurationPage from "@/routes/configuration";
 import LibraryPage from "@/routes/library";
-import PipelinePage from "@/routes/pipeline";
 import RunsPage from "@/routes/runs";
 import SourcesPage from "@/routes/sources";
 import TriagePage from "@/routes/triage";
@@ -63,7 +62,7 @@ export default function App() {
       <Route element={<Shell />}>
         <Route path="/" element={<Navigate to="/triage" replace />} />
         <Route path="/triage" element={<TriagePage />} />
-        <Route path="/pipeline" element={<PipelinePage />} />
+        <Route path="/pipeline" element={<Navigate to="/triage" replace />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route
           path="/insights"

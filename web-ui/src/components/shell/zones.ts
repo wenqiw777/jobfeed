@@ -3,12 +3,11 @@ export interface Zone {
   path: string;
   label: string;
   /** Which sidebar badge this zone shows, if any. */
-  badge: "queue" | "attention" | null;
+  badge: "queue" | null;
 }
 
 export const ZONES: Zone[] = [
   { path: "/triage", label: "Triage", badge: "queue" },
-  { path: "/pipeline", label: "Pipeline", badge: "attention" },
   { path: "/library", label: "Library", badge: null },
   { path: "/insights", label: "Insights", badge: null },
   { path: "/runs", label: "Runs", badge: null },

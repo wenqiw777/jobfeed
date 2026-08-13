@@ -3,15 +3,13 @@ import SideNavigation, {
 } from "@cloudscape-design/components/side-navigation";
 import { useLocation, useNavigate } from "react-router";
 
-import { useAttention, useJobsTabCounts, workflowAttentionTotal } from "@/api/queries";
+import { useJobsTabCounts } from "@/api/queries";
 import { ZONES, type Zone } from "@/components/shell/zones";
 
 function useBadgeCounts(): Record<NonNullable<Zone["badge"]>, number | undefined> {
   const tabCounts = useJobsTabCounts();
-  const attention = useAttention();
   return {
     queue: tabCounts.data?.tab_counts.queue,
-    attention: attention.data ? workflowAttentionTotal(attention.data) : undefined,
   };
 }
 
@@ -62,7 +60,6 @@ function zoneText(
 function ZoneIcon({ zone }: { zone: string }) {
   const glyph: Record<string, string> = {
     "/triage": "◆",
-    "/pipeline": "↗",
     "/library": "▤",
     "/insights": "◫",
     "/runs": "▶",

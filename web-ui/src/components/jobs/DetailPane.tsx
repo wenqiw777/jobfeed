@@ -1,32 +1,17 @@
 import { useJobDetail, type TransitionStatus } from "@/api/queries";
-import { JdPasteCard } from "@/components/jobs/JdPasteCard";
-import { FollowupSection, NotesSection } from "@/components/jobs/DetailNotes";
 import { EvaluationSections, TwinsLine } from "@/components/jobs/DetailSections";
 import { VerdictPill } from "@/components/jobs/VerdictPill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelativeAge } from "@/lib/dates";
 
-export type DecideStatus = Extract<TransitionStatus, "shortlisted" | "archived" | "ignored">;
+export type UserDecision = Extract<TransitionStatus, "applied" | "shortlisted" | "ignored">;
 
 interface DetailPaneProps {
   jobId: string | null;
-  /** Capability flags, not zone names — Library reuses the pane (T11). */
-  showJdPaste: boolean;
-  /** Pending-JD dismiss-as-junk. Independent of the decide trio: an
-   * un-scored posting can't be meaningfully applied/shortlisted/skipped,
-   * so pending_jd shows ONLY paste-JD + Ignore. */
-  showIgnore: boolean;
-  /** Triage decide actions (Apply/Shortlist/Skip). Pipeline turns them
-   * off: its rows are post-decision; status moves happen through
-   * interviews and restore instead. */
+  /** Results expose exactly the three user decisions. */
   showDecide?: boolean;
   isDeciding?: boolean;
-  onDecide?: (to: DecideStatus) => void;
-  onOpenApply?: () => void;
-  /** Zone-specific sections rendered after the header — the seam that
-   * keeps the pane zone-agnostic (Pipeline mounts InterviewPanel and the
-   * restore card here based on the selected row's status). */
-  extraSections?: React.ReactNode;
+  onDecide?: (to: UserDecision) => void;
   /** Nothing-selected message. */
   emptyHint?: React.ReactNode;
 }
@@ -34,13 +19,9 @@ interface DetailPaneProps {
 /** Persistent right pane: detail aggregation for the active row. */
 export function DetailPane({
   jobId,
-  showJdPaste,
-  showIgnore,
   showDecide = true,
   isDeciding = false,
   onDecide,
-  onOpenApply,
-  extraSections,
   emptyHint = "Select a row to review its evidence and decide.",
 }: DetailPaneProps) {
   const detail = useJobDetail(jobId);
@@ -68,7 +49,7 @@ export function DetailPane({
           {job.location !== "" && <span>{job.location}</span>}
           <span className="font-mono">{job.platform}</span>
           <span className="font-mono">{formatRelativeAge(job.posted_at ?? job.discovered_at)}</span>
-          {status.status !== null && <span className="font-mono">[{status.status}]</span>}
+          {status.status !== null && <span>{visibleDecision(status.status)}</span>}
           <a
             href={job.url}
             target="_blank"
@@ -87,36 +68,32 @@ export function DetailPane({
             stageBStatus={evaluation.stage_b_status}
           />
         </div>
-        {(showDecide || showIgnore) && (
+        {showDecide && (
           <div className="mt-2.5 flex items-center gap-1.5">
-            {showDecide && (
-              <>
-                <Button variant="primary" disabled={isDeciding} onClick={onOpenApply}>
-                  Apply
-                </Button>
-                <Button disabled={isDeciding} onClick={() => onDecide?.("shortlisted")}>
-                  Shortlist
-                </Button>
-                <Button disabled={isDeciding} onClick={() => onDecide?.("archived")}>
-                  Skip
-                </Button>
-              </>
-            )}
-            {showIgnore && (
-              <Button disabled={isDeciding} onClick={() => onDecide?.("ignored")}>
-                Ignore
-              </Button>
-            )}
+            <Button variant="primary" disabled={isDeciding} onClick={() => onDecide?.("applied")}>
+              Applied
+            </Button>
+            <Button disabled={isDeciding} onClick={() => onDecide?.("shortlisted")}>
+              Wait
+            </Button>
+            <Button disabled={isDeciding} onClick={() => onDecide?.("ignored")}>
+              Ignore
+            </Button>
           </div>
         )}
       </header>
-      {showJdPaste && <JdPasteCard jobId={job.id} url={job.url} />}
-      {extraSections}
       <EvaluationSections evaluation={evaluation} />
-      <NotesSection jobId={job.id} notes={status.notes} />
-      <FollowupSection jobId={job.id} current={status.next_followup_at} />
     </div>
   );
+}
+
+function visibleDecision(status: string): string {
+  if (["shortlisted", "awaiting_referral"].includes(status)) return "Wait";
+  if (["applied", "interviewing", "offer", "rejected", "ghosted"].includes(status)) {
+    return "Applied";
+  }
+  if (["ignored", "archived"].includes(status)) return "Ignored";
+  return "Ready for decision";
 }
 
 function Score({ label, value }: { label: string; value: number | null }) {

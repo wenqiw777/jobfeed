@@ -61,11 +61,11 @@ change Phase 8 or Phase 9 product behavior.
 
 ### Milestone 2: operational routes
 
-- [ ] Rebuild Pipeline, Library, Sources, and Runs.
-- [ ] Preserve filtering, pagination, attention buckets, interviews, archive
-  restore, probing, run triggers, SSE progress, dialogs, and all empty/error
+- [x] Rebuild Library, Sources, and Runs.
+- [x] Remove Application Pipeline after the product decision below; retain
+  probing, run triggers, SSE progress, filtering, pagination, and empty/error
   states.
-- [ ] Record automated and Chrome evidence below.
+- [ ] Record final automated and Chrome evidence below.
 
 ### Milestone 3: analytics and cleanup
 
@@ -92,6 +92,23 @@ change Phase 8 or Phase 9 product behavior.
 - No external network request or paid LLM call is issued during UI validation;
   manual fixtures are removed after the pass.
 
+## Simplified decision model (frozen 2026-08-13)
+
+- Application Pipeline is not a product zone. `/pipeline` remains only as a
+  compatibility redirect to Triage.
+- Triage is a filtered results surface with exactly three user decisions:
+  **Applied**, **Wait**, and **Ignore**. Each is a lightweight status write;
+  Applied does not read a resume, create an application audit, or open an
+  upload/details dialog.
+- Existing persisted workflow states remain readable for migration
+  compatibility, but the UI groups them into the three decisions:
+  shortlisted/awaiting-referral → Wait; applied/interviewing/offer/rejected/
+  ghosted → Applied; ignored/archived → Ignored.
+- Notes, follow-ups, JD paste, interview rounds, archive/restore, application
+  artifacts, and pipeline status groups are no longer exposed in the GUI.
+- Library uses the same decision vocabulary and is read-only; the backend
+  compatibility APIs are outside this UI slice and are not deleted here.
+
 ## Evidence
 
 - Baseline (2026-08-13): `npm test -- --run` — 21 files, 153 tests passed.
@@ -99,12 +116,24 @@ change Phase 8 or Phase 9 product behavior.
   repository quality gate 1,872 passed / 418 deselected; Chrome extension
   verified the live Triage decision surface and full Settings form against the
   existing SQLite workspace.
-- Milestone 2: pending.
+- Milestone 2 simplification (2026-08-13): Pipeline zone and seven
+  pipeline/application UI modules removed; Triage and Library expose only
+  Results/Wait/Applied/Ignored; Applied/Wait/Ignore use lightweight status
+  writes. Focused behavior tests were recorded RED, then GREEN. Final frontend
+  verification: 19 files / 112 tests passed sequentially, lint/typecheck/build
+  passed, production dependency audit reported 0 vulnerabilities. Repository
+  quality gate: 1,872 passed / 418 deselected.
 - Milestone 3 analytics slice (2026-08-13): 153/153 frontend tests;
   production build; design-ban check 0 findings. Cloudscape containers expose
   explicit region labels, window selectors retain their grouped semantics, and
   KPI values no longer introduce duplicate page-level headings.
-- Final Chrome pass: pending.
+- Final Chrome pass (user Chrome extension, 2026-08-13): Results, Wait,
+  Applied, Ignored all selected and returned real SQLite-backed data/empty
+  states; Library exposed the same four filters; `/pipeline` redirected to
+  `/triage`; no Pipeline navigation, shortcuts, Shortlist/Skip/Restore/
+  Interview controls, page-level horizontal overflow, or wrapped dates were
+  present. Sample date computed `white-space: nowrap` with one-line height.
+  Screenshot: `docs/evidence/2026-08-13-triage-decisions.png`.
 
 ## Finding disposition
 

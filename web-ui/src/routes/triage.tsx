@@ -10,15 +10,14 @@ import {
   type JobsQuery,
   type JobSummary,
 } from "@/api/queries";
-import { ApplyDialog } from "@/components/jobs/ApplyDialog";
 import { BulkBar } from "@/components/jobs/BulkBar";
-import { DetailPane, type DecideStatus } from "@/components/jobs/DetailPane";
+import { DetailPane, type UserDecision } from "@/components/jobs/DetailPane";
 import { JobList } from "@/components/jobs/JobList";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/use-toast";
 import { useSelection } from "@/lib/use-selection";
 
-type TriageTab = "queue" | "pending_jd";
+type TriageFilter = "results" | "wait" | "applied" | "ignored";
 
 /** Triage corpora are 10^2-scale (plan D10) — one page covers the zone. */
 const PAGE_LIMIT = 200;
@@ -28,8 +27,8 @@ const COLLAPSE_MS = 180;
  * A4 zone params. Queue omits `sort` on purpose: queue/pending_jd always
  * use the server's fixed verdict-group order.
  */
-function triageQuery(tab: TriageTab): JobsQuery {
-  if (tab === "queue") {
+function triageQuery(filter: TriageFilter): JobsQuery {
+  if (filter === "results") {
     return {
       tab: "queue",
       apply_hard_filters: true,
@@ -39,7 +38,18 @@ function triageQuery(tab: TriageTab): JobsQuery {
       offset: 0,
     };
   }
-  return { tab: "pending_jd", apply_hard_filters: true, limit: PAGE_LIMIT, offset: 0 };
+  const statuses = {
+    wait: ["shortlisted", "awaiting_referral"],
+    applied: ["applied", "interviewing", "offer", "rejected", "ghosted"],
+    ignored: ["ignored", "archived"],
+  }[filter];
+  return {
+    tab: "all",
+    statuses,
+    sort: "discovered_desc",
+    limit: PAGE_LIMIT,
+    offset: 0,
+  };
 }
 
 function prefersReducedMotion(): boolean {
@@ -47,17 +57,13 @@ function prefersReducedMotion(): boolean {
 }
 
 export default function TriagePage() {
-  const [tab, setTab] = useState<TriageTab>("queue");
+  const [filter, setFilter] = useState<TriageFilter>("results");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collapsingId, setCollapsingId] = useState<string | null>(null);
-  // Snapshot of the dialog's job, taken when it opens (null = closed). A
-  // background refetch can re-seed the live selection mid-dialog; the
-  // application audit must stay pinned to the job the user opened it for.
-  const [applyTarget, setApplyTarget] = useState<JobSummary | null>(null);
   const selection = useSelection();
   const collapseTimerRef = useRef<number | null>(null);
 
-  const list = useJobsList(triageQuery(tab));
+  const list = useJobsList(triageQuery(filter));
   const jobs = useMemo(() => list.data?.jobs ?? [], [list.data]);
   // Decide/advance handlers read the displayed order through a ref so a
   // setTimeout never closes over a stale list. Synced in an effect (refs
@@ -88,8 +94,8 @@ export default function TriagePage() {
       : (jobs[0]?.id ?? null);
   const selectedJob = jobs.find((job) => job.id === effectiveSelectedId) ?? null;
 
-  const switchTab = (next: TriageTab) => {
-    setTab(next);
+  const switchFilter = (next: TriageFilter) => {
+    setFilter(next);
     setSelectedId(null);
     selection.clear();
   };
@@ -121,17 +127,13 @@ export default function TriagePage() {
     }, COLLAPSE_MS);
   };
 
-  const decide = (to: DecideStatus) => {
+  const decide = (to: UserDecision) => {
     const id = effectiveSelectedId;
     if (id === null || transition.isPending) {
       return;
     }
-    // Pending-JD rows are unscored 'new' rows whose only legal move is
-    // new→scored, so the dismiss-as-junk Ignore must bypass the graph.
-    // Queue decides stay graph-checked (never forced).
-    const force = tab === "pending_jd" && to === "ignored";
     transition.mutate(
-      { id, to, force },
+      { id, to },
       {
         onSuccess: () => handleDecided(id),
         onError: (error) =>
@@ -149,20 +151,30 @@ export default function TriagePage() {
     <div className="jobfeed-decision-surface" data-testid="triage-decision-surface">
       <div className="jobfeed-decision-queue">
         <Tabs
-          activeTabId={tab}
+          activeTabId={filter}
           variant="container"
           fitHeight
           disableContentPaddings
-          onChange={({ detail }) => switchTab(detail.activeTabId as TriageTab)}
+          onChange={({ detail }) => switchFilter(detail.activeTabId as TriageFilter)}
           tabs={[
             {
-              id: "queue",
-              label: <TabLabel label="Queue" value={list.data?.tab_counts.queue} />,
+              id: "results",
+              label: "Results",
               content: triageListContent(),
             },
             {
-              id: "pending_jd",
-              label: <TabLabel label="Pending JD" value={list.data?.tab_counts.pending_jd} />,
+              id: "wait",
+              label: "Wait",
+              content: triageListContent(),
+            },
+            {
+              id: "applied",
+              label: "Applied",
+              content: triageListContent(),
+            },
+            {
+              id: "ignored",
+              label: "Ignored",
               content: triageListContent(),
             },
           ]}
@@ -176,35 +188,20 @@ export default function TriagePage() {
       <section aria-label="Job detail" className="jobfeed-evidence-panel">
         <Container
           header={
-            <Header variant="h2" description="Scores, source evidence, notes, and next action">
+            <Header variant="h2" description="Scores, source evidence, and decision">
               {selectedJob ? `${selectedJob.company} · ${selectedJob.title}` : "Job evidence"}
             </Header>
           }
         >
           <DetailPane
             jobId={effectiveSelectedId}
-            showJdPaste={tab === "pending_jd"}
-            showIgnore={tab === "pending_jd"}
-            showDecide={tab !== "pending_jd"}
+            showDecide={filter === "results"}
             isDeciding={transition.isPending}
             onDecide={decide}
-            onOpenApply={() => {
-              if (selectedJob !== null) setApplyTarget(selectedJob);
-            }}
-            emptyHint={tab === "pending_jd" ? "Select a row to paste a JD or ignore the posting." : undefined}
+            emptyHint="Select a result to review its evidence."
           />
         </Container>
       </section>
-      <ApplyDialog
-        job={applyTarget}
-        open={applyTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setApplyTarget(null);
-          }
-        }}
-        onApplied={handleDecided}
-      />
     </div>
   );
 
@@ -215,14 +212,13 @@ export default function TriagePage() {
           selectedIds={selection.selectedIds}
           total={list.data?.total ?? 0}
           loadedCount={jobs.length}
-          ignoreOnly={tab === "pending_jd"}
           onSelectPage={() => selection.selectMany(jobs.map((job) => job.id))}
           onSelectAllMatching={() => selection.selectAll(jobs.map((job) => job.id))}
           onClear={selection.clear}
           onBulkCleared={onBulkCleared}
         />
         <ListBody
-          tab={tab}
+          filter={filter}
           list={list}
           jobs={jobs}
           selectedId={effectiveSelectedId}
@@ -236,12 +232,8 @@ export default function TriagePage() {
   }
 }
 
-function TabLabel({ label, value }: { label: string; value: number | undefined }) {
-  return <span>{label}{value === undefined ? "" : ` (${value})`}</span>;
-}
-
 interface ListBodyProps {
-  tab: TriageTab;
+  filter: TriageFilter;
   list: ReturnType<typeof useJobsList>;
   jobs: JobSummary[];
   selectedId: string | null;
@@ -251,7 +243,7 @@ interface ListBodyProps {
   onToggle: (id: string) => void;
 }
 
-function ListBody({ tab, list, jobs, ...rowProps }: ListBodyProps) {
+function ListBody({ filter, list, jobs, ...rowProps }: ListBodyProps) {
   if (list.isPending) {
     return (
       <div className="flex flex-col gap-1 px-4 py-3" aria-label="Loading jobs">
@@ -269,12 +261,12 @@ function ListBody({ tab, list, jobs, ...rowProps }: ListBodyProps) {
       <div className="grid flex-1 place-items-center px-6 text-center">
         <div>
           <p className="text-body-sm font-medium text-ink-2">
-            {tab === "queue" ? "Queue clear" : "Nothing waiting on a JD"}
+            {filter === "results" ? "No results to review" : `No ${filter} jobs`}
           </p>
           <p className="mt-1 text-micro text-mute">
-            {tab === "queue"
-              ? "Scan results land here sorted by verdict for quick review."
-              : "Rows whose JD couldn't be fetched queue here for a manual paste."}
+            {filter === "results"
+              ? "Run a scan and evaluation to add filtered job results."
+              : "Change the filter to see another decision."}
           </p>
         </div>
       </div>

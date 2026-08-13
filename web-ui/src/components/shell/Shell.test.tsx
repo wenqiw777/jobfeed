@@ -116,27 +116,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("renders the six zone links inside a nav landmark", () => {
+test("renders the product zones inside a nav landmark", () => {
   renderShell();
 
   expect(screen.getByTestId("jobfeed-workspace-layout")).toBeInTheDocument();
   const nav = screen.getByRole("navigation", { name: "Zones" });
-  for (const label of ["Triage", "Pipeline", "Library", "Insights", "Runs", "Sources"]) {
+  for (const label of ["Triage", "Library", "Insights", "Runs", "Sources"]) {
     expect(within(nav).getByRole("link", { name: new RegExp(label) })).toBeInTheDocument();
   }
 });
 
-test("shows the queue count on Triage and the workflow attention total on Pipeline", async () => {
+test("shows the result count on Triage without a pipeline badge", async () => {
   renderShell();
 
   const nav = screen.getByRole("navigation", { name: "Zones" });
   const triage = within(nav).getByRole("link", { name: /Triage/ });
-  const pipeline = within(nav).getByRole("link", { name: /Pipeline/ });
-
   await screen.findByRole("link", { name: /Triage 12/ });
   expect(triage).toHaveTextContent("12");
-  // 2 follow-ups + 1 interview prep + 1 going ghosted = 4.
-  expect(pipeline).toHaveTextContent("4");
+  expect(within(nav).queryByRole("link", { name: /Pipeline/ })).not.toBeInTheDocument();
 });
 
 test("/ redirects to /triage and marks it the current zone", () => {
@@ -159,6 +156,13 @@ test("top bar title follows the active zone", () => {
 test("top bar does not expose keyboard shortcut legends", () => {
   renderShell("/triage");
   expect(screen.queryByText(/j\/k|a apply|h shortlist|s skip/)).not.toBeInTheDocument();
+});
+
+test("application pipeline is not a product zone and legacy links return to triage", () => {
+  renderShell("/pipeline");
+
+  expect(screen.queryByRole("link", { name: /Pipeline/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Triage");
 });
 
 test("lazy-loaded insights route renders after its chunk resolves", async () => {

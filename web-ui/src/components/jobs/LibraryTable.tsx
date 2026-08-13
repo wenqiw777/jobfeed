@@ -22,7 +22,7 @@ const ROW_PX = { compact: 32, comfortable: 46 } as const;
 
 /**
  * Column track shared by the header and every row so they stay aligned.
- * Company | title (+closed badge) | status | verdict | score | age.
+ * Company | title (+closed badge) | decision | verdict | score | age.
  */
 const GRID_COLS =
   "grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_7.5rem_6.5rem_3rem_4rem] items-center gap-2";
@@ -67,7 +67,7 @@ export function LibraryTable({ jobs, activeId, pageKey, onOpen }: LibraryTablePr
       >
         <span>Company</span>
         <span>Title</span>
-        <span>Status</span>
+        <span>Decision</span>
         <span>Verdict</span>
         <span className="text-right">Score</span>
         <span className="text-right">Age</span>
@@ -137,7 +137,7 @@ function LibraryRow({
             </span>
           )}
         </span>
-        <span className="truncate font-mono text-micro text-mute">{job.status}</span>
+        <span className="truncate text-micro font-medium text-ink-2">{decisionLabel(job.status)}</span>
         <span>
           <VerdictPill verdict={job.verdict} stageBStatus={job.stage_b_status} />
         </span>
@@ -148,4 +148,13 @@ function LibraryRow({
       </button>
     </div>
   );
+}
+
+function decisionLabel(status: string): string {
+  if (["shortlisted", "awaiting_referral"].includes(status)) return "Wait";
+  if (["applied", "interviewing", "offer", "rejected", "ghosted"].includes(status)) {
+    return "Applied";
+  }
+  if (["ignored", "archived"].includes(status)) return "Ignored";
+  return "—";
 }
