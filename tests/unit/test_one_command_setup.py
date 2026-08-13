@@ -62,6 +62,10 @@ def _fresh_checkout(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$SETUP_TEST_OPEN_LOG"\n',
     )
     _write_executable(
+        checkout / "fake-bin" / "xdg-open",
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$SETUP_TEST_OPEN_LOG"\n',
+    )
+    _write_executable(
         checkout / "bin" / "jobfeed",
         "#!/bin/sh\n"
         '[ "$#" -gt 0 ] || exec "$SETUP_TEST_ROOT/setup.sh" --launch-only\n'

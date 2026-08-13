@@ -45,11 +45,26 @@ PROMPT_TOKENS = 12
 COMPLETION_TOKENS = 7
 MAX_TOKENS = 256
 RESPONSE_CONTENT = "Score: 84"
+PROXY_ENV_NAMES = (
+    "ALL_PROXY",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "all_proxy",
+    "https_proxy",
+    "http_proxy",
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_fake_sdk_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep fake SDK endpoints inside respx regardless of host proxy settings."""
+    for name in PROXY_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
 
 
 def _settings(
