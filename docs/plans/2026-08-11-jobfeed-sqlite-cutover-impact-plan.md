@@ -674,7 +674,7 @@ containers/networks/volumes 残留为 0/0/0。完整 `make quality` 为 1854 pas
 exited，preflight/after 的 container 与 volume inspect SHA 完全一致。Task 7
 仍需完成至少 7 个自然日 soak 和 rollback readiness 监控；此前不得进入 Task 8。
 
-**Soak day 0 manual acceptance（2026-08-13）：PASS with three P1 fixes.** 真实
+**Soak day 0 manual acceptance（2026-08-13）：CONDITIONAL PASS。** 真实
 浏览器逐区验证 Triage、Pipeline、Library、Insights、Runs、Performance、Sources，
 并执行列表搜索/排序/分页、详情、密度切换、note、follow-up、shortlist、skip、
 archive restore 与 company CRUD/restart persistence。真实 UI 首次暴露 10,000 个
@@ -691,9 +691,30 @@ capability check 已收窄，正式 dry-run 返回 1,476 candidates。SQLite onl
 已精确删除；15 表 counts 回到 cutover baseline，测试前缀残留 0，两个 lease idle，
 `integrity_check=ok`、FK violations=0。最终 `make quality` 为 1,856 passed / 418
 deselected，Ruff、format、mypy 全绿；正式 PG container/volume 指纹前后相同且
-container 仍 exited。外部网络 source、真实 LLM/付费 evaluate 按 Phase 0 边界未跑；
-Chrome extension 未连接到本 task，浏览器证据来自 Codex 隔离浏览器，待连接后可
-补真实 Chrome final gate，不阻塞当前 SQLite soak。
+container 仍 exited。外部网络 source、真实 LLM/付费 evaluate 按 Phase 0 边界未跑。
+
+**Chrome extension final gate（2026-08-13）：CONDITIONAL PASS。** 在用户现有
+`Jackson (Work)` Chrome profile 中由 ChatGPT Chrome extension 直接接管
+`127.0.0.1:7654`，不是 Codex 隔离浏览器。逐项点击 7 个 zone、View 两种密度、
+Triage 两个 tab/详情/笔记/3 种 follow-up/JD paste/Ignore/Apply/Shortlist/Skip/批量
+选择/键盘快捷键、Pipeline group/3 个 attention filter/Archive/Interview round、
+Library 4 个 tab/搜索/4 种排序/翻页/详情动作/Restore、Insights 与 Performance
+全部时间窗、Runs 历史展开/翻页/Scan 5 个 source/Evaluate 表单，以及 Sources
+vendor/Add/Remove/Cancel/include-removed。可逆写操作全部使用
+`codex-chrome-ext-*` fixture；清理后 15 表 counts 回到 baseline，所有 TEXT 列前缀
+残留为 0，`integrity_check=ok`、FK violations=0、两个 lease idle generation 0。
+正式 PG container ID/status 与 volume inspect SHA 仍和 Task 0 证据一致；隔离 QA
+container 残留 0，临时 DB 已移入 Trash。
+
+两项边界不能记为全绿：(1) 正式 Web 使用 `codex-cli/*` 配置，但 canonical Docker
+image 没有 `codex` executable，Evaluate Start 实测返回 500；在端口 7655 的隔离
+SQLite 副本改用 `mock/*` 后，both、Stage A、Stage B、limit validation、run completion
+均通过并已销毁。此项是 runtime configuration blocker，不是 SQLite data-path
+failure。(2) Apply 的两个文件选择器能由 extension 打开，但 extension 未启用
+`Allow access to file URLs`，`fileChooser.setFiles` 被浏览器拒绝；无附件申请记录通过，
+multipart API 已在同日隔离 HTTP 验收通过。Sources probe 与无 lease 的真实 Scan 仍按
+Phase 0 外网边界不执行；5 个 Scan source 均在 occupied lease 下真实点击并正确 409，
+没有发出外网请求。
 
 ### Task 8：PG-only 清理（独立批准后）
 
@@ -800,7 +821,7 @@ Chrome extension 未连接到本 task，浏览器证据来自 Codex 隔离浏览
 | 正式 PG 保护 | **PASS**：artifact 绑定迁移前/后正式 container+volume 指纹；cleanup 后复核一致；container 保持 exited |
 | 正式 SQLite install | **PASS**：no-replace 安装到 `jobfeed_jobfeed_data`；runtime SHA 与 artifact 一致 |
 | 正式 CLI/Web smoke | **PASS**：CLI 读取真实记录；Web `db=ok`、56,507 jobs；0 active leases |
-| Soak day 0 manual acceptance | **PASS**：7 Web zones、31 API operations、canonical CLI/mock scan、backup/restore；3 个 P1 已修复；测试数据零残留；1,856 tests green |
+| Soak day 0 manual acceptance | **CONDITIONAL PASS**：7 Web zones、31 API operations、canonical CLI/mock scan、backup/restore、真实 Chrome extension；测试数据零残留；1,856 tests green。剩余：正式 Docker `codex-cli` runtime 不可用；extension 附件权限未开启 |
 | 7 天 soak | **ACTIVE**：开始于 2026-08-13T03:37:59Z；完成前禁止 Task 8 |
 
 ### 15.1 Task 0 implementation reality：migration control-plane
