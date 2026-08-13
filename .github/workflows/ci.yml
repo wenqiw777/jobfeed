@@ -5,7 +5,57 @@ on:
   pull_request:
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      postgres: ${{ steps.filter.outputs.postgres }}
+      browser: ${{ steps.filter.outputs.browser }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'src/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - 'Makefile'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/ci.yml'
+            postgres:
+              - 'migrations/**'
+              - 'src/jobfeed/adapters/store/postgres.py'
+              - 'src/jobfeed/adapters/migration/**'
+              - 'tests/contract/**'
+              - 'tests/integration/**'
+              - 'tests/store/**'
+              - 'tests/e2e/test_legacy_import.py'
+              - 'Makefile'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/ci.yml'
+            browser:
+              - 'web-ui/**'
+              - 'src/jobfeed/web/**'
+              - 'src/jobfeed/adapters/sources/*linkedin*'
+              - 'tests/integration/test_linkedin_browser.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/ci.yml'
+            docker:
+              - 'Dockerfile*'
+              - 'docker-compose.yml'
+              - 'bin/jobfeed'
+              - 'tests/fixtures/docker-*'
+              - '.github/workflows/ci.yml'
+
   quality-gate:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -28,6 +78,8 @@ jobs:
         run: make quality
 
   postgres-tests:
+    needs: changes
+    if: needs.changes.outputs.postgres == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -67,6 +119,8 @@ jobs:
         run: make test-postgres
 
   browser-tests:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -92,6 +146,8 @@ jobs:
         run: pytest -m browser -o "addopts=" -v --tb=short
 
   docker-build:
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     env:
       JOBFEED_POSTGRES_PORT: "55432"

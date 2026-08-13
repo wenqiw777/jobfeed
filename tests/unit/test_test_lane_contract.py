@@ -21,8 +21,16 @@ def test_default_lane_is_sqlite_and_postgres_lane_is_explicit() -> None:
 
 
 def test_ci_keeps_default_and_postgres_lanes_separate() -> None:
-    """CI quality runs without a PG service and PG behavior uses its named lane."""
+    """CI runs each expensive lane only when its owned paths change."""
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    assert "dorny/paths-filter@v3" in workflow
+    assert "needs.changes.outputs.backend == 'true'" in workflow
+    assert "needs.changes.outputs.postgres == 'true'" in workflow
+    assert "needs.changes.outputs.browser == 'true'" in workflow
+    assert "needs.changes.outputs.docker == 'true'" in workflow
+    assert "web-ui/**" in workflow
+    assert "migrations/**" in workflow
+    assert "Dockerfile*" in workflow
     quality_job, postgres_and_later = workflow.split("  postgres-tests:", maxsplit=1)
     postgres_job, browser_and_later = postgres_and_later.split(
         "  browser-tests:", maxsplit=1
