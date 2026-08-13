@@ -1,4 +1,8 @@
 import { useState } from "react";
+import Alert from "@cloudscape-design/components/alert";
+import Grid from "@cloudscape-design/components/grid";
+import SegmentedControl from "@cloudscape-design/components/segmented-control";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 
 import { useInsightsOverview } from "@/api/queries";
 import { ByResumeTable } from "@/components/insights/ByResumeTable";
@@ -7,7 +11,6 @@ import { KpiCards } from "@/components/insights/KpiCards";
 import { SankeyFunnel } from "@/components/insights/SankeyFunnel";
 import { StatusDonut } from "@/components/insights/StatusDonut";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 
 const WINDOW_PRESETS = [30, 60, 90] as const;
 
@@ -21,27 +24,13 @@ export default function InsightsPage() {
   const overview = useInsightsOverview(windowDays);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
-      <div className="flex items-center gap-1.5" role="group" aria-label="Window">
-        {WINDOW_PRESETS.map((preset) => (
-          <button
-            key={preset}
-            type="button"
-            aria-pressed={windowDays === preset}
-            onClick={() => setWindowDays(preset)}
-            className={cn(
-              "rounded-pill border px-2.5 py-0.5 font-mono text-micro transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-              windowDays === preset
-                ? "border-accent-border bg-accent-bg text-accent"
-                : "border-border text-mute hover:border-border-strong hover:text-ink-2",
-            )}
-          >
-            {preset}d
-          </button>
-        ))}
-      </div>
-      <Body overview={overview} />
+    <div data-testid="cloudscape-insights" className="jobfeed-dashboard-page">
+      <SpaceBetween size="l">
+        <div role="group" aria-label="Window">
+          <SegmentedControl label="Window" selectedId={String(windowDays)} options={WINDOW_PRESETS.map((preset) => ({ id: String(preset), text: `${preset}d` }))} onChange={({ detail }) => setWindowDays(Number(detail.selectedId))} />
+        </div>
+        <Body overview={overview} />
+      </SpaceBetween>
     </div>
   );
 }
@@ -60,16 +49,16 @@ function Body({ overview }: { overview: ReturnType<typeof useInsightsOverview> }
     );
   }
   if (overview.isError) {
-    return <p className="py-6 text-body-sm text-danger">{overview.error.message}</p>;
+    return <Alert type="error" header="Insights unavailable">{overview.error.message}</Alert>;
   }
   const data = overview.data;
   return (
     <>
       <KpiCards overview={data} />
-      <div className="grid gap-3 lg:grid-cols-2">
+      <Grid gridDefinition={[{ colspan: { default: 12, l: 6 } }, { colspan: { default: 12, l: 6 } }] }>
         <SankeyFunnel overview={data} />
         <StatusDonut distribution={data.status_distribution} />
-      </div>
+      </Grid>
       <DailyTimeline overview={data} />
       <ByResumeTable byResume={data.applications.by_resume} />
     </>

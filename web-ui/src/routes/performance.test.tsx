@@ -198,6 +198,7 @@ afterEach(() => {
 
 test("all chart panels render with mocked data", async () => {
   renderPerformance();
+  expect(screen.getByTestId("cloudscape-performance")).toBeInTheDocument();
 
   // KPI cards.
   const kpis = await screen.findByRole("region", { name: "Performance KPIs" });

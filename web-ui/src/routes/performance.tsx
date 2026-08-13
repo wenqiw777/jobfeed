@@ -1,4 +1,7 @@
 import { useState } from "react";
+import Alert from "@cloudscape-design/components/alert";
+import Grid from "@cloudscape-design/components/grid";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 
 import {
   useFunnelStats,
@@ -41,15 +44,11 @@ export default function PerformancePage() {
   const runs = useRuns({ limit: ERROR_RUNS_LIMIT, days: windowDays });
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
-      <TimeFilter windowDays={windowDays} onChange={setWindowDays} />
-      <Body
-        overview={overview}
-        stepTimings={stepTimings}
-        llmStats={llmStats}
-        funnel={funnel}
-        runs={runs}
-      />
+    <div data-testid="cloudscape-performance" className="jobfeed-dashboard-page">
+      <SpaceBetween size="l">
+        <TimeFilter windowDays={windowDays} onChange={setWindowDays} />
+        <Body overview={overview} stepTimings={stepTimings} llmStats={llmStats} funnel={funnel} runs={runs} />
+      </SpaceBetween>
     </div>
   );
 }
@@ -90,7 +89,7 @@ function Body({
     );
   }
   if (firstError) {
-    return <p className="py-6 text-body-sm text-danger">{firstError.message}</p>;
+    return <Alert type="error" header="Performance data unavailable">{firstError.message}</Alert>;
   }
 
   const overviewData = overview.data!;
@@ -102,7 +101,7 @@ function Body({
   return (
     <>
       <KpiCards overview={overviewData} />
-      <div className="grid gap-3 lg:grid-cols-2">
+      <Grid gridDefinition={Array.from({ length: 8 }, () => ({ colspan: { default: 12, l: 6 } }))}>
         <ScanSourceDuration timings={timings} />
         <EvaluateBreakdown timings={timings} />
         <GatePassFail funnel={funnelData} />
@@ -111,7 +110,7 @@ function Body({
         <TokenUsage stats={stats} />
         <FunnelConversion funnel={funnelData} />
         <ErrorsPerRun runs={runRows} />
-      </div>
+      </Grid>
     </>
   );
 }

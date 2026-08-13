@@ -195,6 +195,10 @@
   }
 }
 
+.jobfeed-dashboard-page {
+  padding: 4px 20px 32px;
+}
+
 /* Motion only communicates state (150–250ms ease-out); under
  * prefers-reduced-motion everything snaps. */
 @media (prefers-reduced-motion: reduce) {

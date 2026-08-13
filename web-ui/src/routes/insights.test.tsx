@@ -95,6 +95,7 @@ afterEach(() => {
 
 test("KPI cards: all-time totals plus the windowed application count, labeled", async () => {
   renderInsights();
+  expect(screen.getByTestId("cloudscape-insights")).toBeInTheDocument();
 
   const kpis = await screen.findByRole("region", { name: "Key numbers" });
   expect(calls[0]).toBe("/api/insights/overview?window=30");
