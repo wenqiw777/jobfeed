@@ -473,14 +473,14 @@ def test_machine_fingerprint_hashes_stable_host_and_cpu_without_plaintext() -> N
 
 
 def test_canonical_bin_forwards_benchmark_environment() -> None:
-    """Canonical Docker CLI forwards both scratch DSN and machine token."""
+    """Canonical migration control-plane forwards its isolated evidence env."""
     root = Path(__file__).resolve().parents[2]
     wrapper = (root / "bin" / "jobfeed").read_text("utf-8")
     compose = (root / "docker-compose.yml").read_text("utf-8")
 
     assert 'docker compose --file "$REPO_ROOT/docker-compose.yml"' in wrapper
     assert "--project-directory" in wrapper
-    assert "run --rm" in wrapper
+    assert "run --build -d --no-deps" in wrapper
     scratch_line = (
         'JOBFEED_MIGRATION_SCRATCH_PG_URL: "${JOBFEED_MIGRATION_SCRATCH_PG_URL:-}"'
     )

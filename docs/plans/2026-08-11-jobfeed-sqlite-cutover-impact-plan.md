@@ -351,7 +351,7 @@ PG backup
 | Import/parity | `legacy_import.py`, `parity.py`, `cli/migrate.py` | 新 PG→SQLite 路径并扩展到 14 表 | 最高 |
 | Runtime wiring | `config.py`, `cli/__init__.py`, `web/app.py` | 默认 backend、路径、lifecycle | 高 |
 | Run concurrency | `run_manager.py`, claims service | DB lease、heartbeat、stale recovery | 高 |
-| Docker | `docker-compose.yml`, `bin/jobfeed*`, `setup` | 移除 PG service、挂载共享 DB volume | 高 |
+| Runtime | `bin/jobfeed*`, `setup`, `scan` | 普通命令切为 host `.venv` + repo-local SQLite；Docker 仅迁移/回滚/CI | 高 |
 | Dependencies | `pyproject.toml`, `uv.lock` | asyncpg/Alembic/testcontainers 移除时机；SQLite driver + adapter-internal SQLAlchemy Core | 中 |
 | CI | `.github/workflows/ci.yml`, scripts | SQLite integration、migration、browser lane | 高 |
 | Contract/integration tests | `tests/contract`, `tests/integration`, `tests/store` | parameterize/replace PG fixtures | 最高 |
@@ -706,13 +706,14 @@ vendor/Add/Remove/Cancel/include-removed。可逆写操作全部使用
 正式 PG container ID/status 与 volume inspect SHA 仍和 Task 0 证据一致；隔离 QA
 container 残留 0，临时 DB 已移入 Trash。
 
-两项边界不能记为全绿：(1) 正式 Web 使用 `codex-cli/*` 配置，但 canonical Docker
-image 没有 `codex` executable。2026-08-13 修复后，Evaluate Start 不再返回不透明
+用户于 2026-08-13 批准将普通 canonical runtime 改为宿主机 `.venv` + repo-local
+SQLite，Docker 仅保留迁移、回滚、CI 与可选部署。原正式 Web 使用 `codex-cli/*`
+但 Docker image 没有 `codex` executable；修复后 Evaluate Start 不再返回不透明
 500，而是 `503 llm_runtime_unavailable` 并显示可操作说明；真实 Chrome extension
 点击验证通过，且 `pipeline_runs` 保持 38→38、没有 phantom run。端口 7655 的隔离
 SQLite 副本改用 `mock/*` 后，both、Stage A、Stage B、limit validation、run completion
-均通过并已销毁。真实付费 Evaluate 仍需明确选择容器内后端，或批准把日常 canonical
-runtime 改为宿主机；此项不是 SQLite data-path failure。(2) Apply 的两个文件选择器
+均通过并已销毁。host runtime 切换与真实 LLM/Chrome 全量复测完成前，此项保持 open；
+它不是 SQLite data-path failure。(2) Apply 的两个文件选择器
 能由 extension 打开，但 extension 未启用
 `Allow access to file URLs`，`fileChooser.setFiles` 被浏览器拒绝；无附件申请记录通过，
 multipart API 已在同日隔离 HTTP 验收通过。Sources probe 与无 lease 的真实 Scan 仍按

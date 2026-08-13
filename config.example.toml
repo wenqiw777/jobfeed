@@ -84,8 +84,8 @@ default_eval_limit = 150
 # Digest file output — when output_dir is set, `jobfeed digest` also writes
 # today.md plus a dated YYYY-MM-DD.md there (both overwritten each run), and
 # `digest --quiet` writes silently. Keep this under ~/.cache/jobfeed/ —
-# ~/.jobfeed/ is read-only. The canonical Docker wrapper (./bin/jobfeed)
-# mounts ~/.cache/jobfeed, so this example path lands on the host either way.
+# ~/.jobfeed/ is read-only. The canonical host wrapper (`./bin/jobfeed`)
+# runs from the repo and expands this path directly on the host.
 [digest]
 # output_dir = "~/.cache/jobfeed/digests"
 
@@ -133,7 +133,7 @@ enabled = false
 # (no login, no browser). Paste regular LinkedIn jobs search URLs; query params
 # like f_TPR pass through verbatim (e.g. f_TPR=r86400 = posted in the last 24h).
 # Discovery stores list-card data only; run `./bin/jobfeed enrich-linkedin-guest`
-# (the canonical Docker CLI) afterwards for the paced JD-fetch pass over the
+# (the canonical host CLI) afterwards for the paced JD-fetch pass over the
 # same per-IP budget.
 [sources.linkedin_guest]
 enabled = false

@@ -1,11 +1,10 @@
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$Mounts = @()
-foreach ($File in @("config.toml", "resume.md", "preamble_personal.md")) {
-    $Path = Join-Path $RepoRoot $File
-    if (Test-Path -Path $Path -PathType Leaf) {
-        $Mounts += @("-v", "${Path}:/app/${File}:ro")
-    }
+$HostJobfeed = Join-Path $RepoRoot ".venv\Scripts\jobfeed.exe"
+if (-not (Test-Path -Path $HostJobfeed -PathType Leaf)) {
+    Write-Error "host runtime is not installed; run ./setup"
+    exit 2
 }
-docker compose run --rm @Mounts jobfeed-cli jobfeed @args
+Set-Location $RepoRoot
+& $HostJobfeed @args
 exit $LASTEXITCODE

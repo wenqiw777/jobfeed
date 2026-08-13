@@ -350,10 +350,8 @@ def test_capture_cleanup_failure_is_nonzero_and_prints_recovery_command(
     assert "down --volumes --remove-orphans" in result.stderr
 
 
-def test_capture_rejects_rw_alias_to_dump_and_normal_route_is_unchanged(
-    tmp_path: Path,
-) -> None:
-    """Dump cannot be re-exposed via RW artifacts; ordinary CLI keeps its service."""
+def test_capture_rejects_rw_alias_to_dump(tmp_path: Path) -> None:
+    """The migration dump cannot be re-exposed through RW artifacts."""
     input_dir = tmp_path / "input"
     input_dir.mkdir()
     dump = input_dir / "source.dump"
@@ -370,11 +368,6 @@ def test_capture_rejects_rw_alias_to_dump_and_normal_route_is_unchanged(
     assert rejected.returncode != 0
     assert "read-write artifact mount would expose source dump" in rejected.stderr
     assert calls == []
-
-    normal, calls = _run_wrapper(tmp_path, "digest")
-    assert normal.returncode == 0
-    assert len(calls) == 1
-    assert calls[0]["argv"][-3:] == ["jobfeed-cli", "jobfeed", "digest"]
 
 
 def test_capture_rejects_user_supplied_attestation_before_docker(

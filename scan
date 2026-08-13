@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Run a scan. Assumes `./setup` has been run once (it creates config.toml, sets
-# up the runtime, and applies the DB schema). This just makes sure Postgres is
-# up, then scans — no manual `docker compose` needed.
+# up the host runtime). SQLite opens the repo-local database directly.
 #
 #   ./scan                          # all enabled sources from config.toml
 #   ./scan --source speedyapply     # a single source
@@ -16,8 +15,5 @@ if [ ! -f config.toml ]; then
   echo "error: config.toml not found — run ./setup first." >&2
   exit 1
 fi
-
-# Make sure Postgres is up (idempotent; handles a stopped container after reboot).
-docker compose up -d --wait postgres
 
 exec "$REPO_ROOT/bin/jobfeed" scan "$@"

@@ -286,22 +286,11 @@ if [ "${1:-}" = "migrate" ] && { \
     exit 0
 fi
 
-unset COMPOSE_FILE COMPOSE_PATH_SEPARATOR
-args=(
-    docker compose --file "$REPO_ROOT/docker-compose.yml"
-    --project-directory "$REPO_ROOT" run --rm
-)
-if [ ! -t 0 ]; then
-    args+=(-T)
+# Host-native daily runtime.
+HOST_JOBFEED="$REPO_ROOT/.venv/bin/jobfeed"
+if [ ! -x "$HOST_JOBFEED" ]; then
+    fail "host runtime is not installed; run ./setup"
 fi
-for file in config.toml resume.md preamble_personal.md; do
-    if [ -f "$REPO_ROOT/$file" ]; then
-        args+=(-v "$REPO_ROOT/$file:/app/$file:ro")
-    fi
-done
 
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/jobfeed"
-mkdir -p "$CACHE_DIR"
-args+=(-v "$CACHE_DIR:/root/.cache/jobfeed")
-
-exec "${args[@]}" jobfeed-cli jobfeed "$@"
+cd "$REPO_ROOT"
+exec "$HOST_JOBFEED" "$@"

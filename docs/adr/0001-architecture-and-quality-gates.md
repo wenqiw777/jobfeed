@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted. Runtime boundary amended 2026-08-13 after the SQLite cutover.
 
 ## Context
 
@@ -20,8 +20,12 @@ Phase 0 must avoid external network IO, real LLM calls, browser automation, Temp
 - Centralize recoverable service error handling in `services/error_handler.py`; stores only persist explicit error state.
 - Make ports, adapters, and services async.
 - Keep the Click CLI synchronous and bridge into async services at the boundary with `asyncio.run()`.
-- Treat Docker Compose through `./bin/jobfeed` and `./bin/jobfeed.ps1` as the canonical user-facing runtime in Phase 0.
-- Keep host launchers thin: they may prepare the runtime directory, forward arguments into Docker Compose, and preserve exit status, but must not contain business logic.
+- Treat `./bin/jobfeed` and `./bin/jobfeed.ps1` as the canonical user-facing
+  entrypoints. Ordinary commands execute the repo-local host `.venv` so local
+  LLM CLIs, browser integration, and SQLite share the user's OS identity.
+- Keep host launchers thin: they may select the checked repo-local executable,
+  set the working directory, and preserve exit status, but contain no business
+  logic. Only explicit migration/rollback control-plane commands enter Docker.
 - Use repo-local `.jobfeed-dev/` as the Phase 0 config and DB home.
 - Use SQLite as the only real IO in Phase 0.
 - Fail fast when config requests a non-SQLite backend or when an explicit config path does not exist.
@@ -40,4 +44,4 @@ Phase 0 must avoid external network IO, real LLM calls, browser automation, Temp
 
 Implementation starts with the contract and gates before feature code. Task 1 must create `pyproject.toml`, `Makefile`, and CI wiring that preserve the thresholds defined in `docs/engineering-standards.md`.
 
-The sync CLI boundary is intentionally thin. Business logic belongs in domain functions and async services. Concrete implementations belong in adapters. Any implementation reality that conflicts with this ADR or the Phase 0 plan must stop work until the plan is updated.
+The sync CLI boundary is intentionally thin. Business logic belongs in domain functions and async services. Concrete implementations belong in adapters. Docker remains an isolation tool for migration, rollback, CI, and optional deployment—not a requirement for the local SQLite runtime. Any implementation reality that conflicts with this ADR or the Phase 0 plan must stop work until the plan is updated.

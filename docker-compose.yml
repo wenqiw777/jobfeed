@@ -33,6 +33,9 @@ services:
       - jaeger_data:/badger
 
   jobfeed-cli:
+    # Optional deployment/CI parity image. Ordinary ./bin/jobfeed commands use
+    # the repo-local host .venv and never select this profile.
+    profiles: ["container-runtime"]
     # Prebuilt image published to GHCR on release (see
     # .github/workflows/publish-image.yml). `docker compose pull jobfeed-cli`
     # fetches it so a fresh machine needs no local build; `build:` stays as the

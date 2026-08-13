@@ -1,4 +1,4 @@
-"""Docker runtime contracts for the persistent SQLite cutover boundary."""
+"""Host runtime and migration-only Docker boundary contracts."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ import yaml
 _ROOT = Path(__file__).resolve().parents[2]
 _COMPOSE = _ROOT / "docker-compose.yml"
 _WRAPPER = _ROOT / "bin" / "jobfeed"
+_POWERSHELL_WRAPPER = _ROOT / "bin" / "jobfeed.ps1"
+_SETUP = _ROOT / "setup"
+_SCAN = _ROOT / "scan"
 
 
 def _runtime_service() -> tuple[dict[str, object], dict[str, object]]:
@@ -22,9 +25,10 @@ def _runtime_service() -> tuple[dict[str, object], dict[str, object]]:
 
 
 def test_runtime_uses_one_named_sqlite_volume_without_postgres_dependency() -> None:
-    """Every normal container receives the same path on one named volume."""
+    """Optional container checks stay isolated from the host default runtime."""
     service, document = _runtime_service()
 
+    assert service["profiles"] == ["container-runtime"]
     assert service["environment"]["JOBFEED_DB_PATH"] == "/data/jobfeed.sqlite"
     assert "JOBFEED_DB_URL" not in service["environment"]
     assert service.get("depends_on") is None
@@ -40,13 +44,43 @@ def test_runtime_uses_host_network_for_loopback_only_web_server() -> None:
     assert service["network_mode"] == "host"
 
 
-def test_normal_wrapper_names_reviewed_compose_file_and_runtime_service() -> None:
-    """Ordinary CLI cannot be redirected through COMPOSE_FILE or PostgreSQL."""
+def test_normal_wrapper_executes_repo_host_runtime() -> None:
+    """Ordinary CLI uses the repo venv and never enters Docker Compose."""
     wrapper = _WRAPPER.read_text("utf-8")
+    marker = "# Host-native daily runtime."
 
-    assert 'docker compose --file "$REPO_ROOT/docker-compose.yml"' in wrapper
-    assert "unset COMPOSE_FILE COMPOSE_PATH_SEPARATOR" in wrapper
-    assert 'jobfeed-cli jobfeed "$@"' in wrapper
+    assert marker in wrapper
+    normal_runtime = wrapper.split(marker, 1)[1]
+    assert 'HOST_JOBFEED="$REPO_ROOT/.venv/bin/jobfeed"' in normal_runtime
+    assert 'exec "$HOST_JOBFEED" "$@"' in normal_runtime
+    assert "docker compose" not in normal_runtime
+
+
+def test_powershell_wrapper_executes_repo_host_runtime() -> None:
+    """Windows ordinary CLI uses the repo venv instead of Docker Compose."""
+    wrapper = _POWERSHELL_WRAPPER.read_text("utf-8")
+
+    assert ".venv\\Scripts\\jobfeed.exe" in wrapper
+    assert "docker compose" not in wrapper
+
+
+def test_setup_and_scan_do_not_require_postgres_or_docker() -> None:
+    """Daily host setup and scanning have no Docker/PostgreSQL dependency."""
+    setup = _SETUP.read_text("utf-8")
+    scan = _SCAN.read_text("utf-8")
+
+    assert "uv sync --extra dev" in setup
+    assert "Docker is required" not in setup
+    assert "docker compose" not in setup
+    assert "Postgres" not in scan
+    assert "docker compose" not in scan
+
+
+def test_host_sqlite_runtime_state_is_gitignored() -> None:
+    """The repo-local production SQLite file and sidecars cannot be committed."""
+    ignore = (_ROOT / ".gitignore").read_text("utf-8")
+
+    assert "/data/" in ignore
 
 
 def test_runtime_image_prepares_writable_data_directory() -> None:
