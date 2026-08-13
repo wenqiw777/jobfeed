@@ -1923,6 +1923,17 @@
             "title": "Errors",
             "type": "integer"
           },
+          "evaluate_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluate Stage"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -1959,6 +1970,45 @@
             "title": "Jobs Updated",
             "type": "integer"
           },
+          "ml_gate_processed": {
+            "default": 0,
+            "title": "Ml Gate Processed",
+            "type": "integer"
+          },
+          "ml_gate_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ml Gate Total"
+          },
+          "progress_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Stage"
+          },
+          "progress_updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Updated At"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
@@ -1967,13 +2017,45 @@
             "title": "Source",
             "type": "string"
           },
+          "stage_a_processed": {
+            "default": 0,
+            "title": "Stage A Processed",
+            "type": "integer"
+          },
           "stage_a_scored": {
             "title": "Stage A Scored",
+            "type": "integer"
+          },
+          "stage_a_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage A Total"
+          },
+          "stage_b_processed": {
+            "default": 0,
+            "title": "Stage B Processed",
             "type": "integer"
           },
           "stage_b_scored": {
             "title": "Stage B Scored",
             "type": "integer"
+          },
+          "stage_b_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Total"
           },
           "started_at": {
             "format": "date-time",

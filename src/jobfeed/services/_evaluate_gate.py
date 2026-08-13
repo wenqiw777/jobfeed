@@ -8,6 +8,7 @@ limit after instrumentation is added.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 from jobfeed.domain.models import JobPosting, MLGateResult, PipelineRun
 from jobfeed.ports.ml_gate import GateInput, MLGate
@@ -15,12 +16,14 @@ from jobfeed.ports.store_claims import GateCandidate
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 
 
-async def gate_representatives(
+async def gate_representatives(  # noqa: PLR0913 - live progress is an optional observer
     deps: EvaluateDependencies,
     config: EvaluateRuntimeConfig,
     run: PipelineRun,
     representatives: list[GateCandidate],
     dry_run: bool,
+    *,
+    on_progress: Callable[[], None] | None = None,
 ) -> list[JobPosting]:
     """Gate only NULL-gate reps and return the surviving job postings.
 
@@ -37,15 +40,34 @@ async def gate_representatives(
         run: Pipeline run whose ``jobs_ml_gated`` counter is incremented.
         representatives: Deduped survivors (job + gate state) to consider.
         dry_run: When True, skip persistence.
+        on_progress: Optional bounded callback after persisted gate results.
 
     Returns:
         Surviving job postings (all reps' jobs when the gate is off).
     """
-    gate = deps.ml_gate
-    if not config.ml_gate_enabled or gate is None:
-        return [c.job for c in representatives]
     already_pass = [c.job for c in representatives if c.ml_gate_result == "pass"]
     to_gate = [c.job for c in representatives if c.ml_gate_result is None]
+    run.ml_gate_total = len(representatives)
+    run.ml_gate_processed = len(already_pass)
+    if on_progress is not None:
+        on_progress()
+    gate = deps.ml_gate
+    if not config.ml_gate_enabled or gate is None:
+        run.ml_gate_processed = len(representatives)
+        if on_progress is not None:
+            on_progress()
+        return [c.job for c in representatives]
+    update_interval = max(1, (len(to_gate) + 49) // 50)
+
+    def _result_persisted() -> None:
+        run.ml_gate_processed += 1
+        completed = run.ml_gate_processed - len(already_pass)
+        if on_progress is not None and (
+            completed % update_interval == 0
+            or run.ml_gate_processed == run.ml_gate_total
+        ):
+            on_progress()
+
     newly_passed = await gate_unrated(
         deps,
         gate,
@@ -53,7 +75,12 @@ async def gate_representatives(
         to_gate,
         dry_run,
         max_concurrent=config.llm.max_concurrent,
+        on_persisted=_result_persisted,
     )
+    if dry_run and to_gate:
+        run.ml_gate_processed = len(representatives)
+        if on_progress is not None:
+            on_progress()
     survivors = already_pass + newly_passed
     # The survivor count is the funnel's "after gate" stage; the scored
     # counters can't stand in for it (Stage A limit/budget cap them).
@@ -69,6 +96,7 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
     dry_run: bool,
     *,
     max_concurrent: int = 4,
+    on_persisted: Callable[[], None] | None = None,
 ) -> list[JobPosting]:
     """Score NULL-gate reps, persist results, and return the 'pass' subset.
 
@@ -82,6 +110,7 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
         to_gate: Job postings to score (NULL-gate only).
         dry_run: When True, skip persistence.
         max_concurrent: Maximum simultaneous result writes.
+        on_persisted: Optional callback after each successful result write.
 
     Returns:
         Job postings that passed the gate.
@@ -102,6 +131,7 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
         results,
         dry_run,
         max_concurrent=max_concurrent,
+        on_persisted=on_persisted,
     )
     run.jobs_ml_gated += sum(1 for result in results if result.result != "pass")
     return [
@@ -111,13 +141,14 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
     ]
 
 
-async def _persist_gate_results(
+async def _persist_gate_results(  # noqa: PLR0913 - bounded persistence needs its observer
     deps: EvaluateDependencies,
     representatives: list[JobPosting],
     results: list[MLGateResult],
     dry_run: bool,
     *,
     max_concurrent: int,
+    on_persisted: Callable[[], None] | None,
 ) -> None:
     """Persist gate results with bounded fan-out, 1:1 with representatives."""
     if dry_run:
@@ -129,6 +160,8 @@ async def _persist_gate_results(
     async def _save(job: JobPosting, result: MLGateResult) -> None:
         async with semaphore:
             await deps.store.save_ml_gate_result(_job_id(job), result)
+            if on_persisted is not None:
+                on_persisted()
 
     await asyncio.gather(*(_save(job, result) for job, result in pairs))
 

@@ -1786,6 +1786,8 @@ export interface components {
         RunSummary: {
             /** Errors */
             errors: number;
+            /** Evaluate Stage */
+            evaluate_stage?: string | null;
             /** Finished At */
             finished_at: string | null;
             /** Jobs Discovered */
@@ -1800,14 +1802,39 @@ export interface components {
             jobs_scored: number;
             /** Jobs Updated */
             jobs_updated: number;
+            /**
+             * Ml Gate Processed
+             * @default 0
+             */
+            ml_gate_processed: number;
+            /** Ml Gate Total */
+            ml_gate_total?: number | null;
+            /** Progress Stage */
+            progress_stage?: string | null;
+            /** Progress Updated At */
+            progress_updated_at?: string | null;
             /** Run Id */
             run_id: string;
             /** Source */
             source: string;
+            /**
+             * Stage A Processed
+             * @default 0
+             */
+            stage_a_processed: number;
             /** Stage A Scored */
             stage_a_scored: number;
+            /** Stage A Total */
+            stage_a_total?: number | null;
+            /**
+             * Stage B Processed
+             * @default 0
+             */
+            stage_b_processed: number;
             /** Stage B Scored */
             stage_b_scored: number;
+            /** Stage B Total */
+            stage_b_total?: number | null;
             /**
              * Started At
              * Format: date-time

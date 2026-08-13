@@ -234,6 +234,11 @@ async def test_active_runs_with_entries() -> None:
     """GET /api/runs/active returns active runs with counters."""
     mgr = FakeRunManager()
     run = _make_run("run-42", source="scan")
+    run.progress_stage = "stage_b"
+    run.stage_a_total = 15
+    run.stage_a_processed = 15
+    run.stage_b_total = 4
+    run.stage_b_processed = 2
     mgr._active = [
         ActiveRun(
             run_id="run-42",
@@ -253,3 +258,6 @@ async def test_active_runs_with_entries() -> None:
     assert body["runs"][0]["run_id"] == "run-42"
     assert body["runs"][0]["source"] == "scan"
     assert "counters" in body["runs"][0]
+    assert body["runs"][0]["counters"]["progress_stage"] == "stage_b"
+    assert body["runs"][0]["counters"]["stage_a_total"] == 15  # noqa: PLR2004
+    assert body["runs"][0]["counters"]["stage_b_processed"] == 2  # noqa: PLR2004

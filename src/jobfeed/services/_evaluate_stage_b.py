@@ -38,6 +38,8 @@ async def _run_stage_b(
     """Load, score, and sweep Stage B jobs under a scheduling fence."""
     if limit <= 0:
         return
+    run.progress_stage = "stage_b"
+    service._emit_progress(run)
     lease_session.ensure_active()
     await sync_stage_b_threshold(
         service._deps.store,
@@ -57,6 +59,9 @@ async def _run_stage_b(
         service._config.stage_a_threshold,
     )
     lease_session.ensure_active()
+    run.stage_b_total = len(jobs)
+    run.stage_b_processed = 0
+    service._emit_progress(run)
     service._logger.info("stage_b_queued", count=len(jobs))
     stage_a_scores = await load_stage_a_scores(service._deps.store, jobs)
     lease_session.ensure_active()
@@ -77,6 +82,8 @@ async def _run_stage_b(
             )
             if outcome == "failed":
                 failed.append(job)
+            run.stage_b_processed += 1
+            service._emit_progress(run)
 
     await asyncio.gather(*(_worker(job) for job in jobs))
     lease_session.ensure_active()

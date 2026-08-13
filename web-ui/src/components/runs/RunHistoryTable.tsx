@@ -176,6 +176,7 @@ function Activity({ run }: { run: RunSummary }) {
 }
 
 function RunStatus({ run }: { run: RunSummary }) {
+  if (run.status === "failed") return <StatusIndicator type="error">{run.status}</StatusIndicator>;
   if (run.errors > 0) return <StatusIndicator type="warning">{run.status}</StatusIndicator>;
   if (run.finished_at === null) return <StatusIndicator type="in-progress">{run.status}</StatusIndicator>;
   return <StatusIndicator type="success">{run.status}</StatusIndicator>;

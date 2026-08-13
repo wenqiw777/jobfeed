@@ -207,6 +207,67 @@
   width: min(32rem, calc(100vw - 2rem));
 }
 
+.jobfeed-progress-rail {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 4px 0 8px;
+  list-style: none;
+}
+
+.jobfeed-progress-rail::before {
+  position: absolute;
+  top: 21px;
+  left: 12.5%;
+  right: 12.5%;
+  height: 2px;
+  background: rgb(var(--border-strong));
+  content: "";
+}
+
+.jobfeed-progress-rail li {
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--mute));
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.jobfeed-progress-node {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 2px solid rgb(var(--border-strong));
+  border-radius: 50%;
+  background: rgb(var(--surface));
+  color: rgb(var(--mute));
+}
+
+.jobfeed-progress-rail li[data-state="active"] {
+  color: rgb(var(--accent));
+}
+
+.jobfeed-progress-rail li[data-state="active"] .jobfeed-progress-node {
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 0 5px rgb(var(--accent-bg));
+  color: rgb(var(--accent));
+}
+
+.jobfeed-progress-rail li[data-state="done"] {
+  color: rgb(var(--apply));
+}
+
+.jobfeed-progress-rail li[data-state="done"] .jobfeed-progress-node {
+  border-color: rgb(var(--apply));
+  background: rgb(var(--apply));
+  color: white;
+}
+
 /* Motion only communicates state (150–250ms ease-out); under
  * prefers-reduced-motion everything snaps. */
 @media (prefers-reduced-motion: reduce) {

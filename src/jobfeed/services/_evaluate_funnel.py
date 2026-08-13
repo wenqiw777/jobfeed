@@ -9,6 +9,7 @@ claiming anything. Filter + dedupe are unconditional; gating is conditional on
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
 from jobfeed.domain.dedupe import pick_representatives
@@ -40,6 +41,7 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
     logger: JobfeedLogger,
     dry_run: bool,
     limit: int | None = None,
+    on_progress: Callable[[], None] | None = None,
 ) -> list[str]:
     """Run the candidate funnel and return survivor Stage A job-ids.
 
@@ -62,6 +64,7 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
         dry_run: When True, persist nothing and record a (limit-sliced) preview.
         limit: Stage A claim limit; slices the dry-run preview to match a real
             run (``None`` leaves it unsliced).
+        on_progress: Optional bounded callback for live ML-gate progress.
 
     Returns:
         Survivor job-ids to hand to Stage A (empty in dry-run).
@@ -69,7 +72,14 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
     representatives = await _load_representatives(
         deps, config, run, corpus, max_days, logger
     )
-    survivors = await gate_representatives(deps, config, run, representatives, dry_run)
+    survivors = await gate_representatives(
+        deps,
+        config,
+        run,
+        representatives,
+        dry_run,
+        on_progress=on_progress,
+    )
     if dry_run:
         # Append (not assign) so a later Stage-B preview pass keeps this pass's
         # items; matches build_dry_run_preview's Stage-B ``.extend`` and is

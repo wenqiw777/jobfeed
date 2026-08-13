@@ -36,4 +36,13 @@ class PipelineRun:
     total_llm_cost_usd: float = 0.0
     errors: int = 0
     finished_at: datetime | None = None
+    progress_stage: str | None = None
+    evaluate_stage: str | None = None
+    ml_gate_total: int | None = None
+    ml_gate_processed: int = 0
+    stage_a_total: int | None = None
+    stage_a_processed: int = 0
+    stage_b_total: int | None = None
+    stage_b_processed: int = 0
+    progress_updated_at: datetime | None = None
     dry_run_preview: list[DryRunPreviewItem] = field(default_factory=list)

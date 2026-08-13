@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import cast
 
 from jobfeed.domain.errors import RunLeaseLostError, ScoringParseError
@@ -68,9 +69,8 @@ class EvaluateService:
         lease_session: RunLeaseSession | None = None,
     ) -> PipelineRun:
         """Evaluate pending jobs, persist run counters.
-
-        Args: stage "both"/"a"/"b"; corpus/limit/max_days/dry_run filter
-            knobs; on_progress fires after funnel and each stage; run is an
+        Args: stage "both"/"a"/"b"; corpus/limit/max_days/dry_run knobs;
+            on_progress fires after funnel and each stage; run is an
             optional in-memory dry run; lease_session is a pre-acquired web
             fence, while direct real calls acquire their own fence.
         Returns: Recorded pipeline run with counters.
@@ -133,19 +133,23 @@ class EvaluateService:
         run = lease_session.run
         bind_run_id(run.run_id)
         self._on_progress = on_progress
+        run.evaluate_stage = stage
+        run.progress_stage = "preparing"
+        self._emit_progress(run)
         lease_session.ensure_active()
         await run_auto_decay(self._deps, self._config, self._logger)
         lease_session.ensure_active()
         if stage != "b":
             await self._run_stage_a(run, corpus, limit, max_days, lease_session)
-            self._emit_progress(run)
         if stage != "a":
             async with self._st(run.run_id, "stage", "stage_b"):
                 await _run_stage_b(self, run, limit, max_days, lease_session)
-            self._emit_progress(run)
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
+        run.progress_stage = "finalizing"
+        self._emit_progress(run)
 
     def _emit_progress(self, run: PipelineRun) -> None:
+        run.progress_updated_at = datetime.now(UTC)
         if self._on_progress is not None:
             self._on_progress(run)
 
@@ -167,6 +171,8 @@ class EvaluateService:
         lease_session.ensure_active()
         if not has_budget:
             return
+        run.progress_stage = "ml_gate"
+        self._emit_progress(run)
         async with self._st(run.run_id, "stage", "funnel"):
             survivors = await run_funnel(
                 self._deps,
@@ -176,16 +182,24 @@ class EvaluateService:
                 max_days,
                 logger=self._logger,
                 dry_run=False,
+                on_progress=lambda: self._emit_progress(run),
             )
         lease_session.ensure_active()
-        self._emit_progress(run)  # funnel counters, before the slow scoring
+        self._emit_progress(run)
         if not survivors:
+            run.progress_stage = "stage_a"
+            run.stage_a_total = 0
+            self._emit_progress(run)
             return
         async with self._st(run.run_id, "stage", "stage_a"):
             jobs = await load_stage_a_for_run(
                 self._deps.store, corpus, limit, max_days, survivors
             )
             lease_session.ensure_active()
+            run.progress_stage = "stage_a"
+            run.stage_a_total = len(jobs)
+            run.stage_a_processed = 0
+            self._emit_progress(run)
             self._logger.info("stage_a_queued", count=len(jobs))
             sem = asyncio.Semaphore(max(1, self._config.llm.max_concurrent))
 
@@ -193,6 +207,8 @@ class EvaluateService:
                 async with sem:
                     lease_session.ensure_active()
                     await self._score_stage_a(job, run, lease_session)
+                    run.stage_a_processed += 1
+                    self._emit_progress(run)
 
             await asyncio.gather(*(_worker(j) for j in jobs))
 

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 
+import type { RunSummary } from "@/api/queries";
 import { LiveRunRow } from "@/components/runs/LiveRunRow";
 
 // ---------------------------------------------------------------------------
@@ -73,16 +74,55 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const RUN = { run_id: "r-live-1", source: "ats", started_at: "2026-06-10T08:00:00Z" };
+function runCounters(overrides: Partial<RunSummary> = {}): RunSummary {
+  return {
+    run_id: "r-live-1",
+    source: "evaluate",
+    started_at: "2026-06-10T08:00:00Z",
+    finished_at: null,
+    status: "running",
+    jobs_discovered: 0,
+    jobs_inserted: 0,
+    jobs_updated: 0,
+    jobs_filtered: 0,
+    jobs_ml_gated: 0,
+    jobs_scored: 0,
+    stage_a_scored: 0,
+    stage_b_scored: 0,
+    errors: 0,
+    total_llm_cost_usd: 0,
+    progress_stage: "preparing",
+    evaluate_stage: "both",
+    stage_a_total: null,
+    stage_a_processed: 0,
+    stage_b_total: null,
+    stage_b_processed: 0,
+    progress_updated_at: "2026-06-10T08:00:00Z",
+    ...overrides,
+  } as RunSummary;
+}
 
-function renderRow(onDone: () => void) {
+const RUN = {
+  run_id: "r-live-1",
+  source: "ats",
+  started_at: "2026-06-10T08:00:00Z",
+  counters: runCounters({ source: "ats" }),
+};
+
+const EVALUATE_RUN = {
+  ...RUN,
+  source: "evaluate",
+  counters: runCounters(),
+};
+
+function renderRow(onDone: () => void, run = RUN) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
       <ul>
-        <LiveRunRow run={RUN} onDone={onDone} />
+        <LiveRunRow run={run} onDone={onDone} />
       </ul>
     </QueryClientProvider>,
   );
@@ -131,4 +171,61 @@ test("renders non-zero live counters as chips", () => {
   const row = screen.getByTestId("live-run-r-live-1");
   expect(row).toHaveTextContent("discovered");
   expect(row).not.toHaveTextContent("errors");
+});
+
+test("renders the real evaluate phase, denominators, cost, and errors", () => {
+  renderRow(vi.fn(), {
+    ...EVALUATE_RUN,
+    counters: runCounters({
+      progress_stage: "stage_b",
+      stage_a_total: 150,
+      stage_a_processed: 150,
+      stage_a_scored: 150,
+      stage_b_total: 62,
+      stage_b_processed: 20,
+      stage_b_scored: 19,
+      errors: 1,
+      total_llm_cost_usd: 4.25,
+    } as Partial<RunSummary>),
+  });
+
+  const row = screen.getByTestId("live-run-r-live-1");
+  expect(row).toHaveTextContent("Stage B · deep review");
+  expect(row).toHaveTextContent("150 / 150");
+  expect(row).toHaveTextContent("20 / 62");
+  expect(row).not.toHaveTextContent("0 processed");
+  expect(row).toHaveTextContent("$4.25");
+  expect(row).toHaveTextContent("1 error");
+});
+
+test("merges a newer SSE update with polled active-run counters", () => {
+  renderRow(vi.fn(), {
+    ...EVALUATE_RUN,
+    counters: runCounters({
+      progress_stage: "stage_b",
+      stage_a_total: 150,
+      stage_a_processed: 150,
+      stage_b_total: 62,
+      stage_b_processed: 20,
+      stage_b_scored: 19,
+      total_llm_cost_usd: 4.25,
+    } as Partial<RunSummary>),
+  });
+  const es = FakeEventSource.instances[0]!;
+
+  act(() => es._open());
+  act(() => es._message(JSON.stringify({
+    ...runCounters(),
+    progress_stage: "stage_b",
+    stage_a_total: 150,
+    stage_a_processed: 150,
+    stage_b_total: 62,
+    stage_b_processed: 25,
+    stage_b_scored: 24,
+    total_llm_cost_usd: 5.5,
+  })));
+
+  const row = screen.getByTestId("live-run-r-live-1");
+  expect(row).toHaveTextContent("25 / 62");
+  expect(row).toHaveTextContent("$5.50");
 });

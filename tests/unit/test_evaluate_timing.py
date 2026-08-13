@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -225,8 +226,69 @@ async def test_on_progress_fires_per_stage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stage_a_progress_exposes_real_queue_and_processed_count() -> None:
+    """Live progress carries a truthful Stage A denominator and completion."""
+    store = FakeStore([_job("a"), _job("b", title="Machine Learning Research Intern")])
+    service = EvaluateService(
+        deps=_deps(store),
+        config=_config(),
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+    calls: list[PipelineRun] = []
+
+    await service.run(
+        stage="a",
+        corpus="unrated",
+        on_progress=lambda run: calls.append(replace(run)),
+    )
+
+    stage_a = [call for call in calls if call.progress_stage == "stage_a"]
+    assert stage_a[0].stage_a_total == 2  # noqa: PLR2004
+    assert [call.stage_a_processed for call in stage_a] == [0, 1, 2]
+    assert calls[-2].progress_stage == "finalizing"
+
+
+@pytest.mark.asyncio
+async def test_stage_b_progress_exposes_claimed_queue_and_processed_count() -> None:
+    """Live progress derives the Stage B denominator from the claimed batch."""
+    first = _job("a")
+    second = _job("b", title="Machine Learning Research Intern")
+
+    class StageBStore(FakeStore):
+        async def claim_pending_stage_b(self, **_kw: object) -> list[JobPosting]:
+            return [first, second]
+
+        async def get_stage_a_scores(self, _job_ids: list[str]) -> dict[str, int]:
+            return {"a": 90, "b": 80}
+
+        async def save_stage_b(self, _job_id: str, _result: object) -> None:
+            pass
+
+        async def save_stage_b_error(self, _job_id: str, _message: str) -> None:
+            pass
+
+    store = StageBStore([first, second])
+    service = EvaluateService(
+        deps=_deps(store),
+        config=_config(),
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+    calls: list[PipelineRun] = []
+
+    await service.run(
+        stage="b",
+        corpus="unrated",
+        on_progress=lambda run: calls.append(replace(run)),
+    )
+
+    stage_b = [call for call in calls if call.progress_stage == "stage_b"]
+    assert stage_b[1].stage_b_total == 2  # noqa: PLR2004
+    assert [call.stage_b_processed for call in stage_b[1:]] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
 async def test_on_progress_fires_for_both_stages() -> None:
-    """stage='both' fires after funnel, stage_a, stage_b, and at end."""
+    """stage='both' streams each real phase and ends with final counters."""
     store = FakeStore([_job("a")])
     service = EvaluateService(
         deps=_deps(store),
@@ -234,9 +296,19 @@ async def test_on_progress_fires_for_both_stages() -> None:
         logger=RecordingLogger(),  # type: ignore[arg-type]
     )
     calls: list[PipelineRun] = []
-    await service.run(stage="both", corpus="unrated", on_progress=calls.append)
-    # 4 calls: after funnel (before scoring starts), stage_a, stage_b, final.
-    assert len(calls) == 4  # noqa: PLR2004
+    await service.run(
+        stage="both",
+        corpus="unrated",
+        on_progress=lambda run: calls.append(replace(run)),
+    )
+
+    phases = [call.progress_stage for call in calls]
+    assert phases[0] == "preparing"
+    assert "ml_gate" in phases
+    assert "stage_a" in phases
+    assert "stage_b" in phases
+    assert calls[-2].progress_stage == "finalizing"
+    assert calls[-1].finished_at is not None
 
 
 @pytest.mark.asyncio
@@ -362,3 +434,28 @@ async def test_gate_representatives_counts_gate_survivors() -> None:
     assert {j.id for j in survivors} == {jobs[0].id, jobs[1].id}
     assert run.jobs_gate_passed == 2  # noqa: PLR2004 - already-pass + newly-passed
     assert run.jobs_ml_gated == 1  # the gate-failed rep
+
+
+@pytest.mark.asyncio
+async def test_gate_progress_tracks_persisted_results_without_event_flood() -> None:
+    """ML-gate progress exposes the real queue and reaches its denominator."""
+    jobs = [_job(str(index), title=f"Software Engineer {index}") for index in range(60)]
+    reps = [GateCandidate(job=job, ml_gate_result=None) for job in jobs]
+    gate = _SplitGate(pass_ids={job.id or "" for job in jobs})
+    store = FakeStore(jobs)
+    run = PipelineRun(run_id="run-1", started_at=RUN_AT, source="evaluate")
+    snapshots: list[PipelineRun] = []
+
+    await gate_representatives(
+        _deps(store, gate=gate),
+        _config(ml_gate_enabled=True),
+        run,
+        reps,
+        dry_run=False,
+        on_progress=lambda: snapshots.append(replace(run)),
+    )
+
+    assert snapshots[0].ml_gate_total == 60  # noqa: PLR2004
+    assert snapshots[0].ml_gate_processed == 0
+    assert snapshots[-1].ml_gate_processed == 60  # noqa: PLR2004
+    assert len(snapshots) <= 52  # noqa: PLR2004 - initial + 50 updates + final

@@ -30,6 +30,15 @@ class RunSummary(BaseModel):
     total_llm_cost_usd: float
     errors: int
     finished_at: datetime | None
+    progress_stage: str | None = None
+    evaluate_stage: str | None = None
+    ml_gate_total: int | None = None
+    ml_gate_processed: int = 0
+    stage_a_total: int | None = None
+    stage_a_processed: int = 0
+    stage_b_total: int | None = None
+    stage_b_processed: int = 0
+    progress_updated_at: datetime | None = None
 
 
 class RunsListResponse(BaseModel):
@@ -64,6 +73,15 @@ def run_summary(run: PipelineRun) -> RunSummary:
         total_llm_cost_usd=run.total_llm_cost_usd,
         errors=run.errors,
         finished_at=run.finished_at,
+        progress_stage=run.progress_stage,
+        evaluate_stage=run.evaluate_stage,
+        ml_gate_total=run.ml_gate_total,
+        ml_gate_processed=run.ml_gate_processed,
+        stage_a_total=run.stage_a_total,
+        stage_a_processed=run.stage_a_processed,
+        stage_b_total=run.stage_b_total,
+        stage_b_processed=run.stage_b_processed,
+        progress_updated_at=run.progress_updated_at,
     )
 
 

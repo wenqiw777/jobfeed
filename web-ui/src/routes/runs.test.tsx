@@ -37,6 +37,9 @@ function runRow(id: string, over: Partial<RunSummary> = {}): RunSummary {
     jobs_scored: 0,
     stage_a_scored: 0,
     stage_b_scored: 0,
+    ml_gate_processed: 0,
+    stage_a_processed: 0,
+    stage_b_processed: 0,
     errors: 0,
     total_llm_cost_usd: 0,
     ...over,
@@ -188,6 +191,14 @@ test("rows show only non-zero counter chips; cost only when > 0", async () => {
   expect(within(activity1).getByText("2 errors")).toBeInTheDocument();
   expect(within(activity1).queryByText(/discovered/)).toBeNull();
   expect(within(row1).queryByText(/\$/)).toBeNull();
+});
+
+test("failed runs use an error indicator instead of a success check", async () => {
+  state.runs = [runRow("failed-run", { status: "failed" })];
+  renderRuns();
+
+  const failed = await screen.findByText("failed");
+  expect(failed.closest('[class*="status-error"]')).not.toBeNull();
 });
 
 test("expanding a row reveals the full counter grid, run id, and finished time", async () => {

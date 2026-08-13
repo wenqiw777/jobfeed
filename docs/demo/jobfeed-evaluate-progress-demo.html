@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jobfeed evaluation progress demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #16191f;
+      --muted: #5f6b7a;
+      --line: #b6bec9;
+      --surface: #ffffff;
+      --canvas: #f2f3f3;
+      --blue: #0972d3;
+      --blue-soft: #e9f3ff;
+      --green: #037f0c;
+      --green-soft: #e7f7e9;
+      --amber: #8d6605;
+      --red: #d91515;
+      --navy: #161d26;
+      --shadow: 0 1px 3px rgb(0 7 22 / 14%);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button { font: inherit; }
+    .topbar {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      color: white;
+      background: var(--navy);
+    }
+    .brand { font-size: 20px; font-weight: 750; letter-spacing: -.02em; }
+    .top-meta { color: #d1d5db; font-size: 13px; }
+    main { width: min(1180px, calc(100% - 32px)); margin: 28px auto 48px; }
+    .eyebrow {
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 6px 0 4px; font-size: clamp(30px, 4vw, 44px); letter-spacing: -.035em; }
+    .lede { margin: 0; color: var(--muted); font-size: 16px; }
+    .shell {
+      margin-top: 24px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .run-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 24px 28px 20px;
+      border-bottom: 1px solid #d5d9df;
+    }
+    .run-title { margin: 0 0 6px; font-size: 23px; }
+    .run-id { color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .live-state { display: flex; align-items: center; gap: 9px; color: var(--blue); font-weight: 750; }
+    .live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 5px var(--blue-soft); }
+    .live-dot.pulse { animation: pulse 1.5s ease-out infinite; }
+    @keyframes pulse { 70% { box-shadow: 0 0 0 10px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+    .rail-wrap { padding: 28px 32px 24px; background: #fbfbfb; }
+    .rail { position: relative; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+    .rail::before { content: ""; position: absolute; top: 18px; left: 11%; right: 11%; height: 3px; background: #d5d9df; }
+    .rail-fill { position: absolute; top: 18px; left: 11%; height: 3px; width: 0; background: var(--blue); transition: width .35s ease; }
+    .stop { position: relative; z-index: 1; text-align: center; }
+    .node {
+      width: 38px; height: 38px; margin: 0 auto 10px; display: grid; place-items: center;
+      border: 2px solid #8993a4; border-radius: 50%; background: white; color: #687386; font-weight: 800;
+      transition: .25s ease;
+    }
+    .stop.done .node { border-color: var(--green); background: var(--green); color: white; }
+    .stop.active .node { border-color: var(--blue); color: var(--blue); box-shadow: 0 0 0 6px var(--blue-soft); }
+    .stop-label { font-size: 14px; font-weight: 750; }
+    .stop-detail { min-height: 18px; margin-top: 3px; color: var(--muted); font-size: 12px; }
+
+    .body-grid { display: grid; grid-template-columns: 1.7fr 1fr; }
+    .progress { padding: 26px 28px 30px; border-right: 1px solid #d5d9df; }
+    .side { padding: 26px 28px; background: #fbfbfb; }
+    .section-title { margin: 0 0 18px; font-size: 17px; }
+    .metric-row { display: grid; grid-template-columns: 138px 1fr 84px; gap: 14px; align-items: center; margin: 14px 0; }
+    .metric-label { font-size: 14px; font-weight: 700; }
+    .bar { height: 10px; overflow: hidden; border-radius: 999px; background: #e7e9ec; }
+    .bar > span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--blue); transition: width .3s ease; }
+    .bar.done > span { background: var(--green); }
+    .metric-value { text-align: right; font: 700 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 24px; }
+    .fact { padding: 14px; border: 1px solid #d5d9df; border-radius: 10px; background: white; }
+    .fact-label { color: var(--muted); font-size: 12px; }
+    .fact-value { margin-top: 5px; font-size: 22px; font-weight: 780; letter-spacing: -.02em; }
+    .fact-value.good { color: var(--green); }
+    .event { display: grid; grid-template-columns: 9px 1fr; gap: 10px; padding: 12px 0; border-top: 1px solid #e7e9ec; }
+    .event:first-of-type { border-top: 0; }
+    .event-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--blue); }
+    .event strong { display: block; font-size: 13px; }
+    .event small { color: var(--muted); }
+    .truth-note { margin-top: 16px; padding: 12px; border-left: 3px solid var(--blue); background: var(--blue-soft); color: #354150; font-size: 12px; line-height: 1.45; }
+
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 18px 28px; border-top: 1px solid #d5d9df; }
+    .control {
+      min-height: 38px; padding: 0 16px; border: 1px solid #8993a4; border-radius: 20px;
+      background: white; color: #1d2a3a; font-weight: 700; cursor: pointer;
+    }
+    .control:hover { background: #f4f7fb; }
+    .control:focus-visible { outline: 3px solid #82c4ff; outline-offset: 2px; }
+    .control.primary { border-color: var(--blue); background: var(--blue); color: white; }
+    .control.primary:hover { background: #065299; }
+    .controls-note { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+    @media (max-width: 760px) {
+      .body-grid { grid-template-columns: 1fr; }
+      .progress { border-right: 0; border-bottom: 1px solid #d5d9df; }
+      .metric-row { grid-template-columns: 100px 1fr; }
+      .metric-value { grid-column: 2; }
+      .facts { grid-template-columns: 1fr; }
+      .stop-detail { display: none; }
+      .run-head { flex-direction: column; }
+      .controls-note { width: 100%; margin-left: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar"><div class="brand">jobfeed</div><div class="top-meta">Evaluation progress concept</div></header>
+  <main>
+    <div class="eyebrow">Interactive UI demo</div>
+    <h1>Know exactly what Evaluate is doing.</h1>
+    <p class="lede">A truthful progress view built from the counters Jobfeed already records.</p>
+
+    <section class="shell" aria-label="Evaluation run progress demo">
+      <div class="run-head">
+        <div><h2 class="run-title" id="stage-title">Ready to evaluate</h2><div class="run-id">6688901e-6b3f-4aa3-97b4-62411a29fd91</div></div>
+        <div class="live-state"><span class="live-dot" id="live-dot"></span><span id="run-state">Ready</span></div>
+      </div>
+
+      <div class="rail-wrap">
+        <div class="rail" id="rail">
+          <div class="rail-fill" id="rail-fill"></div>
+          <div class="stop" data-stop="0"><div class="node">1</div><div class="stop-label">ML gate</div><div class="stop-detail" id="gate-detail">Waiting</div></div>
+          <div class="stop" data-stop="1"><div class="node">2</div><div class="stop-label">Stage A</div><div class="stop-detail" id="a-detail">Fast score</div></div>
+          <div class="stop" data-stop="2"><div class="node">3</div><div class="stop-label">Stage B</div><div class="stop-detail" id="b-detail">Queue unknown</div></div>
+          <div class="stop" data-stop="3"><div class="node">✓</div><div class="stop-label">Complete</div><div class="stop-detail" id="done-detail">Pending</div></div>
+        </div>
+      </div>
+
+      <div class="body-grid">
+        <div class="progress">
+          <h3 class="section-title">Live work</h3>
+          <div class="metric-row"><div class="metric-label">ML gate</div><div class="bar" id="gate-bar"><span></span></div><div class="metric-value" id="gate-value">0 / 4,859</div></div>
+          <div class="metric-row"><div class="metric-label">Stage A</div><div class="bar" id="a-bar"><span></span></div><div class="metric-value" id="a-value">0 / 150</div></div>
+          <div class="metric-row"><div class="metric-label">Stage B</div><div class="bar" id="b-bar"><span></span></div><div class="metric-value" id="b-value">Not queued</div></div>
+          <div class="facts">
+            <div class="fact"><div class="fact-label">Run cost</div><div class="fact-value" id="cost">$0.00</div></div>
+            <div class="fact"><div class="fact-label">Errors</div><div class="fact-value good" id="errors">0</div></div>
+            <div class="fact"><div class="fact-label">Last update</div><div class="fact-value" id="updated">—</div></div>
+          </div>
+        </div>
+        <aside class="side">
+          <h3 class="section-title">What is happening</h3>
+          <div id="events"></div>
+          <div class="truth-note"><strong>No invented percentage.</strong> Each bar appears only when Jobfeed knows that stage's queue size. Cost and errors come from the same run record.</div>
+        </aside>
+      </div>
+
+      <div class="controls">
+        <button class="control primary" id="run">Run demo</button>
+        <button class="control" id="pause">Pause</button>
+        <button class="control" id="step">Next update</button>
+        <button class="control" id="complete">Show completed</button>
+        <button class="control" id="reset">Reset</button>
+        <span class="controls-note">Demo target uses the completed run: 4,859 gated · 150 Stage A · 62 Stage B · $9.77</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const TARGET = { gate: 4859, a: 150, b: 62, cost: 9.7655 };
+    const state = { gate: 0, a: 0, b: 0, cost: 0, phase: 0, running: false, done: false };
+    let timer = null;
+    const $ = (id) => document.getElementById(id);
+
+    function formatInt(value) { return new Intl.NumberFormat("en-US").format(value); }
+    function percent(value, total) { return total === 0 ? 0 : Math.min(100, value / total * 100); }
+    function tick() {
+      if (state.done) return;
+      if (state.phase === 0) {
+        state.gate = Math.min(TARGET.gate, state.gate + 405);
+        if (state.gate === TARGET.gate) state.phase = 1;
+      } else if (state.phase === 1) {
+        state.a = Math.min(TARGET.a, state.a + 10);
+        state.cost = TARGET.cost * .227 * (state.a / TARGET.a);
+        if (state.a === TARGET.a) state.phase = 2;
+      } else if (state.phase === 2) {
+        state.b = Math.min(TARGET.b, state.b + 4);
+        state.cost = TARGET.cost * (.227 + .773 * state.b / TARGET.b);
+        if (state.b === TARGET.b) { state.phase = 3; state.done = true; state.running = false; }
+      }
+      render();
+    }
+    function render() {
+      const phaseNames = ["ML gate · filtering", "Stage A · fast score", "Stage B · deep review", "Evaluation complete"];
+      $("stage-title").textContent = state.running || state.done ? phaseNames[state.phase] : "Ready to evaluate";
+      const hasStarted = state.gate + state.a + state.b > 0;
+      $("run-state").textContent = state.done ? "Succeeded" : state.running ? "Running" : hasStarted ? "Paused" : "Ready";
+      $("live-dot").className = `live-dot${state.running ? " pulse" : ""}`;
+      $("live-dot").style.background = state.done ? "var(--green)" : state.running ? "var(--blue)" : "#8993a4";
+      $("gate-value").textContent = `${formatInt(state.gate)} / ${formatInt(TARGET.gate)}`;
+      $("a-value").textContent = `${state.a} / ${TARGET.a}`;
+      $("b-value").textContent = state.phase < 2 ? "Not queued" : `${state.b} / ${TARGET.b}`;
+      $("gate-bar").firstElementChild.style.width = `${percent(state.gate, TARGET.gate)}%`;
+      $("a-bar").firstElementChild.style.width = `${percent(state.a, TARGET.a)}%`;
+      $("b-bar").firstElementChild.style.width = `${percent(state.b, TARGET.b)}%`;
+      [$("gate-bar"), $("a-bar"), $("b-bar")].forEach((bar, i) => bar.classList.toggle("done", state.phase > i));
+      $("cost").textContent = `$${state.cost.toFixed(2)}`;
+      $("errors").textContent = "0";
+      $("updated").textContent = state.gate + state.a + state.b === 0 ? "—" : "now";
+      $("gate-detail").textContent = state.gate === TARGET.gate ? `${formatInt(TARGET.gate)} checked` : state.phase === 0 ? `${formatInt(state.gate)} checked` : "Waiting";
+      $("a-detail").textContent = state.phase > 1 ? `${TARGET.a} scored` : state.phase === 1 ? `${state.a} / ${TARGET.a}` : "Fast score";
+      $("b-detail").textContent = state.phase > 2 ? `${TARGET.b} reviewed` : state.phase === 2 ? `${state.b} / ${TARGET.b}` : "Queue unknown";
+      $("done-detail").textContent = state.done ? "$9.77 · 0 errors" : "Pending";
+      document.querySelectorAll(".stop").forEach((stop, i) => {
+        stop.classList.toggle("done", state.phase > i || state.done && i === 3);
+        stop.classList.toggle("active", !state.done && state.phase === i && (state.running || state.gate + state.a + state.b > 0));
+      });
+      const fills = [0, 26, 52, 78];
+      $("rail-fill").style.width = `${state.done ? 78 : fills[state.phase]}%`;
+      $("events").innerHTML = events().map(([title, detail, color]) => `<div class="event"><span class="event-dot" style="background:${color}"></span><div><strong>${title}</strong><small>${detail}</small></div></div>`).join("");
+      $("run").textContent = state.running ? "Running…" : state.done ? "Run again" : "Run demo";
+    }
+    function events() {
+      if (state.done) return [["Run completed", "150 fast scores and 62 deep reviews saved", "var(--green)"], ["Budget recorded", "$9.77 total cost · 0 errors", "var(--green)"], ["Lease released", "Results are ready in Triage", "var(--green)"]];
+      if (state.phase === 2) return [["Deep reviews running", `${state.b} of ${TARGET.b} complete`, "var(--blue)"], ["Fast scoring complete", `${TARGET.a} Stage A results saved`, "var(--green)"], ["No errors", "10 evaluations can run in parallel", "var(--green)"]];
+      if (state.phase === 1) return [["Fast scoring running", `${state.a} of ${TARGET.a} complete`, "var(--blue)"], ["ML gate complete", `${formatInt(TARGET.gate)} jobs checked locally`, "var(--green)"], ["Stage B queue", "Appears after fast scoring completes", "#8993a4"]];
+      return [["Filtering locally", `${formatInt(state.gate)} of ${formatInt(TARGET.gate)} checked`, "var(--blue)"], ["No model cost yet", "Paid scoring starts at Stage A", "var(--green)"], ["Stage B queue", "Unknown until Stage A completes", "#8993a4"]];
+    }
+    function play() {
+      if (state.done) reset();
+      state.running = true; clearInterval(timer); timer = setInterval(tick, 180); render();
+    }
+    function pause() { state.running = false; clearInterval(timer); render(); }
+    function reset() { pause(); Object.assign(state, { gate: 0, a: 0, b: 0, cost: 0, phase: 0, done: false }); render(); }
+    function showCompleted() { pause(); Object.assign(state, { gate: TARGET.gate, a: TARGET.a, b: TARGET.b, cost: TARGET.cost, phase: 3, done: true }); render(); }
+    $("run").addEventListener("click", play);
+    $("pause").addEventListener("click", pause);
+    $("step").addEventListener("click", () => { pause(); tick(); });
+    $("complete").addEventListener("click", showCompleted);
+    $("reset").addEventListener("click", reset);
+    render();
+  </script>
+</body>
+</html>
