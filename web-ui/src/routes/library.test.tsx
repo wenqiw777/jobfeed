@@ -401,6 +401,18 @@ test("decidable rows get decide actions; deciding closes the drawer", async () =
   expect(JSON.parse(String(post?.init?.body))).toMatchObject({ to: "archived" });
 });
 
+test("new rows hide decide actions until evaluation marks them scored", async () => {
+  renderLibrary();
+  await screen.findByTestId("job-row-n1");
+
+  fireEvent.click(screen.getByRole("button", { name: "Open Con1 Titlen1" }));
+  const drawer = await screen.findByRole("dialog");
+  expect(await within(drawer).findByText("Con1")).toBeInTheDocument();
+  expect(within(drawer).queryByRole("button", { name: "Apply" })).toBeNull();
+  expect(within(drawer).queryByRole("button", { name: "Shortlist" })).toBeNull();
+  expect(within(drawer).queryByRole("button", { name: "Skip" })).toBeNull();
+});
+
 test("archived rows get the restore card instead of decide actions", async () => {
   renderLibrary();
   await screen.findByTestId("job-row-a1");

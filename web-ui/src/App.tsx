@@ -1,8 +1,10 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useLocation } from "react-router";
 
+import { useConfiguration } from "@/api/configuration";
 import { Shell } from "@/components/shell/Shell";
 import { Skeleton } from "@/components/ui/skeleton";
+import ConfigurationPage from "@/routes/configuration";
 import LibraryPage from "@/routes/library";
 import PipelinePage from "@/routes/pipeline";
 import RunsPage from "@/routes/runs";
@@ -42,8 +44,22 @@ function PerformanceFallback() {
 }
 
 export default function App() {
+  const location = useLocation();
+  const configuration = useConfiguration();
+
+  if (configuration.isPending) {
+    return <ConfigurationLoading />;
+  }
+  if (configuration.isError || configuration.data === undefined) {
+    return <ConfigurationUnavailable />;
+  }
+  if (!configuration.data.configured && location.pathname !== "/setup") {
+    return <Navigate to="/setup" replace />;
+  }
+
   return (
     <Routes>
+      <Route path="/setup" element={<ConfigurationPage />} />
       <Route element={<Shell />}>
         <Route path="/" element={<Navigate to="/triage" replace />} />
         <Route path="/triage" element={<TriagePage />} />
@@ -70,5 +86,29 @@ export default function App() {
         <Route path="*" element={<Navigate to="/triage" replace />} />
       </Route>
     </Routes>
+  );
+}
+
+function ConfigurationLoading() {
+  return (
+    <main className="min-h-screen bg-bg px-5 py-12" aria-label="Loading settings">
+      <div className="mx-auto max-w-4xl space-y-3">
+        <Skeleton className="h-14 w-72" />
+        <Skeleton className="h-96 w-full" />
+      </div>
+    </main>
+  );
+}
+
+function ConfigurationUnavailable() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-bg px-5">
+      <div className="max-w-md rounded-panel border border-border bg-surface p-5">
+        <h1 className="text-h1 text-ink">Configuration unavailable</h1>
+        <p className="mt-2 text-body text-ink-2">
+          Jobfeed could not read local settings. Refresh after checking the server log.
+        </p>
+      </div>
+    </main>
   );
 }

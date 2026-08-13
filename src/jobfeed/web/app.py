@@ -16,6 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from jobfeed.cli import AppContext, create_app
 from jobfeed.cli._evaluate_factory import EvalBuildParams, build_evaluate_service
 from jobfeed.cli._scan_sources import build_scan_sources
+from jobfeed.config_editor import ConfigurationEditor
 from jobfeed.domain.errors import SourceConfigError
 from jobfeed.observability import get_logger, init_otel, init_sentry
 from jobfeed.ports.store_perf import StorePerfMixin
@@ -26,9 +27,11 @@ from jobfeed.services.performance import PerformanceService
 from jobfeed.services.run_manager import RunManager, SourceResolver
 from jobfeed.services.scan import ScanService, SourceSpec
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
+from jobfeed.web.config_runtime import apply_runtime_settings
 from jobfeed.web.errors import install_error_handling
 from jobfeed.web.routes.applications import router as applications_router
 from jobfeed.web.routes.companies import router as companies_router
+from jobfeed.web.routes.configuration import router as configuration_router
 from jobfeed.web.routes.health import router as health_router
 from jobfeed.web.routes.insights import router as insights_router
 from jobfeed.web.routes.jobs import router as jobs_router
@@ -136,8 +139,15 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
         cast(InsightsStore, context["store"]), application_service
     )
     app.state.performance_service = PerformanceService(cast(StorePerfMixin, store))
+    config_path = context.get("config_path") or Path("config.toml")
+    app.state.configuration_editor = ConfigurationEditor(
+        config_path,
+        context["settings"],
+        lambda settings: apply_runtime_settings(app, context, settings),
+    )
     install_error_handling(app)
     app.include_router(health_router, prefix="/api")
+    app.include_router(configuration_router, prefix="/api")
     app.include_router(jobs_router, prefix="/api")
     app.include_router(workflow_router, prefix="/api")
     app.include_router(applications_router, prefix="/api")

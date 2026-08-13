@@ -13,7 +13,8 @@ and reaches the local Jobfeed GUI without installing Node or Docker.
 
 ## Acceptance
 
-- A fresh checkout with Git and network access creates config and SQLite state.
+- A fresh checkout with Git and network access creates SQLite state, opens the
+  GUI setup stage, and creates config only after the user saves valid settings.
 - Runtime sync excludes the development extra.
 - The local server becomes healthy at `127.0.0.1:7654` and the browser opens.
 - Repeating setup does not start a duplicate server.
@@ -44,3 +45,58 @@ Moving disabled ML, browser-source, observability, and PostgreSQL rollback
 dependencies into optional extras is a separate footprint optimization; it is
 not required for the one-command behavior and must preserve the active rollback
 window.
+
+## GUI configuration follow-up
+
+Status: complete (2026-08-13).
+
+Purpose: remove the remaining file-editing step from first-run setup. A fresh
+checkout starts from validated built-in defaults, opens the GUI configuration
+stage, and persists the user's choices only after the form validates.
+
+Acceptance criteria:
+
+- `setup.sh` does not create `config.toml`; a fresh run opens `/setup`, while a
+  configured checkout opens the normal application.
+- `GET /api/config` reports whether the project is configured and returns the
+  effective user-editable settings. `PUT /api/config` validates and atomically
+  writes `config.toml` without exposing database switching or secret values.
+- Saved source, evaluation, filter, and ML-gate settings apply to newly started
+  web runs without restarting the process.
+- The SPA gates an unconfigured checkout on a responsive configuration form,
+  enters Triage after a successful save, and keeps Settings reachable later.
+- Backend and frontend tests pass, the committed SPA bundle is rebuilt, a real
+  fresh-checkout setup is exercised, and the full form is verified in the
+  user's Chrome extension with a screenshot.
+
+Risks and constraints:
+
+- In-flight runs retain the settings they started with; only newly scheduled
+  work observes a saved update.
+- API-key values remain host environment variables. The GUI may configure only
+  the environment-variable name, never read or persist the secret itself.
+- SQLite's path stays fixed for the process lifetime and is intentionally not a
+  GUI field.
+
+Evidence:
+
+- RED: focused setup, API, and frontend tests failed before the setup redirect,
+  configuration endpoints, atomic editor, and GUI route existed. A later
+  Library regression test reproduced that an unscored `new` row exposed
+  decision buttons which the workflow correctly rejected.
+- GREEN: the backend focused suite passed, all 153 frontend tests passed with
+  type generation, lint, typecheck, and zero design-ban findings, and the
+  production SPA bundle rebuilt successfully. `make quality` passed Ruff,
+  format, mypy, and 1,871 Python tests (418 deselected).
+- A real checkout without config ran `./setup.sh`, opened `/setup`, saved a
+  mode-0600 `config.toml`, applied later threshold/filter changes without
+  restarting the server, and kept SQLite `integrity_check=ok`.
+- The user's Chrome extension exercised first-run validation, save/reload,
+  mock scan and both evaluation stages, Runs detail, Library search/statuses,
+  notes/follow-up, Triage selection/Shortlist/Skip, application recording,
+  Pipeline, interview creation/completion, archive/restore, Insights and
+  Performance windows, Sources add/remove, density, and advanced Settings.
+- The unscored-row action defect was fixed test-first and rechecked in the same
+  Chrome session: the `new` detail now exposes no Apply/Shortlist/Skip actions.
+  Chrome reported no Jobfeed console errors; the only warnings came from the
+  installed Grammarly extension.

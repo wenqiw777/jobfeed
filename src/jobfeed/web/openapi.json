@@ -577,6 +577,59 @@
         "title": "CompanyOut",
         "type": "object"
       },
+      "ConfigurationResponse": {
+        "additionalProperties": false,
+        "description": "Editable settings plus first-run completion state.",
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "hard_filters": {
+            "$ref": "#/components/schemas/HardFiltersSettings"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/LLMSettings"
+          },
+          "ml_gate": {
+            "$ref": "#/components/schemas/MLGateSettings"
+          },
+          "scoring": {
+            "$ref": "#/components/schemas/ScoringSettings"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/SourcesConfig"
+          }
+        },
+        "required": [
+          "configured"
+        ],
+        "title": "ConfigurationResponse",
+        "type": "object"
+      },
+      "EditableConfiguration": {
+        "additionalProperties": false,
+        "description": "Settings that local users may safely manage through the GUI.",
+        "properties": {
+          "hard_filters": {
+            "$ref": "#/components/schemas/HardFiltersSettings"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/LLMSettings"
+          },
+          "ml_gate": {
+            "$ref": "#/components/schemas/MLGateSettings"
+          },
+          "scoring": {
+            "$ref": "#/components/schemas/ScoringSettings"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/SourcesConfig"
+          }
+        },
+        "title": "EditableConfiguration",
+        "type": "object"
+      },
       "EvaluationDetail": {
         "description": "Evaluation section of the detail response (stages optional).\n\n``stage_b_status`` is the raw pipeline status (the same store column the\nlist rows carry), set even when ``stage_b`` is None \u2014 below-threshold\nrows have no Stage B blocks but still need their derived display state.",
         "properties": {
@@ -722,6 +775,67 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HardFiltersSettings": {
+        "additionalProperties": false,
+        "description": "Hard filter settings mirroring HardFilters domain object.\n\nEmpty defaults mean no filtering \u2014 a config file without a [hard_filters]\nsection is equivalent to no filters at all.",
+        "properties": {
+          "big_company_days": {
+            "default": 90,
+            "minimum": 1.0,
+            "title": "Big Company Days",
+            "type": "integer"
+          },
+          "big_company_list": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Big Company List",
+            "type": "array"
+          },
+          "company_blocklist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Company Blocklist",
+            "type": "array"
+          },
+          "location_allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Location Allowlist",
+            "type": "array"
+          },
+          "location_blocklist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Location Blocklist",
+            "type": "array"
+          },
+          "posted_within_days": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted Within Days"
+          },
+          "title_blocklist": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Title Blocklist",
+            "type": "array"
+          }
+        },
+        "title": "HardFiltersSettings",
         "type": "object"
       },
       "InsightsDayEntry": {
@@ -1355,6 +1469,82 @@
         "title": "LLMDailyStatsRow",
         "type": "object"
       },
+      "LLMSettings": {
+        "additionalProperties": false,
+        "description": "LLM model and runtime limits used by evaluation services.",
+        "properties": {
+          "claude_timeout_s": {
+            "default": 210.0,
+            "title": "Claude Timeout S",
+            "type": "number"
+          },
+          "codex_timeout_s": {
+            "default": 60.0,
+            "title": "Codex Timeout S",
+            "type": "number"
+          },
+          "master_resume_path": {
+            "default": "resume.example.md",
+            "title": "Master Resume Path",
+            "type": "string"
+          },
+          "max_concurrent": {
+            "default": 4,
+            "title": "Max Concurrent",
+            "type": "integer"
+          },
+          "max_daily_cost_usd": {
+            "default": 10.0,
+            "minimum": 0.0,
+            "title": "Max Daily Cost Usd",
+            "type": "number"
+          },
+          "max_daily_score_calls": {
+            "default": 150,
+            "minimum": 0.0,
+            "title": "Max Daily Score Calls",
+            "type": "integer"
+          },
+          "openai_compat_api_key_env": {
+            "default": "OPENAI_API_KEY",
+            "title": "Openai Compat Api Key Env",
+            "type": "string"
+          },
+          "openai_compat_base_url": {
+            "default": "https://api.openai.com/v1",
+            "title": "Openai Compat Base Url",
+            "type": "string"
+          },
+          "openai_compat_timeout_s": {
+            "default": 60.0,
+            "title": "Openai Compat Timeout S",
+            "type": "number"
+          },
+          "preamble_personal_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preamble Personal Path"
+          },
+          "stage_a": {
+            "default": "codex-cli/gpt-5.4-mini",
+            "title": "Stage A",
+            "type": "string"
+          },
+          "stage_b": {
+            "default": "codex-cli/gpt-5.5",
+            "title": "Stage B",
+            "type": "string"
+          }
+        },
+        "title": "LLMSettings",
+        "type": "object"
+      },
       "LLMStatsResponse": {
         "description": "``GET /performance/llm-stats`` response.",
         "properties": {
@@ -1370,6 +1560,54 @@
           "stats"
         ],
         "title": "LLMStatsResponse",
+        "type": "object"
+      },
+      "MLGateSettings": {
+        "additionalProperties": false,
+        "description": "Configuration for the XGBoost ML gate used in Phase 5 evaluation funnel.",
+        "properties": {
+          "embedding_max_chars": {
+            "default": 2000,
+            "exclusiveMinimum": 0.0,
+            "title": "Embedding Max Chars",
+            "type": "integer"
+          },
+          "embedding_model": {
+            "default": "all-MiniLM-L6-v2",
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "max_candidates": {
+            "default": 5000,
+            "minimum": 1.0,
+            "title": "Max Candidates",
+            "type": "integer"
+          },
+          "model_dir": {
+            "default": "models/ml_gate",
+            "title": "Model Dir",
+            "type": "string"
+          },
+          "model_version": {
+            "default": "v20260601T170453Z",
+            "title": "Model Version",
+            "type": "string"
+          },
+          "threshold_override": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold Override"
+          }
+        },
+        "title": "MLGateSettings",
         "type": "object"
       },
       "NoteBody": {
@@ -1791,6 +2029,359 @@
           "total"
         ],
         "title": "RunsListResponse",
+        "type": "object"
+      },
+      "ScoringSettings": {
+        "additionalProperties": false,
+        "description": "Scoring gates used by evaluation services.",
+        "properties": {
+          "default_eval_limit": {
+            "default": 150,
+            "minimum": 0.0,
+            "title": "Default Eval Limit",
+            "type": "integer"
+          },
+          "ml_gate_enabled": {
+            "default": false,
+            "title": "Ml Gate Enabled",
+            "type": "boolean"
+          },
+          "stage_a_threshold": {
+            "default": 60,
+            "title": "Stage A Threshold",
+            "type": "integer"
+          }
+        },
+        "title": "ScoringSettings",
+        "type": "object"
+      },
+      "SourcesATSConfig": {
+        "additionalProperties": false,
+        "description": "Runtime limits and tuning knobs for the ATS source.",
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "failure_threshold": {
+            "default": 3,
+            "minimum": 1.0,
+            "title": "Failure Threshold",
+            "type": "integer"
+          },
+          "max_concurrent": {
+            "default": 10,
+            "minimum": 1.0,
+            "title": "Max Concurrent",
+            "type": "integer"
+          },
+          "probe_timeout_s": {
+            "default": 5.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Probe Timeout S",
+            "type": "number"
+          },
+          "probe_ttl_days": {
+            "default": 7,
+            "minimum": 0.0,
+            "title": "Probe Ttl Days",
+            "type": "integer"
+          },
+          "scan_timeout_s": {
+            "default": 30.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Scan Timeout S",
+            "type": "number"
+          },
+          "seed_companies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Seed Companies",
+            "type": "array"
+          }
+        },
+        "title": "SourcesATSConfig",
+        "type": "object"
+      },
+      "SourcesConfig": {
+        "additionalProperties": false,
+        "description": "Container for all job-data source configurations.",
+        "properties": {
+          "ats": {
+            "$ref": "#/components/schemas/SourcesATSConfig"
+          },
+          "indeed": {
+            "$ref": "#/components/schemas/SourcesIndeedConfig"
+          },
+          "linkedin": {
+            "$ref": "#/components/schemas/SourcesLinkedInConfig"
+          },
+          "linkedin_guest": {
+            "$ref": "#/components/schemas/SourcesLinkedInGuestConfig"
+          },
+          "speedyapply": {
+            "$ref": "#/components/schemas/SourcesSpeedyApplyConfig"
+          }
+        },
+        "title": "SourcesConfig",
+        "type": "object"
+      },
+      "SourcesIndeedConfig": {
+        "additionalProperties": false,
+        "description": "Runtime limits and tuning knobs for the Indeed (JobSpy) source.",
+        "properties": {
+          "country_indeed": {
+            "default": "usa",
+            "title": "Country Indeed",
+            "type": "string"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "hours_old": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hours Old"
+          },
+          "max_concurrent": {
+            "default": 2,
+            "minimum": 1.0,
+            "title": "Max Concurrent",
+            "type": "integer"
+          },
+          "max_jobs": {
+            "default": 100,
+            "minimum": 1.0,
+            "title": "Max Jobs",
+            "type": "integer"
+          },
+          "repeat": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Repeat",
+            "type": "integer"
+          },
+          "search_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Search Urls",
+            "type": "array"
+          },
+          "timeout_s": {
+            "default": 60.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout S",
+            "type": "number"
+          }
+        },
+        "title": "SourcesIndeedConfig",
+        "type": "object"
+      },
+      "SourcesLinkedInConfig": {
+        "additionalProperties": false,
+        "description": "Runtime limits and profile paths for the LinkedIn Playwright source.",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "headless": {
+            "default": true,
+            "title": "Headless",
+            "type": "boolean"
+          },
+          "lock_path": {
+            "default": "~/.cache/jobfeed/enrich.lock",
+            "title": "Lock Path",
+            "type": "string"
+          },
+          "max_jobs": {
+            "default": 100,
+            "minimum": 1.0,
+            "title": "Max Jobs",
+            "type": "integer"
+          },
+          "profile_dir": {
+            "default": "~/.cache/jobfeed/linkedin",
+            "title": "Profile Dir",
+            "type": "string"
+          },
+          "search_urls": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/components/schemas/SourcesLinkedInSearchConfig"
+                }
+              ]
+            },
+            "title": "Search Urls",
+            "type": "array"
+          },
+          "tier2_cap": {
+            "default": 30,
+            "minimum": 0.0,
+            "title": "Tier2 Cap",
+            "type": "integer"
+          }
+        },
+        "title": "SourcesLinkedInConfig",
+        "type": "object"
+      },
+      "SourcesLinkedInGuestConfig": {
+        "additionalProperties": false,
+        "description": "Runtime limits and pacing knobs for the LinkedIn guest source.\n\nThe guest source scrapes LinkedIn's anonymous guest endpoints (no login,\nno browser). ``pacing_s`` spaces both list-page fetches and JD enrich\nrequests; ``enrich_batch_limit`` caps how many unenriched jobs one\nenrich pass attempts. ``enrich_after_scan`` makes ``scan`` run one such\npass automatically after this source is scanned (set false to keep scan\ndiscover-only and run ``enrich-linkedin-guest`` manually).",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "enrich_after_scan": {
+            "default": true,
+            "title": "Enrich After Scan",
+            "type": "boolean"
+          },
+          "enrich_batch_limit": {
+            "default": 500,
+            "minimum": 1.0,
+            "title": "Enrich Batch Limit",
+            "type": "integer"
+          },
+          "max_jobs": {
+            "default": 1000,
+            "minimum": 1.0,
+            "title": "Max Jobs",
+            "type": "integer"
+          },
+          "pacing_s": {
+            "default": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Pacing S",
+            "type": "number"
+          },
+          "proxies": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxies"
+          },
+          "search_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Search Urls",
+            "type": "array"
+          },
+          "timeout_s": {
+            "default": 15.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout S",
+            "type": "number"
+          }
+        },
+        "title": "SourcesLinkedInGuestConfig",
+        "type": "object"
+      },
+      "SourcesLinkedInSearchConfig": {
+        "additionalProperties": false,
+        "description": "One LinkedIn Playwright search URL with optional local budgets.",
+        "properties": {
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group"
+          },
+          "group_max_jobs": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Max Jobs"
+          },
+          "max_jobs": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Jobs"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "SourcesLinkedInSearchConfig",
+        "type": "object"
+      },
+      "SourcesSpeedyApplyConfig": {
+        "additionalProperties": false,
+        "description": "Runtime limits and tuning knobs for the SpeedyApply source.\n\n``search_urls`` lists the GitHub markdown job lists to scan. Enabled\nconfigs must set it explicitly because list fields are TOML-only: the\nnested env setter stores a bare string at the leaf, which Pydantic will not\ncoerce into a list, so ``JOBFEED_SOURCES__SPEEDYAPPLY__SEARCH_URLS`` is\nunsupported.",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "fetch_timeout_s": {
+            "default": 30.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Fetch Timeout S",
+            "type": "number"
+          },
+          "max_concurrent": {
+            "default": 10,
+            "minimum": 1.0,
+            "title": "Max Concurrent",
+            "type": "integer"
+          },
+          "search_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Search Urls",
+            "type": "array"
+          }
+        },
+        "title": "SourcesSpeedyApplyConfig",
         "type": "object"
       },
       "StageADetail": {
@@ -2562,6 +3153,62 @@
           }
         },
         "summary": "Remove Company"
+      }
+    },
+    "/api/config": {
+      "get": {
+        "description": "Return effective editable settings and onboarding state.\n\nArgs:\n    editor: Project-local configuration editor.\n\nReturns:\n    Effective user-editable settings without database or secret values.",
+        "operationId": "get_configuration_api_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigurationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Configuration"
+      },
+      "put": {
+        "description": "Atomically save valid settings and apply them to new work.\n\nArgs:\n    body: Complete GUI-managed configuration.\n    editor: Project-local configuration editor.\n\nReturns:\n    Saved effective settings with onboarding marked complete.",
+        "operationId": "put_configuration_api_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditableConfiguration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigurationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Configuration"
       }
     },
     "/api/health": {

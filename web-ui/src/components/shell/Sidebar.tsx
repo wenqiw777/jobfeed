@@ -1,4 +1,5 @@
 import { NavLink } from "react-router";
+import { Settings } from "lucide-react";
 
 import { useAttention, useJobsTabCounts, workflowAttentionTotal } from "@/api/queries";
 import { ZONES, type Zone } from "@/components/shell/zones";
@@ -45,6 +46,15 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      <div className="mt-auto border-t border-border p-2">
+        <NavLink
+          to="/setup"
+          className="flex items-center gap-2 rounded-control px-2.5 py-1.5 text-body-sm font-medium text-ink-2 transition-colors hover:bg-hairline hover:text-ink"
+        >
+          <Settings aria-hidden="true" className="h-3.5 w-3.5" />
+          Settings
+        </NavLink>
+      </div>
     </aside>
   );
 }

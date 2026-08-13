@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 import App from "@/App";
+import { configurationKey } from "@/api/configuration";
 import { DensityProvider } from "@/lib/density";
 
 const TAB_COUNTS = {
@@ -67,6 +68,9 @@ function mockApi(): void {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/api/config") {
+        return jsonResponse({ configured: true });
+      }
       if (url.startsWith("/api/jobs")) {
         return jsonResponse({ jobs: [], total: 0, tab_counts: TAB_COUNTS });
       }
@@ -91,6 +95,7 @@ function renderShell(initialPath = "/triage") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  queryClient.setQueryData(configurationKey, { configured: true });
   return render(
     <QueryClientProvider client={queryClient}>
       <DensityProvider>

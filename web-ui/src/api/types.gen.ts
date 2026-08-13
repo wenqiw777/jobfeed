@@ -200,6 +200,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Configuration
+         * @description Return effective editable settings and onboarding state.
+         *
+         *     Args:
+         *         editor: Project-local configuration editor.
+         *
+         *     Returns:
+         *         Effective user-editable settings without database or secret values.
+         */
+        get: operations["get_configuration_api_config_get"];
+        /**
+         * Put Configuration
+         * @description Atomically save valid settings and apply them to new work.
+         *
+         *     Args:
+         *         body: Complete GUI-managed configuration.
+         *         editor: Project-local configuration editor.
+         *
+         *     Returns:
+         *         Saved effective settings with onboarding marked complete.
+         */
+        put: operations["put_configuration_api_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -1151,6 +1188,30 @@ export interface components {
             vendor: string | null;
         };
         /**
+         * ConfigurationResponse
+         * @description Editable settings plus first-run completion state.
+         */
+        ConfigurationResponse: {
+            /** Configured */
+            configured: boolean;
+            hard_filters?: components["schemas"]["HardFiltersSettings"];
+            llm?: components["schemas"]["LLMSettings"];
+            ml_gate?: components["schemas"]["MLGateSettings"];
+            scoring?: components["schemas"]["ScoringSettings"];
+            sources?: components["schemas"]["SourcesConfig"];
+        };
+        /**
+         * EditableConfiguration
+         * @description Settings that local users may safely manage through the GUI.
+         */
+        EditableConfiguration: {
+            hard_filters?: components["schemas"]["HardFiltersSettings"];
+            llm?: components["schemas"]["LLMSettings"];
+            ml_gate?: components["schemas"]["MLGateSettings"];
+            scoring?: components["schemas"]["ScoringSettings"];
+            sources?: components["schemas"]["SourcesConfig"];
+        };
+        /**
          * EvaluationDetail
          * @description Evaluation section of the detail response (stages optional).
          *
@@ -1216,6 +1277,32 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HardFiltersSettings
+         * @description Hard filter settings mirroring HardFilters domain object.
+         *
+         *     Empty defaults mean no filtering — a config file without a [hard_filters]
+         *     section is equivalent to no filters at all.
+         */
+        HardFiltersSettings: {
+            /**
+             * Big Company Days
+             * @default 90
+             */
+            big_company_days: number;
+            /** Big Company List */
+            big_company_list?: string[];
+            /** Company Blocklist */
+            company_blocklist?: string[];
+            /** Location Allowlist */
+            location_allowlist?: string[];
+            /** Location Blocklist */
+            location_blocklist?: string[];
+            /** Posted Within Days */
+            posted_within_days?: number | null;
+            /** Title Blocklist */
+            title_blocklist?: string[];
         };
         /**
          * InsightsDayEntry
@@ -1459,12 +1546,108 @@ export interface components {
             p95_latency_ms: number;
         };
         /**
+         * LLMSettings
+         * @description LLM model and runtime limits used by evaluation services.
+         */
+        LLMSettings: {
+            /**
+             * Claude Timeout S
+             * @default 210
+             */
+            claude_timeout_s: number;
+            /**
+             * Codex Timeout S
+             * @default 60
+             */
+            codex_timeout_s: number;
+            /**
+             * Master Resume Path
+             * @default resume.example.md
+             */
+            master_resume_path: string;
+            /**
+             * Max Concurrent
+             * @default 4
+             */
+            max_concurrent: number;
+            /**
+             * Max Daily Cost Usd
+             * @default 10
+             */
+            max_daily_cost_usd: number;
+            /**
+             * Max Daily Score Calls
+             * @default 150
+             */
+            max_daily_score_calls: number;
+            /**
+             * Openai Compat Api Key Env
+             * @default OPENAI_API_KEY
+             */
+            openai_compat_api_key_env: string;
+            /**
+             * Openai Compat Base Url
+             * @default https://api.openai.com/v1
+             */
+            openai_compat_base_url: string;
+            /**
+             * Openai Compat Timeout S
+             * @default 60
+             */
+            openai_compat_timeout_s: number;
+            /** Preamble Personal Path */
+            preamble_personal_path?: string | null;
+            /**
+             * Stage A
+             * @default codex-cli/gpt-5.4-mini
+             */
+            stage_a: string;
+            /**
+             * Stage B
+             * @default codex-cli/gpt-5.5
+             */
+            stage_b: string;
+        };
+        /**
          * LLMStatsResponse
          * @description ``GET /performance/llm-stats`` response.
          */
         LLMStatsResponse: {
             /** Stats */
             stats: components["schemas"]["LLMDailyStatsRow"][];
+        };
+        /**
+         * MLGateSettings
+         * @description Configuration for the XGBoost ML gate used in Phase 5 evaluation funnel.
+         */
+        MLGateSettings: {
+            /**
+             * Embedding Max Chars
+             * @default 2000
+             */
+            embedding_max_chars: number;
+            /**
+             * Embedding Model
+             * @default all-MiniLM-L6-v2
+             */
+            embedding_model: string;
+            /**
+             * Max Candidates
+             * @default 5000
+             */
+            max_candidates: number;
+            /**
+             * Model Dir
+             * @default models/ml_gate
+             */
+            model_dir: string;
+            /**
+             * Model Version
+             * @default v20260601T170453Z
+             */
+            model_version: string;
+            /** Threshold Override */
+            threshold_override?: number | null;
         };
         /**
          * NoteBody
@@ -1644,6 +1827,244 @@ export interface components {
             runs: components["schemas"]["RunSummary"][];
             /** Total */
             total: number;
+        };
+        /**
+         * ScoringSettings
+         * @description Scoring gates used by evaluation services.
+         */
+        ScoringSettings: {
+            /**
+             * Default Eval Limit
+             * @default 150
+             */
+            default_eval_limit: number;
+            /**
+             * Ml Gate Enabled
+             * @default false
+             */
+            ml_gate_enabled: boolean;
+            /**
+             * Stage A Threshold
+             * @default 60
+             */
+            stage_a_threshold: number;
+        };
+        /**
+         * SourcesATSConfig
+         * @description Runtime limits and tuning knobs for the ATS source.
+         */
+        SourcesATSConfig: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Failure Threshold
+             * @default 3
+             */
+            failure_threshold: number;
+            /**
+             * Max Concurrent
+             * @default 10
+             */
+            max_concurrent: number;
+            /**
+             * Probe Timeout S
+             * @default 5
+             */
+            probe_timeout_s: number;
+            /**
+             * Probe Ttl Days
+             * @default 7
+             */
+            probe_ttl_days: number;
+            /**
+             * Scan Timeout S
+             * @default 30
+             */
+            scan_timeout_s: number;
+            /** Seed Companies */
+            seed_companies?: string[];
+        };
+        /**
+         * SourcesConfig
+         * @description Container for all job-data source configurations.
+         */
+        SourcesConfig: {
+            ats?: components["schemas"]["SourcesATSConfig"];
+            indeed?: components["schemas"]["SourcesIndeedConfig"];
+            linkedin?: components["schemas"]["SourcesLinkedInConfig"];
+            linkedin_guest?: components["schemas"]["SourcesLinkedInGuestConfig"];
+            speedyapply?: components["schemas"]["SourcesSpeedyApplyConfig"];
+        };
+        /**
+         * SourcesIndeedConfig
+         * @description Runtime limits and tuning knobs for the Indeed (JobSpy) source.
+         */
+        SourcesIndeedConfig: {
+            /**
+             * Country Indeed
+             * @default usa
+             */
+            country_indeed: string;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Hours Old */
+            hours_old?: number | null;
+            /**
+             * Max Concurrent
+             * @default 2
+             */
+            max_concurrent: number;
+            /**
+             * Max Jobs
+             * @default 100
+             */
+            max_jobs: number;
+            /**
+             * Repeat
+             * @default 1
+             */
+            repeat: number;
+            /** Search Urls */
+            search_urls?: string[];
+            /**
+             * Timeout S
+             * @default 60
+             */
+            timeout_s: number;
+        };
+        /**
+         * SourcesLinkedInConfig
+         * @description Runtime limits and profile paths for the LinkedIn Playwright source.
+         */
+        SourcesLinkedInConfig: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Headless
+             * @default true
+             */
+            headless: boolean;
+            /**
+             * Lock Path
+             * @default ~/.cache/jobfeed/enrich.lock
+             */
+            lock_path: string;
+            /**
+             * Max Jobs
+             * @default 100
+             */
+            max_jobs: number;
+            /**
+             * Profile Dir
+             * @default ~/.cache/jobfeed/linkedin
+             */
+            profile_dir: string;
+            /** Search Urls */
+            search_urls?: (string | components["schemas"]["SourcesLinkedInSearchConfig"])[];
+            /**
+             * Tier2 Cap
+             * @default 30
+             */
+            tier2_cap: number;
+        };
+        /**
+         * SourcesLinkedInGuestConfig
+         * @description Runtime limits and pacing knobs for the LinkedIn guest source.
+         *
+         *     The guest source scrapes LinkedIn's anonymous guest endpoints (no login,
+         *     no browser). ``pacing_s`` spaces both list-page fetches and JD enrich
+         *     requests; ``enrich_batch_limit`` caps how many unenriched jobs one
+         *     enrich pass attempts. ``enrich_after_scan`` makes ``scan`` run one such
+         *     pass automatically after this source is scanned (set false to keep scan
+         *     discover-only and run ``enrich-linkedin-guest`` manually).
+         */
+        SourcesLinkedInGuestConfig: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Enrich After Scan
+             * @default true
+             */
+            enrich_after_scan: boolean;
+            /**
+             * Enrich Batch Limit
+             * @default 500
+             */
+            enrich_batch_limit: number;
+            /**
+             * Max Jobs
+             * @default 1000
+             */
+            max_jobs: number;
+            /**
+             * Pacing S
+             * @default 1
+             */
+            pacing_s: number;
+            /** Proxies */
+            proxies?: string | null;
+            /** Search Urls */
+            search_urls?: string[];
+            /**
+             * Timeout S
+             * @default 15
+             */
+            timeout_s: number;
+        };
+        /**
+         * SourcesLinkedInSearchConfig
+         * @description One LinkedIn Playwright search URL with optional local budgets.
+         */
+        SourcesLinkedInSearchConfig: {
+            /** Group */
+            group?: string | null;
+            /** Group Max Jobs */
+            group_max_jobs?: number | null;
+            /** Max Jobs */
+            max_jobs?: number | null;
+            /** Url */
+            url: string;
+        };
+        /**
+         * SourcesSpeedyApplyConfig
+         * @description Runtime limits and tuning knobs for the SpeedyApply source.
+         *
+         *     ``search_urls`` lists the GitHub markdown job lists to scan. Enabled
+         *     configs must set it explicitly because list fields are TOML-only: the
+         *     nested env setter stores a bare string at the leaf, which Pydantic will not
+         *     coerce into a list, so ``JOBFEED_SOURCES__SPEEDYAPPLY__SEARCH_URLS`` is
+         *     unsupported.
+         */
+        SourcesSpeedyApplyConfig: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Fetch Timeout S
+             * @default 30
+             */
+            fetch_timeout_s: number;
+            /**
+             * Max Concurrent
+             * @default 10
+             */
+            max_concurrent: number;
+            /** Search Urls */
+            search_urls?: string[];
         };
         /**
          * StageADetail
@@ -2071,6 +2492,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_configuration_api_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigurationResponse"];
+                };
+            };
+        };
+    };
+    put_configuration_api_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditableConfiguration"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigurationResponse"];
                 };
             };
             /** @description Validation Error */

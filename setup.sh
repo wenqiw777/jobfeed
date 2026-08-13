@@ -110,27 +110,26 @@ open_gui() {
     if [ "${JOBFEED_SETUP_NO_OPEN:-0}" = "1" ]; then
         return
     fi
+    open_url="$GUI_URL"
+    if [ ! -f "$REPO_ROOT/config.toml" ]; then
+        open_url="$GUI_URL/setup"
+    fi
     case "$(uname -s)" in
-        Darwin) open "$GUI_URL" ;;
+        Darwin) open "$open_url" ;;
         Linux)
             if command -v xdg-open >/dev/null 2>&1; then
-                xdg-open "$GUI_URL" >/dev/null 2>&1 || true
+                xdg-open "$open_url" >/dev/null 2>&1 || true
             else
-                printf '%s\n' "Open $GUI_URL in your browser."
+                printf '%s\n' "Open $open_url in your browser."
             fi
             ;;
-        *) printf '%s\n' "Open $GUI_URL in your browser." ;;
+        *) printf '%s\n' "Open $open_url in your browser." ;;
     esac
 }
 
 cd "$REPO_ROOT"
 [ -f web-ui/dist/index.html ] \
     || fail "the prebuilt GUI is missing; reinstall from a complete release checkout"
-
-if [ ! -f config.toml ]; then
-    cp config.example.toml config.toml
-    printf '%s\n' "==> created config.toml"
-fi
 
 mkdir -p "$DATA_DIR"
 uv_bin="$(find_or_install_uv)"

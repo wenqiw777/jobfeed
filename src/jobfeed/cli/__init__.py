@@ -33,6 +33,7 @@ class AppContext(TypedDict):
     """Runtime dependency graph shared by Click commands."""
 
     settings: Settings
+    config_path: Path | None
     store: JobStore
     sources: dict[str, SimpleSource]
     scan_service: ScanService
@@ -75,6 +76,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
     return AppContext(
         settings=settings,
+        config_path=config_path,
         store=store,
         sources=sources,
         scan_service=ScanService(

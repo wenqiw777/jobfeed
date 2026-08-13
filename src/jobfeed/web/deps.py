@@ -8,6 +8,7 @@ from fastapi import Request
 
 from jobfeed.cli import AppContext
 from jobfeed.cli._probe import ProbeVendorFn
+from jobfeed.config_editor import ConfigurationEditor
 from jobfeed.ports.store import JobStore
 from jobfeed.services.application import ApplicationService
 from jobfeed.services.insights import InsightsService
@@ -42,6 +43,18 @@ def get_store(request: Request) -> JobStore:
         Job store whose connection is owned by the app lifespan.
     """
     return get_context(request)["store"]
+
+
+def get_configuration_editor(request: Request) -> ConfigurationEditor:
+    """Return the project-local GUI configuration editor.
+
+    Args:
+        request: Current request.
+
+    Returns:
+        Shared editor that persists and applies validated settings.
+    """
+    return cast(ConfigurationEditor, request.app.state.configuration_editor)
 
 
 def get_jobs_view_service(request: Request) -> JobsViewService:
@@ -145,6 +158,7 @@ def get_performance_service(request: Request) -> PerformanceService:
 __all__ = [
     "ProbeVendorFn",
     "get_application_service",
+    "get_configuration_editor",
     "get_context",
     "get_insights_service",
     "get_jobs_view_service",

@@ -51,8 +51,9 @@ const SORT_OPTIONS: { value: LibrarySort; label: string }[] = [
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
 
-/** Statuses still in the decide loop — the drawer offers triage actions. */
-const DECIDABLE = new Set(["new", "scored", "shortlisted", "awaiting_referral"]);
+/** Statuses still in the decide loop — `new` must first be evaluated to
+ * `scored`, otherwise every decision endpoint correctly rejects it. */
+const DECIDABLE = new Set(["scored", "shortlisted", "awaiting_referral"]);
 /** Statuses POST /restore accepts — the drawer offers the restore card. */
 function isRestorable(status: string): status is "ghosted" | "archived" {
   return status === "ghosted" || status === "archived";

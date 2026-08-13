@@ -75,8 +75,10 @@ def _stop_test_server(checkout: Path) -> None:
         os.kill(int(pid_path.read_text(encoding="utf-8")), 15)
 
 
-def test_setup_sh_prepares_runtime_starts_server_and_opens_gui(tmp_path: Path) -> None:
-    """A fresh checkout reaches the GUI through one setup command."""
+def test_setup_sh_prepares_runtime_starts_server_and_opens_setup(
+    tmp_path: Path,
+) -> None:
+    """A fresh checkout reaches GUI configuration through one setup command."""
     checkout, environment = _fresh_checkout(tmp_path)
     try:
         result = subprocess.run(
@@ -89,7 +91,7 @@ def test_setup_sh_prepares_runtime_starts_server_and_opens_gui(tmp_path: Path) -
             timeout=10,
         )
         assert result.returncode == 0, result.stderr
-        assert (checkout / "config.toml").is_file()
+        assert not (checkout / "config.toml").exists()
         assert (checkout / "data" / "jobfeed-serve.pid").is_file()
         assert (checkout / "data" / "jobfeed-serve.log").is_file()
         assert (checkout / "uv.log").read_text(encoding="utf-8").strip() == (
@@ -99,7 +101,7 @@ def test_setup_sh_prepares_runtime_starts_server_and_opens_gui(tmp_path: Path) -
             "serve"
         ]
         assert (checkout / "open.log").read_text(encoding="utf-8").strip() == (
-            "http://127.0.0.1:7654"
+            "http://127.0.0.1:7654/setup"
         )
         assert "Jobfeed is ready" in result.stdout
     finally:
@@ -137,6 +139,29 @@ def test_setup_is_idempotent_when_gui_is_already_healthy(tmp_path: Path) -> None
             len((checkout / "open.log").read_text(encoding="utf-8").splitlines())
             == REPEATED_OPEN_COUNT
         )
+        assert set((checkout / "open.log").read_text().splitlines()) == {
+            "http://127.0.0.1:7654/setup"
+        }
+    finally:
+        _stop_test_server(checkout)
+
+
+def test_setup_reopens_main_gui_after_configuration_exists(tmp_path: Path) -> None:
+    """A configured checkout bypasses onboarding on later setup runs."""
+    checkout, environment = _fresh_checkout(tmp_path)
+    (checkout / "config.toml").write_text("[db]\npath = 'data/jobfeed.sqlite'\n")
+    try:
+        result = subprocess.run(
+            ["./setup.sh"],
+            cwd=checkout,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        assert (checkout / "open.log").read_text().strip() == ("http://127.0.0.1:7654")
     finally:
         _stop_test_server(checkout)
 

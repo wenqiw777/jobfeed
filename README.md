@@ -13,12 +13,13 @@ cd jobfeed
 ./setup.sh
 ```
 
-`setup.sh` installs `uv` when needed, creates `config.toml`, installs the
-repo-local runtime, initializes `data/jobfeed.sqlite`, starts Jobfeed, and opens
-the GUI at `http://127.0.0.1:7654`. The production GUI bundle ships in the
-repository, so users do not install Node or build the frontend. Repeating the
-command is safe: it reuses a healthy server instead of starting a duplicate.
-The older `./setup` name remains an alias.
+`setup.sh` installs `uv` when needed, installs the repo-local runtime,
+initializes `data/jobfeed.sqlite`, starts Jobfeed, and opens the GUI setup page.
+Choose your résumé, models, sources, and filters there; saving creates the
+project-local `config.toml` and opens Triage. The production GUI bundle ships in
+the repository, so users do not install Node or build the frontend. Repeating
+the command is safe: it reuses a healthy server instead of starting a
+duplicate. The older `./setup` name remains an alias.
 
 After setup, `./scan --source mock` runs an offline smoke scan; `./scan` uses
 the sources enabled in `config.toml`. Every normal `./bin/jobfeed ...` command
@@ -31,7 +32,7 @@ opens the same repo-local SQLite database directly.
 ```sh
 cp resume.example.md resume.md     # resume.md is gitignored
 $EDITOR resume.md                  # replace the example with your real résumé
-#  then in config.toml:  master_resume_path = "resume.md"
+# Then open Settings in the GUI and set Master resume to "resume.md".
 ```
 
 **Format** is plain Markdown with no fixed schema. The scorer weights **project / work bullets** highest (skills-line keywords and coursework count less), so lead with concrete projects; state your graduation date / availability so the timing check works. You may keep internal-only sections (e.g. a compensation floor) — they inform scoring but are never echoed in any output. Optionally, a personal calibration appendix (hiring window, real-outcome anchors, GPA notes) sharpens scoring — copy [`preamble_personal.example.md`](preamble_personal.example.md) to `preamble_personal.md` (also gitignored) and set `preamble_personal_path`.
