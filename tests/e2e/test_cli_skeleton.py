@@ -254,6 +254,24 @@ def test_create_app_wires_sqlite_store(tmp_path: Path) -> None:
     assert app["stage_b_threshold_sync"] is app["store"]
 
 
+def test_cli_mark_stale_closed_dry_run_uses_sqlite_capability(
+    tmp_path: Path,
+) -> None:
+    """The canonical maintenance dry-run works through the SQLite facade."""
+    database = tmp_path / "jobfeed.sqlite"
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[db]\npath = "{database}"\n', encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        ["--config", str(config_path), "mark-stale-closed", "--older-than-days", "30"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Would close 0 stale jobs" in result.output
+    assert "dry-run" in result.output
+
+
 def test_cli_migrate_dry_run_needs_no_target_store(tmp_path: Path) -> None:
     """migrate import-sqlite --dry-run prints a plan without touching the store.
 

@@ -7,7 +7,7 @@ import asyncio
 import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
-from jobfeed.ports.store_ops import StoreOpsMixin
+from jobfeed.ports.maintenance import StaleJobMaintenance
 
 
 @click.command(
@@ -61,7 +61,7 @@ async def _run_mark_stale(
 ) -> int:
     async def action() -> int:
         store = app["store"]
-        if not isinstance(store, StoreOpsMixin):
+        if not isinstance(store, StaleJobMaintenance):
             raise click.ClickException(
                 f"Store does not support maintenance ops: {type(store).__name__}"
             )
