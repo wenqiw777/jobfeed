@@ -656,7 +656,7 @@ mypy 全绿。本机未跟踪 `config.toml` 的 `[db]` 已从旧 URL 切为 SQLi
 - **证据：** cutover checklist、恢复记录、7 天运行记录、最终 `make quality` 和 CI。
 - **返回设计：** soak 出现数据损坏、重复付费或无法恢复时立即 rollback，不允许进入 Task 8。
 
-**状态（2026-08-12）：rehearsal 完成 / 正式 cutover 待明确批准。** Canonical
+**状态（2026-08-12）：正式 cutover 已执行 / soak day 0。** Canonical
 `./bin/jobfeed migrate import-postgres-snapshot` 已从冻结的 PostgreSQL 0007 dump
 完成隔离 restore、0008 upgrade、14 表导入与 exact parity。最终 SQLite 为
 412,409,856 bytes，包含 56,507 jobs；14 表共迁移 188,276 rows，另有两条
@@ -665,8 +665,14 @@ idle `run_leases`。Cutover 与 provenance validators 均 PASS，SQLite
 正式 `jobfeed-postgres-1` 与 `jobfeed_pgdata` 的迁移前/工作后指纹写入 artifact
 并完全相同；cleanup 后再次核对仍相同，正式 container 保持 exited。隔离
 containers/networks/volumes 残留为 0/0/0。完整 `make quality` 为 1854 passed /
-418 deselected，Ruff、format、mypy 全绿。尚未把 SQLite artifact 安装到正式
-runtime volume，也未启动 7 天 soak；该写操作需要独立明确批准。
+418 deselected，Ruff、format、mypy 全绿。用户随后明确批准正式 cutover：artifact
+以 no-replace 临时文件、SHA/integrity/FK 校验和目录 fsync 安装到新建的
+`jobfeed_jobfeed_data` volume；运行时文件 SHA 与 artifact 一致。Canonical CLI
+读取 3 条真实数据，Web 于 `2026-08-13T03:37:59Z` 启动并从宿主
+`127.0.0.1:7654` 返回 `db=ok` 和 56,507 jobs。直接 SQLite 复核为 38 runs、
+0 active leases、integrity OK、FK violations=0。正式 PostgreSQL container 保持
+exited，preflight/after 的 container 与 volume inspect SHA 完全一致。Task 7
+仍需完成至少 7 个自然日 soak 和 rollback readiness 监控；此前不得进入 Task 8。
 
 ### Task 8：PG-only 清理（独立批准后）
 
@@ -753,7 +759,7 @@ runtime volume，也未启动 7 天 soak；该写操作需要独立明确批准�
 
 独立 agent 完成了 Task 0 合同审计；用户已选择第 14 节方案 1。Task 0–6
 均已完成，Task 7 的真实 canonical rehearsal 也已通过。因此当前状态是
-**TASK 7 REHEARSAL COMPLETE / FORMAL CUTOVER AWAITING EXPLICIT AUTHORIZATION**。
+**FORMAL SQLITE CUTOVER ACTIVE / TASK 7 SOAK DAY 0**。
 
 | 检查 | 状态 |
 |---|---|
@@ -771,7 +777,9 @@ runtime volume，也未启动 7 天 soak；该写操作需要独立明确批准�
 | Baseline harness | **PASS**：canonical 命令 155 秒；exact evidence/provenance validators 通过；隔离资源残留 0/0/0；正式 PG 未变化 |
 | Forward cutover rehearsal | **PASS**：14 表 / 188,276 rows；exact parity；SQLite integrity/FK 通过 |
 | 正式 PG 保护 | **PASS**：artifact 绑定迁移前/后正式 container+volume 指纹；cleanup 后复核一致；container 保持 exited |
-| 正式 SQLite install | **WAITING**：需要明确授权后才写入 runtime volume |
+| 正式 SQLite install | **PASS**：no-replace 安装到 `jobfeed_jobfeed_data`；runtime SHA 与 artifact 一致 |
+| 正式 CLI/Web smoke | **PASS**：CLI 读取真实记录；Web `db=ok`、56,507 jobs；0 active leases |
+| 7 天 soak | **ACTIVE**：开始于 2026-08-13T03:37:59Z；完成前禁止 Task 8 |
 
 ### 15.1 Task 0 implementation reality：migration control-plane
 
