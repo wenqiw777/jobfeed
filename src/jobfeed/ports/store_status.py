@@ -160,19 +160,6 @@ class StoreStatusMixin(Protocol):
         """
         ...
 
-    async def expand_twin_ids(self, job_ids: list[int]) -> dict[int, list[int]]:
-        """Expand each job_id to its twin cluster (same company_norm + title_norm).
-
-        A row with blank company_norm or title_norm expands to itself only.
-
-        Args:
-            job_ids: Store-assigned job identities.
-
-        Returns:
-            Mapping of job_id to list of twin cluster member ids.
-        """
-        ...
-
     async def transition_status_bulk(
         self, request: BulkTransitionRequest
     ) -> BulkResult:

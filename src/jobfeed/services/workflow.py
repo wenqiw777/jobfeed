@@ -101,8 +101,6 @@ class WorkflowService:
         Returns:
             Summary of succeeded, failed, and skipped transitions.
         """
-        job_ids = [int(jid) for jid, _ in items]  # raises ValueError for non-numeric
-        await self._store.expand_twin_ids(job_ids)
         bulk_req = BulkTransitionRequest(
             items=items,
             reason_selected=REASON_BULK_SELECTED,

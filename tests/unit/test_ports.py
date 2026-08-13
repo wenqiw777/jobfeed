@@ -432,6 +432,7 @@ def test_store_status_mixin_has_full_status_surface() -> None:
     ]
     for method_name in status_methods:
         assert inspect.iscoroutinefunction(getattr(StoreStatusMixin, method_name))
+    assert not hasattr(StoreStatusMixin, "expand_twin_ids")
 
 
 @pytest.mark.asyncio

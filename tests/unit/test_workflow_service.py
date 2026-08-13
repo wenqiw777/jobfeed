@@ -218,15 +218,18 @@ class TestTransition:
 class TestTransitionBulk:
     """Tests for WorkflowService.transition_bulk."""
 
-    def test_bulk_calls_expand_and_transition(self) -> None:
-        """transition_bulk should call expand_twin_ids then transition_status_bulk."""
+    def test_bulk_delegates_twin_expansion_to_aggregate(self) -> None:
+        """The service calls only the public bulk aggregate capability."""
         store = _make_store()
+        store.expand_twin_ids.side_effect = AssertionError(
+            "expand_twin_ids is an adapter-private helper"
+        )
         svc = _svc(store)
         items = [("1", "rejected"), ("2", "archived")]
         asyncio.run(
             svc.transition_bulk(items),
         )
-        store.expand_twin_ids.assert_awaited_once_with([1, 2])
+        store.expand_twin_ids.assert_not_awaited()
         store.transition_status_bulk.assert_awaited_once_with(
             BulkTransitionRequest(
                 items=items,
