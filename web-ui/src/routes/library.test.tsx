@@ -218,6 +218,10 @@ test("initial request: library params with no triage narrowing; range label", as
   renderLibrary();
   await screen.findByTestId("job-row-c1");
 
+  expect(screen.getByTestId("cloudscape-library")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /^Job library/ })).toBeInTheDocument();
+  expect(screen.getByRole("tablist")).toBeInTheDocument();
+
   const url = lastJobsUrl();
   for (const param of ["tab=all", "sort=discovered_desc", "limit=50", "offset=0"]) {
     expect(url).toContain(param);
@@ -281,12 +285,11 @@ test("sort selection composes the sort param and resets the page", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await waitFor(() => expect(lastJobsUrl()).toContain("offset=50"));
 
-  // Radix Select in happy-dom: open via the trigger's keyboard path
-  // (pointerdown needs real pointer plumbing), then click the item —
-  // its onClick selects for non-mouse pointer types, the test default.
-  const trigger = screen.getByRole("combobox", { name: "Sort" });
-  fireEvent.keyDown(trigger, { key: "Enter" });
-  fireEvent.click(await screen.findByRole("option", { name: "Highest score" }));
+  const trigger = screen.getByRole("button", { name: /^Sort/ });
+  fireEvent.mouseDown(trigger, { button: 0 });
+  fireEvent.click(trigger);
+  const option = await screen.findByRole("option", { name: "Highest score" });
+  fireEvent.mouseUp(option, { button: 0 });
 
   await waitFor(() => expect(lastJobsUrl()).toContain("sort=score_desc"));
   expect(lastJobsUrl()).toContain("offset=0");

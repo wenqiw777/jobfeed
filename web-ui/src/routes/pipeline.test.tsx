@@ -257,6 +257,10 @@ test("committed-rows params, D13 groups with counts, flattened row order", async
   renderPipeline();
   await screen.findByTestId("job-row-a1");
 
+  expect(screen.getByTestId("cloudscape-pipeline")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /^Application pipeline/ })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Job detail/ })).toBeInTheDocument();
+
   const listUrl = calls.find((call) => call.url.startsWith("/api/jobs?"))?.url ?? "";
   for (const param of [
     "tab=all",

@@ -1,3 +1,7 @@
+import Box from "@cloudscape-design/components/box";
+import Container from "@cloudscape-design/components/container";
+import Header from "@cloudscape-design/components/header";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useMemo, useRef, useState } from "react";
 
 import { useAttention, useJobsList, type JobsQuery, type JobSummary } from "@/api/queries";
@@ -107,37 +111,64 @@ export default function PipelinePage() {
   });
 
   return (
-    <div className="grid h-full grid-cols-[minmax(0,1fr)_380px]">
-      <div className="flex min-h-0 flex-col border-r border-border">
-        <AttentionBar
-          attention={attention.data}
-          activeBucket={activeBucket}
-          onToggle={toggleBucket}
-        />
-        <ListBody
-          list={list}
-          groups={groups}
-          isFiltered={activeBucket !== null}
-          collapsedKeys={collapsedKeys}
-          selectedId={effectiveSelectedId}
-          onToggleGroup={toggleGroup}
-          onOpen={setSelectedId}
-        />
+    <div className="jobfeed-decision-surface" data-testid="cloudscape-pipeline">
+      <div className="jobfeed-decision-queue">
+        <Container
+          fitHeight
+          header={
+            <Header
+              variant="h1"
+              description="Follow every application from first outreach through interview, offer, or close."
+              counter={list.data ? `(${list.data.total})` : undefined}
+            >
+              Application pipeline
+            </Header>
+          }
+        >
+          <SpaceBetween size="s">
+            <AttentionBar
+              attention={attention.data}
+              activeBucket={activeBucket}
+              onToggle={toggleBucket}
+            />
+            <ListBody
+              list={list}
+              groups={groups}
+              isFiltered={activeBucket !== null}
+              collapsedKeys={collapsedKeys}
+              selectedId={effectiveSelectedId}
+              onToggleGroup={toggleGroup}
+              onOpen={setSelectedId}
+            />
+          </SpaceBetween>
+        </Container>
       </div>
       <section
         ref={detailRef}
         tabIndex={-1}
         aria-label="Job detail"
-        className="min-h-0 focus-visible:outline-none"
+        className="jobfeed-evidence-panel focus-visible:outline-none"
       >
-        <DetailPane
-          jobId={effectiveSelectedId}
-          showJdPaste={false}
-          showIgnore={false}
-          showDecide={false}
-          emptyHint="Select a row — move with j/k, open the posting with o."
-          extraSections={selectedJob !== null && <PipelineSections job={selectedJob} />}
-        />
+        <Container
+          fitHeight
+          header={
+            <Header
+              variant="h2"
+              description="Evidence, follow-ups, interview rounds, and status actions"
+            >
+              {selectedJob ? `Job detail — ${selectedJob.company}` : "Job detail"}
+            </Header>
+          }
+        >
+          <DetailPane
+            jobId={effectiveSelectedId}
+            showJdPaste={false}
+            showIgnore={false}
+            showDecide={false}
+            emptyHint="Select a row — move with j/k, open the posting with o."
+            extraSections={selectedJob !== null && <PipelineSections job={selectedJob} />}
+          />
+        </Container>
       </section>
     </div>
   );
@@ -182,22 +213,22 @@ function ListBody({ list, groups, isFiltered, ...groupProps }: ListBodyProps) {
     );
   }
   if (list.isError) {
-    return <p className="px-4 py-6 text-body-sm text-danger">{list.error.message}</p>;
+    return <Box color="text-status-error">{list.error.message}</Box>;
   }
   if (groups.length === 0) {
     return (
-      <div className="grid flex-1 place-items-center px-6 text-center">
-        <div>
-          <p className="text-body-sm font-medium text-ink-2">
+      <Box textAlign="center" padding={{ vertical: "xxl", horizontal: "l" }}>
+        <SpaceBetween size="xxs">
+          <Box variant="h3">
             {isFiltered ? "Nothing in this bucket" : "Nothing in flight"}
-          </p>
-          <p className="mt-1 text-micro text-mute">
+          </Box>
+          <Box color="text-body-secondary">
             {isFiltered
               ? "The flagged jobs sit outside the pipeline statuses — clear the filter to see everything."
               : "Apply from Triage and applications track here: follow-ups, interviews, offers."}
-          </p>
-        </div>
-      </div>
+          </Box>
+        </SpaceBetween>
+      </Box>
     );
   }
   return <StatusGroups groups={groups} {...groupProps} />;
