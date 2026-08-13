@@ -18,10 +18,12 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 
+from jobfeed.domain.errors import LLMRuntimeUnavailable
 from jobfeed.observability import get_logger
 
 _HTTP_VALIDATION_ERROR = 422
 _HTTP_INTERNAL_ERROR = 500
+_HTTP_SERVICE_UNAVAILABLE = 503
 _CODES_BY_STATUS = {404: "not_found", 422: "validation_error"}
 
 
@@ -56,6 +58,7 @@ def install_error_handling(app: FastAPI) -> None:
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
     app.add_exception_handler(ApiError, _handle_api_error)
+    app.add_exception_handler(LLMRuntimeUnavailable, _handle_llm_unavailable)
 
 
 async def _assign_request_id(
@@ -137,6 +140,29 @@ async def _handle_api_error(request: Request, exc: Exception) -> JSONResponse:
         raise exc
     return _error_response(
         exc.status_code, exc.code, exc.message, _request_id_of(request)
+    )
+
+
+async def _handle_llm_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    """Render an unavailable configured LLM backend as an actionable 503.
+
+    Args:
+        request: Request carrying the middleware-assigned request id.
+        exc: Always an LLMRuntimeUnavailable per handler registration.
+
+    Returns:
+        JSON 503 response preserving the backend's configuration guidance.
+
+    Raises:
+        Exception: Re-raises any unexpected exception type defensively.
+    """
+    if not isinstance(exc, LLMRuntimeUnavailable):
+        raise exc
+    return _error_response(
+        _HTTP_SERVICE_UNAVAILABLE,
+        "llm_runtime_unavailable",
+        str(exc),
+        _request_id_of(request),
     )
 
 

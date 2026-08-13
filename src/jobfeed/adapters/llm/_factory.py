@@ -8,12 +8,9 @@ from dataclasses import dataclass
 
 from jobfeed.adapters.llm._pricing import ModelPricing
 from jobfeed.config import LLMSettings
+from jobfeed.domain.errors import LLMRuntimeUnavailable
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.llm import LLMClient
-
-
-class LLMRuntimeUnavailable(RuntimeError):
-    """Required LLM CLI tool is not installed."""
 
 
 @dataclass(frozen=True)

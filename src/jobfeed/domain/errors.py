@@ -7,6 +7,10 @@ class JobfeedError(Exception):
     """Base exception for expected Jobfeed application failures."""
 
 
+class LLMRuntimeUnavailable(JobfeedError):
+    """Raised when the configured LLM backend cannot run in this process."""
+
+
 class ScoringParseError(JobfeedError):
     """Raised when an LLM response cannot be normalized into domain results."""
 
@@ -67,6 +71,7 @@ class RunLeaseLostError(JobfeedError):
 
 __all__ = [
     "JobfeedError",
+    "LLMRuntimeUnavailable",
     "ResumeNotConfiguredError",
     "RunConflictError",
     "RunLeaseLostError",

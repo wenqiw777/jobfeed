@@ -707,10 +707,13 @@ vendor/Add/Remove/Cancel/include-removed。可逆写操作全部使用
 container 残留 0，临时 DB 已移入 Trash。
 
 两项边界不能记为全绿：(1) 正式 Web 使用 `codex-cli/*` 配置，但 canonical Docker
-image 没有 `codex` executable，Evaluate Start 实测返回 500；在端口 7655 的隔离
+image 没有 `codex` executable。2026-08-13 修复后，Evaluate Start 不再返回不透明
+500，而是 `503 llm_runtime_unavailable` 并显示可操作说明；真实 Chrome extension
+点击验证通过，且 `pipeline_runs` 保持 38→38、没有 phantom run。端口 7655 的隔离
 SQLite 副本改用 `mock/*` 后，both、Stage A、Stage B、limit validation、run completion
-均通过并已销毁。此项是 runtime configuration blocker，不是 SQLite data-path
-failure。(2) Apply 的两个文件选择器能由 extension 打开，但 extension 未启用
+均通过并已销毁。真实付费 Evaluate 仍需明确选择容器内后端，或批准把日常 canonical
+runtime 改为宿主机；此项不是 SQLite data-path failure。(2) Apply 的两个文件选择器
+能由 extension 打开，但 extension 未启用
 `Allow access to file URLs`，`fileChooser.setFiles` 被浏览器拒绝；无附件申请记录通过，
 multipart API 已在同日隔离 HTTP 验收通过。Sources probe 与无 lease 的真实 Scan 仍按
 Phase 0 外网边界不执行；5 个 Scan source 均在 occupied lease 下真实点击并正确 409，
@@ -821,7 +824,7 @@ Phase 0 外网边界不执行；5 个 Scan source 均在 occupied lease 下真�
 | 正式 PG 保护 | **PASS**：artifact 绑定迁移前/后正式 container+volume 指纹；cleanup 后复核一致；container 保持 exited |
 | 正式 SQLite install | **PASS**：no-replace 安装到 `jobfeed_jobfeed_data`；runtime SHA 与 artifact 一致 |
 | 正式 CLI/Web smoke | **PASS**：CLI 读取真实记录；Web `db=ok`、56,507 jobs；0 active leases |
-| Soak day 0 manual acceptance | **CONDITIONAL PASS**：7 Web zones、31 API operations、canonical CLI/mock scan、backup/restore、真实 Chrome extension；测试数据零残留；1,856 tests green。剩余：正式 Docker `codex-cli` runtime 不可用；extension 附件权限未开启 |
+| Soak day 0 manual acceptance | **CONDITIONAL PASS**：7 Web zones、31 API operations、canonical CLI/mock scan、backup/restore、真实 Chrome extension；测试数据零残留；1,857 tests green。正式 Web 的缺失 LLM runtime 已从 500 修成可操作 503 且无 phantom run；剩余：真实付费 backend 尚未装入 Docker 或切换为 host runtime；extension 附件权限未开启 |
 | 7 天 soak | **ACTIVE**：开始于 2026-08-13T03:37:59Z；完成前禁止 Task 8 |
 
 ### 15.1 Task 0 implementation reality：migration control-plane

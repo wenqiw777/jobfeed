@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from jobfeed.domain.errors import (
+    LLMRuntimeUnavailable,
     ResumeNotConfiguredError,
     RunConflictError,
     SourceConfigError,
@@ -21,6 +22,7 @@ from tests.web.test_app_skeleton import fake_context, open_client
 HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
 HTTP_CONFLICT = 409
+HTTP_SERVICE_UNAVAILABLE = 503
 _EVAL_LIMIT = 10
 
 
@@ -43,11 +45,13 @@ class FakeRunManager:
         should_conflict_eval: bool = False,
         disabled_source: str | None = None,
         missing_resume: bool = False,
+        unavailable_llm: bool = False,
     ) -> None:
         self._should_conflict_scan = should_conflict_scan
         self._should_conflict_eval = should_conflict_eval
         self._disabled_source = disabled_source
         self._missing_resume = missing_resume
+        self._unavailable_llm = unavailable_llm
         self._active: list[ActiveRun] = []
         self.scan_calls: list[object] = []
         self.eval_calls: list[dict[str, object]] = []
@@ -67,6 +71,10 @@ class FakeRunManager:
             raise RunConflictError("An evaluation is already running")
         if self._missing_resume:
             raise ResumeNotConfiguredError("Resume file not found: /no/such/resume.md")
+        if self._unavailable_llm:
+            raise LLMRuntimeUnavailable(
+                "codex-cli backend requires 'codex' to be installed and on PATH"
+            )
         self.eval_calls.append(kwargs)
         return "run-eval-1"
 
@@ -193,6 +201,18 @@ async def test_trigger_evaluate_conflict_returns_409() -> None:
 
     assert resp.status_code == HTTP_CONFLICT
     assert resp.json()["error"]["code"] == "evaluate_already_running"
+
+
+async def test_trigger_evaluate_unavailable_llm_returns_503() -> None:
+    """POST /api/runs/evaluate maps missing backend runtime to a clean 503."""
+    app, _mgr = _build_app(FakeRunManager(unavailable_llm=True))
+    async with open_client(app) as client:
+        resp = await client.post("/api/runs/evaluate", json={})
+
+    assert resp.status_code == HTTP_SERVICE_UNAVAILABLE
+    body = resp.json()["error"]
+    assert body["code"] == "llm_runtime_unavailable"
+    assert "codex-cli backend requires 'codex'" in body["message"]
 
 
 # ---------------------------------------------------------------------------
