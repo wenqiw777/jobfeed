@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+SCRIPT_PATH="$0"
+while [ -L "$SCRIPT_PATH" ]; do
+    SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+    LINK_TARGET="$(readlink "$SCRIPT_PATH")"
+    case "$LINK_TARGET" in
+        /*) SCRIPT_PATH="$LINK_TARGET" ;;
+        *) SCRIPT_PATH="$SCRIPT_DIR/$LINK_TARGET" ;;
+    esac
+done
+REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)"
 
 fail() {
     printf 'error: %s\n' "$*" >&2
     exit 2
 }
+
+if [ "$#" -eq 0 ]; then
+    exec "$REPO_ROOT/setup.sh" --launch-only
+fi
 
 if [ "${1:-}" = "migrate" ] && { \
     [ "${2:-}" = "capture-postgres-baseline" ] \

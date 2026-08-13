@@ -18,6 +18,8 @@ and reaches the local Jobfeed GUI without installing Node or Docker.
 - Runtime sync excludes the development extra.
 - The local server becomes healthy at `127.0.0.1:7654` and the browser opens.
 - Repeating setup does not start a duplicate server.
+- Setup installs a user-local `jobfeed` command; zero arguments start or reuse
+  the server and open the correct GUI route from any working directory.
 - A fresh checkout does not need Node/npm to serve the GUI.
 - Focused setup tests, `make quality`, and a real fresh-checkout browser smoke pass.
 
@@ -33,6 +35,13 @@ Complete.
   created schema v1, and reached `{"status":"ok","db":"ok"}`.
 - The detached server survived its setup shell with PPID 1; repeating setup
   retained the same PID instead of launching another process.
+- The installed launcher resolves its repo symlink, so `jobfeed` works outside
+  the checkout; subcommands still enter the same repo-local runtime.
+- Real terminal proof: `setup.sh` installed
+  `~/.local/bin/jobfeed -> <checkout>/bin/jobfeed`; after stopping the server,
+  running `jobfeed` from `/tmp` started a new detached PID, opened the GUI, and
+  returned `{"status":"ok","db":"ok"}`. `jobfeed --help` from `/tmp` retained
+  the full existing command surface.
 - Direct SQLite verification returned `integrity_check=ok`, zero FK violations,
   and an empty initial jobs table.
 - Real Chrome loaded all seven GUI zones from the committed 1.6 MB production

@@ -13,6 +13,17 @@ fail() {
     exit 1
 }
 
+launch_only=0
+case "$#" in
+    0) ;;
+    1)
+        [ "$1" = "--launch-only" ] \
+            || fail "usage: ./setup.sh [--launch-only]"
+        launch_only=1
+        ;;
+    *) fail "usage: ./setup.sh [--launch-only]" ;;
+esac
+
 find_or_install_uv() {
     if command -v uv >/dev/null 2>&1; then
         command -v uv
@@ -34,6 +45,24 @@ find_or_install_uv() {
         fi
     done
     fail "uv installation completed but the uv executable was not found"
+}
+
+install_launcher() {
+    uv_bin="$1"
+    launcher_dir="$("$uv_bin" tool dir --bin)"
+    [ -n "$launcher_dir" ] || fail "uv returned an empty tool executable directory"
+    mkdir -p -- "$launcher_dir"
+    launcher="$launcher_dir/jobfeed"
+    launcher_target="$REPO_ROOT/bin/jobfeed"
+    if [ -e "$launcher" ] || [ -L "$launcher" ]; then
+        if [ ! -L "$launcher" ] || [ "$(readlink "$launcher")" != "$launcher_target" ]; then
+            fail "$launcher already exists and is not managed by this checkout"
+        fi
+    fi
+    ln -sfn -- "$launcher_target" "$launcher"
+    if ! "$uv_bin" tool update-shell >/dev/null 2>&1; then
+        printf '%s\n' "warning: add $launcher_dir to PATH to use the jobfeed command" >&2
+    fi
 }
 
 is_healthy() {
@@ -132,9 +161,15 @@ cd "$REPO_ROOT"
     || fail "the prebuilt GUI is missing; reinstall from a complete release checkout"
 
 mkdir -p "$DATA_DIR"
-uv_bin="$(find_or_install_uv)"
-printf '%s\n' "==> installing the Jobfeed runtime ..."
-"$uv_bin" sync --locked --no-dev --python 3.12
+if [ "$launch_only" -eq 0 ]; then
+    uv_bin="$(find_or_install_uv)"
+    printf '%s\n' "==> installing the Jobfeed runtime ..."
+    "$uv_bin" sync --locked --no-dev --python 3.12
+    install_launcher "$uv_bin"
+else
+    [ -x "$REPO_ROOT/.venv/bin/jobfeed" ] \
+        || fail "host runtime is not installed; run ./setup.sh"
+fi
 
 start_server
 open_gui
@@ -142,3 +177,6 @@ open_gui
 printf '\nJobfeed is ready: %s\n' "$GUI_URL"
 printf 'Data: %s\n' "$DATA_DIR/jobfeed.sqlite"
 printf 'Logs: %s\n' "$LOG_FILE"
+if [ "$launch_only" -eq 0 ]; then
+    printf '%s\n' "Command: open a new terminal and run jobfeed"
+fi

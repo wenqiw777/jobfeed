@@ -19,7 +19,9 @@ Choose your résumé, models, sources, and filters there; saving creates the
 project-local `config.toml` and opens Triage. The production GUI bundle ships in
 the repository, so users do not install Node or build the frontend. Repeating
 the command is safe: it reuses a healthy server instead of starting a
-duplicate. The older `./setup` name remains an alias.
+duplicate. Setup also installs a user-local terminal launcher and updates the
+shell path. In each new terminal, run `jobfeed` with no arguments to start or
+reuse the server and open the GUI. The older `./setup` name remains an alias.
 
 After setup, `./scan --source mock` runs an offline smoke scan; `./scan` uses
 the sources enabled in `config.toml`. Every normal `./bin/jobfeed ...` command
@@ -42,13 +44,18 @@ Scoring needs an LLM backend. To try it with **no toolchain**, use the mock conf
 ## Host Runtime
 
 ```sh
+jobfeed # start or reuse the server, then open the GUI
 ./bin/jobfeed --config tests/fixtures/docker-smoke.toml scan --source mock
 ./bin/jobfeed --config tests/fixtures/docker-smoke.toml evaluate --limit 3
 ./bin/jobfeed --config tests/fixtures/docker-smoke.toml digest
 ./bin/jobfeed serve
 ```
 
-The canonical entrypoint is always `./bin/jobfeed`; ordinary commands execute `.venv/bin/jobfeed` from the repo root. The smoke fixture selects mock LLM backends so it works offline. Explicit PostgreSQL snapshot migration and rollback rehearsal commands still use isolated Docker Compose projects.
+The setup-installed `jobfeed` command points to the canonical
+`./bin/jobfeed` entrypoint, so both execute `.venv/bin/jobfeed` from the repo
+root and use the same SQLite file. The smoke fixture selects mock LLM backends
+so it works offline. Explicit PostgreSQL snapshot migration and rollback
+rehearsal commands still use isolated Docker Compose projects.
 
 SQLite is the supported normal store backend. Runtime data lives in `data/jobfeed.sqlite`; Jobfeed does not read or write `~/.jobfeed/`. Omitting `--config` discovers repo-local `config.toml`, whose default real `codex-cli` models use the host executable and host login.
 
@@ -65,7 +72,9 @@ make fmt
 pre-commit install
 ```
 
-Use `./bin/jobfeed` for production-parity verification. Bare `jobfeed` and `uv run jobfeed` remain developer shortcuts.
+Use `./bin/jobfeed` for repo-explicit production-parity verification. The
+setup-installed bare `jobfeed` is the end-user launcher; `uv run jobfeed`
+remains developer-only.
 
 ### ML-gate end-to-end test (`pytest -m mlmodel`)
 

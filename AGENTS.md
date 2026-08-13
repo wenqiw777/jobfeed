@@ -5,10 +5,11 @@
 - Treat the Phase 0 plan as source of truth when it conflicts with the architecture spec.
 - Do not read or write `~/.jobfeed/` in Phase 0.
 - Do not add external network IO, real LLM calls, browser automation, Temporal, Postgres, or frontend code in Phase 0.
-- Treat `./bin/jobfeed ...` as the canonical user-facing CLI path. It executes
-  the repo-local host `.venv`; bare `jobfeed ...` or `uv run jobfeed ...` is
-  developer-only. Docker is reserved for migration, rollback, CI, or optional
-  deployment checks.
+- Treat `./bin/jobfeed ...` as the canonical repo-local CLI path. `setup.sh`
+  installs a user-local `jobfeed` launcher pointing to it; zero arguments start
+  the local server and open the GUI, while subcommands keep their existing
+  behavior. `uv run jobfeed ...` is developer-only. Docker is reserved for
+  migration, rollback, CI, or optional deployment checks.
 - Keep `domain/` pure stdlib and keep services adapter-free.
 - Write docstrings for public production APIs and comments only for why, constraints, invariants, complexity, or failure modes.
 - Run `make quality` before marking any task complete.
