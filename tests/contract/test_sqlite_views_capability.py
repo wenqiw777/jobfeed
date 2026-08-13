@@ -250,6 +250,15 @@ async def test_twin_queries_use_exact_pairs_and_stable_order(tmp_path: Path) -> 
         assert await store.list_twin_statuses(str(blank)) == []
         empty = await store.list_twin_rows_by_status([], statuses=["applied"], limit=1)
         assert empty == []
+
+        large_keys = [("missing", str(index)) for index in range(1_100)]
+        large_keys.append(("alpha", "engineer"))
+        large = await store.list_twin_rows_by_status(
+            large_keys,
+            statuses=["applied"],
+            limit=10,
+        )
+        assert [row.job.id for row in large] == [str(twin)]
     finally:
         await lifecycle.close()
 

@@ -186,14 +186,17 @@ class _SqliteViews:
         """Return bounded exact-pair twin rows in the requested statuses."""
         if not keys or not statuses:
             return []
-        key_predicate = " OR ".join(
-            "(j.company_norm=? AND j.title_norm=?)" for _ in keys
-        )
-        params: list[object] = [value for key in keys for value in key]
+        unique_keys = list(dict.fromkeys(keys))
+        key_values = ",".join("(?,?)" for _ in unique_keys)
+        params: list[object] = [value for key in unique_keys for value in key]
         params.extend(statuses)
         params.append(limit)
         sql = (
-            f"SELECT {_COLUMNS}{_FROM} WHERE ({key_predicate})"
+            f"WITH twin_keys(company_norm,title_norm) AS (VALUES {key_values})"
+            f" SELECT {_COLUMNS}{_FROM}"
+            " JOIN twin_keys AS tk"
+            " ON tk.company_norm=j.company_norm AND tk.title_norm=j.title_norm"
+            " WHERE 1"
             " AND j.company_norm <> '' AND j.title_norm <> ''"
             f" AND s.status IN ({_placeholders(statuses)})"
             " ORDER BY j.discovered_at DESC, j.id DESC LIMIT ?"
