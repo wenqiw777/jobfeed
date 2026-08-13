@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -293,6 +294,46 @@ class _SplitGate:
             )
             for job in jobs
         ]
+
+
+class _ConcurrencyRecordingStore(FakeStore):
+    """Record simultaneous gate-result writes without touching a database."""
+
+    def __init__(self, candidates: list[JobPosting]) -> None:
+        super().__init__(candidates)
+        self.active_writes = 0
+        self.peak_writes = 0
+
+    async def save_ml_gate_result(self, job_id: str, result: MLGateResult) -> None:
+        self.active_writes += 1
+        self.peak_writes = max(self.peak_writes, self.active_writes)
+        try:
+            await asyncio.sleep(0.01)
+            await super().save_ml_gate_result(job_id, result)
+        finally:
+            self.active_writes -= 1
+
+
+@pytest.mark.asyncio
+async def test_gate_result_persistence_is_bounded() -> None:
+    """A large gate batch must not open one SQLite worker thread per row."""
+    jobs = [_job(str(index)) for index in range(20)]
+    store = _ConcurrencyRecordingStore(jobs)
+    gate = _SplitGate(pass_ids={job.id or "" for job in jobs})
+    deps = _deps(store, gate=gate)
+    run = PipelineRun(run_id="run-1", started_at=RUN_AT, source="evaluate")
+
+    await gate_unrated(
+        deps,
+        gate,
+        run,
+        jobs,
+        dry_run=False,
+        max_concurrent=3,
+    )
+
+    assert store.peak_writes == 3  # noqa: PLR2004 - configured cap
+    assert len(store.gate_results) == len(jobs)
 
 
 @pytest.mark.asyncio

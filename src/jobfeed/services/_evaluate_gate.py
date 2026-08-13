@@ -46,7 +46,14 @@ async def gate_representatives(
         return [c.job for c in representatives]
     already_pass = [c.job for c in representatives if c.ml_gate_result == "pass"]
     to_gate = [c.job for c in representatives if c.ml_gate_result is None]
-    newly_passed = await gate_unrated(deps, gate, run, to_gate, dry_run)
+    newly_passed = await gate_unrated(
+        deps,
+        gate,
+        run,
+        to_gate,
+        dry_run,
+        max_concurrent=config.llm.max_concurrent,
+    )
     survivors = already_pass + newly_passed
     # The survivor count is the funnel's "after gate" stage; the scored
     # counters can't stand in for it (Stage A limit/budget cap them).
@@ -54,12 +61,14 @@ async def gate_representatives(
     return survivors
 
 
-async def gate_unrated(
+async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurrency cap
     deps: EvaluateDependencies,
     gate: MLGate,
     run: PipelineRun,
     to_gate: list[JobPosting],
     dry_run: bool,
+    *,
+    max_concurrent: int = 4,
 ) -> list[JobPosting]:
     """Score NULL-gate reps, persist results, and return the 'pass' subset.
 
@@ -72,6 +81,7 @@ async def gate_unrated(
         run: Pipeline run whose counters are mutated.
         to_gate: Job postings to score (NULL-gate only).
         dry_run: When True, skip persistence.
+        max_concurrent: Maximum simultaneous result writes.
 
     Returns:
         Job postings that passed the gate.
@@ -86,7 +96,13 @@ async def gate_unrated(
     # CPU-bound inference is the adapter's job (XGBoostGate offloads to a
     # worker thread internally), so an async gate implementation stays legal.
     results = await gate.predict_batch(inputs)
-    await _persist_gate_results(deps, to_gate, results, dry_run)
+    await _persist_gate_results(
+        deps,
+        to_gate,
+        results,
+        dry_run,
+        max_concurrent=max_concurrent,
+    )
     run.jobs_ml_gated += sum(1 for result in results if result.result != "pass")
     return [
         job
@@ -100,14 +116,19 @@ async def _persist_gate_results(
     representatives: list[JobPosting],
     results: list[MLGateResult],
     dry_run: bool,
+    *,
+    max_concurrent: int,
 ) -> None:
-    """Persist each gate result concurrently, 1:1 with reps (no-op in dry-run)."""
+    """Persist gate results with bounded fan-out, 1:1 with representatives."""
     if dry_run:
         return
     pairs = list(zip(representatives, results, strict=True))
 
+    semaphore = asyncio.Semaphore(max(1, max_concurrent))
+
     async def _save(job: JobPosting, result: MLGateResult) -> None:
-        await deps.store.save_ml_gate_result(_job_id(job), result)
+        async with semaphore:
+            await deps.store.save_ml_gate_result(_job_id(job), result)
 
     await asyncio.gather(*(_save(job, result) for job, result in pairs))
 
