@@ -386,6 +386,30 @@ test("an applied job can add the first interview round", async () => {
   });
 });
 
+test("interview submit uses the datetime value visible in the native control", async () => {
+  renderPipeline();
+  await screen.findByTestId("job-row-a1");
+  await openRow("a1");
+
+  const panel = await screen.findByRole("region", { name: "Interviews" });
+  const scheduled = within(panel).getByLabelText("Scheduled time") as HTMLInputElement;
+  fireEvent.change(within(panel).getByLabelText("Round label"), {
+    target: { value: "Technical screen" },
+  });
+  scheduled.value = "2026-08-20T14:30";
+  expect(scheduled).toHaveValue("2026-08-20T14:30");
+  fireEvent.click(within(panel).getByRole("button", { name: "Add round" }));
+
+  await within(panel).findByText("Technical screen");
+  const post = calls.find(
+    (call) => call.url === "/api/jobs/a1/interviews" && call.method === "POST",
+  );
+  expect(JSON.parse(String(post?.init?.body))).toEqual({
+    label: "Technical screen",
+    scheduled_at: new Date("2026-08-20T14:30").toISOString(),
+  });
+});
+
 test("completing a round marks it done and shows the notes", async () => {
   state.interviews["i1"] = [
     {

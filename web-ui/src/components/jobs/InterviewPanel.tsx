@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   useAddInterview,
@@ -105,7 +105,7 @@ function CompleteForm({ jobId, roundIndex }: { jobId: string; roundIndex: number
 
 function AddRoundForm({ jobId }: { jobId: string }) {
   const [label, setLabel] = useState("");
-  const [scheduled, setScheduled] = useState("");
+  const scheduledRef = useRef<HTMLInputElement>(null);
   const add = useAddInterview();
 
   const submit = () => {
@@ -114,11 +114,17 @@ function AddRoundForm({ jobId }: { jobId: string }) {
       return;
     }
     add.mutate(
-      { id: jobId, label: trimmed, scheduledAt: dateTimeInputToIso(scheduled) },
+      {
+        id: jobId,
+        label: trimmed,
+        scheduledAt: dateTimeInputToIso(scheduledRef.current?.value ?? ""),
+      },
       {
         onSuccess: () => {
           setLabel("");
-          setScheduled("");
+          if (scheduledRef.current !== null) {
+            scheduledRef.current.value = "";
+          }
         },
         onError: (error) =>
           toast({ variant: "destructive", title: "Add round failed", description: error.message }),
@@ -142,9 +148,8 @@ function AddRoundForm({ jobId }: { jobId: string }) {
         className="h-7 w-36"
       />
       <input
+        ref={scheduledRef}
         type="datetime-local"
-        value={scheduled}
-        onChange={(event) => setScheduled(event.target.value)}
         aria-label="Scheduled time"
         className="h-7 rounded-control border border-border-strong bg-surface px-2 font-mono text-micro text-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       />
