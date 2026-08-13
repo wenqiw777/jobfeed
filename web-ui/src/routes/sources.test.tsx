@@ -128,23 +128,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test("renders the Cloudscape source workspace and tracked-company table", async () => {
+  renderSources();
+
+  expect(await screen.findByTestId("cloudscape-sources")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Company sources", level: 2 })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Add company boards", level: 2 })).toBeVisible();
+  expect(screen.getByRole("heading", { name: /Tracked companies/, level: 2 })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Company" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Vendor" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Discovery health" })).toBeVisible();
+});
+
 test("companies table: slug/vendor columns, failure tint, removed via toggle only", async () => {
   renderSources();
   const row1 = await screen.findByTestId("company-row-co1");
-  const row2 = screen.getByTestId("company-row-co2");
 
   expect(within(row1).getByText("co1")).toBeInTheDocument();
-  expect(within(row2).getByText("ashby")).toBeInTheDocument();
+  expect(screen.getByText("ashby")).toBeInTheDocument();
   // Non-zero failure counts get the consider-family warn tint; zero stays mute.
-  expect(within(row2).getByText("3")).toHaveClass("text-consider");
-  expect(within(row1).getByText("0")).toHaveClass("text-mute");
+  expect(screen.getByText("3 consecutive failures")).toBeInTheDocument();
+  expect(screen.getByText("Healthy · 0 failures")).toBeInTheDocument();
 
   // Soft-removed rows are hidden until the toggle re-includes them.
   expect(screen.queryByTestId("company-row-gone1")).toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "Include removed" }));
   const removedRow = await screen.findByTestId("company-row-gone1");
   expect(calls.at(-1)?.url).toContain("include_removed=true");
-  expect(within(removedRow).getByText("removed")).toBeInTheDocument();
+  expect(screen.getByText("Removed")).toBeInTheDocument();
   // No remove affordance on an already-removed row.
   expect(within(removedRow).queryByRole("button", { name: /Remove/ })).toBeNull();
 });
@@ -158,7 +169,7 @@ test("remove is gated by the danger dialog; cancel sends no request", async () =
   expect(within(dialog).getByText("Stop tracking co1?")).toBeInTheDocument();
 
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(screen.getByRole("dialog").className).toContain("hidden"));
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
 
   fireEvent.click(screen.getByRole("button", { name: "Remove co1" }));
@@ -215,7 +226,7 @@ test("probe flow: 20-line paste → per-entry results → confirm inserts only c
 
   // Per-entry status: resolved rows pre-checked, errors flagged and
   // uncheckable, the definitive miss labeled (not an error).
-  expect(await screen.findByText("16 of 20 selected")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /16 of 20 selected/ })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Add co3" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Add bad1" })).toBeDisabled();
   expect(screen.getByRole("checkbox", { name: "Add bad1" })).not.toBeChecked();
@@ -225,7 +236,7 @@ test("probe flow: 20-line paste → per-entry results → confirm inserts only c
 
   // Uncheck one resolved row; confirm must post exactly the checked 15.
   fireEvent.click(screen.getByRole("checkbox", { name: "Add co16" }));
-  expect(screen.getByText("15 of 20 selected")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /15 of 20 selected/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Add 15 companies" }));
 
   const bulk = await waitFor(() => {
@@ -271,10 +282,10 @@ test("bulk confirm failure: error toast, review stays interactive for a retry", 
     target: { value: "alpha\nbeta" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Probe list" }));
-  expect(await screen.findByText("2 of 2 selected")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /2 of 2 selected/ })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Add 2 companies" }));
-  expect(await screen.findByRole("button", { name: "Adding…" })).toBeDisabled();
+  expect(await screen.findByText("Adding companies")).toBeInTheDocument();
   failBulk();
 
   // The failure surfaces as a toast…
@@ -283,7 +294,7 @@ test("bulk confirm failure: error toast, review stays interactive for a retry", 
   // …and the review is still interactive, not wedged: the confirm button is
   // back from its pending label and enabled, the result rows still render.
   expect(screen.getByRole("button", { name: "Add 2 companies" })).toBeEnabled();
-  expect(screen.getByText("2 of 2 selected")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /2 of 2 selected/ })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Add alpha" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Add beta" })).toBeChecked();
 });
@@ -296,13 +307,13 @@ test("probe review: select all / none drive the confirm button", async () => {
     target: { value: "alpha\nbeta\nbad9" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Probe list" }));
-  expect(await screen.findByText("2 of 3 selected")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /2 of 3 selected/ })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "None" }));
-  expect(screen.getByText("0 of 3 selected")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /0 of 3 selected/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Add 0 companies" })).toBeDisabled();
 
   fireEvent.click(screen.getByRole("button", { name: "Select all" }));
-  expect(screen.getByText("2 of 3 selected")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /2 of 3 selected/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Add 2 companies" })).toBeEnabled();
 });

@@ -1,36 +1,39 @@
+import Alert from "@cloudscape-design/components/alert";
+import Badge from "@cloudscape-design/components/badge";
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import Checkbox from "@cloudscape-design/components/checkbox";
+import Header from "@cloudscape-design/components/header";
+import Modal from "@cloudscape-design/components/modal";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
+import Table from "@cloudscape-design/components/table";
 import { useState } from "react";
 
 import { useRemoveCompany, type CompanyOut } from "@/api/queries";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { toast } from "@/components/ui/use-toast";
-import { cn } from "@/lib/utils";
 
-const GRID_COLS = "grid grid-cols-[minmax(0,2fr)_7rem_6rem_minmax(0,1fr)_5.5rem] items-center gap-2";
+interface CompaniesTableProps {
+  companies: CompanyOut[];
+  includeRemoved: boolean;
+  isLoading: boolean;
+  error: Error | null;
+  onIncludeRemovedChange: (includeRemoved: boolean) => void;
+}
 
-/**
- * Tracked-companies table: slug (mono) / vendor / discover-failure count
- * (consider tint when > 0) / removed badge. Removing is destructive —
- * scans stop covering the company — so it sits behind the danger dialog
- * (DESIGN.md: dialogs are for destructive confirmation only).
- */
-export function CompaniesTable({ companies }: { companies: CompanyOut[] }) {
-  // The dialog target is a slug snapshot: a refetch can drop the row
-  // while the dialog is up, but the confirm still names what was asked.
+/** Cloudscape resource table for tracked company boards. */
+export function CompaniesTable({
+  companies,
+  includeRemoved,
+  isLoading,
+  error,
+  onIncludeRemovedChange,
+}: CompaniesTableProps) {
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const remove = useRemoveCompany();
 
   const confirmRemove = () => {
-    if (removeTarget === null || remove.isPending) {
-      return;
-    }
+    if (removeTarget === null || remove.isPending) return;
     remove.mutate(
       { slug: removeTarget },
       {
@@ -38,108 +41,123 @@ export function CompaniesTable({ companies }: { companies: CompanyOut[] }) {
           toast({ title: `Stopped tracking ${removeTarget}` });
           setRemoveTarget(null);
         },
-        onError: (error) =>
-          toast({ variant: "destructive", title: "Remove failed", description: error.message }),
+        onError: (mutationError) =>
+          toast({
+            variant: "destructive",
+            title: "Remove failed",
+            description: mutationError.message,
+          }),
       },
     );
   };
 
   return (
-    <div>
-      <div
-        aria-hidden="true"
-        className={cn(GRID_COLS, "border-b border-border px-3 py-1.5 text-label uppercase tracking-wide text-mute")}
-      >
-        <span>Slug</span>
-        <span>Vendor</span>
-        <span className="text-right">Failures</span>
-        <span />
-        <span />
-      </div>
-      <ul aria-label="Tracked companies">
-        {companies.map((company) => (
-          <CompanyRow key={company.slug} company={company} onRemove={setRemoveTarget} />
-        ))}
-      </ul>
-      <Dialog
-        open={removeTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setRemoveTarget(null);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Stop tracking {removeTarget}?</DialogTitle>
-            <DialogDescription>
-              Scans will skip this company from now on. Jobs already discovered stay in
-              Library; re-adding the slug resumes tracking.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button size="sm" onClick={() => setRemoveTarget(null)}>
-              Cancel
-            </Button>
-            <Button variant="danger" size="sm" disabled={remove.isPending} onClick={confirmRemove}>
-              {remove.isPending ? "Removing…" : "Remove"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function CompanyRow({
-  company,
-  onRemove,
-}: {
-  company: CompanyOut;
-  onRemove: (slug: string) => void;
-}) {
-  return (
-    <li
-      data-testid={`company-row-${company.slug}`}
-      className={cn(GRID_COLS, "border-b border-hairline px-3 py-1 text-compact")}
-    >
-      <span className="truncate font-mono text-ink">{company.slug}</span>
-      <span className="text-ink-2">{company.vendor ?? "—"}</span>
-      <span className="text-right">
-        <FailureCount count={company.consecutive_discover_failures} />
-      </span>
-      <span>
-        {company.removed && (
-          <span className="rounded-pill bg-skip-bg px-1.5 py-px text-micro font-medium text-skip">
-            removed
-          </span>
-        )}
-      </span>
-      <span className="text-right">
-        {!company.removed && (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Remove ${company.slug}`}
-            className="text-mute hover:text-danger"
-            onClick={() => onRemove(company.slug)}
+    <>
+      <Table
+        trackBy="slug"
+        items={companies}
+        loading={isLoading}
+        loadingText="Loading companies"
+        skeleton={{ totalRows: 4 }}
+        ariaLabels={{ tableLabel: "Tracked companies" }}
+        contentDensity="compact"
+        columnDefinitions={[
+          {
+            id: "company",
+            header: "Company",
+            isRowHeader: true,
+            cell: (company) => (
+              <span data-testid={`company-row-${company.slug}`}>{company.slug}</span>
+            ),
+          },
+          { id: "vendor", header: "Vendor", cell: (company) => company.vendor ?? "—" },
+          {
+            id: "health",
+            header: "Discovery health",
+            cell: (company) => <DiscoveryHealth company={company} />,
+          },
+          {
+            id: "state",
+            header: "State",
+            cell: (company) =>
+              company.removed ? <Badge color="grey">Removed</Badge> : <Badge color="green">Active</Badge>,
+          },
+          {
+            id: "actions",
+            header: "Actions",
+            cell: (company) =>
+              company.removed ? null : (
+                <Button
+                  variant="inline-link"
+                  ariaLabel={`Remove ${company.slug}`}
+                  onClick={() => setRemoveTarget(company.slug)}
+                >
+                  Remove
+                </Button>
+              ),
+          },
+        ]}
+        header={
+          <Header
+            variant="h2"
+            counter={`(${companies.length})`}
+            description="Active rows are included in the next ATS scan. Discovery failures reset after a successful fetch."
+            actions={
+              <Checkbox
+                checked={includeRemoved}
+                onChange={({ detail }) => onIncludeRemovedChange(detail.checked)}
+                ariaLabel="Include removed"
+              >
+                Include removed
+              </Checkbox>
+            }
           >
-            Remove
-          </Button>
-        )}
-      </span>
-    </li>
+            Tracked companies
+          </Header>
+        }
+        empty={
+          <Box textAlign="center" color="inherit">
+            <SpaceBetween size="xs">
+              <b>No companies tracked</b>
+              <Box variant="p" color="text-body-secondary">
+                Probe a board above, review the vendor match, then add it to the scan roster.
+              </Box>
+            </SpaceBetween>
+          </Box>
+        }
+      />
+      {error !== null && <Alert type="error" header="Companies could not be loaded">{error.message}</Alert>}
+      <Modal
+        visible={removeTarget !== null}
+        onDismiss={() => setRemoveTarget(null)}
+        header={`Stop tracking ${removeTarget ?? "company"}?`}
+        closeAriaLabel="Close remove confirmation"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button onClick={() => setRemoveTarget(null)}>Cancel</Button>
+              <Button variant="primary" loading={remove.isPending} onClick={confirmRemove}>
+                Remove
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <Alert type="warning">
+          Scans will skip this company. Existing jobs remain in Library, and re-adding the slug resumes tracking.
+        </Alert>
+      </Modal>
+    </>
   );
 }
 
-/** Consecutive discover failures; consider-family tint once non-zero. */
-function FailureCount({ count }: { count: number }) {
-  if (count === 0) {
-    return <span className="font-mono text-micro text-mute">0</span>;
+function DiscoveryHealth({ company }: { company: CompanyOut }) {
+  if (company.consecutive_discover_failures === 0) {
+    return <StatusIndicator type="success">Healthy · 0 failures</StatusIndicator>;
   }
   return (
-    <span className="inline-flex rounded-pill bg-consider-bg px-1.5 py-px font-mono text-micro font-medium text-consider">
-      {count}
-    </span>
+    <StatusIndicator type="warning">
+      {company.consecutive_discover_failures} consecutive failures
+    </StatusIndicator>
   );
 }
