@@ -143,14 +143,16 @@ export default function PipelinePage() {
   );
 }
 
-/** Status-keyed detail extras: interview rounds while interviewing, the
+/** Status-keyed detail extras: interview rounds while applied/interviewing, the
  * archive (abandon) action while still active (applied/interviewing), and
  * the restore card once ghosted. Keyed off the LIST row's status so the
  * seam needs no second detail fetch. */
 function PipelineSections({ job }: { job: JobSummary }) {
   return (
     <>
-      {job.status === "interviewing" && <InterviewPanel jobId={job.id} />}
+      {(job.status === "applied" || job.status === "interviewing") && (
+        <InterviewPanel jobId={job.id} />
+      )}
       {(job.status === "applied" || job.status === "interviewing") && (
         <ArchiveSection jobId={job.id} status={job.status} />
       )}

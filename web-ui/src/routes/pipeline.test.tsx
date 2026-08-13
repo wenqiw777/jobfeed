@@ -365,6 +365,27 @@ test("interview add posts the round and it appears in the panel", async () => {
   expect(JSON.parse(String(post?.init?.body))).toEqual({ label: "Onsite", scheduled_at: null });
 });
 
+test("an applied job can add the first interview round", async () => {
+  renderPipeline();
+  await screen.findByTestId("job-row-a1");
+  await openRow("a1");
+
+  const panel = await screen.findByRole("region", { name: "Interviews" });
+  fireEvent.change(within(panel).getByLabelText("Round label"), {
+    target: { value: "Recruiter screen" },
+  });
+  fireEvent.click(within(panel).getByRole("button", { name: "Add round" }));
+
+  expect(await within(panel).findByText("Recruiter screen")).toBeInTheDocument();
+  const post = calls.find(
+    (call) => call.url === "/api/jobs/a1/interviews" && call.method === "POST",
+  );
+  expect(JSON.parse(String(post?.init?.body))).toEqual({
+    label: "Recruiter screen",
+    scheduled_at: null,
+  });
+});
+
 test("completing a round marks it done and shows the notes", async () => {
   state.interviews["i1"] = [
     {
