@@ -674,6 +674,27 @@ containers/networks/volumes 残留为 0/0/0。完整 `make quality` 为 1854 pas
 exited，preflight/after 的 container 与 volume inspect SHA 完全一致。Task 7
 仍需完成至少 7 个自然日 soak 和 rollback readiness 监控；此前不得进入 Task 8。
 
+**Soak day 0 manual acceptance（2026-08-13）：PASS with three P1 fixes.** 真实
+浏览器逐区验证 Triage、Pipeline、Library、Insights、Runs、Performance、Sources，
+并执行列表搜索/排序/分页、详情、密度切换、note、follow-up、shortlist、skip、
+archive restore 与 company CRUD/restart persistence。真实 UI 首次暴露 10,000 个
+twin key 被拼成超深 `OR` 而触发 SQLite expression-depth 500；改为 exact-pair
+`VALUES` CTE 后，1,101-key regression、真实首页和 Web logs 均通过。FastAPI 31
+operations 的隔离手工验收覆盖 status、JD、application multipart、interview、
+insights/performance/runs 及 company CRUD；其暴露的 bulk transition retired-helper
+500 已改为直接调用 store aggregate，并以真实 HTTP 验证一条请求成功转换两个
+twin（`succeeded=2, cascaded=1`）。Canonical CLI 覆盖 list/stats/history/company/
+snapshot/interview/digest/ML info/evaluate dry-run/health，并在独立 Compose project
+完成真实 mock scan（3 inserted）后销毁全部资源；`mark-stale-closed` 的错误宽
+capability check 已收窄，正式 dry-run 返回 1,476 candidates。SQLite online backup
+与 restore 手工恢复 56,507 jobs，integrity/FK 通过。测试数据和 digest state key
+已精确删除；15 表 counts 回到 cutover baseline，测试前缀残留 0，两个 lease idle，
+`integrity_check=ok`、FK violations=0。最终 `make quality` 为 1,856 passed / 418
+deselected，Ruff、format、mypy 全绿；正式 PG container/volume 指纹前后相同且
+container 仍 exited。外部网络 source、真实 LLM/付费 evaluate 按 Phase 0 边界未跑；
+Chrome extension 未连接到本 task，浏览器证据来自 Codex 隔离浏览器，待连接后可
+补真实 Chrome final gate，不阻塞当前 SQLite soak。
+
 ### Task 8：PG-only 清理（独立批准后）
 
 - **结果：** 删除 `PostgresStore`、Postgres compose service、PG Alembic runtime、asyncpg、PG testcontainers/CI lane、旧 PG import path 和过时文档；SQLite 成为唯一正式 backend。
@@ -779,6 +800,7 @@ exited，preflight/after 的 container 与 volume inspect SHA 完全一致。Tas
 | 正式 PG 保护 | **PASS**：artifact 绑定迁移前/后正式 container+volume 指纹；cleanup 后复核一致；container 保持 exited |
 | 正式 SQLite install | **PASS**：no-replace 安装到 `jobfeed_jobfeed_data`；runtime SHA 与 artifact 一致 |
 | 正式 CLI/Web smoke | **PASS**：CLI 读取真实记录；Web `db=ok`、56,507 jobs；0 active leases |
+| Soak day 0 manual acceptance | **PASS**：7 Web zones、31 API operations、canonical CLI/mock scan、backup/restore；3 个 P1 已修复；测试数据零残留；1,856 tests green |
 | 7 天 soak | **ACTIVE**：开始于 2026-08-13T03:37:59Z；完成前禁止 Task 8 |
 
 ### 15.1 Task 0 implementation reality：migration control-plane
