@@ -256,6 +256,24 @@ test("trigger evaluate dialog opens and submits with defaults", async () => {
   expect(await screen.findByText(/Evaluate started/)).toBeInTheDocument();
 });
 
+test("trigger evaluate submits a non-default stage", async () => {
+  renderRuns();
+  await screen.findByTestId("run-row-r2");
+
+  fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
+  await screen.findByText("Trigger Evaluate");
+  fireEvent.change(screen.getByLabelText("Stage"), { target: { value: "b" } });
+  fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Start evaluate" }));
+
+  const postCall = await waitFor(() => {
+    const call = calls.find((c) => c.method === "POST" && c.url === "/api/runs/evaluate");
+    expect(call).toBeDefined();
+    return call!;
+  });
+  expect(postCall.body).toEqual({ stage: "b", limit: 1 });
+});
+
 test("evaluate 409 shows conflict toast", async () => {
   // Override mock to return 409 for evaluate.
   const baseFetch = globalThis.fetch;

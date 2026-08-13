@@ -21,13 +21,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "@/components/ui/use-toast";
 
 type Stage = "a" | "b" | "both";
@@ -91,16 +84,16 @@ export function TriggerEvaluateButton() {
         <div className="mt-3 flex flex-col gap-3">
           <label className="flex flex-col gap-1">
             <span className="text-label text-mute">Stage</span>
-            <Select value={stage} onValueChange={(v) => setStage(v as Stage)}>
-              <SelectTrigger aria-label="Stage">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="both">Both (A + B)</SelectItem>
-                <SelectItem value="a">Stage A only</SelectItem>
-                <SelectItem value="b">Stage B only</SelectItem>
-              </SelectContent>
-            </Select>
+            <select
+              value={stage}
+              onChange={(event) => setStage(event.target.value as Stage)}
+              aria-label="Stage"
+              className="h-8 w-full rounded-control border border-border-strong bg-surface px-2.5 text-body-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              <option value="both">Both (A + B)</option>
+              <option value="a">Stage A only</option>
+              <option value="b">Stage B only</option>
+            </select>
           </label>
 
           <label className="flex flex-col gap-1">
