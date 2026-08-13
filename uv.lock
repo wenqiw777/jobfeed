@@ -855,7 +855,7 @@ requires-dist = [
     { name = "python-jobspy", specifier = ">=1.1.82" },
     { name = "python-multipart", specifier = ">=0.0.7" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.22" },
-    { name = "ruff", marker = "extra == 'dev'" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.14" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "structlog" },

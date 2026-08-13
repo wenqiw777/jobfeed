@@ -25,7 +25,7 @@ _USE_SETTINGS_TIMEOUT = _UseSettingsTimeout()
 class LLMClientBuildOptions:
     """Per-client runtime policy overrides for LLM adapters."""
 
-    timeout_s: float | None | _UseSettingsTimeout = _USE_SETTINGS_TIMEOUT
+    timeout_s: float | _UseSettingsTimeout | None = _USE_SETTINGS_TIMEOUT
     max_retries: int = 2
 
 

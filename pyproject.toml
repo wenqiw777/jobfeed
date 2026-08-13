@@ -74,7 +74,7 @@ dev = [
     "pytest-asyncio",
     "pytest-playwright",
     "respx >= 0.22",
-    "ruff",
+    "ruff == 0.15.14",
     "testcontainers[postgres] >= 4.0",
 ]
 
