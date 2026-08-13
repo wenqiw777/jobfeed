@@ -14,6 +14,8 @@ def test_default_lane_is_sqlite_and_postgres_lane_is_explicit() -> None:
     contract_suite = (ROOT / "tests/contract/test_store_contract.py").read_text()
 
     assert "test-postgres:" in makefile
+    assert "tests/contract tests/integration tests/store" in makefile
+    assert "tests/e2e/test_legacy_import.py" in makefile
     assert "-m 'not postgres" in pytest_config
     assert "pytestmark = pytest.mark.postgres" not in contract_suite
 

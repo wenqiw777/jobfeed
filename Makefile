@@ -7,7 +7,7 @@ test:
 
 # Explicit compatibility/migration lane. The default pytest addopts excludes it.
 test-postgres:
-	JOBFEED_REQUIRE_POSTGRES=1 JOBFEED_CONTRACT_BACKEND=postgres pytest -m postgres -o "addopts=" -v --tb=short
+	JOBFEED_REQUIRE_POSTGRES=1 JOBFEED_CONTRACT_BACKEND=postgres pytest -m postgres tests/contract tests/integration tests/store tests/e2e/test_legacy_import.py -o "addopts=" -v --tb=short
 
 lint:
 	ruff check . && ruff format --check . && mypy src/

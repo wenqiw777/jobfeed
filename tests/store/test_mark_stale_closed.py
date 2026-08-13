@@ -241,34 +241,34 @@ def test_cli_command_registered_in_help() -> None:
 
 
 @pytest.mark.postgres
-def test_cli_dry_run_prints_would_close(fresh_pg_dsn: str, tmp_path: Path) -> None:
-    """CLI default (dry-run) prints 'Would close N stale jobs'."""
+def test_cli_dry_run_rejects_legacy_postgres_config(
+    fresh_pg_dsn: str, tmp_path: Path
+) -> None:
+    """Normal CLI commands must reject the retired PostgreSQL runtime."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(f'[db]\nurl = "{fresh_pg_dsn}"\n', encoding="utf-8")
 
-    runner = CliRunner()
-    result = runner.invoke(
+    result = CliRunner().invoke(
         cli,
         ["--config", str(config_path), "mark-stale-closed"],
     )
 
-    assert result.exit_code == 0, result.output
-    assert "Would close" in result.output
-    assert "dry-run" in result.output
+    assert result.exit_code != 0
+    assert "PostgreSQL runtime db.url is no longer supported" in result.output
 
 
 @pytest.mark.postgres
-def test_cli_apply_prints_closed_count(fresh_pg_dsn: str, tmp_path: Path) -> None:
-    """CLI --apply writes and prints 'Closed N stale jobs.'."""
+def test_cli_apply_rejects_legacy_postgres_config(
+    fresh_pg_dsn: str, tmp_path: Path
+) -> None:
+    """The write flag must not bypass the retired runtime boundary."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(f'[db]\nurl = "{fresh_pg_dsn}"\n', encoding="utf-8")
 
-    runner = CliRunner()
-    result = runner.invoke(
+    result = CliRunner().invoke(
         cli,
         ["--config", str(config_path), "mark-stale-closed", "--apply"],
     )
 
-    assert result.exit_code == 0, result.output
-    assert "Closed" in result.output
-    assert "stale jobs" in result.output
+    assert result.exit_code != 0
+    assert "PostgreSQL runtime db.url is no longer supported" in result.output
