@@ -67,8 +67,7 @@ interface LibraryQueryState {
 
 /**
  * Library: every posting ever seen — full-width table, drawer detail.
- * No keyboard map on purpose: this is a lookup zone (table + drawer
- * interactions only); j/k decide flows belong to Triage and Pipeline.
+ * This is a lookup zone with table and modal interactions only.
  */
 export default function LibraryPage() {
   const [state, setState] = useState<LibraryQueryState>({

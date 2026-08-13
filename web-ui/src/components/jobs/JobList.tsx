@@ -45,7 +45,7 @@ export function JobList({
     virtualizer.measure();
   }, [virtualizer, rowHeight]);
 
-  // Keyboard moves must keep the active row inside the viewport.
+  // Selection changes must keep the active row inside the viewport.
   useEffect(() => {
     if (selectedId === null) {
       return;

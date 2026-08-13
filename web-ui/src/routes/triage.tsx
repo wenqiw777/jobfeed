@@ -16,7 +16,6 @@ import { DetailPane, type DecideStatus } from "@/components/jobs/DetailPane";
 import { JobList } from "@/components/jobs/JobList";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/use-toast";
-import { useKeyboardMap } from "@/lib/keyboard";
 import { useSelection } from "@/lib/use-selection";
 
 type TriageTab = "queue" | "pending_jd";
@@ -56,7 +55,6 @@ export default function TriagePage() {
   // application audit must stay pinned to the job the user opened it for.
   const [applyTarget, setApplyTarget] = useState<JobSummary | null>(null);
   const selection = useSelection();
-  const detailRef = useRef<HTMLElement>(null);
   const collapseTimerRef = useRef<number | null>(null);
 
   const list = useJobsList(triageQuery(tab));
@@ -142,60 +140,6 @@ export default function TriagePage() {
     );
   };
 
-  const moveSelection = (delta: 1 | -1) => {
-    const rows = rowsRef.current;
-    if (rows.length === 0) {
-      return;
-    }
-    const index =
-      effectiveSelectedId === null
-        ? -1
-        : rows.findIndex((job) => job.id === effectiveSelectedId);
-    const next = index === -1 ? 0 : Math.min(rows.length - 1, Math.max(0, index + delta));
-    setSelectedId(rows[next]?.id ?? null);
-  };
-
-  // n/f reach into the detail pane by data attribute — the pane's inner
-  // sections would otherwise need ref plumbing through three layers.
-  const focusKbdTarget = (name: string) => {
-    document.querySelector<HTMLElement>(`[data-kbd-target="${name}"]`)?.focus();
-  };
-
-  // Decide keys are per-tab: a/h/s only make sense for scored queue rows;
-  // a pending-JD row's sole decision is the (forced) Ignore on i. Movement,
-  // open, and the focus jumps stay shared.
-  const decideKeys: Record<string, () => void> =
-    tab === "queue"
-      ? {
-          a: () => {
-            if (selectedJob !== null) {
-              setApplyTarget(selectedJob);
-            }
-          },
-          h: () => decide("shortlisted"),
-          s: () => decide("archived"),
-        }
-      : { i: () => decide("ignored") };
-
-  useKeyboardMap(
-    {
-      ArrowDown: () => moveSelection(1),
-      j: () => moveSelection(1),
-      ArrowUp: () => moveSelection(-1),
-      k: () => moveSelection(-1),
-      Enter: () => detailRef.current?.focus(),
-      n: () => focusKbdTarget("note"),
-      f: () => focusKbdTarget("followup"),
-      o: () => {
-        if (selectedJob !== null) {
-          window.open(selectedJob.url, "_blank", "noopener");
-        }
-      },
-      ...decideKeys,
-    },
-    { enabled: applyTarget === null },
-  );
-
   const onBulkCleared = () => {
     selection.clear();
     setSelectedId(null);
@@ -229,7 +173,7 @@ export default function TriagePage() {
           }
         />
       </div>
-      <section ref={detailRef} tabIndex={-1} aria-label="Job detail" className="jobfeed-evidence-panel">
+      <section aria-label="Job detail" className="jobfeed-evidence-panel">
         <Container
           header={
             <Header variant="h2" description="Scores, source evidence, notes, and next action">
@@ -247,7 +191,7 @@ export default function TriagePage() {
             onOpenApply={() => {
               if (selectedJob !== null) setApplyTarget(selectedJob);
             }}
-            emptyHint={tab === "pending_jd" ? "Select a row — move with j/k, paste a JD or ignore with i." : undefined}
+            emptyHint={tab === "pending_jd" ? "Select a row to paste a JD or ignore the posting." : undefined}
           />
         </Container>
       </section>
@@ -329,7 +273,7 @@ function ListBody({ tab, list, jobs, ...rowProps }: ListBodyProps) {
           </p>
           <p className="mt-1 text-micro text-mute">
             {tab === "queue"
-              ? "Scan results land here sorted by verdict — decide with a / h / s."
+              ? "Scan results land here sorted by verdict for quick review."
               : "Rows whose JD couldn't be fetched queue here for a manual paste."}
           </p>
         </div>

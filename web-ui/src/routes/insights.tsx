@@ -15,8 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 const WINDOW_PRESETS = [30, 60, 90] as const;
 
 /**
- * Insights: the funnel at a glance. Read-only charts — no keyboard map
- * on purpose (nothing to decide here). The window presets re-query
+ * Insights: the funnel at a glance. The window presets re-query
  * `?window=`; totals stay all-time regardless (KPI cards label which).
  */
 export default function InsightsPage() {

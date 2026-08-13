@@ -156,20 +156,9 @@ test("top bar title follows the active zone", () => {
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Runs");
 });
 
-test("top bar keyboard hints follow the active zone's keyboard map", () => {
-  const triage = renderShell("/triage");
-  expect(
-    screen.getByText("j/k move · a apply · h shortlist · s skip"),
-  ).toBeInTheDocument();
-  triage.unmount();
-
-  const pipeline = renderShell("/pipeline");
-  expect(screen.getByText("j/k move · enter detail · o open")).toBeInTheDocument();
-  pipeline.unmount();
-
-  // Library has no keyboard map — no hints at all.
-  renderShell("/library");
-  expect(screen.queryByText(/j\/k move/)).not.toBeInTheDocument();
+test("top bar does not expose keyboard shortcut legends", () => {
+  renderShell("/triage");
+  expect(screen.queryByText(/j\/k|a apply|h shortlist|s skip/)).not.toBeInTheDocument();
 });
 
 test("lazy-loaded insights route renders after its chunk resolves", async () => {

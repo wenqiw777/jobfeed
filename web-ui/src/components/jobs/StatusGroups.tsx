@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import Icon from "@cloudscape-design/components/icon";
 
 import type { JobSummary } from "@/api/queries";
 import { JobRow } from "@/components/jobs/JobRow";
@@ -77,7 +77,6 @@ interface GroupSectionProps {
 }
 
 function GroupSection({ group, isCollapsed, selectedId, onToggle, onOpen }: GroupSectionProps) {
-  const Chevron = isCollapsed ? ChevronRight : ChevronDown;
   return (
     <section>
       <button
@@ -86,7 +85,7 @@ function GroupSection({ group, isCollapsed, selectedId, onToggle, onOpen }: Grou
         onClick={onToggle}
         className="flex w-full items-center gap-1.5 border-b border-hairline bg-bg px-3 py-1.5 text-left hover:bg-accent-bg/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
       >
-        <Chevron aria-hidden="true" className="h-3.5 w-3.5 text-mute" />
+        <Icon name={isCollapsed ? "caret-right-filled" : "caret-down-filled"} />
         <span className="text-label uppercase tracking-wide text-ink-2">{group.label}</span>
         <span className="font-mono text-micro text-mute">{group.jobs.length}</span>
       </button>

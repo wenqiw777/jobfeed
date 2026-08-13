@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import Button from "@cloudscape-design/components/button";
+import Input from "@cloudscape-design/components/input";
 
 import {
   useAddInterview,
@@ -8,7 +9,6 @@ import {
   type InterviewRound,
 } from "@/api/queries";
 import { SectionLabel } from "@/components/jobs/DetailSections";
-import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/use-toast";
 import { dateTimeInputToIso } from "@/lib/dates";
 
@@ -142,9 +142,9 @@ function AddRoundForm({ jobId }: { jobId: string }) {
     >
       <Input
         value={label}
-        onChange={(event) => setLabel(event.target.value)}
+        onChange={({ detail }) => setLabel(detail.value)}
         placeholder="Round label…"
-        aria-label="Round label"
+        ariaLabel="Round label"
         className="h-7 w-36"
       />
       <input

@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import Icon from "@cloudscape-design/components/icon";
 
 import type { AttentionResponse } from "@/api/queries";
 import { cn } from "@/lib/utils";
@@ -84,7 +84,7 @@ function Chip({ label, count, isActive, onClick }: ChipProps) {
     >
       {label}
       <span className="font-mono">{count}</span>
-      {isActive && <X aria-hidden="true" className="h-3 w-3" />}
+      {isActive && <Icon name="close" />}
     </button>
   );
 }

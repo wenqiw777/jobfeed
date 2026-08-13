@@ -7,17 +7,15 @@ import { useLocation } from "react-router";
 import { zoneForPath } from "@/components/shell/zones";
 import { useDensity, type Density } from "@/lib/density";
 
-/** Route title, keyboard legend, and persistent display preferences. */
+/** Route title and persistent display preferences. */
 export function TopBar() {
   const location = useLocation();
   const zone = zoneForPath(location.pathname);
-  const hints = zone?.hints ?? "";
 
   return (
     <div className="jobfeed-route-header">
       <Header
         variant="h1"
-        description={hints || undefined}
         actions={<ViewMenu />}
       >
         {zone?.label ?? "Jobfeed"}

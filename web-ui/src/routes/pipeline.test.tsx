@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import type {
   AttentionResponse,
@@ -224,10 +224,6 @@ function activeRowId(): string | null {
   return active?.getAttribute("data-testid")?.replace("job-row-", "") ?? null;
 }
 
-function press(key: string): void {
-  fireEvent.keyDown(window, { key });
-}
-
 function visibleRowIds(): string[] {
   return Array.from(document.querySelectorAll('[role="listitem"]')).map(
     (item) => item.getAttribute("data-testid")?.replace("job-row-", "") ?? "",
@@ -330,9 +326,7 @@ test("collapsing a group hides its rows but keeps the header count", async () =>
   expect(visibleRowIds()).toEqual(["a1", "a2", "i1", "o1", "r1", "g1"]);
 });
 
-test("j/k walk the flattened visible order, skipping collapsed groups; o opens", async () => {
-  const openSpy = vi.fn();
-  vi.stubGlobal("open", openSpy);
+test("row clicks select visible jobs and details expose the posting link", async () => {
   renderPipeline();
   await screen.findByTestId("job-row-a1");
   await waitFor(() => expect(activeRowId()).toBe("a1"));
@@ -341,12 +335,17 @@ test("j/k walk the flattened visible order, skipping collapsed groups; o opens",
   fireEvent.click(screen.getByRole("button", { name: "Applied 2" }));
   await waitFor(() => expect(activeRowId()).toBe("i1"));
 
-  press("j");
+  fireEvent.click(screen.getByRole("button", { name: "Open Coo1 Titleo1" }));
   expect(activeRowId()).toBe("o1");
-  press("k");
-  expect(activeRowId()).toBe("i1");
-  press("o");
-  expect(openSpy).toHaveBeenCalledWith("https://example.com/i1", "_blank", "noopener");
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: /open posting/ })).toHaveAttribute(
+      "href",
+      "https://example.com/o1",
+    ),
+  );
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+  });
 });
 
 test("interview add posts the round and it appears in the panel", async () => {

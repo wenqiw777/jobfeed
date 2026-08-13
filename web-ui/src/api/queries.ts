@@ -106,7 +106,7 @@ export function useJobDetail(id: string | null) {
     queryKey: jobsKeys.detail(id),
     queryFn: () => apiFetch<JobDetailResponse>(`/api/jobs/${id}`),
     enabled: id !== null,
-    // j/k navigation keeps the previous row's pane visible while the next
+    // Selection changes keep the previous row's pane visible while the next
     // detail loads instead of flashing the skeleton.
     placeholderData: keepPreviousData,
   });

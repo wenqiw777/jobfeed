@@ -102,7 +102,7 @@ function CompactBody({ job, isActive, scoreLabel, age }: BodyProps) {
         <span className="text-mute"> · {job.title}</span>
       </span>
       <span className="font-mono text-compact text-ink-2">{scoreLabel}</span>
-      <span className="w-10 text-right font-mono text-micro text-mute">{age}</span>
+      <span className="w-16 shrink-0 whitespace-nowrap text-right font-mono text-micro text-mute">{age}</span>
     </>
   );
 }

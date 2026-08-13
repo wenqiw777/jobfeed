@@ -234,7 +234,7 @@ test("seeds selection on the first row; deciding advances to the next row", asyn
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
-  press("s");
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   await waitFor(() => expect(activeRowId()).toBe("2"));
   // The refetch dropped the decided row but selection stays pinned.
   await waitFor(() => expect(screen.queryByTestId("job-row-1")).toBeNull());
@@ -248,7 +248,7 @@ test("deciding a middle row advances to the row after it", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open Co2 Title2" }));
   expect(activeRowId()).toBe("2");
 
-  press("h");
+  fireEvent.click(screen.getByRole("button", { name: "Shortlist" }));
   await waitFor(() => expect(activeRowId()).toBe("3"));
 });
 
@@ -257,7 +257,7 @@ test("deciding the last row falls back to the previous row", async () => {
   await screen.findByTestId("job-row-3");
 
   fireEvent.click(screen.getByRole("button", { name: "Open Co3 Title3" }));
-  press("s");
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   await waitFor(() => expect(activeRowId()).toBe("2"));
 });
 
@@ -268,7 +268,7 @@ test("a decided row collapses for ~180ms, then the class clears", async () => {
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
-  press("s");
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   await waitFor(() => {
     const row = screen.getByTestId("job-row-1");
     expect(row).toHaveAttribute("data-collapsing");
@@ -293,7 +293,7 @@ test("prefers-reduced-motion skips the collapse class entirely", async () => {
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
-  press("s");
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   await waitFor(() => expect(activeRowId()).toBe("2"));
   expect(document.querySelector("[data-collapsing]")).toBeNull();
 });
@@ -402,7 +402,7 @@ test("apply dialog posts multipart and toasts the reapply notice", async () => {
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
-  press("a");
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByTestId("cloudscape-apply-form")).toBeInTheDocument();
   expect(within(dialog).getByText(/Apply — Co1 · Title1/)).toBeInTheDocument();
@@ -430,7 +430,7 @@ test("apply dialog stays pinned to its job when a refetch re-seeds selection", a
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
-  press("a");
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByText(/Apply — Co1 · Title1/)).toBeInTheDocument();
 
@@ -456,7 +456,7 @@ test("cancelling the apply dialog discards the draft — reopening posts a clean
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
   // Draft an application for job 1, then cancel out of the dialog.
-  press("a");
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   const firstDialog = await screen.findByRole("dialog");
   expect(within(firstDialog).getByText(/Apply — Co1 · Title1/)).toBeInTheDocument();
   fireEvent.change(within(firstDialog).getByLabelText(/Resume variant/), {
@@ -470,7 +470,7 @@ test("cancelling the apply dialog discards the draft — reopening posts a clean
 
   // Reopen for job 2 and submit without touching any field.
   fireEvent.click(screen.getByRole("button", { name: "Open Co2 Title2" }));
-  press("a");
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
   const secondDialog = await screen.findByRole("dialog");
   expect(within(secondDialog).getByText(/Apply — Co2 · Title2/)).toBeInTheDocument();
   expect(within(secondDialog).getByLabelText(/Resume variant/)).toHaveValue("");
@@ -496,24 +496,22 @@ test("deciding the only row clears selection and shows the empty states", async 
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
-  press("s");
+  fireEvent.click(screen.getByRole("button", { name: "Skip" }));
   await waitFor(() => expect(screen.queryByTestId("job-row-1")).toBeNull());
   expect(activeRowId()).toBeNull();
   expect(screen.getByText("Queue clear")).toBeInTheDocument();
-  expect(
-    screen.getByText(/Select a row — or move with j\/k and decide with a\/h\/s\./),
-  ).toBeInTheDocument();
+  expect(screen.getByText("Select a row to review its evidence and decide.")).toBeInTheDocument();
 });
 
-test("o opens the selected posting in a new tab", async () => {
-  const openSpy = vi.fn();
-  vi.stubGlobal("open", openSpy);
+test("detail exposes the selected posting as an external link", async () => {
   renderTriage();
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
-  press("o");
-  expect(openSpy).toHaveBeenCalledWith("https://example.com/1", "_blank", "noopener");
+  expect(screen.getByRole("link", { name: /open posting/ })).toHaveAttribute(
+    "href",
+    "https://example.com/1",
+  );
 });
 
 function transitionBody(url: string): Record<string, unknown> {
@@ -549,7 +547,7 @@ test("pending JD hides the decide trio; Ignore sends a forced transition", async
   });
 });
 
-test("i ignores the selected pending row (forced); queue does not bind i", async () => {
+test("single-key shortcuts do not trigger queue or pending decisions", async () => {
   renderTriage();
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
@@ -558,15 +556,11 @@ test("i ignores the selected pending row (forced); queue does not bind i", async
   expect(calls.filter((call) => call.url.endsWith("/transition"))).toHaveLength(0);
 
   await openPendingTab();
-  await waitFor(() => expect(activeRowId()).toBe("p1"));
   press("i");
-  await waitFor(() => expect(screen.queryByTestId("job-row-p1")).toBeNull());
-  expect(transitionBody("/api/jobs/p1/transition")).toMatchObject({
-    to: "ignored",
-    force: true,
-  });
-  // Selection auto-advanced onto the surviving pending row.
-  await waitFor(() => expect(activeRowId()).toBe("p2"));
+  press("j");
+  press("k");
+  expect(calls.filter((call) => call.url.endsWith("/transition"))).toHaveLength(0);
+  expect(activeRowId()).toBe("p1");
 });
 
 test("queue decides stay non-forced", async () => {
@@ -574,7 +568,7 @@ test("queue decides stay non-forced", async () => {
   await screen.findByTestId("job-row-1");
   await waitFor(() => expect(activeRowId()).toBe("1"));
 
-  press("h");
+  fireEvent.click(screen.getByRole("button", { name: "Shortlist" }));
   await waitFor(() =>
     expect(calls.some((call) => call.url === "/api/jobs/1/transition")).toBe(true),
   );

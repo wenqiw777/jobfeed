@@ -6,7 +6,7 @@ import { SectionLabel } from "@/components/jobs/DetailSections";
 import { toast } from "@/components/ui/use-toast";
 import { dateInputToIso, followupAtFromNow } from "@/lib/dates";
 
-/** Existing notes + an append box. data-kbd-target wires the `n` key. */
+/** Existing notes and an append box. */
 export function NotesSection({ jobId, notes }: { jobId: string; notes: string | null }) {
   const [text, setText] = useState("");
   const note = useNote();
@@ -38,7 +38,6 @@ export function NotesSection({ jobId, notes }: { jobId: string; notes: string | 
         rows={2}
         placeholder="Add a note…"
         aria-label="Add a note"
-        data-kbd-target="note"
         className="w-full resize-y rounded-control border border-border-strong bg-surface px-2.5 py-1.5 text-body-sm text-ink placeholder:text-mute focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       />
       <div className="mt-1.5">
@@ -55,7 +54,7 @@ const PRESETS: { label: string; days: number }[] = [
   { label: "2w", days: 14 },
 ];
 
-/** Follow-up presets + custom date. data-kbd-target wires the `f` key. */
+/** Follow-up presets and a custom date. */
 export function FollowupSection({ jobId, current }: { jobId: string; current: string | null }) {
   const [customDate, setCustomDate] = useState("");
   const followup = useFollowup();
@@ -97,7 +96,6 @@ export function FollowupSection({ jobId, current }: { jobId: string; current: st
           onChange={(event) => setCustomDate(event.target.value)}
           onBlur={submitCustom}
           aria-label="Custom follow-up date"
-          data-kbd-target="followup"
           className="h-7 rounded-control border border-border-strong bg-surface px-2 font-mono text-micro text-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         />
         {current !== null && (

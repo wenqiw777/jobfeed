@@ -27,7 +27,7 @@ interface DetailPaneProps {
    * keeps the pane zone-agnostic (Pipeline mounts InterviewPanel and the
    * restore card here based on the selected row's status). */
   extraSections?: React.ReactNode;
-  /** Nothing-selected message; defaults to the triage keyboard hint. */
+  /** Nothing-selected message. */
   emptyHint?: React.ReactNode;
 }
 
@@ -41,7 +41,7 @@ export function DetailPane({
   onDecide,
   onOpenApply,
   extraSections,
-  emptyHint = "Select a row — or move with j/k and decide with a/h/s.",
+  emptyHint = "Select a row to review its evidence and decide.",
 }: DetailPaneProps) {
   const detail = useJobDetail(jobId);
 

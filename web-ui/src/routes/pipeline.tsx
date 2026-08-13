@@ -2,7 +2,7 @@ import Box from "@cloudscape-design/components/box";
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { useAttention, useJobsList, type JobsQuery, type JobSummary } from "@/api/queries";
 import { ArchiveSection } from "@/components/jobs/ArchiveSection";
@@ -12,7 +12,6 @@ import { InterviewPanel } from "@/components/jobs/InterviewPanel";
 import { RestoreSection } from "@/components/jobs/RestoreSection";
 import { groupJobs, StatusGroups, type GroupKey } from "@/components/jobs/StatusGroups";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useKeyboardMap } from "@/lib/keyboard";
 
 /** Pipeline corpora are 10^2-scale (plan D10) — one page covers the zone. */
 const PAGE_LIMIT = 200;
@@ -34,7 +33,6 @@ export default function PipelinePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeBucket, setActiveBucket] = useState<AttentionBucket | null>(null);
   const [collapsedKeys, setCollapsedKeys] = useState<ReadonlySet<GroupKey>>(new Set());
-  const detailRef = useRef<HTMLElement>(null);
 
   const list = useJobsList(PIPELINE_QUERY);
   const attention = useAttention();
@@ -82,34 +80,6 @@ export default function PipelinePage() {
     });
   };
 
-  const moveSelection = (delta: 1 | -1) => {
-    if (visibleRows.length === 0) {
-      return;
-    }
-    const index =
-      effectiveSelectedId === null
-        ? -1
-        : visibleRows.findIndex((job) => job.id === effectiveSelectedId);
-    const next = index === -1 ? 0 : Math.min(visibleRows.length - 1, Math.max(0, index + delta));
-    setSelectedId(visibleRows[next]?.id ?? null);
-  };
-
-  // Movement + open only. NO decide keys (h/s/a are triage semantics —
-  // pipeline rows are post-decision; status moves happen via the
-  // interview panel and restore, not single-key triage actions).
-  useKeyboardMap({
-    ArrowDown: () => moveSelection(1),
-    j: () => moveSelection(1),
-    ArrowUp: () => moveSelection(-1),
-    k: () => moveSelection(-1),
-    Enter: () => detailRef.current?.focus(),
-    o: () => {
-      if (selectedJob !== null) {
-        window.open(selectedJob.url, "_blank", "noopener");
-      }
-    },
-  });
-
   return (
     <div className="jobfeed-decision-surface" data-testid="cloudscape-pipeline">
       <div className="jobfeed-decision-queue">
@@ -144,8 +114,6 @@ export default function PipelinePage() {
         </Container>
       </div>
       <section
-        ref={detailRef}
-        tabIndex={-1}
         aria-label="Job detail"
         className="jobfeed-evidence-panel focus-visible:outline-none"
       >
@@ -165,7 +133,7 @@ export default function PipelinePage() {
             showJdPaste={false}
             showIgnore={false}
             showDecide={false}
-            emptyHint="Select a row — move with j/k, open the posting with o."
+            emptyHint="Select a row to review the application."
             extraSections={selectedJob !== null && <PipelineSections job={selectedJob} />}
           />
         </Container>
