@@ -110,16 +110,15 @@ jobs:
 
       - name: Verify canonical Docker CLI smoke
         run: |
-          docker compose run --rm jobfeed-cli alembic -c migrations/alembic.ini upgrade head
-          ./bin/jobfeed --help
-          ./bin/jobfeed --config tests/fixtures/docker-smoke.toml scan --source mock
-          ./bin/jobfeed --config tests/fixtures/docker-smoke.toml evaluate --limit 3
-          ./bin/jobfeed --config tests/fixtures/docker-smoke.toml digest
+          docker compose run --rm jobfeed-cli jobfeed --help
+          docker compose run --rm jobfeed-cli jobfeed --config tests/fixtures/docker-smoke.toml scan --source mock
+          docker compose run --rm jobfeed-cli jobfeed --config tests/fixtures/docker-smoke.toml evaluate --limit 3
+          docker compose run --rm jobfeed-cli jobfeed --config tests/fixtures/docker-smoke.toml digest
 
       - name: Verify canonical Docker real-backend failure
         run: |
           set +e
-          output=$(./bin/jobfeed --config tests/fixtures/docker-real-backend-missing.toml evaluate --stage a --limit 1 2>&1)
+          output=$(docker compose run --rm jobfeed-cli jobfeed --config tests/fixtures/docker-real-backend-missing.toml evaluate --stage a --limit 1 2>&1)
           status=$?
           echo "$output"
           test "$status" -ne 0

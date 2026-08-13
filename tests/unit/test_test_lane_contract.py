@@ -32,3 +32,16 @@ def test_ci_keeps_default_and_postgres_lanes_separate() -> None:
     assert "make test-postgres" in postgres_job
     assert "postgres:" not in browser_job
     assert "PGTEST_DSN" not in browser_job
+
+
+def test_docker_smoke_uses_sqlite_container_runtime_only() -> None:
+    """Optional container smoke must not initialize or require PostgreSQL."""
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    docker_job = workflow.split("  docker-build:", maxsplit=1)[1]
+
+    assert "alembic -c migrations/alembic.ini upgrade head" not in docker_job
+    assert "./bin/jobfeed" not in docker_job
+    for command in ("--help", "scan --source mock", "evaluate --limit 3", "digest"):
+        assert "docker compose run --rm jobfeed-cli jobfeed" in docker_job
+        assert command in docker_job
+    assert "docker-real-backend-missing.toml" in docker_job
