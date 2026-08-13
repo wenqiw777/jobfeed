@@ -10,10 +10,10 @@
  * the history list.
  */
 import { useEffect, useRef } from "react";
-import { Loader2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { runsKeys, type RunSummary } from "@/api/queries";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSSE, type SSEState } from "@/lib/use-sse";
 import { cn } from "@/lib/utils";
 import { formatLocalDateTime } from "@/lib/dates";
@@ -65,13 +65,7 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
       className="border-b border-accent/20 bg-accent-bg/30"
     >
       <div className="flex items-center gap-3 px-4 py-2">
-        <Loader2
-          aria-hidden="true"
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-accent",
-            "motion-safe:animate-spin",
-          )}
-        />
+        <Skeleton className="h-3.5 w-3.5 shrink-0 rounded-full" />
         <span className="font-mono text-compact text-ink">
           {formatLocalDateTime(run.started_at)}
         </span>
