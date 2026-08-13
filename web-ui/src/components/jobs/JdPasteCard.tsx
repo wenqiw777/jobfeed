@@ -1,7 +1,8 @@
 import { useState } from "react";
+import Button from "@cloudscape-design/components/button";
+import Textarea from "@cloudscape-design/components/textarea";
 
 import { usePasteJd } from "@/api/queries";
-import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
 
 /**
@@ -51,19 +52,17 @@ export function JdPasteCard({ jobId, url }: { jobId: string; url: string | null 
           open posting ↗
         </a>
       )}
-      <textarea
+      <Textarea
         value={text}
-        onChange={(event) => setText(event.target.value)}
+        onChange={({ detail }) => setText(detail.value)}
         placeholder="Paste JD body here…"
         rows={6}
         disabled={paste.isPending}
-        aria-label="JD text"
-        className="mt-2 w-full resize-y rounded-control border border-border-strong bg-surface px-2.5 py-1.5 font-mono text-compact text-ink placeholder:text-mute focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        ariaLabel="JD text"
       />
       <div className="mt-2">
         <Button
           variant="primary"
-          size="sm"
           disabled={paste.isPending || text.trim() === ""}
           onClick={submit}
         >

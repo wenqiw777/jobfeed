@@ -16,7 +16,6 @@ import "./styles.css";
 
 import App from "./App";
 import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { DensityProvider } from "@/lib/density";
 import { setGlobalTheme } from "@cloudscape-design/components/theming";
 
@@ -48,12 +47,10 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <DensityProvider>
-        <TooltipProvider delayDuration={300}>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-          <Toaster />
-        </TooltipProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+        <Toaster />
       </DensityProvider>
     </QueryClientProvider>
   </StrictMode>,

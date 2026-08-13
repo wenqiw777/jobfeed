@@ -3,7 +3,6 @@ import { JdPasteCard } from "@/components/jobs/JdPasteCard";
 import { FollowupSection, NotesSection } from "@/components/jobs/DetailNotes";
 import { EvaluationSections, TwinsLine } from "@/components/jobs/DetailSections";
 import { VerdictPill } from "@/components/jobs/VerdictPill";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelativeAge } from "@/lib/dates";
 
@@ -92,19 +91,19 @@ export function DetailPane({
           <div className="mt-2.5 flex items-center gap-1.5">
             {showDecide && (
               <>
-                <Button variant="primary" size="sm" disabled={isDeciding} onClick={onOpenApply}>
+                <Button variant="primary" disabled={isDeciding} onClick={onOpenApply}>
                   Apply
                 </Button>
-                <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("shortlisted")}>
+                <Button disabled={isDeciding} onClick={() => onDecide?.("shortlisted")}>
                   Shortlist
                 </Button>
-                <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("archived")}>
+                <Button disabled={isDeciding} onClick={() => onDecide?.("archived")}>
                   Skip
                 </Button>
               </>
             )}
             {showIgnore && (
-              <Button size="sm" disabled={isDeciding} onClick={() => onDecide?.("ignored")}>
+              <Button disabled={isDeciding} onClick={() => onDecide?.("ignored")}>
                 Ignore
               </Button>
             )}
@@ -148,3 +147,4 @@ function Empty({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+import Button from "@cloudscape-design/components/button";

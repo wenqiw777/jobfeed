@@ -199,6 +199,14 @@
   padding: 4px 20px 32px;
 }
 
+.jobfeed-flashbar {
+  position: fixed;
+  z-index: 1000;
+  top: 4.5rem;
+  right: 1rem;
+  width: min(32rem, calc(100vw - 2rem));
+}
+
 /* Motion only communicates state (150–250ms ease-out); under
  * prefers-reduced-motion everything snaps. */
 @media (prefers-reduced-motion: reduce) {

@@ -1,29 +1,24 @@
-import {
-  Toast,
-  ToastClose,
-  ToastDescription,
-  ToastProvider,
-  ToastTitle,
-  ToastViewport,
-} from "@/components/ui/toast";
+import Flashbar from "@cloudscape-design/components/flashbar";
+
 import { useToast } from "@/components/ui/use-toast";
 
 export function Toaster() {
-  const { toasts } = useToast();
+  const { toasts, dismiss } = useToast();
 
   return (
-    <ToastProvider>
-      {toasts.map(({ id, title, description, action, ...props }) => (
-        <Toast key={id} {...props}>
-          <div className="grid gap-0.5">
-            {title && <ToastTitle>{title}</ToastTitle>}
-            {description && <ToastDescription>{description}</ToastDescription>}
-          </div>
-          {action}
-          <ToastClose />
-        </Toast>
-      ))}
-      <ToastViewport />
-    </ToastProvider>
+    <div className="jobfeed-flashbar">
+      <Flashbar
+        items={toasts.filter(({ open }) => open !== false).map(({ id, title, description, action, variant }) => ({
+          id,
+          type: variant === "destructive" ? "error" : "success",
+          header: title,
+          content: description,
+          action,
+          dismissible: true,
+          dismissLabel: "Dismiss notification",
+          onDismiss: () => dismiss(id),
+        }))}
+      />
+    </div>
   );
 }

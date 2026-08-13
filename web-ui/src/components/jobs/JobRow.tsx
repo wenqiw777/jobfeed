@@ -1,5 +1,6 @@
+import Checkbox from "@cloudscape-design/components/checkbox";
+
 import type { JobSummary } from "@/api/queries";
-import { Checkbox } from "@/components/ui/checkbox";
 import { VerdictPill } from "@/components/jobs/VerdictPill";
 import { formatRelativeAge } from "@/lib/dates";
 import { useDensity } from "@/lib/density";
@@ -52,9 +53,8 @@ export function JobRow({
         <div className="absolute left-2.5 top-1/2 z-10 -translate-y-1/2">
           <Checkbox
             checked={isChecked}
-            onCheckedChange={() => onToggle?.(job.id)}
-            onClick={(event) => event.stopPropagation()}
-            aria-label={`Select ${job.company} ${job.title}`}
+            onChange={() => onToggle?.(job.id)}
+            ariaLabel={`Select ${job.company} ${job.title}`}
           />
         </div>
       )}

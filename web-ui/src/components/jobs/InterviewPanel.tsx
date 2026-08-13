@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import Button from "@cloudscape-design/components/button";
 
 import {
   useAddInterview,
@@ -7,7 +8,6 @@ import {
   type InterviewRound,
 } from "@/api/queries";
 import { SectionLabel } from "@/components/jobs/DetailSections";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/use-toast";
 import { dateTimeInputToIso } from "@/lib/dates";
@@ -96,7 +96,7 @@ function CompleteForm({ jobId, roundIndex }: { jobId: string; roundIndex: number
         aria-label={`Notes for round ${roundIndex}`}
         className="w-full resize-y rounded-control border border-border-strong bg-surface px-2.5 py-1 text-body-sm text-ink placeholder:text-mute focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       />
-      <Button size="sm" disabled={complete.isPending} onClick={submit}>
+      <Button disabled={complete.isPending} onClick={submit}>
         Mark done
       </Button>
     </div>
@@ -153,7 +153,7 @@ function AddRoundForm({ jobId }: { jobId: string }) {
         aria-label="Scheduled time"
         className="h-7 rounded-control border border-border-strong bg-surface px-2 font-mono text-micro text-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       />
-      <Button size="sm" type="submit" disabled={add.isPending || label.trim() === ""}>
+      <Button formAction="submit" disabled={add.isPending || label.trim() === ""}>
         Add round
       </Button>
     </form>

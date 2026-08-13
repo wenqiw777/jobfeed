@@ -1,6 +1,5 @@
 import { useJobTransition } from "@/api/queries";
 import { SectionLabel } from "@/components/jobs/DetailSections";
-import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
 
 /**
@@ -46,9 +45,10 @@ export function ArchiveSection({
       <p className="mb-1.5 text-body-sm text-mute">
         Abandon this application — Archive moves it out of the active pipeline.
       </p>
-      <Button size="sm" disabled={transition.isPending} onClick={submit}>
+      <Button disabled={transition.isPending} onClick={submit}>
         Archive
       </Button>
     </section>
   );
 }
+import Button from "@cloudscape-design/components/button";

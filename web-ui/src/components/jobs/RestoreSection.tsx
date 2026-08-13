@@ -1,6 +1,5 @@
 import { useRestore } from "@/api/queries";
 import { SectionLabel } from "@/components/jobs/DetailSections";
-import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
 
 /**
@@ -46,9 +45,10 @@ export function RestoreSection({
         Restore puts it back where it was (the server picks the last non-terminal status from
         history).
       </p>
-      <Button size="sm" disabled={restore.isPending} onClick={submit}>
+      <Button disabled={restore.isPending} onClick={submit}>
         Restore
       </Button>
     </section>
   );
 }
+import Button from "@cloudscape-design/components/button";

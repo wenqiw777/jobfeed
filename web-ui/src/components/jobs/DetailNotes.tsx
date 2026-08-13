@@ -1,8 +1,8 @@
 import { useState } from "react";
+import Button from "@cloudscape-design/components/button";
 
 import { useFollowup, useNote } from "@/api/queries";
 import { SectionLabel } from "@/components/jobs/DetailSections";
-import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
 import { dateInputToIso, followupAtFromNow } from "@/lib/dates";
 
@@ -42,7 +42,7 @@ export function NotesSection({ jobId, notes }: { jobId: string; notes: string | 
         className="w-full resize-y rounded-control border border-border-strong bg-surface px-2.5 py-1.5 text-body-sm text-ink placeholder:text-mute focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       />
       <div className="mt-1.5">
-        <Button size="sm" disabled={note.isPending || text.trim() === ""} onClick={save}>
+        <Button disabled={note.isPending || text.trim() === ""} onClick={save}>
           Save note
         </Button>
       </div>
@@ -85,7 +85,6 @@ export function FollowupSection({ jobId, current }: { jobId: string; current: st
         {PRESETS.map((preset) => (
           <Button
             key={preset.label}
-            size="sm"
             disabled={followup.isPending}
             onClick={() => submit(followupAtFromNow(preset.days))}
           >

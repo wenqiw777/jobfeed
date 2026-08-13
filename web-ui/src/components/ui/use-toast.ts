@@ -6,8 +6,6 @@
  */
 import * as React from "react";
 
-import type { ToastActionElement, ToastProps } from "./toast";
-
 const TOAST_LIMIT = 3;
 
 /**
@@ -16,11 +14,14 @@ const TOAST_LIMIT = 3;
  */
 const TOAST_REMOVE_DELAY_MS = 200;
 
-type ToasterToast = ToastProps & {
+export type ToasterToast = {
   id: string;
   title?: React.ReactNode;
   description?: React.ReactNode;
-  action?: ToastActionElement;
+  action?: React.ReactNode;
+  variant?: "default" | "destructive";
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 let count = 0;

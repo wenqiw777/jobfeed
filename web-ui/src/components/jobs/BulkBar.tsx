@@ -1,5 +1,6 @@
+import Button from "@cloudscape-design/components/button";
+
 import { useBulkTransition, type TransitionStatus } from "@/api/queries";
-import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
 
 interface BulkBarProps {
@@ -85,7 +86,6 @@ export function BulkBar({
       {actions.map((action) => (
         <Button
           key={action.to}
-          size="sm"
           disabled={bulk.isPending}
           onClick={() => run(action)}
         >
@@ -93,18 +93,18 @@ export function BulkBar({
         </Button>
       ))}
       <span className="mx-1 h-4 w-px bg-accent-border" aria-hidden="true" />
-      <Button variant="ghost" size="sm" disabled={bulk.isPending} onClick={onSelectPage}>
+      <Button variant="link" disabled={bulk.isPending} onClick={onSelectPage}>
         Select page
       </Button>
       {/* Select-all only reaches the loaded response. At triage scale that
           IS the matching set (one page, plan D10) — but when the total
           extends past the page, the label must not overstate. */}
-      <Button variant="ghost" size="sm" disabled={bulk.isPending} onClick={onSelectAllMatching}>
+      <Button variant="link" disabled={bulk.isPending} onClick={onSelectAllMatching}>
         {total > loadedCount
           ? `Select all ${loadedCount} loaded`
           : `Select all ${total} matching`}
       </Button>
-      <Button variant="ghost" size="sm" disabled={bulk.isPending} onClick={onClear}>
+      <Button variant="link" disabled={bulk.isPending} onClick={onClear}>
         Clear
       </Button>
     </div>
