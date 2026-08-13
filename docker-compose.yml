@@ -42,6 +42,10 @@ services:
       context: .
       dockerfile: Dockerfile
     working_dir: /app
+    # `serve` intentionally binds 127.0.0.1 only. Host networking preserves
+    # that loopback security boundary while making the Dockerized Web process
+    # reachable from the host browser; no container port is exposed externally.
+    network_mode: host
     environment:
       # Task 6A consumes this exact flat alias. The parent directory is the
       # shared named volume, not an ephemeral container filesystem.

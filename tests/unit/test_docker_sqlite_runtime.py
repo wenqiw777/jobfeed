@@ -33,6 +33,13 @@ def test_runtime_uses_one_named_sqlite_volume_without_postgres_dependency() -> N
     assert document["services"]["postgres"]["profiles"] == ["migration"]
 
 
+def test_runtime_uses_host_network_for_loopback_only_web_server() -> None:
+    """Container loopback maps to host loopback for the canonical serve path."""
+    service, _document = _runtime_service()
+
+    assert service["network_mode"] == "host"
+
+
 def test_normal_wrapper_names_reviewed_compose_file_and_runtime_service() -> None:
     """Ordinary CLI cannot be redirected through COMPOSE_FILE or PostgreSQL."""
     wrapper = _WRAPPER.read_text("utf-8")
