@@ -69,7 +69,7 @@ change Phase 8 or Phase 9 product behavior.
 
 ### Milestone 3: analytics and cleanup
 
-- [ ] Rebuild Insights and Performance page structure around Cloudscape.
+- [x] Rebuild Insights and Performance page structure around Cloudscape.
 - [ ] Remove unused Radix primitives, Tailwind component styling, Lucide icons,
   and obsolete custom UI wrappers after all callers have migrated.
 - [ ] Keep only product-specific CSS and Recharts styling that Cloudscape does
@@ -100,7 +100,10 @@ change Phase 8 or Phase 9 product behavior.
   verified the live Triage decision surface and full Settings form against the
   existing SQLite workspace.
 - Milestone 2: pending.
-- Milestone 3: pending.
+- Milestone 3 analytics slice (2026-08-13): 153/153 frontend tests;
+  production build; design-ban check 0 findings. Cloudscape containers expose
+  explicit region labels, window selectors retain their grouped semantics, and
+  KPI values no longer introduce duplicate page-level headings.
 - Final Chrome pass: pending.
 
 ## Finding disposition

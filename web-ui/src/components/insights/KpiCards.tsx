@@ -22,8 +22,8 @@ export function KpiCards({ overview }: { overview: InsightsOverviewResponse }) {
           {items.map(({ label, value, meta }) => (
             <div key={label}>
               <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large" fontWeight="bold">{value.toLocaleString()}</Box>
-              <Box variant="small" color="text-body-secondary">{meta}</Box>
+              <Box variant="awsui-value-large" display="block" fontWeight="bold">{value.toLocaleString()}</Box>
+              <Box variant="small" display="block" color="text-body-secondary">{meta}</Box>
             </div>
           ))}
         </ColumnLayout>

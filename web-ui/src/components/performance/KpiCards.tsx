@@ -34,7 +34,7 @@ export function KpiCards({ overview }: { overview: PerformanceOverviewResponse }
           {items.map(({ label, value, delta, goodDirection }) => (
             <div key={label}>
               <Box variant="awsui-key-label">{label}</Box>
-              <Box variant="awsui-value-large" fontWeight="bold">{value}</Box>
+              <Box variant="awsui-value-large" display="block" fontWeight="bold">{value}</Box>
               <DeltaArrow delta={delta} goodDirection={goodDirection} />
             </div>
           ))}
