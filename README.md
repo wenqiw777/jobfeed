@@ -1,10 +1,97 @@
-# Jobfeed
+<a id="readme-top"></a>
 
-Jobfeed is a local-first job scanning and evaluation pipeline. The current runtime uses a host-native Click CLI, one repo-local SQLite database, ATS source adapters, configurable LLM backends, and Markdown digest rendering.
+<div align="center">
+  <img src="web-ui/public/favicon.svg" alt="Jobfeed logo" width="88" height="88">
+
+  <h1>Jobfeed</h1>
+
+  <p>
+    A local-first workspace that finds jobs, evaluates fit against your résumé,
+    and keeps every decision in one focused interface.
+  </p>
+
+  <p>
+    <a href="https://github.com/wenqiw777/jobfeed/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/wenqiw777/jobfeed/ci.yml?branch=main&label=CI"></a>
+    <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white">
+    <img alt="SQLite" src="https://img.shields.io/badge/SQLite-local--first-003B57?logo=sqlite&logoColor=white">
+    <img alt="Cloudscape" src="https://img.shields.io/badge/UI-Cloudscape-0972D3">
+  </p>
+
+  <p>
+    <a href="#see-it-in-action"><strong>Demo</strong></a>
+    ·
+    <a href="#quick-start">Install</a>
+    ·
+    <a href="#configure-your-workspace">Configure</a>
+    ·
+    <a href="#everyday-use">Use</a>
+    ·
+    <a href="#development">Develop</a>
+    ·
+    <a href="https://github.com/wenqiw777/jobfeed/issues">Report a bug</a>
+  </p>
+</div>
+
+## Why Jobfeed
+
+Jobfeed turns a scattered job search into one local workflow:
+
+- Scan company career pages, LinkedIn guest search, Indeed, and curated lists.
+- Exclude irrelevant roles before model calls with deterministic filters and an optional local ML gate.
+- Run quick evaluation followed by detailed résumé-to-job evidence.
+- Review the result and record one decision: **Wait**, **Applied**, or **Ignored**.
+- Watch scan and evaluation counters update live.
+- Keep configuration and job data in a repo-local SQLite database.
+
+**Workflow:** scan jobs → filter noise → evaluate résumé fit → decide what to do.
+
+The normal user path does not require Docker, PostgreSQL, or a frontend build.
+
+## See it in action
+
+### One-command setup
+
+Run `./setup.sh` in Terminal. It installs the local runtime, starts Jobfeed,
+and opens the real GUI automatically.
+
+![Run Jobfeed setup in Terminal and open the GUI](docs/assets/setup-demo.gif)
+
+### Review résumé fit against each job description
+
+Open a posting to compare its quick score, detailed fit score, evidence, and
+recommended action before recording your decision.
+
+![Jobfeed job-description fit review](docs/assets/job-fit-review.png)
+
+### Live evaluation progress
+
+The Runs page streams each stage and counter while work is in progress. This
+recording uses anonymous deterministic demo jobs and mock model responses.
+
+![Jobfeed live evaluation progress](docs/assets/evaluate-progress.gif)
+
+### Insights
+
+See evaluation coverage and user decisions for the selected time range.
+
+![Jobfeed insights dashboard](docs/assets/insights.png)
+
+### Performance
+
+Compare scan time, evaluation steps, model latency, token use, conversion, and
+recent run errors in one view.
+
+![Jobfeed performance dashboard](docs/assets/performance.png)
 
 ## Quick start
 
-A fresh machine only needs **Git**. Docker and Node are not required. Then:
+### Prerequisites
+
+- macOS or Linux
+- Git
+- `curl` only when [`uv`](https://docs.astral.sh/uv/) is not already installed
+
+### Install and open the GUI
 
 ```sh
 git clone https://github.com/wenqiw777/jobfeed.git
@@ -12,97 +99,127 @@ cd jobfeed
 ./setup.sh
 ```
 
-`setup.sh` installs `uv` when needed, installs the repo-local runtime,
-initializes `data/jobfeed.sqlite`, starts Jobfeed, and opens the GUI setup page.
-Choose your résumé, models, sources, and filters there; saving creates the
-project-local `config.toml` and opens Triage. The production GUI bundle ships in
-the repository, so users do not install Node or build the frontend. Repeating
-the command is safe: it reuses a healthy server instead of starting a
-duplicate. Setup also installs a user-local terminal launcher and updates the
-shell path. In each new terminal, run `jobfeed` with no arguments to start or
-reuse the server and open the GUI. The older `./setup` name remains an alias.
+`setup.sh` installs `uv` when needed, creates the repo-local Python runtime,
+initializes `data/jobfeed.sqlite`, starts Jobfeed on
+`http://127.0.0.1:7654`, and opens the setup screen. It also installs a
+user-local `jobfeed` terminal launcher.
 
-After setup, `./scan --source mock` runs an offline smoke scan; `./scan` uses
-the sources enabled in `config.toml`. Every normal `./bin/jobfeed ...` command
-opens the same repo-local SQLite database directly.
-
-## Evaluate against your résumé
-
-`jobfeed evaluate` scores every job by how well it fits **your** résumé (résumé ↔ job-description match), so it needs one Markdown file: your *master résumé*. Your real résumé is personal data and is **never committed** — instead the repo ships an example so you can see the format and run end-to-end the moment you clone. Out of the box `config.example.toml` points `master_resume_path` at the committed [`resume.example.md`](resume.example.md), so `evaluate` works immediately, scoring against the example candidate until you swap in your own:
+After the first setup, open a new terminal and run:
 
 ```sh
-cp resume.example.md resume.md     # resume.md is gitignored
-$EDITOR resume.md                  # replace the example with your real résumé
-# Then open Settings in the GUI and set Master resume to "resume.md".
+jobfeed
 ```
 
-**Format** is plain Markdown with no fixed schema. The scorer weights **project / work bullets** highest (skills-line keywords and coursework count less), so lead with concrete projects; state your graduation date / availability so the timing check works. You may keep internal-only sections (e.g. a compensation floor) — they inform scoring but are never echoed in any output. Optionally, a personal calibration appendix (hiring window, real-outcome anchors, GPA notes) sharpens scoring — copy [`preamble_personal.example.md`](preamble_personal.example.md) to `preamble_personal.md` (also gitignored) and set `preamble_personal_path`.
+With no arguments, `jobfeed` starts or reuses the local server and opens the
+GUI. Running `./setup.sh` again is also safe.
 
-Scoring needs an LLM backend. To try it with **no toolchain**, use the mock config — `./bin/jobfeed --config tests/fixtures/smoke.toml evaluate` selects mock LLM backends. For real scoring set `stage_a` / `stage_b` to `codex-cli/*`, `openai-compat/*`, or `claude-cli/*`. Logged-in local Codex/Claude CLIs are available directly to the host runtime.
+## Configure your workspace
 
-## Host Runtime
+Open **Settings** in the GUI to manage:
 
-```sh
-jobfeed # start or reuse the server, then open the GUI
-./bin/jobfeed --config tests/fixtures/smoke.toml scan --source mock
-./bin/jobfeed --config tests/fixtures/smoke.toml evaluate --limit 3
-./bin/jobfeed --config tests/fixtures/smoke.toml digest
-./bin/jobfeed serve
-```
+- **Résumé** — select the Markdown or text file used as evaluation evidence.
+- **Models** — use a signed-in Codex or Claude app, or an OpenAI-compatible API endpoint.
+- **Sources** — enable only the feeds you want Jobfeed to scan.
+- **Filters** — limit locations, companies, and posting age before evaluation.
+- **Budgets** — set daily model-call, cost, and concurrency limits.
 
-The setup-installed `jobfeed` command points to the canonical
-`./bin/jobfeed` entrypoint, so both execute `.venv/bin/jobfeed` from the repo
-root and use the same SQLite file. The smoke fixture selects mock LLM backends
-so it works offline.
+The repository includes [`resume.example.md`](resume.example.md) and
+[`preamble_personal.example.md`](preamble_personal.example.md) as optional
+starting points. Your real résumé, local configuration, and SQLite data are
+gitignored.
 
-SQLite is the supported normal store backend. Runtime data lives in `data/jobfeed.sqlite`; Jobfeed does not read or write `~/.jobfeed/`. Omitting `--config` discovers repo-local `config.toml`, whose default real `codex-cli` models use the host executable and host login.
+## Everyday use
+
+The GUI is the primary interface. The same runtime also exposes a compact CLI:
+
+| Command | Action |
+| --- | --- |
+| `jobfeed` | Open the local GUI |
+| `jobfeed scan --source mock` | Run an offline smoke scan |
+| `jobfeed scan` | Scan the enabled sources |
+| `jobfeed evaluate` | Evaluate eligible jobs against the configured résumé |
+| `jobfeed digest` | Render the current digest |
+| `jobfeed --help` | List all commands and options |
+
+Use `./bin/jobfeed ...` when you want an explicit repo-local command. Both
+entrypoints use the same configuration and SQLite database.
+
+## Data and privacy
+
+- Runtime data defaults to `data/jobfeed.sqlite`.
+- GUI settings are written to `config.toml`.
+- Jobfeed binds the GUI to loopback (`127.0.0.1`) by default.
+- Your résumé, config, database, logs, and generated digests are not committed.
+- Network access occurs only for the sources and model backends you enable.
+
+Back up the SQLite file when you want a portable copy of the workspace.
+
+## Built with
+
+- [Python](https://www.python.org/) and [FastAPI](https://fastapi.tiangolo.com/)
+- [SQLite](https://www.sqlite.org/) with [aiosqlite](https://aiosqlite.omnilib.dev/)
+- [React](https://react.dev/) and [Cloudscape Design System](https://cloudscape.design/)
+- [TanStack Query](https://tanstack.com/query/latest) and [Vite](https://vite.dev/)
+- [Click](https://click.palletsprojects.com/) for the CLI
 
 ## Development
 
+End users receive the prebuilt GUI and do not need Node.js. Contributors can
+install the full development toolchain with:
+
 ```sh
-pip install -e ".[dev]"
-python -m playwright install chromium  # needed only for LinkedIn Playwright scans
-jobfeed --help
-make test
-make lint
+uv sync --extra dev --python 3.12
 make quality
-make fmt
-pre-commit install
 ```
 
-Use `./bin/jobfeed` for repo-explicit production-parity verification. The
-setup-installed bare `jobfeed` is the end-user launcher; `uv run jobfeed`
-remains developer-only.
-
-### ML-gate end-to-end test (`pytest -m mlmodel`)
-
-The ML pre-filter gate has one end-to-end check that runs the **real** XGBoost model and the **real** fastembed (ONNX) embedder over a handful of clear jobs and asserts the gate's pass/block decisions (including the exact deterministic hard-fail reasons). It is **not** part of `make quality` — it carries the `mlmodel` marker, which is excluded from the default test selection, so the fast quality gate never triggers the one-time model download. Treat it as a manual / CI ML check.
+For frontend development with hot reload:
 
 ```sh
-pytest -m mlmodel        # runs tests/mlmodel/test_ml_gate_e2e.py
+cd web-ui
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
-- The trained XGBoost model is **committed in-repo** under `models/ml_gate/` (`v*.json` booster + `.meta.json` threshold), so a plain `git clone` is self-contained — no model download or training step is needed to run the gate.
-- The embedder is `all-MiniLM-L6-v2` served by [`fastembed`](https://github.com/qdrant/fastembed) over **onnxruntime** (no PyTorch). `fastembed` is a **core** dependency. The ONNX weights (~87MB) are downloaded once from Hugging Face into `$JOBFEED_ML_CACHE_DIR` (else `~/.cache/jobfeed/fastembed`) and reused.
-- Pre-seed explicitly with `./bin/jobfeed ml-gate fetch` for an offline-ready evaluation run.
+Before submitting a change, run `make quality`. Browser-facing changes should
+also be exercised through the real GUI. See
+[`docs/engineering-standards.md`](docs/engineering-standards.md) for the
+project's coding and verification rules.
 
-#### Pre-seeding the embedder weights (`jobfeed ml-gate fetch`)
+### Optional ML model check
+
+The real local ML-gate check is intentionally separate from the fast default
+suite because it downloads the embedding model on first use:
 
 ```sh
-jobfeed ml-gate fetch                 # download/warm the default all-MiniLM-L6-v2 weights
-jobfeed ml-gate fetch --embedding-model BAAI/bge-small-en-v1.5
+jobfeed ml-gate fetch
+pytest -m mlmodel
 ```
 
-`fetch` materializes the ONNX weights into the resolved cache dir and prints the location + on-disk size. It is the explicit, offline-friendly pre-seed step for host-native runs.
+## Project structure
 
-#### Running the real ML gate
+```text
+src/jobfeed/
+├── domain/      # Pure business rules and models
+├── ports/       # Async capability contracts
+├── services/    # Workflow orchestration
+├── adapters/    # SQLite, sources, models, and external I/O
+└── web/         # FastAPI routes and GUI hosting
+web-ui/          # React + Cloudscape interface
+tests/           # Unit, contract, integration, and browser checks
+```
 
-Because fastembed/onnxruntime is a core dependency (no heavy torch optional extra), the real ML gate runs in the host `.venv`. Enable it with `scoring.ml_gate_enabled=true`, or point `ml_gate.model_dir="mock"` at the deterministic mock gate.
+## Contributing
 
-## Architecture
+Issues and focused pull requests are welcome. Please describe the user-visible
+behavior, include the relevant test evidence, and avoid committing local data
+or credentials.
 
-The Python package lives under `src/jobfeed/`. The project follows a hexagonal architecture: `domain/` contains pure business logic and shared domain errors, `ports/` defines async Protocol contracts, `adapters/` implements concrete IO, and `services/` orchestrates through ports. Store access is async through `SQLiteStore`; the CLI is a thin sync boundary that uses `asyncio.run()` to call async services.
+## Acknowledgements
 
-## Engineering Standards
+README structure adapted for Jobfeed from
+[Best-README-Template](https://github.com/othneildrew/Best-README-Template).
+The concise demo-first presentation was inspired by
+[holehe](https://github.com/megadose/holehe) and the curated examples in
+[awesome-readme](https://github.com/matiassingers/awesome-readme).
 
-Read [docs/engineering-standards.md](docs/engineering-standards.md) before changing code.
+<p align="right"><a href="#readme-top">Back to top</a></p>
