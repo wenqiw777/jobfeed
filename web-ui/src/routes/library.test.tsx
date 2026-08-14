@@ -10,7 +10,7 @@ const calls: string[] = [];
 function row(status: string, postedAt: string | null = "2026-06-16T00:00:00Z"): JobSummary {
   return {
     id: "1", company: "Acme", title: "Engineer", platform: "lever",
-    url: "https://example.com", status, verdict: "apply", stage_a_score: 80,
+    url: "https://example.com", status, decision: "results", verdict: "apply", stage_a_score: 80,
     stage_b_fit_score: 90, stage_b_status: "completed", jd_quality: "full",
     company_norm: "acme", title_norm: "engineer", posted_at: postedAt,
     discovered_at: "2026-06-16T12:00:00Z", closed_at: null,
@@ -23,7 +23,7 @@ function mockApi(postedAt: string | null = "2026-06-16T00:00:00Z"): void {
     calls.push(url);
     if (url.startsWith("/api/jobs?")) {
       const params = new URLSearchParams(url.split("?")[1]);
-      const status = params.getAll("statuses")[0] ?? "scored";
+      const status = params.get("decision") ?? "results";
       return new Response(JSON.stringify({
         jobs: [row(status, postedAt)], total: 1,
         tab_counts: { queue: 1, pending_jd: 0, all: 1, scored: 1, shortlisted: 0, archived: 0 },
@@ -60,12 +60,16 @@ test("Applied filter groups historical application statuses", async () => {
   await screen.findByTestId("job-row-1");
   fireEvent.click(screen.getByRole("tab", { name: "Applied" }));
   await waitFor(() => {
-    const url = calls.find((value) => value.includes("statuses=interviewing"));
-    expect(url).toContain("statuses=applied");
-    expect(url).toContain("statuses=offer");
-    expect(url).toContain("statuses=rejected");
+    const url = calls.find((value) => value.includes("decision=applied"));
+    expect(url).toBeDefined();
   });
   expect(screen.getByText("Applied")).toBeInTheDocument();
+});
+
+test("uses 50 rows for every library page", async () => {
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  expect(calls.some((url) => url.includes("limit=50"))).toBe(true);
 });
 
 test("sorts all postings from the Fit score and Posted headers", async () => {

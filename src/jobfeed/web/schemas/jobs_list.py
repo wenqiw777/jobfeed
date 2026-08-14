@@ -5,9 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from jobfeed.domain.models_views import JobsViewPage, JobsViewQuery, JobsViewRow
+from jobfeed.domain.user_decisions import (
+    UserDecision,
+    decision_for_status,
+    statuses_for_decision,
+)
 from jobfeed.services.jobs_view import JOBS_VIEW_CORPUS_LIMIT
 
 _DEFAULT_PAGE_LIMIT = 50
@@ -34,6 +39,7 @@ class JobsListParams(BaseModel):
 
     tab: TabName = "all"
     statuses: list[str] | None = None
+    decision: UserDecision | None = None
     search: str | None = None
     posted_within_days: int | None = Field(default=None, ge=0)
     require_verdict: bool = False
@@ -43,6 +49,12 @@ class JobsListParams(BaseModel):
     limit: int = Field(default=_DEFAULT_PAGE_LIMIT, ge=0, le=JOBS_VIEW_CORPUS_LIMIT)
     offset: int = Field(default=0, ge=0)
 
+    @model_validator(mode="after")
+    def _one_status_filter(self) -> JobsListParams:
+        if self.statuses and self.decision is not None:
+            raise ValueError("statuses and decision cannot be combined")
+        return self
+
     def to_query(self) -> JobsViewQuery:
         """Build the domain query from the request parameters.
 
@@ -51,7 +63,13 @@ class JobsListParams(BaseModel):
         """
         return JobsViewQuery(
             tab=self.tab,
-            statuses=tuple(self.statuses) if self.statuses else None,
+            statuses=(
+                statuses_for_decision(self.decision)
+                if self.decision is not None
+                else tuple(self.statuses)
+                if self.statuses
+                else None
+            ),
             search=self.search,
             posted_within_days=self.posted_within_days,
             require_verdict=self.require_verdict,
@@ -69,6 +87,7 @@ class JobSummary(BaseModel):
     platform: str
     url: str
     status: str
+    decision: UserDecision | None
     verdict: str | None
     stage_a_score: int | None
     stage_b_fit_score: int | None
@@ -115,6 +134,7 @@ def _job_summary(row: JobsViewRow) -> JobSummary:
         platform=job.platform,
         url=job.url,
         status=row.status,
+        decision=decision_for_status(row.status),
         verdict=row.verdict,
         stage_a_score=row.stage_a_score,
         stage_b_fit_score=row.stage_b_fit_score,

@@ -31,10 +31,51 @@ async def test_insights_empty_database_has_explicit_zero_semantics(
         assert result.total_jobs == 0
         assert result.ml_gate_passed_jobs == 0
         assert result.evaluated_jobs == 0
+        assert result.detailed_reviewed_jobs == 0
         assert result.applied_jobs == 0
         assert result.verdict_distribution == {}
-        assert result.status_distribution == {}
+        assert result.decision_distribution == {}
         assert result.daily == []
+    finally:
+        await lifecycle.close()
+
+
+async def test_insights_counts_completed_evaluations_without_legacy_timestamps(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Completion status is authoritative when legacy completion time is absent."""
+    monkeypatch.setattr(_sqlite_insights, "_utc_now", lambda: NOW)
+    lifecycle, store = await open_views_performance(tmp_path / "legacy-evaluated.db")
+    try:
+        quick = await insert_job(
+            lifecycle,
+            "quick",
+            discovered_at=utc_text(NOW - timedelta(days=1)),
+            status="scored",
+        )
+        detailed = await insert_job(
+            lifecycle,
+            "detailed",
+            discovered_at=utc_text(NOW - timedelta(days=1)),
+            status="scored",
+        )
+        await set_evaluation(lifecycle, quick, stage_a_score=70)
+        await set_evaluation(
+            lifecycle,
+            detailed,
+            stage_a_score=80,
+            verdict="apply",
+            stage_b_status="completed",
+        )
+        async with lifecycle.connection() as connection:
+            await connection.execute(
+                "UPDATE evaluations SET stage_a_status='completed', stage_a_at=NULL"
+            )
+
+        result = await store.insights_overview(window_days=7)
+
+        assert result.evaluated_jobs == 2
+        assert result.detailed_reviewed_jobs == 1
     finally:
         await lifecycle.close()
 
@@ -113,9 +154,9 @@ async def test_insights_cohort_totals_and_inclusive_windowed_days(
         assert result.evaluated_jobs == 1
         assert result.applied_jobs == 1
         assert result.verdict_distribution == {"consider": 1}
-        assert result.status_distribution == {
+        assert result.decision_distribution == {
             "applied": 1,
-            "scored": 1,
+            "results": 1,
         }
         assert [day.day.isoformat() for day in result.daily] == [
             "2026-08-10",
@@ -140,10 +181,10 @@ async def test_insights_cohort_totals_and_inclusive_windowed_days(
             "below_threshold": 1,
             "consider": 1,
         }
-        assert all_time.status_distribution == {
+        assert all_time.decision_distribution == {
             "applied": 1,
-            "archived": 1,
-            "scored": 1,
+            "ignored": 1,
+            "results": 1,
         }
         assert [day.day.isoformat() for day in all_time.daily] == [
             "2026-07-13",
@@ -162,7 +203,7 @@ async def test_insights_applied_matches_the_triage_applied_group(
     monkeypatch.setattr(_sqlite_insights, "_utc_now", lambda: NOW)
     lifecycle, store = await open_views_performance(tmp_path / "applied-status.db")
     try:
-        await insert_job(
+        current_applied = await insert_job(
             lifecycle,
             "current-applied",
             discovered_at=utc_text(NOW - timedelta(days=1)),
@@ -174,26 +215,39 @@ async def test_insights_applied_matches_the_triage_applied_group(
             discovered_at=utc_text(NOW),
             status="interviewing",
         )
+        left_applied = await insert_job(
+            lifecycle,
+            "left-applied",
+            discovered_at=utc_text(NOW),
+            status="shortlisted",
+        )
         async with lifecycle.connection() as connection:
-            await connection.execute(
+            await connection.executemany(
                 """INSERT INTO job_status_history
                    (job_id, from_status, to_status, changed_at)
                    VALUES (?, 'new', 'applied', ?)""",
-                (historical_applied, utc_text(NOW)),
+                [
+                    (
+                        current_applied,
+                        utc_text(NOW - timedelta(days=1)),
+                    ),
+                    (historical_applied, utc_text(NOW)),
+                    (left_applied, utc_text(NOW)),
+                ],
             )
 
         result = await store.insights_overview(window_days=7)
 
         assert result.applied_jobs == 2
-        assert result.status_distribution == {"applied": 1, "interviewing": 1}
+        assert result.decision_distribution == {"applied": 2, "wait": 1}
         assert result.daily == [
             InsightsDay(
                 day=(NOW - timedelta(days=1)).date(),
                 discovered=1,
                 evaluated=0,
-                applied=0,
+                applied=1,
             ),
-            InsightsDay(day=NOW.date(), discovered=1, evaluated=0, applied=1),
+            InsightsDay(day=NOW.date(), discovered=2, evaluated=0, applied=1),
         ]
     finally:
         await lifecycle.close()
@@ -228,6 +282,12 @@ async def test_insights_window_filters_the_full_discovery_cohort(
                    VALUES (?, 'new', 'applied', ?)""",
                 (older, utc_text(NOW - timedelta(days=1))),
             )
+            await connection.execute(
+                """INSERT INTO job_status_history
+                   (job_id, from_status, to_status, changed_at)
+                   VALUES (?, 'new', 'applied', ?)""",
+                (recent, utc_text(NOW)),
+            )
         for job_id in (older, recent):
             await set_evaluation(
                 lifecycle,
@@ -247,9 +307,9 @@ async def test_insights_window_filters_the_full_discovery_cohort(
         assert (week.applied_jobs, month.applied_jobs) == (1, 2)
         assert week.verdict_distribution == {"consider": 1}
         assert month.verdict_distribution == {"consider": 2}
-        assert week.status_distribution == {"interviewing": 1}
-        assert month.status_distribution == {"applied": 1, "interviewing": 1}
-        assert sum(day.applied for day in week.daily) == 0
-        assert sum(day.applied for day in month.daily) == 1
+        assert week.decision_distribution == {"applied": 1}
+        assert month.decision_distribution == {"applied": 2}
+        assert sum(day.applied for day in week.daily) == week.applied_jobs == 1
+        assert sum(day.applied for day in month.daily) == month.applied_jobs == 2
     finally:
         await lifecycle.close()

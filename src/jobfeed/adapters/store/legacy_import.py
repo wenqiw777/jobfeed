@@ -68,6 +68,7 @@ class EvaluationRow(TypedDict, total=False):
     stage_a_cost_usd: float | None
     stage_a_prompt_hash: str | None
     stage_a_resume_hash: str | None
+    stage_a_at: str | None
     stage_b_verdict: str | None
     stage_b_jd_summary: str | None
     stage_b_verdict_json: str | None
@@ -80,6 +81,7 @@ class EvaluationRow(TypedDict, total=False):
     stage_b_cost_usd: float | None
     stage_b_prompt_hash: str | None
     stage_b_resume_hash: str | None
+    stage_b_at: str | None
     created_at: str
     updated_at: str
 
@@ -403,6 +405,9 @@ def _map_evaluation_row(row: dict[str, Any]) -> EvaluationRow:
         stage_a_prompt_hash=row["stage_a_prompt_hash"],
         # resume_hash -> stage_a_resume_hash
         stage_a_resume_hash=row["resume_hash"],
+        stage_a_at=(
+            row["created_at"] if row["stage_a_status"] == "completed" else None
+        ),
         stage_b_verdict=row.get("stage_b_verdict"),
         stage_b_jd_summary=row.get("stage_b_jd_summary"),
         # block_a_verdict -> stage_b_verdict_json
@@ -423,6 +428,7 @@ def _map_evaluation_row(row: dict[str, Any]) -> EvaluationRow:
         stage_b_resume_hash=(
             row["resume_hash"] if stage_b_done else row.get("stage_b_resume_hash")
         ),
+        stage_b_at=(row["updated_at"] if stage_b_done else None),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

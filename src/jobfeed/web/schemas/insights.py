@@ -22,6 +22,7 @@ class InsightsTotals(BaseModel):
     jobs: int
     ml_gate_passed: int
     evaluated: int
+    detailed_reviewed: int
     applied: int
 
 
@@ -47,7 +48,7 @@ class InsightsOverviewResponse(BaseModel):
     window_days: int | None
     totals: InsightsTotals
     verdict_distribution: dict[str, int]
-    status_distribution: dict[str, int]
+    decision_distribution: dict[str, int]
     daily: list[InsightsDayEntry]
 
 
@@ -68,10 +69,11 @@ def insights_overview_response(
             jobs=overview.total_jobs,
             ml_gate_passed=overview.ml_gate_passed_jobs,
             evaluated=overview.evaluated_jobs,
+            detailed_reviewed=overview.detailed_reviewed_jobs,
             applied=overview.applied_jobs,
         ),
         verdict_distribution=overview.verdict_distribution,
-        status_distribution=overview.status_distribution,
+        decision_distribution=overview.decision_distribution,
         daily=[_day_entry(day) for day in overview.daily],
     )
 

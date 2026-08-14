@@ -7,6 +7,7 @@ import { useBulkTransition, type TransitionStatus } from "@/api/queries";
 import { toast } from "@/components/ui/use-toast";
 
 interface BulkBarProps {
+  currentDecision: "results" | "wait" | "applied" | "ignored";
   selectedIds: string[];
   /** True total matching the current filters (the API's `total`). */
   total: number;
@@ -20,18 +21,19 @@ interface BulkBarProps {
 }
 
 interface BulkAction {
+  decision: "wait" | "ignored";
   label: string;
   to: TransitionStatus;
-  force: boolean;
 }
 
 const ACTIONS: BulkAction[] = [
-  { label: "Move selected to Wait", to: "shortlisted", force: false },
-  { label: "Ignore selected", to: "ignored", force: false },
+  { decision: "wait", label: "Move selected to Wait", to: "shortlisted" },
+  { decision: "ignored", label: "Ignore selected", to: "ignored" },
 ];
 
 /** Appears while rows are checkbox-selected; runs the bulk endpoint. */
 export function BulkBar({
+  currentDecision,
   selectedIds,
   total,
   isSelectingAll,
@@ -46,9 +48,9 @@ export function BulkBar({
     return null;
   }
 
-  const run = ({ to, force }: BulkAction) => {
+  const run = ({ to }: BulkAction) => {
     bulk.mutate(
-      { items: selectedIds.map((id) => ({ id, to })), force },
+      { items: selectedIds.map((id) => ({ id, to })) },
       {
         onSuccess: (result) => {
           const failedIds = result.failed.map((failure) => failure.id);
@@ -83,7 +85,9 @@ export function BulkBar({
             <Box variant="strong">{selectedIds.length} selected</Box>
             <div role="group" aria-label="Decision actions">
               <SpaceBetween direction="horizontal" size="xs">
-                {ACTIONS.map((action) => (
+                {ACTIONS.filter(
+                  (action) => action.decision !== currentDecision,
+                ).map((action) => (
                   <Button
                     key={action.to}
                     wrapText={false}

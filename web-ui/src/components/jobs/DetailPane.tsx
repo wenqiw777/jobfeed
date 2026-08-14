@@ -65,7 +65,7 @@ export function DetailPane({
               </SpaceBetween>
             ) : formatRelativeAge(job.posted_at),
           },
-          { label: "Decision", value: visibleDecision(status.status ?? "") },
+          { label: "Decision", value: visibleDecision(status.decision) },
           { label: "Quick score", value: stageA?.score ?? "—" },
           { label: "Detailed fit score", value: stageB?.fit_score ?? "—" },
         ]}
@@ -123,11 +123,10 @@ function DecisionActions({
   );
 }
 
-function visibleDecision(status: string): string {
-  if (["shortlisted", "awaiting_referral"].includes(status)) return "Wait";
-  if (["applied", "interviewing", "offer", "rejected", "ghosted"].includes(status)) {
-    return "Applied";
-  }
-  if (["ignored", "archived"].includes(status)) return "Ignored";
-  return "Ready for decision";
+function visibleDecision(decision: DecisionView | null): string {
+  if (decision === "results") return "Ready for decision";
+  if (decision === "wait") return "Wait";
+  if (decision === "applied") return "Applied";
+  if (decision === "ignored") return "Ignored";
+  return "—";
 }

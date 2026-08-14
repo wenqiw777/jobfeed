@@ -141,8 +141,8 @@ class InsightsDay:
         discovered: Jobs first discovered that day (``jobs.discovered_at``).
         evaluated: Jobs whose Stage A completed that day
             (``evaluations.stage_a_at``).
-        applied: Status transitions to applied that day
-            (``job_status_history.changed_at``).
+        applied: Cohort jobs currently in the Applied decision, bucketed by
+            their latest transition to applied.
     """
 
     day: date
@@ -162,15 +162,16 @@ class InsightsOverview:
         ml_gate_passed_jobs: Cohort gate survivors
             (``ml_gate_result = 'pass'``) — the funnel-stage semantic, not
             gate failures. Jobs never gated count toward neither.
-        evaluated_jobs: Cohort jobs with a completed Stage A
-            (``stage_a_at`` set).
-        applied_jobs: Cohort jobs whose current status is ``applied``.
+        evaluated_jobs: Cohort jobs with completed Stage A status.
+        detailed_reviewed_jobs: Cohort jobs with completed Stage B status.
+        applied_jobs: Cohort jobs whose current workflow state belongs to the
+            user-facing Applied decision.
         verdict_distribution: Cohort ``stage_b_verdict`` counts plus the
             derived ``below_threshold`` bucket (verdict-less rows with
             ``stage_b_status = 'skipped_below_threshold'`` — the same
             grouping the triage view uses). Only nonzero buckets appear.
-        status_distribution: Cohort ``job_status.status`` counts. Only
-            nonzero buckets appear.
+        decision_distribution: Cohort current user-decision counts. Historical
+            ``archived`` rows are included in the single ``ignored`` bucket.
         daily: Ascending per-day event counts for cohort jobs; only days having
             data appear (consumers zero-fill gaps).
     """
@@ -179,9 +180,10 @@ class InsightsOverview:
     total_jobs: int
     ml_gate_passed_jobs: int
     evaluated_jobs: int
+    detailed_reviewed_jobs: int
     applied_jobs: int
     verdict_distribution: dict[str, int]
-    status_distribution: dict[str, int]
+    decision_distribution: dict[str, int]
     daily: list[InsightsDay]
 
 

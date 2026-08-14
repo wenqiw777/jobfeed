@@ -545,6 +545,31 @@ async def _check_score_ranges(
     )
 
 
+async def _check_evaluation_completion_times(
+    target: ParityReadPort,
+    report: ParityReport,
+) -> None:
+    """Require every completed evaluation stage to carry its event time."""
+    evaluations = await target.read_all_rows("evaluations")
+    missing: list[str] = []
+    for row in evaluations:
+        if row.get("stage_a_status") == "completed" and row.get("stage_a_at") is None:
+            missing.append(f"job_id={row['job_id']}: stage_a_at")
+        if row.get("stage_b_status") == "completed" and row.get("stage_b_at") is None:
+            missing.append(f"job_id={row['job_id']}: stage_b_at")
+    report.add(
+        ParityCheck(
+            name="evaluation_completion_times",
+            passed=not missing,
+            details=(
+                "Every completed evaluation stage has a timestamp"
+                if not missing
+                else f"Missing completion times: {'; '.join(missing[:10])}"
+            ),
+        )
+    )
+
+
 async def _check_canonical_checksums(
     legacy_conn: sqlite3.Connection,
     target: ParityReadPort,
@@ -651,6 +676,7 @@ async def verify_import_parity(
         await _check_normalization(target, report)
         await _check_id_preservation(legacy_conn, target, report)
         await _check_score_ranges(target, report)
+        await _check_evaluation_completion_times(target, report)
         await _check_canonical_checksums(legacy_conn, target, report)
     finally:
         legacy_conn.close()

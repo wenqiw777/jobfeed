@@ -19,15 +19,20 @@ STATUS_VALUES: frozenset[str] = frozenset(
 )
 
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "new": frozenset({"scored"}),
+    "new": frozenset({"scored", "shortlisted", "applied", "ignored"}),
     "scored": frozenset(
         {"shortlisted", "awaiting_referral", "applied", "archived", "ignored"},
     ),
-    "shortlisted": frozenset({"awaiting_referral", "applied", "archived"}),
-    "awaiting_referral": frozenset({"applied", "archived"}),
+    "shortlisted": frozenset(
+        {"scored", "awaiting_referral", "applied", "archived", "ignored"}
+    ),
+    "awaiting_referral": frozenset(
+        {"scored", "shortlisted", "applied", "archived", "ignored"}
+    ),
     "applied": frozenset(
         {
             "shortlisted",
+            "scored",
             "interviewing",
             "offer",
             "rejected",
@@ -36,12 +41,14 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
             "ignored",
         }
     ),
-    "interviewing": frozenset({"offer", "rejected", "ghosted", "archived"}),
-    "ignored": frozenset(),
-    "archived": frozenset(),
-    "rejected": frozenset(),
-    "offer": frozenset(),
-    "ghosted": frozenset(),
+    "interviewing": frozenset(
+        {"scored", "shortlisted", "offer", "rejected", "ghosted", "archived", "ignored"}
+    ),
+    "ignored": frozenset({"scored", "shortlisted", "applied"}),
+    "archived": frozenset({"scored", "shortlisted", "applied"}),
+    "rejected": frozenset({"scored", "shortlisted", "ignored"}),
+    "offer": frozenset({"scored", "shortlisted", "ignored"}),
+    "ghosted": frozenset({"scored", "shortlisted", "ignored"}),
 }
 
 _TERMINAL: frozenset[str] = frozenset(
@@ -86,7 +93,10 @@ REASON_AUTO_SCORED = "auto_scored"
 
 
 def is_terminal(status: str) -> bool:
-    """Check whether a status has no allowed outgoing transitions.
+    """Check whether a status is terminal for workflow automation.
+
+    A terminal workflow state can still accept an explicit user correction
+    from the simplified Results/Wait/Applied/Ignored controls.
 
     Args:
         status: Status string to check.

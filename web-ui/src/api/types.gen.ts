@@ -1309,8 +1309,8 @@ export interface components {
         InsightsOverviewResponse: {
             /** Daily */
             daily: components["schemas"]["InsightsDayEntry"][];
-            /** Status Distribution */
-            status_distribution: {
+            /** Decision Distribution */
+            decision_distribution: {
                 [key: string]: number;
             };
             totals: components["schemas"]["InsightsTotals"];
@@ -1332,6 +1332,8 @@ export interface components {
         InsightsTotals: {
             /** Applied */
             applied: number;
+            /** Detailed Reviewed */
+            detailed_reviewed: number;
             /** Evaluated */
             evaluated: number;
             /** Jobs */
@@ -1460,6 +1462,8 @@ export interface components {
             company: string;
             /** Company Norm */
             company_norm: string | null;
+            /** Decision */
+            decision: ("results" | "wait" | "applied" | "ignored") | null;
             /**
              * Discovered At
              * Format: date-time
@@ -2098,6 +2102,8 @@ export interface components {
          * @description Workflow section: current status, notes, follow-up, history.
          */
         StatusDetail: {
+            /** Decision */
+            decision: ("results" | "wait" | "applied" | "ignored") | null;
             /** History */
             history: string[];
             /** Next Followup At */
@@ -2606,6 +2612,7 @@ export interface operations {
             query?: {
                 tab?: "queue" | "pending_jd" | "all" | "scored" | "shortlisted" | "archived";
                 statuses?: string[] | null;
+                decision?: ("results" | "wait" | "applied" | "ignored") | null;
                 search?: string | null;
                 posted_within_days?: number | null;
                 require_verdict?: boolean;

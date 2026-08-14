@@ -684,7 +684,9 @@ SELECT
     (SELECT COUNT(*) FROM cohort WHERE ml_gate_result = 'pass')
         AS ml_gate_passed_jobs,
     (SELECT COUNT(*) FROM evaluations e JOIN cohort c ON c.id = e.job_id
-        WHERE e.stage_a_at IS NOT NULL) AS evaluated_jobs,
+        WHERE e.stage_a_status = 'completed') AS evaluated_jobs,
+    (SELECT COUNT(*) FROM evaluations e JOIN cohort c ON c.id = e.job_id
+        WHERE e.stage_b_status = 'completed') AS detailed_reviewed_jobs,
     (SELECT COUNT(*) FROM job_status s JOIN cohort c ON c.id = s.job_id
         WHERE s.status IN
           ('applied','interviewing','offer','rejected','ghosted')) AS applied_jobs"""
@@ -702,12 +704,39 @@ _INSIGHTS_VERDICTS_SQL = """SELECT
     )
     GROUP BY bucket"""
 
-_INSIGHTS_STATUSES_SQL = """SELECT s.status AS bucket, COUNT(*) AS n
+_INSIGHTS_DECISIONS_SQL = """SELECT
+    CASE
+      WHEN s.status IN ('new','scored') THEN 'results'
+      WHEN s.status IN ('shortlisted','awaiting_referral') THEN 'wait'
+      WHEN s.status IN ('applied','interviewing','offer','rejected','ghosted')
+        THEN 'applied'
+      WHEN s.status IN ('ignored','archived') THEN 'ignored'
+      ELSE NULL
+    END AS bucket,
+    COUNT(*) AS n
     FROM job_status s JOIN jobs j ON j.id = s.job_id
     WHERE ($1::integer IS NULL
            OR j.discovered_at >= now() - make_interval(days => $1))
       AND j.discovered_at <= now()
-    GROUP BY s.status"""
+    GROUP BY bucket"""
+
+_INSIGHTS_APPLIED_DAILY_SQL = """WITH current_applied AS (
+    SELECT s.job_id,
+           COALESCE(MAX(h.changed_at), s.last_status_change_at) AS event_at
+    FROM job_status s
+    JOIN jobs j ON j.id=s.job_id
+    LEFT JOIN job_status_history h
+      ON h.job_id=s.job_id AND h.to_status='applied'
+    WHERE s.status IN ('applied','interviewing','offer','rejected','ghosted')
+      AND ($1::integer IS NULL
+           OR j.discovered_at >= now() - make_interval(days => $1))
+      AND j.discovered_at <= now()
+    GROUP BY s.job_id, s.last_status_change_at
+)
+SELECT (event_at AT TIME ZONE 'UTC')::date AS day, COUNT(*) AS n
+FROM current_applied
+WHERE event_at <= now()
+GROUP BY day"""
 
 
 def _insights_day_sql(table: str, column: str) -> str:
@@ -3766,24 +3795,23 @@ class PostgresStore:
         async with pool.acquire() as conn:
             totals = await conn.fetchrow(_INSIGHTS_TOTALS_SQL, window_days)
             verdict_rows = await conn.fetch(_INSIGHTS_VERDICTS_SQL, window_days)
-            status_rows = await conn.fetch(_INSIGHTS_STATUSES_SQL, window_days)
+            decision_rows = await conn.fetch(_INSIGHTS_DECISIONS_SQL, window_days)
             discovered = await conn.fetch(
                 _insights_day_sql("jobs", "discovered_at"), window_days
             )
             evaluated = await conn.fetch(
                 _insights_day_sql("evaluations", "stage_a_at"), window_days
             )
-            applied = await conn.fetch(
-                _insights_day_sql("job_status_history", "changed_at"), window_days
-            )
+            applied = await conn.fetch(_INSIGHTS_APPLIED_DAILY_SQL, window_days)
         return InsightsOverview(
             window_days=window_days,
             total_jobs=int(totals["total_jobs"]),
             ml_gate_passed_jobs=int(totals["ml_gate_passed_jobs"]),
             evaluated_jobs=int(totals["evaluated_jobs"]),
+            detailed_reviewed_jobs=int(totals["detailed_reviewed_jobs"]),
             applied_jobs=int(totals["applied_jobs"]),
             verdict_distribution={r["bucket"]: int(r["n"]) for r in verdict_rows},
-            status_distribution={r["bucket"]: int(r["n"]) for r in status_rows},
+            decision_distribution={r["bucket"]: int(r["n"]) for r in decision_rows},
             daily=_merge_insights_days(discovered, evaluated, applied),
         )
 

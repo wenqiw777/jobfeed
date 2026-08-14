@@ -25,6 +25,7 @@ _RUN_LEASE_ROWS = [
     ("scan", 0, None, None, None, None),
 ]
 _INJECTED_FAILURE_CALL = 4
+_DATA_REPAIR_FAILURE_CALL = 2
 
 
 async def _scalar(connection: aiosqlite.Connection, sql: str) -> Any:
@@ -117,6 +118,77 @@ async def test_inconsistent_zero_or_v1_database_fails_closed() -> None:
         with pytest.raises(ValueError, match="schema v1 is inconsistent"):
             await ensure_sqlite_schema(connection)
         assert await _table_names(connection) == ()
+
+
+@pytest.mark.asyncio
+async def test_current_data_repair_backfills_completed_evaluation_times() -> None:
+    """Existing completed evaluations gain stable dates without a DDL migration."""
+    async with aiosqlite.connect(":memory:") as connection:
+        await ensure_sqlite_schema(connection)
+        await connection.execute("PRAGMA user_version=1")
+        await connection.execute(
+            """INSERT INTO jobs(
+                   platform, canonical_id, url, title, company, location,
+                   discovered_at
+               ) VALUES('test','legacy','https://example.test','Engineer',
+                        'Example','Remote','2026-05-01T00:00:00.000000Z')"""
+        )
+        job_id = await _scalar(connection, "SELECT id FROM jobs")
+        await connection.execute(
+            """INSERT INTO jobs(
+                   platform, canonical_id, url, title, company, location,
+                   discovered_at
+               ) VALUES('test','drift','https://example.test/drift','Engineer',
+                        'Example','Remote','2026-05-01T00:00:00.000000Z')"""
+        )
+        drift_job_id = await _scalar(
+            connection, "SELECT id FROM jobs WHERE canonical_id='drift'"
+        )
+        await connection.execute(
+            "UPDATE job_status SET status='scored' WHERE job_id=?", (drift_job_id,)
+        )
+        await connection.execute(
+            """INSERT INTO evaluations(
+                   job_id, stage_a_status, stage_a_at, stage_b_status, stage_b_at,
+                   created_at, updated_at
+               ) VALUES(?, 'completed', NULL, 'completed', NULL, ?, ?)""",
+            (
+                job_id,
+                "2026-05-02T03:04:05.000000Z",
+                "2026-05-03T04:05:06.000000Z",
+            ),
+        )
+        await connection.commit()
+
+        await ensure_sqlite_schema(connection)
+
+        assert await _scalar(connection, "PRAGMA user_version") == 1
+        cursor = await connection.execute(
+            "SELECT stage_a_at, stage_b_at FROM evaluations WHERE job_id=?", (job_id,)
+        )
+        assert await cursor.fetchone() == (
+            "2026-05-02T03:04:05.000000Z",
+            "2026-05-03T04:05:06.000000Z",
+        )
+        await cursor.close()
+        assert (
+            await _scalar(
+                connection,
+                """SELECT COUNT(*) FROM job_status s JOIN evaluations e
+               ON e.job_id=s.job_id
+               WHERE s.status='new' AND e.stage_a_status='completed'""",
+            )
+            == 0
+        )
+        assert (
+            await _scalar(
+                connection,
+                """SELECT COUNT(*) FROM job_status s LEFT JOIN evaluations e
+               ON e.job_id=s.job_id
+               WHERE s.status='scored' AND e.job_id IS NULL""",
+            )
+            == 0
+        )
 
 
 @pytest.mark.asyncio
@@ -230,3 +302,65 @@ async def test_migration_failure_rolls_back_every_ddl_statement(
 
         assert await _scalar(connection, "PRAGMA user_version") == 0
         assert await _table_names(connection) == ()
+
+
+@pytest.mark.asyncio
+async def test_data_repair_failure_rolls_back_every_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed invariant repair preserves the exact pre-repair data."""
+    async with aiosqlite.connect(":memory:") as connection:
+        await ensure_sqlite_schema(connection)
+        await connection.execute(
+            """INSERT INTO jobs(
+                   platform, canonical_id, url, title, company, location,
+                   discovered_at
+               ) VALUES('test','rollback','https://example.test/rollback',
+                        'Engineer','Example','Remote',
+                        '2026-05-01T00:00:00.000000Z')"""
+        )
+        job_id = await _scalar(connection, "SELECT id FROM jobs")
+        await connection.execute(
+            """INSERT INTO evaluations(
+                   job_id, stage_a_status, stage_a_at, created_at, updated_at
+               ) VALUES(?, 'completed', NULL, ?, ?)""",
+            (
+                job_id,
+                "2026-05-02T03:04:05.000000Z",
+                "2026-05-03T04:05:06.000000Z",
+            ),
+        )
+        await connection.commit()
+
+        calls = 0
+        original = sqlite_schema._execute_data_migration_statement
+
+        async def fail_second(connection: aiosqlite.Connection, sql: str) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == _DATA_REPAIR_FAILURE_CALL:
+                raise RuntimeError("injected data repair failure")
+            await original(connection, sql)
+
+        monkeypatch.setattr(
+            sqlite_schema, "_execute_data_migration_statement", fail_second
+        )
+        with pytest.raises(RuntimeError, match="injected data repair failure"):
+            await ensure_sqlite_schema(connection)
+
+        assert await _scalar(connection, "PRAGMA user_version") == 1
+        assert (
+            await _scalar(
+                connection,
+                "SELECT COUNT(*) FROM evaluations WHERE stage_a_at IS NOT NULL",
+            )
+            == 0
+        )
+        assert (
+            await _scalar(
+                connection,
+                "SELECT COUNT(*) FROM job_status WHERE status='new'",
+            )
+            == 1
+        )
+        assert await _scalar(connection, "SELECT COUNT(*) FROM job_status_history") == 1

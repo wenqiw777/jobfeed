@@ -7,6 +7,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from jobfeed.domain.interview import InterviewRound
+from jobfeed.domain.user_decisions import UserDecision, decision_for_status
 from jobfeed.services.jobs_view import JobDetail
 from jobfeed.web.schemas._jobs_detail_stage_b import StageBDetail, stage_b_section
 
@@ -52,6 +53,7 @@ class StatusDetail(BaseModel):
     """Workflow section: current status, notes, follow-up, history."""
 
     status: str | None
+    decision: UserDecision | None
     notes: str | None
     next_followup_at: datetime | None
     resume_variant: str | None
@@ -178,6 +180,9 @@ def _status_detail(detail: JobDetail) -> StatusDetail:
     status = detail.status
     return StatusDetail(
         status=str(status.status) if status is not None else None,
+        decision=(
+            decision_for_status(str(status.status)) if status is not None else None
+        ),
         notes=status.notes if status is not None else None,
         next_followup_at=status.next_followup_at if status is not None else None,
         resume_variant=status.resume_variant if status is not None else None,

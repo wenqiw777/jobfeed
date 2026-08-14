@@ -17,7 +17,8 @@ export function coverageStages(overview: InsightsOverviewResponse): CoverageStag
     total === 0 ? 0 : Math.round((count / total) * 1000) / 10;
   return [
     { label: "Passed local filter", count: overview.totals.ml_gate_passed, percent: percentOfDiscovered(overview.totals.ml_gate_passed) },
-    { label: "Evaluated", count: overview.totals.evaluated, percent: percentOfDiscovered(overview.totals.evaluated) },
+    { label: "Quick evaluated", count: overview.totals.evaluated, percent: percentOfDiscovered(overview.totals.evaluated) },
+    { label: "Detailed reviewed", count: overview.totals.detailed_reviewed, percent: percentOfDiscovered(overview.totals.detailed_reviewed) },
     { label: "Recommended apply", count: overview.verdict_distribution.apply ?? 0, percent: percentOfDiscovered(overview.verdict_distribution.apply ?? 0) },
     { label: "Applied", count: overview.totals.applied, percent: percentOfDiscovered(overview.totals.applied) },
   ];

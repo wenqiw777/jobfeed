@@ -268,7 +268,7 @@ async def test_overview_pins_totals_distributions_and_daily_series(
         "consider": 1,
         "below_threshold": 1,
     }
-    assert payload["status_distribution"] == {
+    assert payload["decision_distribution"] == {
         "scored": 1,
         "applied": 1,
         "shortlisted": 1,
@@ -318,7 +318,7 @@ async def test_overview_applied_uses_status_state_and_transition_history(
 
     expected_applied_jobs = 2
     assert overview.applied_jobs == expected_applied_jobs
-    assert overview.status_distribution == {"applied": 1, "interviewing": 1}
+    assert overview.decision_distribution == {"applied": 2}
     assert overview.daily == [
         InsightsDay(day=now.date(), discovered=2, evaluated=0, applied=2)
     ]
@@ -344,7 +344,7 @@ async def test_overview_all_time_has_no_cutoff(
         "evaluated": 3,
         "applied": 2,
     }
-    assert payload["status_distribution"] == {
+    assert payload["decision_distribution"] == {
         "applied": 2,
         "scored": 1,
         "shortlisted": 1,
@@ -385,7 +385,7 @@ async def test_overview_window_validation_and_empty_db_contract(
     }
     assert payload["daily"] == []
     assert payload["verdict_distribution"] == {}
-    assert payload["status_distribution"] == {}
+    assert payload["decision_distribution"] == {}
     assert "applications" not in payload
 
 
