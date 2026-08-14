@@ -35,15 +35,15 @@ async def ensure_sqlite_schema(connection: aiosqlite.Connection) -> None:
         raise RuntimeError("SQLite schema migration requires no active transaction")
     version = await _schema_version(connection)
     if version == 0:
-        await _migrate_zero_to_one(connection)
+        await _migrate_zero_to_current(connection)
         return
     if version == SQLITE_SCHEMA_VERSION:
-        await _validate_v1(connection)
+        await _repair_current_data(connection)
         return
     raise ValueError(f"unsupported SQLite schema version: {version}")
 
 
-async def _migrate_zero_to_one(connection: aiosqlite.Connection) -> None:
+async def _migrate_zero_to_current(connection: aiosqlite.Connection) -> None:
     await connection.execute("BEGIN IMMEDIATE")
     try:
         version = await _schema_version(connection)
@@ -66,6 +66,75 @@ async def _migrate_zero_to_one(connection: aiosqlite.Connection) -> None:
         raise
 
 
+async def _repair_current_data(connection: aiosqlite.Connection) -> None:
+    """Idempotently repair invariants that predate the current schema contract."""
+    await connection.execute("BEGIN IMMEDIATE")
+    try:
+        version = await _schema_version(connection)
+        if version != SQLITE_SCHEMA_VERSION:
+            raise ValueError(f"unsupported SQLite schema version: {version}")
+        await _validate_v1(connection)
+        await _execute_data_migration_statement(
+            connection,
+            """UPDATE evaluations
+               SET stage_a_at=created_at
+               WHERE stage_a_status='completed' AND stage_a_at IS NULL""",
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """UPDATE evaluations
+               SET stage_b_at=updated_at
+               WHERE stage_b_status='completed' AND stage_b_at IS NULL""",
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """INSERT INTO job_status_history(
+                   job_id, from_status, to_status, changed_at, reason
+               )
+               SELECT s.job_id, 'new', 'scored',
+                      COALESCE(e.stage_a_at, e.created_at), 'schema_data_repair'
+               FROM job_status s JOIN evaluations e ON e.job_id=s.job_id
+               WHERE s.status='new' AND e.stage_a_status='completed'""",
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """UPDATE job_status
+               SET status='scored',
+                   last_status_change_at=(
+                     SELECT COALESCE(e.stage_a_at, e.created_at)
+                     FROM evaluations e WHERE e.job_id=job_status.job_id
+                   )
+               WHERE status='new' AND EXISTS (
+                 SELECT 1 FROM evaluations e
+                 WHERE e.job_id=job_status.job_id
+                   AND e.stage_a_status='completed'
+               )""",
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """INSERT INTO job_status_history(
+                   job_id, from_status, to_status, changed_at, reason
+               )
+               SELECT s.job_id, 'scored', 'new', s.last_status_change_at,
+                      'schema_data_repair'
+               FROM job_status s LEFT JOIN evaluations e ON e.job_id=s.job_id
+               WHERE s.status='scored' AND e.job_id IS NULL""",
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """UPDATE job_status
+               SET status='new'
+               WHERE status='scored' AND NOT EXISTS (
+                 SELECT 1 FROM evaluations e WHERE e.job_id=job_status.job_id
+               )""",
+        )
+        await _validate_v1(connection)
+        await connection.commit()
+    except BaseException:
+        await connection.rollback()
+        raise
+
+
 async def _schema_version(connection: aiosqlite.Connection) -> int:
     version = await _scalar(connection, "PRAGMA user_version")
     if type(version) is not int:
@@ -74,6 +143,12 @@ async def _schema_version(connection: aiosqlite.Connection) -> int:
 
 
 async def _execute_schema_statement(connection: aiosqlite.Connection, sql: str) -> None:
+    await connection.execute(sql)
+
+
+async def _execute_data_migration_statement(
+    connection: aiosqlite.Connection, sql: str
+) -> None:
     await connection.execute(sql)
 
 

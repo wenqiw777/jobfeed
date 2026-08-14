@@ -34,6 +34,7 @@ function triageQuery(filter: TriageFilter, page: number, sort: TriageSort): Jobs
   if (filter === "results") {
     return {
       tab: "queue",
+      decision: "results",
       apply_hard_filters: true,
       dedupe: true,
       require_verdict: true,
@@ -42,14 +43,9 @@ function triageQuery(filter: TriageFilter, page: number, sort: TriageSort): Jobs
       offset: page * PAGE_LIMIT,
     };
   }
-  const statuses = {
-    wait: ["shortlisted", "awaiting_referral"],
-    applied: ["applied", "interviewing", "offer", "rejected", "ghosted"],
-    ignored: ["ignored", "archived"],
-  }[filter];
   return {
     tab: "all",
-    statuses,
+    decision: filter,
     sort,
     limit: PAGE_LIMIT,
     offset: page * PAGE_LIMIT,
@@ -236,6 +232,7 @@ export default function TriagePage() {
     return (
       <SpaceBetween size="xs">
         <BulkBar
+          currentDecision={filter}
           selectedIds={selection.selectedIds}
           total={list.data?.total ?? 0}
           onSelectPage={() => selection.selectMany(jobs.map((job) => job.id))}

@@ -8,20 +8,20 @@ interface StatusItem {
   value: number;
 }
 
-/** Displays every nonzero job status on a logarithmic count scale. */
+/** Displays the four user decisions without exposing workflow status names. */
 export function JobStatusChart({ distribution }: { distribution: Record<string, number> }) {
   const data = Object.entries(distribution)
     .filter(([, value]) => value > 0)
     .sort(([, left], [, right]) => right - left)
     .map(([status, value]) => ({ status: readableStatus(status), value }));
   if (data.length === 0) {
-    return <ChartCard title="Job status"><ChartEmpty>No job decisions yet.</ChartEmpty></ChartCard>;
+    return <ChartCard title="User decisions"><ChartEmpty>No job decisions yet.</ChartEmpty></ChartCard>;
   }
   return (
-    <ChartCard title="Job status" description="Log scale keeps small statuses visible next to large ones.">
+    <ChartCard title="User decisions" description="Archived postings are included in Ignored.">
       <BarChart
-        ariaLabel="Job status"
-        ariaDescription="Current job counts by status on a logarithmic scale."
+        ariaLabel="User decisions"
+        ariaDescription="Current job counts by user decision on a logarithmic scale."
         i18nStrings={CHART_I18N}
         height={150}
         horizontalBars
@@ -44,5 +44,6 @@ function logCountDomain(data: readonly StatusItem[]): [number, number] {
 }
 
 function readableStatus(status: string): string {
+  if (status === "results") return "Results";
   return status.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
 }

@@ -48,9 +48,9 @@ function jsonResponse(body: unknown): Response {
 
 const EMPTY_OVERVIEW = {
   window_days: 30,
-  totals: { jobs: 0, ml_gate_passed: 0, evaluated: 0, applied: 0 },
+  totals: { jobs: 0, ml_gate_passed: 0, evaluated: 0, detailed_reviewed: 0, applied: 0 },
   verdict_distribution: {},
-  status_distribution: {},
+  decision_distribution: {},
   daily: [],
 };
 
@@ -117,13 +117,13 @@ test("renders the product zones inside a nav landmark", () => {
   }
 });
 
-test("shows the result count on Triage without a pipeline badge", async () => {
+test("does not show the misleading raw pipeline count on Triage", () => {
   renderShell();
 
   const nav = screen.getByRole("navigation", { name: "Zones" });
   const triage = within(nav).getByRole("link", { name: /Triage/ });
-  await screen.findByRole("link", { name: /Triage 12/ });
-  expect(triage).toHaveTextContent("12");
+  expect(triage).toHaveTextContent("Triage");
+  expect(triage).not.toHaveTextContent("12");
   expect(within(nav).queryByRole("link", { name: /Pipeline/ })).not.toBeInTheDocument();
 });
 

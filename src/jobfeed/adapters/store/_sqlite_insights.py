@@ -22,7 +22,9 @@ SELECT
     (SELECT COUNT(*) FROM cohort) AS total_jobs,
     (SELECT COUNT(*) FROM cohort WHERE ml_gate_result='pass') AS gate_passed,
     (SELECT COUNT(*) FROM evaluations e JOIN cohort c ON c.id=e.job_id
-        WHERE e.stage_a_at IS NOT NULL) AS evaluated,
+        WHERE e.stage_a_status='completed') AS evaluated,
+    (SELECT COUNT(*) FROM evaluations e JOIN cohort c ON c.id=e.job_id
+        WHERE e.stage_b_status='completed') AS detailed_reviewed,
     (SELECT COUNT(*) FROM job_status s JOIN cohort c ON c.id=s.job_id
         WHERE s.status IN
           ('applied','interviewing','offer','rejected','ghosted')) AS applied"""
@@ -36,10 +38,19 @@ _VERDICTS_SQL = """SELECT
        OR stage_b_status='skipped_below_threshold'
     )
     GROUP BY bucket"""
-_STATUSES_SQL = """SELECT s.status AS bucket, COUNT(*) AS n
+_DECISIONS_SQL = """SELECT
+    CASE
+      WHEN s.status IN ('new','scored') THEN 'results'
+      WHEN s.status IN ('shortlisted','awaiting_referral') THEN 'wait'
+      WHEN s.status IN ('applied','interviewing','offer','rejected','ghosted')
+        THEN 'applied'
+      WHEN s.status IN ('ignored','archived') THEN 'ignored'
+      ELSE NULL
+    END AS bucket,
+    COUNT(*) AS n
     FROM job_status s JOIN jobs j ON j.id=s.job_id
     WHERE (? IS NULL OR j.discovered_at>=?) AND j.discovered_at<=?
-    GROUP BY s.status"""
+    GROUP BY bucket"""
 
 
 def _utc_now() -> datetime:
@@ -75,6 +86,34 @@ async def _daily_counts(
               AND measure.{column}<=?{transition_filter}
             GROUP BY day""",
         (cutoff, cutoff, now, cutoff, cutoff, now),
+    )
+
+
+async def _daily_applied_counts(
+    connection: aiosqlite.Connection,
+    cutoff: str | None,
+    now: str,
+) -> list[aiosqlite.Row]:
+    """Bucket the current Applied decision cohort by its latest apply event."""
+    return await _fetch_rows(
+        connection,
+        """WITH current_applied AS (
+               SELECT s.job_id,
+                      COALESCE(MAX(h.changed_at), s.last_status_change_at) AS event_at
+               FROM job_status s
+               JOIN jobs j ON j.id=s.job_id
+               LEFT JOIN job_status_history h
+                 ON h.job_id=s.job_id AND h.to_status='applied'
+               WHERE s.status IN
+                 ('applied','interviewing','offer','rejected','ghosted')
+                 AND (? IS NULL OR j.discovered_at>=?) AND j.discovered_at<=?
+               GROUP BY s.job_id, s.last_status_change_at
+           )
+           SELECT substr(event_at, 1, 10) AS day, COUNT(*) AS n
+           FROM current_applied
+           WHERE event_at<=?
+           GROUP BY day""",
+        (cutoff, cutoff, now, now),
     )
 
 
@@ -130,26 +169,27 @@ class _SqliteInsights:
             cohort_params = (cutoff, cutoff, now_text)
             totals = await _fetch_row(connection, _TOTALS_SQL, cohort_params)
             verdicts = await _fetch_rows(connection, _VERDICTS_SQL, cohort_params)
-            statuses = await _fetch_rows(connection, _STATUSES_SQL, cohort_params)
+            decisions = await _fetch_rows(connection, _DECISIONS_SQL, cohort_params)
             discovered = await _daily_counts(
                 connection, "jobs", "discovered_at", cutoff, now_text
             )
             evaluated = await _daily_counts(
                 connection, "evaluations", "stage_a_at", cutoff, now_text
             )
-            applied = await _daily_counts(
-                connection, "job_status_history", "changed_at", cutoff, now_text
-            )
+            applied = await _daily_applied_counts(connection, cutoff, now_text)
         assert totals is not None
         return InsightsOverview(
             window_days=window_days,
             total_jobs=int(totals["total_jobs"]),
             ml_gate_passed_jobs=int(totals["gate_passed"]),
             evaluated_jobs=int(totals["evaluated"]),
+            detailed_reviewed_jobs=int(totals["detailed_reviewed"]),
             applied_jobs=int(totals["applied"]),
             verdict_distribution={
                 str(row["bucket"]): int(row["n"]) for row in verdicts
             },
-            status_distribution={str(row["bucket"]): int(row["n"]) for row in statuses},
+            decision_distribution={
+                str(row["bucket"]): int(row["n"]) for row in decisions
+            },
             daily=_merge_days(discovered, evaluated, applied),
         )

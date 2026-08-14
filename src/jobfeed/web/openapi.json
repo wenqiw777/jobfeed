@@ -824,11 +824,11 @@
             "title": "Daily",
             "type": "array"
           },
-          "status_distribution": {
+          "decision_distribution": {
             "additionalProperties": {
               "type": "integer"
             },
-            "title": "Status Distribution",
+            "title": "Decision Distribution",
             "type": "object"
           },
           "totals": {
@@ -857,7 +857,7 @@
           "window_days",
           "totals",
           "verdict_distribution",
-          "status_distribution",
+          "decision_distribution",
           "daily"
         ],
         "title": "InsightsOverviewResponse",
@@ -868,6 +868,10 @@
         "properties": {
           "applied": {
             "title": "Applied",
+            "type": "integer"
+          },
+          "detailed_reviewed": {
+            "title": "Detailed Reviewed",
             "type": "integer"
           },
           "evaluated": {
@@ -887,6 +891,7 @@
           "jobs",
           "ml_gate_passed",
           "evaluated",
+          "detailed_reviewed",
           "applied"
         ],
         "title": "InsightsTotals",
@@ -1229,6 +1234,23 @@
             ],
             "title": "Company Norm"
           },
+          "decision": {
+            "anyOf": [
+              {
+                "enum": [
+                  "results",
+                  "wait",
+                  "applied",
+                  "ignored"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
           "discovered_at": {
             "format": "date-time",
             "title": "Discovered At",
@@ -1340,6 +1362,7 @@
           "platform",
           "url",
           "status",
+          "decision",
           "verdict",
           "stage_a_score",
           "stage_b_fit_score",
@@ -2478,6 +2501,23 @@
       "StatusDetail": {
         "description": "Workflow section: current status, notes, follow-up, history.",
         "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "enum": [
+                  "results",
+                  "wait",
+                  "applied",
+                  "ignored"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
           "history": {
             "items": {
               "type": "string"
@@ -2533,6 +2573,7 @@
         },
         "required": [
           "status",
+          "decision",
           "notes",
           "next_followup_at",
           "resume_variant",
@@ -3338,6 +3379,28 @@
                 }
               ],
               "title": "Statuses"
+            }
+          },
+          {
+            "in": "query",
+            "name": "decision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "results",
+                    "wait",
+                    "applied",
+                    "ignored"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Decision"
             }
           },
           {

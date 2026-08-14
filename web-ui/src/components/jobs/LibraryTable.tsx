@@ -49,7 +49,11 @@ export function LibraryTable({ jobs, onOpen, sort, onSort }: LibraryTableProps) 
       ),
       width: 320,
     },
-    { id: "decision", header: "Your decision", cell: (job) => decisionLabel(job.status) },
+    {
+      id: "decision",
+      header: "Your decision",
+      cell: (job) => decisionLabel(job.decision),
+    },
     {
       id: "verdict",
       header: "Recommendation",
@@ -100,11 +104,10 @@ export function LibraryTable({ jobs, onOpen, sort, onSort }: LibraryTableProps) 
   );
 }
 
-function decisionLabel(status: string): string {
-  if (["shortlisted", "awaiting_referral"].includes(status)) return "Wait";
-  if (["applied", "interviewing", "offer", "rejected", "ghosted"].includes(status)) {
-    return "Applied";
-  }
-  if (["ignored", "archived"].includes(status)) return "Ignored";
+function decisionLabel(decision: JobSummary["decision"]): string {
+  if (decision === "results") return "Results";
+  if (decision === "wait") return "Wait";
+  if (decision === "applied") return "Applied";
+  if (decision === "ignored") return "Ignored";
   return "—";
 }

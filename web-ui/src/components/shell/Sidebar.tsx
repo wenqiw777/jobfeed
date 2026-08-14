@@ -4,25 +4,16 @@ import SideNavigation, {
 import Icon, { type IconProps } from "@cloudscape-design/components/icon";
 import { useLocation, useNavigate } from "react-router";
 
-import { useJobsTabCounts } from "@/api/queries";
-import { ZONES, type Zone } from "@/components/shell/zones";
-
-function useBadgeCounts(): Record<NonNullable<Zone["badge"]>, number | undefined> {
-  const tabCounts = useJobsTabCounts();
-  return {
-    queue: tabCounts.data?.tab_counts.queue,
-  };
-}
+import { ZONES } from "@/components/shell/zones";
 
 /** Cloudscape navigation for the application's product zones. */
 export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
-  const badges = useBadgeCounts();
   const location = useLocation();
   const navigate = useNavigate();
   const items: SideNavigationProps.Item[] = [
     ...ZONES.map((zone) => ({
       type: "link" as const,
-      text: zoneText(zone, badges),
+      text: zone.label,
       href: zone.path,
       icon: <ZoneIcon zone={zone.path} />,
     })),
@@ -47,15 +38,6 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
       }}
     />
   );
-}
-
-function zoneText(
-  zone: Zone,
-  badges: Record<NonNullable<Zone["badge"]>, number | undefined>,
-) {
-  if (zone.badge === null) return zone.label;
-  const count = badges[zone.badge];
-  return count ? `${zone.label} ${count}` : zone.label;
 }
 
 function ZoneIcon({ zone }: { zone: string }) {

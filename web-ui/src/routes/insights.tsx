@@ -64,7 +64,7 @@ function Body({ overview }: { overview: ReturnType<typeof useInsightsOverview> }
         { colspan: { default: 12, s: 4 } },
       ]}>
         <EvaluationCoverage overview={data} />
-        <JobStatusChart distribution={data.status_distribution} />
+        <JobStatusChart distribution={data.decision_distribution} />
       </Grid>
     </>
   );

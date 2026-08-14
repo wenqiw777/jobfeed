@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from jobfeed.domain.status import (
     ACTIVE_APPLICATION_STATUSES,
     ALLOWED_TRANSITIONS,
@@ -56,8 +58,10 @@ def test_allowed_transitions_covers_all_statuses() -> None:
 
 
 def test_new_transitions() -> None:
-    """new can only transition to scored."""
-    assert ALLOWED_TRANSITIONS["new"] == frozenset({"scored"})
+    """new supports evaluation progress plus the three user decisions."""
+    assert ALLOWED_TRANSITIONS["new"] == frozenset(
+        {"scored", "shortlisted", "applied", "ignored"}
+    )
 
 
 def test_scored_transitions() -> None:
@@ -68,16 +72,16 @@ def test_scored_transitions() -> None:
 
 
 def test_shortlisted_transitions() -> None:
-    """shortlisted can go to awaiting_referral, applied, or archived."""
+    """shortlisted preserves workflow edges and supports decision corrections."""
     assert ALLOWED_TRANSITIONS["shortlisted"] == frozenset(
-        {"awaiting_referral", "applied", "archived"},
+        {"scored", "awaiting_referral", "applied", "archived", "ignored"},
     )
 
 
 def test_awaiting_referral_transitions() -> None:
-    """awaiting_referral can go to applied or archived."""
+    """awaiting_referral preserves workflow edges and decision corrections."""
     assert ALLOWED_TRANSITIONS["awaiting_referral"] == frozenset(
-        {"applied", "archived"},
+        {"scored", "shortlisted", "applied", "archived", "ignored"},
     )
 
 
@@ -86,6 +90,7 @@ def test_applied_transitions() -> None:
     assert ALLOWED_TRANSITIONS["applied"] == frozenset(
         {
             "shortlisted",
+            "scored",
             "interviewing",
             "offer",
             "rejected",
@@ -97,9 +102,17 @@ def test_applied_transitions() -> None:
 
 
 def test_interviewing_transitions() -> None:
-    """interviewing fans out to offer, rejected, ghosted, archived."""
+    """interviewing keeps lifecycle transitions and decision corrections."""
     assert ALLOWED_TRANSITIONS["interviewing"] == frozenset(
-        {"offer", "rejected", "ghosted", "archived"},
+        {
+            "scored",
+            "shortlisted",
+            "offer",
+            "rejected",
+            "ghosted",
+            "archived",
+            "ignored",
+        },
     )
 
 
@@ -141,10 +154,36 @@ def test_archived_is_terminal() -> None:
     assert is_terminal("archived") is True
 
 
-def test_terminal_statuses_have_empty_transitions() -> None:
-    """All five terminal statuses should have no outgoing edges."""
-    for status in ("ignored", "archived", "rejected", "offer", "ghosted"):
-        assert ALLOWED_TRANSITIONS[status] == frozenset()
+@pytest.mark.parametrize(
+    ("source", "targets"),
+    [
+        ("shortlisted", ("scored", "applied", "ignored")),
+        ("applied", ("scored", "shortlisted", "ignored")),
+        ("ghosted", ("scored", "shortlisted", "ignored")),
+        ("ignored", ("scored", "shortlisted", "applied")),
+        ("archived", ("scored", "shortlisted", "applied")),
+    ],
+)
+def test_user_decisions_are_reversible_without_force(
+    source: str, targets: tuple[str, ...]
+) -> None:
+    """The simplified Results/Wait/Applied/Ignored controls can correct mistakes."""
+    for target in targets:
+        assert validate_transition(source, target) is None
+
+
+def test_terminal_statuses_only_allow_explicit_decision_corrections() -> None:
+    """Workflow-terminal rows remain correctable by the simplified UI."""
+    assert ALLOWED_TRANSITIONS["ignored"] == frozenset(
+        {"scored", "shortlisted", "applied"}
+    )
+    assert ALLOWED_TRANSITIONS["archived"] == frozenset(
+        {"scored", "shortlisted", "applied"}
+    )
+    for status in ("rejected", "offer", "ghosted"):
+        assert ALLOWED_TRANSITIONS[status] == frozenset(
+            {"scored", "shortlisted", "ignored"}
+        )
 
 
 def test_non_terminal_statuses() -> None:

@@ -128,15 +128,13 @@ export interface TransitionVars {
   id: string;
   to: TransitionStatus;
   note?: string;
-  /** Bypass the transition graph. Only the pending-JD Ignore sets this:
-   * pending rows are unscored 'new' rows whose only legal move is
-   * new→scored, so dismiss-as-junk needs force (T4 contract). */
+  /** Administrative escape hatch; ordinary Triage decisions omit it. */
   force?: boolean;
 }
 
 export interface BulkTransitionVars {
   items: { id: string; to: TransitionStatus }[];
-  /** Same forced-Ignore escape hatch as TransitionVars.force. */
+  /** Administrative escape hatch; ordinary Triage decisions omit it. */
   force?: boolean;
 }
 

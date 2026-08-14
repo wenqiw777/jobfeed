@@ -93,27 +93,36 @@ def test_is_terminal_returns_false_for_non_terminal() -> None:
         assert is_terminal(status) is False
 
 
-def test_terminal_statuses_have_empty_transitions() -> None:
-    """Terminal statuses should have no outgoing transitions."""
-    for status in ("archived", "ignored", "rejected", "offer", "ghosted"):
-        assert ALLOWED_TRANSITIONS[status] == frozenset()
+def test_terminal_statuses_only_allow_user_decision_corrections() -> None:
+    """Workflow-terminal rows remain correctable from the four-state UI."""
+    for status in ("archived", "ignored"):
+        assert ALLOWED_TRANSITIONS[status] == frozenset(
+            {"scored", "shortlisted", "applied"}
+        )
+    for status in ("rejected", "offer", "ghosted"):
+        assert ALLOWED_TRANSITIONS[status] == frozenset(
+            {"scored", "shortlisted", "ignored"}
+        )
 
 
-def test_transition_graph_matches_design_spec() -> None:
-    """ALLOWED_TRANSITIONS must match the Phase 6 design spec graph."""
-    assert ALLOWED_TRANSITIONS["new"] == frozenset({"scored"})
+def test_transition_graph_preserves_workflow_and_user_corrections() -> None:
+    """The graph includes workflow edges and explicit four-state corrections."""
+    assert ALLOWED_TRANSITIONS["new"] == frozenset(
+        {"scored", "shortlisted", "applied", "ignored"}
+    )
     assert ALLOWED_TRANSITIONS["scored"] == frozenset(
         {"shortlisted", "awaiting_referral", "applied", "archived", "ignored"},
     )
     assert ALLOWED_TRANSITIONS["shortlisted"] == frozenset(
-        {"awaiting_referral", "applied", "archived"},
+        {"scored", "awaiting_referral", "applied", "archived", "ignored"},
     )
     assert ALLOWED_TRANSITIONS["awaiting_referral"] == frozenset(
-        {"applied", "archived"},
+        {"scored", "shortlisted", "applied", "archived", "ignored"},
     )
     assert ALLOWED_TRANSITIONS["applied"] == frozenset(
         {
             "shortlisted",
+            "scored",
             "interviewing",
             "offer",
             "rejected",
@@ -123,7 +132,15 @@ def test_transition_graph_matches_design_spec() -> None:
         },
     )
     assert ALLOWED_TRANSITIONS["interviewing"] == frozenset(
-        {"offer", "rejected", "ghosted", "archived"},
+        {
+            "scored",
+            "shortlisted",
+            "offer",
+            "rejected",
+            "ghosted",
+            "archived",
+            "ignored",
+        },
     )
 
 

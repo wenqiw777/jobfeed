@@ -19,6 +19,7 @@ function job(
     platform: "greenhouse",
     url: "https://example.com/1",
     status,
+    decision: status === "ignored" ? "ignored" : "results",
     verdict: "apply",
     stage_a_score: 84,
     stage_b_fit_score: 92,
@@ -60,7 +61,7 @@ function detail(): JobDetailResponse {
         hooks: { lead_with: "Systems work", supporting: [], avoid_mentioning: [] },
       },
     },
-    status: { status: "scored", history: [], notes: null, next_followup_at: null, resume_variant: null },
+    status: { status: "scored", decision: "results", history: [], notes: null, next_followup_at: null, resume_variant: null },
     twins: [],
     interviews: [],
     application: null,
@@ -124,6 +125,16 @@ test("shows Results plus the three decision filters", async () => {
   expect(await screen.findByText("~Jun 16, 2026")).toBeInTheDocument();
   expect(await screen.findByText("Estimated from date added")).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /Pending JD/ })).not.toBeInTheDocument();
+});
+
+test("Ignored requests one decision that includes archived workflow rows", async () => {
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  fireEvent.click(screen.getByRole("tab", { name: "Ignored" }));
+  await waitFor(() => {
+    expect(calls.some(({ url }) => url.includes("decision=ignored"))).toBe(true);
+  });
+  expect(calls.some(({ url }) => url.includes("statuses=archived"))).toBe(false);
 });
 
 test("shows 50 results per page and paginates through the complete result set", async () => {
@@ -206,9 +217,9 @@ test("decision filters send compatible status groups and allow correcting mistak
   await screen.findByTestId("job-row-1");
   fireEvent.click(screen.getByRole("tab", { name: "Applied" }));
   await waitFor(() => {
-    const filtered = calls.find((call) => call.url.includes("statuses=interviewing"));
-    expect(filtered?.url).toContain("statuses=applied");
-    expect(filtered?.url).toContain("statuses=offer");
+    const filtered = calls.find((call) => call.url.includes("decision=applied"));
+    expect(filtered?.url).toContain("decision=applied");
+    expect(filtered?.url).not.toContain("statuses=");
   });
   expect(screen.queryByRole("button", { name: "Mark as applied" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Move to Results" })).toBeInTheDocument();
@@ -239,6 +250,20 @@ test("bulk actions name both the destination and affected selection", async () =
   }
   expect(screen.queryByText("Shortlist")).not.toBeInTheDocument();
   expect(screen.queryByText("Skip")).not.toBeInTheDocument();
+});
+
+test("bulk actions hide the current tab's no-op destination", async () => {
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  fireEvent.click(screen.getByRole("tab", { name: "Ignored" }));
+  await screen.findByTestId("job-row-1");
+  fireEvent.click(screen.getByRole("checkbox", { name: /Select Readable Co/ }));
+
+  const toolbar = screen.getByRole("toolbar", { name: "Bulk actions" });
+  expect(within(toolbar).queryByRole("button", { name: "Ignore selected" })).toBeNull();
+  expect(
+    within(toolbar).getByRole("button", { name: "Move selected to Wait" }),
+  ).toBeInTheDocument();
 });
 
 test("bulk Ignore removes successful Results immediately and updates the count", async () => {
