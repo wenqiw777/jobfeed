@@ -68,7 +68,7 @@ def evaluate(ctx: click.Context, /, **kwargs: object) -> None:
     """Run pending evaluation stages and print counters.
 
     LLM clients, prompt renderer, and EvaluateService are built lazily
-    so that scan/digest/migrate work without LLM CLI tools installed.
+    so that scan and digest work without LLM CLI tools installed.
 
     Args:
         ctx: Click invocation context.

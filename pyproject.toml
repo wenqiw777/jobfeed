@@ -13,7 +13,7 @@ dependencies = [
     "asyncpg >= 0.30",
     "beautifulsoup4 >= 4.12",
     "click",
-    # Web API (Phase 8): FastAPI thin shell served by uvicorn from `jobfeed
+    # FastAPI thin shell served by uvicorn from `jobfeed
     # serve`; python-multipart backs the multipart apply-upload route.
     # >= 0.115: first release with query-parameter Pydantic models
     # (`Annotated[JobsListParams, Query()]`), which the /api/jobs route uses;
@@ -21,11 +21,11 @@ dependencies = [
     # floor keeps locked/constrained installs reproducible, not just fresh
     # latest-resolves.
     "fastapi >= 0.115",
-    # ML gate (Phase 5): numpy (feature vectorizer), xgboost (model load), and
+    # ML gate: numpy (feature vectorizer), xgboost (model load), and
     # the fastembed ONNX embedder are all core — exercised by `make quality`
     # unit tests and lazy-imported in the gate. fastembed runs `all-MiniLM-L6-v2`
-    # via onnxruntime (~200MB, NO torch), so the default Docker image runs the
-    # real gate and there is no OpenMP/torch segfault risk. Its only outbound
+    # via onnxruntime (~200MB, NO torch), so there is no OpenMP/torch segfault
+    # risk. Its only outbound
     # network is a one-time HuggingFace download of the ONNX model weights.
     "fastembed >= 0.4",
     "httpx >= 0.28",
@@ -54,7 +54,7 @@ dependencies = [
     # >= 0.30: the uvicorn that runs `jobfeed serve`; a modern floor keeps the
     # loopback server's lifespan/shutdown behavior reproducible across installs.
     "uvicorn >= 0.30",
-    # Observability (Phase 9): OpenTelemetry SDK + exporters + auto-instrumentation
+    # Observability: OpenTelemetry SDK + exporters + auto-instrumentation
     # for httpx, asyncpg, and FastAPI; Sentry error tracking with FastAPI integration.
     "opentelemetry-api >= 1.25",
     "opentelemetry-sdk >= 1.25",

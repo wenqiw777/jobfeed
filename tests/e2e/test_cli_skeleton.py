@@ -1,4 +1,4 @@
-"""E2E tests for the Phase 0 Click CLI walking skeleton."""
+"""End-to-end tests for the Click CLI."""
 
 from __future__ import annotations
 
@@ -13,9 +13,6 @@ from jobfeed.cli import cli, create_app
 
 MOCK_JOB_COUNT = 3
 CLICK_USAGE_ERROR = 2
-FIXTURE_LEGACY_DB = (
-    Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "legacy_v16.db"
-)
 
 
 @pytest.mark.postgres
@@ -270,35 +267,6 @@ def test_cli_mark_stale_closed_dry_run_uses_sqlite_capability(
     assert result.exit_code == 0, result.output
     assert "Would close 0 stale jobs" in result.output
     assert "dry-run" in result.output
-
-
-def test_cli_migrate_dry_run_needs_no_target_store(tmp_path: Path) -> None:
-    """migrate import-sqlite --dry-run prints a plan without touching the store.
-
-    The dry-run path never reaches the store (which would require a live
-    database), so this stays offline.
-
-    Args:
-        tmp_path: Temporary root used for a synthetic config file.
-    """
-    config_path = tmp_path / "config.toml"
-    config_path.write_text("[db]\n", encoding="utf-8")
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--config",
-            str(config_path),
-            "migrate",
-            "import-sqlite",
-            "--from",
-            str(FIXTURE_LEGACY_DB),
-            "--dry-run",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert "Traceback" not in result.output
 
 
 def test_cli_digest_rejects_timezone_naive_cutoff(tmp_path: Path) -> None:

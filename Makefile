@@ -1,6 +1,4 @@
-.PHONY: test test-postgres lint fmt quality e2e docker-build docker-quality update-prices web-schema web-build
-
-SOURCE ?= indeed
+.PHONY: test test-postgres lint fmt quality update-prices web-schema web-build
 
 test:
 	pytest
@@ -17,17 +15,6 @@ fmt:
 
 quality:
 	make lint && make test
-
-# Manual full-stack e2e smoke (ephemeral PG + real scan). Not a CI gate.
-# Override the source with: make e2e SOURCE=all   (or speedyapply | indeed)
-e2e:
-	./scripts/e2e_smoke.sh $(SOURCE)
-
-docker-build:
-	docker compose build jobfeed-cli
-
-docker-quality: docker-build
-	docker compose run --rm jobfeed-cli make quality
 
 update-prices:
 	curl -sL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \

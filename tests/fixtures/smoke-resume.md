@@ -1,4 +1,4 @@
-# Docker Smoke Resume
+# Smoke Resume
 
 Python backend engineer with experience building async services, REST APIs,
-PostgreSQL-backed data pipelines, and CI automation.
+SQLite data pipelines, and CI automation.
