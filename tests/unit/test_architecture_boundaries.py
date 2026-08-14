@@ -1,4 +1,4 @@
-"""Import-boundary tests for the hexagonal Phase 0 architecture."""
+"""Import-boundary tests for the current hexagonal architecture."""
 
 from __future__ import annotations
 
@@ -76,8 +76,8 @@ def test_web_does_not_import_adapters() -> None:
     assert not violations, format_violations(violations)
 
 
-# Browser automation is forbidden outside the LinkedIn SessionSource surface
-# (CLAUDE.md Phase 4 amendment). Only this file may import Playwright, and only
+# Browser automation is confined to the LinkedIn SessionSource surface. Only
+# this file may import Playwright, and only
 # lazily (via importlib) so non-LinkedIn scans never hard-depend on the browser.
 PLAYWRIGHT_IMPORT_ALLOWLIST = frozenset({"adapters/sources/linkedin.py"})
 

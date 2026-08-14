@@ -43,7 +43,7 @@ def test_nested_db_path_beats_flat_alias(monkeypatch: pytest.MonkeyPatch) -> Non
         ({}, '[db]\nurl = "postgresql://legacy/db"\n'),
     ],
 )
-def test_runtime_rejects_legacy_postgres_url_with_migration_guidance(
+def test_runtime_rejects_legacy_postgres_url_with_sqlite_guidance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     environment: dict[str, str],
@@ -55,7 +55,7 @@ def test_runtime_rejects_legacy_postgres_url_with_migration_guidance(
     path = tmp_path / "config.toml"
     path.write_text(config, encoding="utf-8")
 
-    with pytest.raises(ValidationError, match="migrate pg-to-sqlite"):
+    with pytest.raises(ValidationError, match="migrated SQLite database"):
         load_settings(path)
 
 
@@ -90,7 +90,7 @@ def test_cli_reports_legacy_url_errors_without_traceback(
 
     assert result.exit_code == 1
     assert "Traceback" not in result.output
-    assert "migrate pg-to-sqlite" in result.output
+    assert "migrated SQLite database" in result.output
 
 
 def test_settings_model_has_no_backend_or_url_selector() -> None:

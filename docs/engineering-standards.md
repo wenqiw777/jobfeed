@@ -1,6 +1,7 @@
 # Engineering Standards
 
-These standards are the engineering contract for Jobfeed. Rules that can be automated must be enforced by `make quality` and CI. Task 1 must wire these same thresholds into `pyproject.toml`, `Makefile`, and CI without weakening them.
+These standards are the engineering contract for Jobfeed. Rules that can be
+automated are enforced by `make quality` and CI.
 
 ## Naming
 
@@ -8,7 +9,7 @@ These standards are the engineering contract for Jobfeed. Rules that can be auto
 - Classes, dataclasses, enums, exceptions, and protocols use `PascalCase`.
 - Boolean names start with `is_`, `has_`, `can_`, `should_`, or `needs_`.
 - Ports are capability nouns: `JobStore`, `LLMClient`, `SimpleSource`, `SessionSource`.
-- Adapters are implementation nouns: `PostgresStore`, `MockLLM`, `MockSource`.
+- Adapters are implementation nouns: `SQLiteStore`, `MockLLM`, `MockSource`.
 - Services are workflow nouns: `ScanService`, `EvaluateService`, `DigestService`.
 
 ## Function Shape
@@ -18,7 +19,11 @@ These standards are the engineering contract for Jobfeed. Rules that can be auto
 - Positional/keyword arguments max: 5. Use a dataclass or config object beyond that.
 - Line length: <= 88 characters (`line-length = 88` in `pyproject.toml`, Ruff-enforced via format check + `E501`).
 - Statements target: <= 40.
-- File length: <= 300 lines, enforced as a blocking hygiene gate. Exempt: the `adapters/store/` layer, `cli/migrate.py`, and `domain/ml_features.py`. The PostgresStore and legacy-migration surface are inherently large; `ml_features.py` holds the ML-gate vocab name lists plus the compiled regex tables that index them, which must stay in lockstep in one file. Fragmenting any of these into <=300-line shards harms readability. The gate stays blocking everywhere else. (Phase 1 amendment, approved 2026-05-22; `ml_features.py` added 2026-06-07.)
+- File length: <= 300 lines, enforced as a blocking hygiene gate. Exempt: the
+  `adapters/store/` layer and `domain/ml_features.py`. Store modules contain
+  large SQL surfaces; `ml_features.py` keeps the
+  vocabulary and compiled regex tables that must stay in lockstep. The gate
+  stays blocking everywhere else.
 - Functions should have a single clear responsibility.
 - Avoid nested loops in application/service code.
 - If nested loops are necessary in algorithmic or data-processing code, extract them into a named helper and document time complexity.
@@ -34,7 +39,7 @@ The thresholds above are global defaults. A small set of scoped relaxations live
 - **`per-file-ignores`:**
   - `ports/*.py` — `ARG002` (Protocol methods legitimately have unused args), `PLR0913` (capability signatures can exceed 5 args).
   - `adapters/store/postgres.py` — `ARG002`, `E501`, `PLR0913`, `SIM117` (the 300-line-exempt store surface; large SQL-bearing methods).
-  - `tests/**/test_ports.py` — `ARG002`, `PLR0913`. `tests/conftest.py` / `migrations/env.py` — `PLC0415`. `migrations/versions/*.py` — `E501`. `tests/fixtures/generate_legacy_fixture.py` — `PLR2004`, `E501`, `C901`, `PLC0415`.
+  - `tests/**/test_ports.py` — `ARG002`, `PLR0913`. `tests/conftest.py` — `PLC0415`. `tests/fixtures/generate_legacy_fixture.py` — `PLR2004`, `E501`, `C901`, `PLC0415`.
   - `tests/unit/test_speedyapply_markdown.py` / `tests/unit/test_speedyapply_routing.py` — `E501` (inline SpeedyApply markdown-table fixtures embed HTML anchors that cannot wrap). `tests/unit/test_dedupe.py` / `tests/contract/test_dedupe_contract.py` — `PLR0913` (keyword-only `_job` fixture builders intentionally expose every dedup-relevant field).
 - **Targeted `# noqa`:** for a one-off legitimate exceedance outside the scoped paths, a per-line `# noqa: <rule>` is the escape hatch rather than a new per-file ignore (e.g. `adapters/sources/_http.py` `fetch_json` / `probe_url` carry `# noqa: PLR0913` — low-level HTTP helpers with `client`/`url`/`slug`/`vendor`/`timeout`/`retries`).
 
@@ -87,6 +92,6 @@ The thresholds above are global defaults. A small set of scoped relaxations live
 - Unit tests, including `tests/unit/test_code_hygiene.py`.
 - Production docstring coverage for public modules, classes, functions, and methods.
 - The code hygiene checker must check its own test file and support modules for file length and structural hygiene.
-- Later CI-only integration and E2E tests once Task 1 and later tasks create those layers.
+- Integration and E2E tests for the current SQLite runtime and CLI.
 
 Pre-commit may run only fast local checks: Ruff format, Ruff check with fixes, and mypy over `src/`. Slow integration and E2E tests belong in CI, not pre-commit.

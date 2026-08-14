@@ -46,8 +46,8 @@ class DBSettings(BaseModel):
     def _reject_legacy_url(cls, value: object) -> object:
         if isinstance(value, Mapping) and "url" in value:
             raise ValueError(
-                "PostgreSQL runtime db.url is no longer supported; run "
-                "`./bin/jobfeed migrate pg-to-sqlite` and configure [db].path"
+                "PostgreSQL runtime db.url is no longer supported; configure "
+                "[db].path with the migrated SQLite database"
             )
         return value
 

@@ -4,8 +4,7 @@ Jobfeed is a local-first job scanning and evaluation pipeline. The current runti
 
 ## Quick start
 
-A fresh machine only needs **Git**. Docker and Node are not required for normal
-use. Then:
+A fresh machine only needs **Git**. Docker and Node are not required. Then:
 
 ```sh
 git clone https://github.com/wenqiw777/jobfeed.git
@@ -39,23 +38,22 @@ $EDITOR resume.md                  # replace the example with your real résumé
 
 **Format** is plain Markdown with no fixed schema. The scorer weights **project / work bullets** highest (skills-line keywords and coursework count less), so lead with concrete projects; state your graduation date / availability so the timing check works. You may keep internal-only sections (e.g. a compensation floor) — they inform scoring but are never echoed in any output. Optionally, a personal calibration appendix (hiring window, real-outcome anchors, GPA notes) sharpens scoring — copy [`preamble_personal.example.md`](preamble_personal.example.md) to `preamble_personal.md` (also gitignored) and set `preamble_personal_path`.
 
-Scoring needs an LLM backend. To try it with **no toolchain**, use the mock config — `./bin/jobfeed --config tests/fixtures/docker-smoke.toml evaluate` selects mock LLM backends. For real scoring set `stage_a` / `stage_b` to `codex-cli/*`, `openai-compat/*`, or `claude-cli/*`. Because the canonical runtime is the host, logged-in local Codex/Claude CLIs are available without copying credentials into a container.
+Scoring needs an LLM backend. To try it with **no toolchain**, use the mock config — `./bin/jobfeed --config tests/fixtures/smoke.toml evaluate` selects mock LLM backends. For real scoring set `stage_a` / `stage_b` to `codex-cli/*`, `openai-compat/*`, or `claude-cli/*`. Logged-in local Codex/Claude CLIs are available directly to the host runtime.
 
 ## Host Runtime
 
 ```sh
 jobfeed # start or reuse the server, then open the GUI
-./bin/jobfeed --config tests/fixtures/docker-smoke.toml scan --source mock
-./bin/jobfeed --config tests/fixtures/docker-smoke.toml evaluate --limit 3
-./bin/jobfeed --config tests/fixtures/docker-smoke.toml digest
+./bin/jobfeed --config tests/fixtures/smoke.toml scan --source mock
+./bin/jobfeed --config tests/fixtures/smoke.toml evaluate --limit 3
+./bin/jobfeed --config tests/fixtures/smoke.toml digest
 ./bin/jobfeed serve
 ```
 
 The setup-installed `jobfeed` command points to the canonical
 `./bin/jobfeed` entrypoint, so both execute `.venv/bin/jobfeed` from the repo
 root and use the same SQLite file. The smoke fixture selects mock LLM backends
-so it works offline. Explicit PostgreSQL snapshot migration and rollback
-rehearsal commands still use isolated Docker Compose projects.
+so it works offline.
 
 SQLite is the supported normal store backend. Runtime data lives in `data/jobfeed.sqlite`; Jobfeed does not read or write `~/.jobfeed/`. Omitting `--config` discovers repo-local `config.toml`, whose default real `codex-cli` models use the host executable and host login.
 
@@ -85,9 +83,8 @@ pytest -m mlmodel        # runs tests/mlmodel/test_ml_gate_e2e.py
 ```
 
 - The trained XGBoost model is **committed in-repo** under `models/ml_gate/` (`v*.json` booster + `.meta.json` threshold), so a plain `git clone` is self-contained — no model download or training step is needed to run the gate.
-- The embedder is `all-MiniLM-L6-v2` served by [`fastembed`](https://github.com/qdrant/fastembed) over **onnxruntime** (no PyTorch). `fastembed` is a **core** dependency, so the gate runs in the default install and the default Docker image. The ONNX weights (~87MB) are too large to commit to git, so they are obtained one of two ways depending on how you run jobfeed (below).
-- **Canonical host runtime — one-time per-machine download.** Weights are downloaded once from Hugging Face into `$JOBFEED_ML_CACHE_DIR` (else `~/.cache/jobfeed/fastembed`, never `~/.jobfeed`) and reused. Pre-seed explicitly with `./bin/jobfeed ml-gate fetch` for an offline-ready evaluation run.
-- **Optional Docker image.** The deployment/CI image still bakes the same weights for isolated checks, but ordinary local commands do not build or enter that image.
+- The embedder is `all-MiniLM-L6-v2` served by [`fastembed`](https://github.com/qdrant/fastembed) over **onnxruntime** (no PyTorch). `fastembed` is a **core** dependency. The ONNX weights (~87MB) are downloaded once from Hugging Face into `$JOBFEED_ML_CACHE_DIR` (else `~/.cache/jobfeed/fastembed`) and reused.
+- Pre-seed explicitly with `./bin/jobfeed ml-gate fetch` for an offline-ready evaluation run.
 
 #### Pre-seeding the embedder weights (`jobfeed ml-gate fetch`)
 
@@ -96,7 +93,7 @@ jobfeed ml-gate fetch                 # download/warm the default all-MiniLM-L6-
 jobfeed ml-gate fetch --embedding-model BAAI/bge-small-en-v1.5
 ```
 
-`fetch` materializes the ONNX weights into the resolved cache dir and prints the location + on-disk size. It is unnecessary for the default Docker image (which already bundles them); it's the explicit, offline-friendly pre-seed step for host-native runs.
+`fetch` materializes the ONNX weights into the resolved cache dir and prints the location + on-disk size. It is the explicit, offline-friendly pre-seed step for host-native runs.
 
 #### Running the real ML gate
 
@@ -104,8 +101,8 @@ Because fastembed/onnxruntime is a core dependency (no heavy torch optional extr
 
 ## Architecture
 
-The Python package lives under `src/jobfeed/`. The project follows a hexagonal architecture: `domain/` contains pure business logic and shared domain errors, `ports/` defines async Protocol contracts, `adapters/` implements concrete IO, and `services/` orchestrates through ports. Normal store access is async through `SQLiteStore`; PostgreSQL code remains only for the approved migration/rollback window. The CLI is a thin sync boundary that uses `asyncio.run()` to call async services.
+The Python package lives under `src/jobfeed/`. The project follows a hexagonal architecture: `domain/` contains pure business logic and shared domain errors, `ports/` defines async Protocol contracts, `adapters/` implements concrete IO, and `services/` orchestrates through ports. Store access is async through `SQLiteStore`; the CLI is a thin sync boundary that uses `asyncio.run()` to call async services.
 
 ## Engineering Standards
 
-Read [docs/engineering-standards.md](docs/engineering-standards.md) and [docs/adr/0001-architecture-and-quality-gates.md](docs/adr/0001-architecture-and-quality-gates.md) before changing code.
+Read [docs/engineering-standards.md](docs/engineering-standards.md) before changing code.

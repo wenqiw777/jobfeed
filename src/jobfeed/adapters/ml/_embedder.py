@@ -37,11 +37,9 @@ DEFAULT_MAX_CHARS = 2000
 _MODEL_NAME_ALIASES = {DEFAULT_MODEL_NAME: FASTEMBED_MINILM_ID}
 
 # Env override + host-native default for the fastembed ONNX weight cache. Without
-# an explicit cache_dir, fastembed falls back to ``$TMPDIR/fastembed_cache``,
-# which is ephemeral inside a ``docker compose run --rm`` container — re-downloading
-# ~90MB every run. We pin it under ~/.cache/jobfeed (the repo's runtime-cache
-# convention, NEVER ~/.jobfeed) so host runs persist with zero config, and the
-# docker-compose service overrides it via JOBFEED_ML_CACHE_DIR onto a named volume.
+# an explicit cache_dir, fastembed falls back to ``$TMPDIR/fastembed_cache`` and
+# can download ~90 MB again after temporary files are cleared. We pin it under
+# ~/.cache/jobfeed (never ~/.jobfeed) so host runs persist with zero config.
 ML_CACHE_DIR_ENV = "JOBFEED_ML_CACHE_DIR"
 
 
@@ -152,11 +150,9 @@ class FastEmbedEmbedder:
 def _resolve_cache_dir() -> str:
     """Return the stable fastembed weight-cache dir (env override or host default).
 
-    ``$JOBFEED_ML_CACHE_DIR`` wins (the docker-compose service points it at a
-    persistent named volume so weights survive ``--rm``, and the default Docker
-    image *bakes* the weights here at build time); otherwise the host default
-    ``~/.cache/jobfeed/fastembed`` keeps host-native runs persistent with zero
-    config. The directory is created if missing so the first run can write.
+    ``$JOBFEED_ML_CACHE_DIR`` wins; otherwise the host default
+    ``~/.cache/jobfeed/fastembed`` keeps runs persistent with zero config. The
+    directory is created if missing so the first run can write.
     """
     override = os.environ.get(ML_CACHE_DIR_ENV)
     cache_dir = (
@@ -225,9 +221,8 @@ def warm_embedder(model_name: str = DEFAULT_MODEL_NAME) -> str:
     """Download + materialize the embedder weights into the resolved cache dir.
 
     Single source of truth for "put the ONNX weights on disk at the runtime
-    cache path" — reused by the ``jobfeed ml-gate fetch`` command and by the
-    Docker image's build-time bake, so neither can drift from the path a real
-    evaluation run reads. Loads the model (triggering the one-time HF download
+    cache path", reused by the ``jobfeed ml-gate fetch`` command. Loads the
+    model (triggering the one-time HF download
     when absent) and runs a tiny embed so the ONNX session is fully realized.
 
     Args:
@@ -248,11 +243,9 @@ def _load_model(model_name: str) -> Any:
     The ``fastembed`` import is performed here so the surrounding module imports
     cleanly without the ONNX runtime installed. The model's ONNX weights are
     downloaded once from Hugging Face into ``_resolve_cache_dir()`` (a stable
-    path / persistent Docker volume, NOT fastembed's ephemeral temp default) and
-    reused on every later run, so the download is genuinely one-time per machine.
-    The default Docker image bakes the weights here at build time, so the
-    canonical path never downloads; a host-native cache miss logs one clear
-    line (with a pre-seed hint) BEFORE the download so it is never a surprise.
+    path, not fastembed's ephemeral temp default) and reused on every later run,
+    so the download is genuinely one-time per machine. A cache miss logs one
+    clear line (with a pre-seed hint) before the download.
     """
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
@@ -275,8 +268,8 @@ def _load_model(model_name: str) -> Any:
 def _warn_one_time_download(model_name: str, cache_dir: str) -> None:
     """Emit one structlog line before a cold-cache embedder weight download.
 
-    Fired only on a genuine cache MISS (so the baked Docker image and warm
-    host caches stay silent). Surfaces the model id + target dir and points at
+    Fired only on a genuine cache miss, so warm host caches stay silent.
+    Surfaces the model id + target dir and points at
     ``jobfeed ml-gate fetch`` so the implicit fetch is visible and pre-seedable
     instead of a mysterious mid-evaluation stall.
     """

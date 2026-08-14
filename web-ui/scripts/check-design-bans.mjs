@@ -1,8 +1,7 @@
 /**
- * DESIGN.md absolute-ban detector (no deps, offline).
+ * Jobfeed UI guardrail detector (no deps, offline).
  *
- * `npx impeccable detect` (the tool DESIGN.md's ban list cites) covers
- * .tsx files only via a narrow regex set, so this script is the durable
+ * This script is the durable
  * gate: it scans web-ui/src for the bans that can regress silently in
  * class strings — gradients, side-stripe borders, warm/cream color
  * classes, raw hex colors outside the token files, and content-area
@@ -26,7 +25,7 @@ const RULES = [
   {
     name: "gradient",
     pattern: /linear-gradient|radial-gradient|conic-gradient|bg-gradient-/g,
-    why: "gradients are banned (DESIGN.md)",
+    why: "gradients are banned by the Jobfeed UI guardrails",
   },
   {
     name: "side-stripe",

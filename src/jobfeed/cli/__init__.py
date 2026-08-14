@@ -51,7 +51,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
     Wires the shared persistent SQLite store from ``settings.db.path``.
 
     The evaluate command builds its own EvaluateService lazily so that
-    scan, digest, and migrate work without LLM CLI tools installed.
+    scan and digest work without LLM CLI tools installed.
 
     Args:
         config_path: Optional path to the TOML configuration file.
@@ -241,7 +241,6 @@ from jobfeed.cli.evaluate import evaluate  # noqa: E402
 from jobfeed.cli.interview import interview  # noqa: E402
 from jobfeed.cli.login import login  # noqa: E402
 from jobfeed.cli.maintenance import mark_stale_closed  # noqa: E402
-from jobfeed.cli.migrate import migrate  # noqa: E402
 from jobfeed.cli.ml_gate import ml_gate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
 from jobfeed.cli.serve import serve  # noqa: E402
@@ -252,7 +251,6 @@ from jobfeed.cli.status_query import list_cmd, stats  # noqa: E402
 cli.add_command(scan)
 cli.add_command(evaluate)
 cli.add_command(digest)
-cli.add_command(migrate)
 cli.add_command(login)
 cli.add_command(mark_stale_closed)
 cli.add_command(ml_gate)

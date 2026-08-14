@@ -2,7 +2,7 @@
 stage_a = "codex-cli/gpt-5.4-mini"
 stage_b = "mock/stage-b"
 max_concurrent = 1
-master_resume_path = "tests/fixtures/docker-smoke-resume.md"
+master_resume_path = "tests/fixtures/smoke-resume.md"
 
 [observability]
 log_level = "warning"
