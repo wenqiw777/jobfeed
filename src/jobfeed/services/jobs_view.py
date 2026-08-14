@@ -163,8 +163,9 @@ class JobsViewService:
     ) -> JobsViewPage:
         """Run the composed list view for one request.
 
-        Triage tabs always use the fixed verdict-group order (``sort`` is
-        ignored there per plan A4); Library tabs honor ``sort``. Requests
+        Triage tabs retain verdict-group order for the default discovered
+        sort and honor an explicit alternative sort. Library tabs honor
+        ``sort``. Requests
         needing post-processing over-fetch and paginate in memory with the
         true post-processing total; plain Library requests paginate in SQL
         for ANY sort (the store orders per ``query.sort``).
@@ -173,7 +174,7 @@ class JobsViewService:
             query: Tab, filters, and the requested pagination window.
             apply_hard_filters: Drop rows failing the configured hard filters.
             dedupe: Fold twin clusters to one display representative (D9).
-            sort: Library sort name (one of ``VALID_SORTS``).
+            sort: Sort name (one of ``VALID_SORTS``).
 
         Returns:
             Page with the requested window, true total, and SQL tab counts.
@@ -184,7 +185,7 @@ class JobsViewService:
         if sort not in VALID_SORTS:
             raise ValueError(f"unknown jobs view sort: {sort!r}")
         is_triage = query.tab in _TRIAGE_TABS
-        effective_sort = DEFAULT_SORT if is_triage else sort
+        effective_sort = sort
         if not (is_triage or apply_hard_filters or dedupe):
             return await self._store.query_jobs_view(
                 replace(query, sort=effective_sort)
@@ -202,7 +203,9 @@ class JobsViewService:
                 self._store, rows, twin_limit=JOBS_VIEW_CORPUS_LIMIT
             )
         sort_key = (
-            verdict_group_sort_key if is_triage else LIBRARY_SORT_KEYS[effective_sort]
+            verdict_group_sort_key
+            if is_triage and effective_sort == DEFAULT_SORT
+            else LIBRARY_SORT_KEYS[effective_sort]
         )
         rows = sorted(rows, key=sort_key)
         return JobsViewPage(

@@ -6,15 +6,13 @@ from datetime import date, datetime
 
 from pydantic import BaseModel
 
-from jobfeed.domain.models import ApplicationStats, ResumeVariantStats
 from jobfeed.domain.models_ops import AttentionItem, AttentionReport
 from jobfeed.domain.models_status import WorkflowAttention, WorkflowAttentionItem
-from jobfeed.domain.models_views import InsightsDay
-from jobfeed.services.insights import InsightsBundle
+from jobfeed.domain.models_views import InsightsDay, InsightsOverview
 
 
 class InsightsTotals(BaseModel):
-    """All-time funnel totals: discovered, gate-passed, evaluated, applied.
+    """Selected-cohort totals: discovered, gate-passed, evaluated, applied.
 
     ``ml_gate_passed`` counts gate survivors (``ml_gate_result = 'pass'``) —
     the funnel-stage semantic, not gate failures; jobs never gated count
@@ -36,59 +34,34 @@ class InsightsDayEntry(BaseModel):
     applied: int
 
 
-class ResumeVariantStatsRow(BaseModel):
-    """Per-resume-variant application outcomes."""
-
-    sent: int
-    responses: int
-    interviews: int
-    offers: int
-    rejections: int
-
-
-class ApplicationStatsBlock(BaseModel):
-    """Windowed application stats including the by-resume table.
-
-    ``by_resume`` is empty (never null) when no application falls inside
-    the window.
-    """
-
-    applied_count: int
-    response_count: int
-    interview_count: int
-    offer_count: int
-    rejection_count: int
-    median_days_to_response: float | None
-    by_resume: dict[str, ResumeVariantStatsRow]
-
-
 class InsightsOverviewResponse(BaseModel):
     """``GET /api/insights/overview`` response.
 
-    Totals and distributions are all-time; ``daily`` and ``applications``
-    cover the requested window. ``verdict_distribution`` includes the derived
+    The requested window selects the discovery-date cohort for totals,
+    distributions, and ``daily``.
+    ``verdict_distribution`` includes the derived
     ``below_threshold`` bucket (triage grouping); both distributions carry
     only nonzero buckets.
     """
 
-    window_days: int
+    window_days: int | None
     totals: InsightsTotals
     verdict_distribution: dict[str, int]
     status_distribution: dict[str, int]
     daily: list[InsightsDayEntry]
-    applications: ApplicationStatsBlock
 
 
-def insights_overview_response(bundle: InsightsBundle) -> InsightsOverviewResponse:
-    """Render the composed insights bundle as the overview response.
+def insights_overview_response(
+    overview: InsightsOverview,
+) -> InsightsOverviewResponse:
+    """Render the insights aggregate as the overview response.
 
     Args:
-        bundle: Store aggregate plus windowed application stats.
+        overview: Selected-period insights aggregate.
 
     Returns:
         Wire-shape overview response.
     """
-    overview = bundle.overview
     return InsightsOverviewResponse(
         window_days=overview.window_days,
         totals=InsightsTotals(
@@ -100,7 +73,6 @@ def insights_overview_response(bundle: InsightsBundle) -> InsightsOverviewRespon
         verdict_distribution=overview.verdict_distribution,
         status_distribution=overview.status_distribution,
         daily=[_day_entry(day) for day in overview.daily],
-        applications=_application_stats_block(bundle.applications),
     )
 
 
@@ -111,31 +83,6 @@ def _day_entry(day: InsightsDay) -> InsightsDayEntry:
         discovered=day.discovered,
         evaluated=day.evaluated,
         applied=day.applied,
-    )
-
-
-def _application_stats_block(stats: ApplicationStats) -> ApplicationStatsBlock:
-    """Map domain application stats to the response block (None -> {})."""
-    by_resume = stats.by_resume or {}
-    return ApplicationStatsBlock(
-        applied_count=stats.applied_count,
-        response_count=stats.response_count,
-        interview_count=stats.interview_count,
-        offer_count=stats.offer_count,
-        rejection_count=stats.rejection_count,
-        median_days_to_response=stats.median_days_to_response,
-        by_resume={name: _variant_row(variant) for name, variant in by_resume.items()},
-    )
-
-
-def _variant_row(variant: ResumeVariantStats) -> ResumeVariantStatsRow:
-    """Map one per-variant stats record to its DTO."""
-    return ResumeVariantStatsRow(
-        sent=variant.sent,
-        responses=variant.responses,
-        interviews=variant.interviews,
-        offers=variant.offers,
-        rejections=variant.rejections,
     )
 
 
@@ -230,13 +177,11 @@ def _pipeline_entry(item: AttentionItem) -> PipelineAttentionEntry:
 
 
 __all__ = [
-    "ApplicationStatsBlock",
     "AttentionResponse",
     "InsightsDayEntry",
     "InsightsOverviewResponse",
     "InsightsTotals",
     "PipelineAttentionEntry",
-    "ResumeVariantStatsRow",
     "WorkflowAttentionEntry",
     "attention_response",
     "insights_overview_response",

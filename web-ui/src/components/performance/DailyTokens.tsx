@@ -1,68 +1,44 @@
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import LineChart from "@cloudscape-design/components/line-chart";
 
 import type { LLMDailyStatsRow } from "@/api/queries";
+import { CHART_I18N, countDomain } from "@/components/insights/chartProps";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
 import { dayTick } from "@/lib/dates";
 
-const INITIAL_DIMENSION = { width: 600, height: 200 };
+const compactTokenFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
-/** Daily token usage: average tokens per LLM call (input + output) per
- * day. The API exposes token counts only — no per-day cost — so this
- * panel charts tokens honestly instead of pretending to price them. */
+function tokenTick(value: number): string {
+  return compactTokenFormatter.format(value);
+}
+
+function exactTokens(value: number): string {
+  return `${Math.round(value).toLocaleString("en-US")} tokens`;
+}
+
 export function DailyTokens({ stats }: { stats: LLMDailyStatsRow[] }) {
-  if (stats.length === 0) {
-    return (
-      <ChartCard title="Daily token usage">
-        <ChartEmpty>No LLM token data in this period.</ChartEmpty>
-      </ChartCard>
-    );
+  const byDay = new Map<string, { weightedTokens: number; calls: number }>();
+  for (const row of stats) {
+    const calls = Number.isFinite(row.call_count) && row.call_count > 0 ? row.call_count : 1;
+    const value = byDay.get(row.day) ?? { weightedTokens: 0, calls: 0 };
+    value.weightedTokens += (row.avg_input_tokens + row.avg_output_tokens) * calls;
+    value.calls += calls;
+    byDay.set(row.day, value);
   }
-  const data = stats.map((row) => ({
-    day: row.day,
-    tokens: row.avg_input_tokens + row.avg_output_tokens,
-  }));
-  return (
-    <ChartCard title="Daily token usage">
-      <div className="h-52" data-testid="daily-tokens">
-        <ResponsiveContainer width="100%" height="100%" initialDimension={INITIAL_DIMENSION}>
-          <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-            <CartesianGrid stroke="rgb(var(--hairline))" vertical={false} />
-            <XAxis
-              dataKey="day"
-              tickFormatter={dayTick}
-              axisLine={false}
-              tickLine={false}
-              interval="preserveStartEnd"
-              tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
-            />
-            <YAxis
-              allowDecimals={false}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
-            />
-            <Tooltip
-              contentStyle={{ fontSize: 12, borderRadius: 6 }}
-              formatter={(value) => [`${Number(value).toLocaleString()} tokens`, "avg per call"]}
-            />
-            <Bar
-              dataKey="tokens"
-              fill="rgb(var(--consider))"
-              barSize={16}
-              radius={[3, 3, 0, 0]}
-              isAnimationActive={false}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </ChartCard>
-  );
+  const data = [...byDay].map(([day, value]) => ({ day, tokens: value.weightedTokens / value.calls }));
+  if (data.length === 0) return <ChartCard title="Daily average tokens per model call"><ChartEmpty>No token data in this time range.</ChartEmpty></ChartCard>;
+  return <ChartCard title="Daily average tokens per model call"><LineChart
+    ariaLabel="Daily average tokens per model call" ariaDescription="Daily average input and output tokens per model call."
+    i18nStrings={CHART_I18N} height={100} hideFilter hideLegend xScaleType="categorical" xDomain={data.map((row) => row.day)}
+    yDomain={countDomain(data.map((row) => row.tokens))} xTickFormatter={dayTick} yTitle="Tokens"
+    yTickFormatter={tokenTick}
+    series={[{
+      title: "Average tokens",
+      type: "line",
+      valueFormatter: exactTokens,
+      data: data.map((row) => ({ x: row.day, y: row.tokens })),
+    }]}
+  /></ChartCard>;
 }

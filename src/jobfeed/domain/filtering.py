@@ -2,10 +2,69 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from jobfeed.domain.models import JobPosting
+
+_UNITED_STATES_ALLOWLIST_VALUE = "united states"
+_US_NAMES = ("united states", "u.s.", "usa")
+_US_STATE_CODES = frozenset(
+    [
+        "AL",
+        "AK",
+        "AZ",
+        "AR",
+        "CA",
+        "CO",
+        "CT",
+        "DE",
+        "FL",
+        "GA",
+        "HI",
+        "ID",
+        "IL",
+        "IN",
+        "IA",
+        "KS",
+        "KY",
+        "LA",
+        "ME",
+        "MD",
+        "MA",
+        "MI",
+        "MN",
+        "MS",
+        "MO",
+        "MT",
+        "NE",
+        "NV",
+        "NH",
+        "NJ",
+        "NM",
+        "NY",
+        "NC",
+        "ND",
+        "OH",
+        "OK",
+        "OR",
+        "PA",
+        "RI",
+        "SC",
+        "SD",
+        "TN",
+        "TX",
+        "UT",
+        "VT",
+        "VA",
+        "WA",
+        "WV",
+        "WI",
+        "WY",
+        "DC",
+    ]
+)
 
 
 @dataclass(kw_only=True)
@@ -88,7 +147,7 @@ def _location_reason(
     if not location:
         return None
 
-    if allowlist and not _any_match(location, allowlist):
+    if allowlist and not _matches_location_allowlist(location, allowlist):
         return "location not in allowlist"
 
     match = _first_match(location, blocklist)
@@ -96,6 +155,21 @@ def _location_reason(
         return f'location contains "{match}"'
 
     return None
+
+
+def _matches_location_allowlist(location: str, allowlist: list[str]) -> bool:
+    if _any_match(location, allowlist):
+        return True
+    has_us_filter = any(
+        value.casefold() == _UNITED_STATES_ALLOWLIST_VALUE for value in allowlist
+    )
+    if not has_us_filter:
+        return False
+    normalized = location.casefold()
+    if any(name in normalized for name in _US_NAMES):
+        return True
+    tokens = re.findall(r"\b[A-Z]{2}\b", location.upper().replace(".", ""))
+    return any(token in _US_STATE_CODES for token in tokens)
 
 
 def _freshness_reason(

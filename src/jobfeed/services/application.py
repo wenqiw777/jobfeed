@@ -210,13 +210,13 @@ class ApplicationService:
     async def stats(
         self,
         *,
-        since_days_ago: int = 30,
+        since_days_ago: int | None = 30,
         by_resume: bool = False,
     ) -> ApplicationStats:
         """Aggregate application statistics over a time window.
 
         Args:
-            since_days_ago: Number of days to look back.
+            since_days_ago: Number of days to look back, or None for all time.
             by_resume: Include per-variant breakdown.
 
         Returns:

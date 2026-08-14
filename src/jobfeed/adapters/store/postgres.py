@@ -205,12 +205,22 @@ _JOBS_VIEW_COLUMNS = (
 _JOBS_VIEW_SORT_SQL: dict[str, str] = {
     "discovered_desc": "jobs.discovered_at DESC, jobs.id DESC",
     "posted_desc": (
-        "jobs.posted_at DESC NULLS LAST, jobs.discovered_at DESC, jobs.id DESC"
+        "COALESCE(jobs.posted_at, jobs.discovered_at) DESC, jobs.discovered_at DESC, "
+        "jobs.id DESC"
+    ),
+    "posted_asc": (
+        "COALESCE(jobs.posted_at, jobs.discovered_at) ASC, jobs.discovered_at DESC, "
+        "jobs.id DESC"
     ),
     "score_desc": (
         "COALESCE((evaluations.stage_b_fit_json ->> 'score_0_100')::integer,"
         " evaluations.stage_a_score) DESC NULLS LAST,"
         " jobs.discovered_at DESC, jobs.id DESC"
+    ),
+    "score_asc": (
+        "COALESCE((evaluations.stage_b_fit_json->>'score_0_100')::integer,"
+        " evaluations.stage_a_score) ASC NULLS LAST, jobs.discovered_at DESC,"
+        " jobs.id DESC"
     ),
     "company_asc": (
         "jobs.company_norm ASC NULLS LAST, jobs.discovered_at DESC, jobs.id DESC"
@@ -656,32 +666,48 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
     )
 
 
-# Insights aggregates (Phase 8). Totals and distributions are all-time;
-# only the daily series is windowed. The verdict CASE mirrors the triage
-# grouping: an explicit verdict wins; verdict-less threshold-skipped rows
-# form the derived below_threshold bucket.
+# Insights aggregates (Phase 8). The requested discovery-date cohort bounds
+# totals, distributions, and daily events. The verdict CASE mirrors the
+# triage grouping: an explicit verdict wins; verdict-less threshold-skipped
+# rows form the derived below_threshold bucket.
 # ml_gate_passed counts gate survivors (ml_gate_result = 'pass') — the
 # funnel-stage semantic — not gate failures; jobs never gated (NULL) count
 # toward neither.
-_INSIGHTS_TOTALS_SQL = """SELECT
-    (SELECT COUNT(*) FROM jobs) AS total_jobs,
-    (SELECT COUNT(*) FROM jobs WHERE ml_gate_result = 'pass')
+_INSIGHTS_TOTALS_SQL = """WITH cohort AS (
+    SELECT id, ml_gate_result FROM jobs
+    WHERE ($1::integer IS NULL
+           OR discovered_at >= now() - make_interval(days => $1))
+      AND discovered_at <= now()
+)
+SELECT
+    (SELECT COUNT(*) FROM cohort) AS total_jobs,
+    (SELECT COUNT(*) FROM cohort WHERE ml_gate_result = 'pass')
         AS ml_gate_passed_jobs,
-    (SELECT COUNT(*) FROM evaluations WHERE stage_a_at IS NOT NULL)
-        AS evaluated_jobs,
-    (SELECT COUNT(*) FROM applied) AS applied_jobs"""
+    (SELECT COUNT(*) FROM evaluations e JOIN cohort c ON c.id = e.job_id
+        WHERE e.stage_a_at IS NOT NULL) AS evaluated_jobs,
+    (SELECT COUNT(*) FROM job_status s JOIN cohort c ON c.id = s.job_id
+        WHERE s.status IN
+          ('applied','interviewing','offer','rejected','ghosted')) AS applied_jobs"""
 
 _INSIGHTS_VERDICTS_SQL = """SELECT
         CASE WHEN stage_b_verdict IS NOT NULL THEN stage_b_verdict
              ELSE 'below_threshold' END AS bucket,
         COUNT(*) AS n
-    FROM evaluations
-    WHERE stage_b_verdict IS NOT NULL
+    FROM evaluations e JOIN jobs j ON j.id = e.job_id
+    WHERE ($1::integer IS NULL
+           OR j.discovered_at >= now() - make_interval(days => $1))
+      AND j.discovered_at <= now()
+      AND (stage_b_verdict IS NOT NULL
        OR stage_b_status = 'skipped_below_threshold'
+    )
     GROUP BY bucket"""
 
-_INSIGHTS_STATUSES_SQL = """SELECT status AS bucket, COUNT(*) AS n
-    FROM job_status GROUP BY status"""
+_INSIGHTS_STATUSES_SQL = """SELECT s.status AS bucket, COUNT(*) AS n
+    FROM job_status s JOIN jobs j ON j.id = s.job_id
+    WHERE ($1::integer IS NULL
+           OR j.discovered_at >= now() - make_interval(days => $1))
+      AND j.discovered_at <= now()
+    GROUP BY s.status"""
 
 
 def _insights_day_sql(table: str, column: str) -> str:
@@ -697,13 +723,30 @@ def _insights_day_sql(table: str, column: str) -> str:
         column: Timestamptz column to bucket (in-repo literal).
 
     Returns:
-        SQL with one ``$1`` parameter: the window size in days.
+        SQL with one ``$1`` parameter: the window size in days, or NULL for
+        all time.
     """
+    if table == "jobs":
+        return (
+            f"SELECT ({column} AT TIME ZONE 'UTC')::date AS day, COUNT(*) AS n"
+            f" FROM {table}"
+            f" WHERE ($1::integer IS NULL"
+            f" OR {column} >= now() - make_interval(days => $1))"
+            f" AND {column} <= now()"
+            " GROUP BY day"
+        )
+    transition_filter = (
+        " AND measure.to_status = 'applied'" if table == "job_status_history" else ""
+    )
     return (
-        f"SELECT ({column} AT TIME ZONE 'UTC')::date AS day, COUNT(*) AS n"
-        f" FROM {table}"
-        f" WHERE {column} >= now() - make_interval(days => $1)"
-        f" AND {column} <= now()"
+        f"SELECT (measure.{column} AT TIME ZONE 'UTC')::date AS day, COUNT(*) AS n"
+        f" FROM {table} measure JOIN jobs j ON j.id = measure.job_id"
+        " WHERE ($1::integer IS NULL"
+        " OR j.discovered_at >= now() - make_interval(days => $1))"
+        " AND j.discovered_at <= now()"
+        f" AND ($1::integer IS NULL"
+        f" OR measure.{column} >= now() - make_interval(days => $1))"
+        f" AND measure.{column} <= now(){transition_filter}"
         " GROUP BY day"
     )
 
@@ -722,7 +765,7 @@ def _merge_insights_days(
     Args:
         discovered: (day, n) rows bucketed on ``jobs.discovered_at``.
         evaluated: (day, n) rows bucketed on ``evaluations.stage_a_at``.
-        applied: (day, n) rows bucketed on ``applied.applied_at``.
+        applied: (day, n) rows bucketed on ``job_status_history.changed_at``.
 
     Returns:
         Per-day funnel counts, ascending by day.
@@ -3505,12 +3548,14 @@ class PostgresStore:
                    cur AS (
                        SELECT
                            COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
-                               FILTER (WHERE source != 'evaluate'), 0) AS avg_scan,
+                               FILTER (WHERE status = 'succeeded'
+                                   AND source NOT ILIKE '%%evaluat%%'), 0) AS avg_scan,
                            COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
-                               FILTER (WHERE source ILIKE '%%evaluat%%'), 0) AS avg_eval,
+                               FILTER (WHERE status = 'succeeded'
+                                   AND source ILIKE '%%evaluat%%'), 0) AS avg_eval,
                            COALESCE(SUM(total_llm_cost_usd), 0) AS cost,
                            CASE WHEN COUNT(*) > 0
-                               THEN COUNT(*) FILTER (WHERE errors > 0)::float / COUNT(*)
+                               THEN COUNT(*) FILTER (WHERE errors > 0 OR status = 'failed')::float / COUNT(*)
                                ELSE 0 END AS err_rate
                        FROM pipeline_runs, bounds
                        WHERE started_at >= bounds.cur_start
@@ -3519,12 +3564,14 @@ class PostgresStore:
                    prev AS (
                        SELECT
                            COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
-                               FILTER (WHERE source != 'evaluate'), 0) AS avg_scan,
+                               FILTER (WHERE status = 'succeeded'
+                                   AND source NOT ILIKE '%%evaluat%%'), 0) AS avg_scan,
                            COALESCE(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)
-                               FILTER (WHERE source ILIKE '%%evaluat%%'), 0) AS avg_eval,
+                               FILTER (WHERE status = 'succeeded'
+                                   AND source ILIKE '%%evaluat%%'), 0) AS avg_eval,
                            COALESCE(SUM(total_llm_cost_usd), 0) AS cost,
                            CASE WHEN COUNT(*) > 0
-                               THEN COUNT(*) FILTER (WHERE errors > 0)::float / COUNT(*)
+                               THEN COUNT(*) FILTER (WHERE errors > 0 OR status = 'failed')::float / COUNT(*)
                                ELSE 0 END AS err_rate,
                            COUNT(*) AS cnt
                        FROM pipeline_runs, bounds
@@ -3618,24 +3665,28 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT date(timestamp) AS day,
+                """SELECT date(timestamp) AS day, model, stage,
                           percentile_cont(0.5) WITHIN GROUP
                               (ORDER BY latency_ms) AS p50,
                           percentile_cont(0.95) WITHIN GROUP
                               (ORDER BY latency_ms) AS p95,
+                          count(*) AS call_count,
                           avg(input_tokens) AS avg_in,
                           avg(output_tokens) AS avg_out
                    FROM llm_usage
                    WHERE timestamp >= now() - make_interval(days => $1)
-                   GROUP BY 1
-                   ORDER BY 1""",
+                   GROUP BY 1, 2, 3
+                   ORDER BY 1, 2, 3""",
                 window_days,
             )
         return [
             LLMDailyStats(
                 day=r["day"].isoformat(),
+                model=str(r["model"]),
+                stage=r["stage"],
                 p50_latency_ms=float(r["p50"]),
                 p95_latency_ms=float(r["p95"]),
+                call_count=int(r["call_count"]),
                 avg_input_tokens=float(r["avg_in"]),
                 avg_output_tokens=float(r["avg_out"]),
             )
@@ -3697,24 +3748,25 @@ class PostgresStore:
             for r in rows
         ]
 
-    async def insights_overview(self, *, window_days: int) -> InsightsOverview:
+    async def insights_overview(self, *, window_days: int | None) -> InsightsOverview:
         """Aggregate the insights overview.
 
-        Totals and the verdict/status distributions are all-time; only the
-        daily series is windowed (UTC day buckets over
-        ``[now - window_days, now]``, emitting only days having data).
+        The window defines the discovery-date cohort for totals,
+        distributions, and daily UTC event buckets over
+        ``[now - window_days, now]``, or all time through now when None.
 
         Args:
-            window_days: Daily-series window in days (caller-validated).
+            window_days: Discovery-cohort and daily-series window (validated),
+                or None for all time.
 
         Returns:
             Insights overview aggregate.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn:
-            totals = await conn.fetchrow(_INSIGHTS_TOTALS_SQL)
-            verdict_rows = await conn.fetch(_INSIGHTS_VERDICTS_SQL)
-            status_rows = await conn.fetch(_INSIGHTS_STATUSES_SQL)
+            totals = await conn.fetchrow(_INSIGHTS_TOTALS_SQL, window_days)
+            verdict_rows = await conn.fetch(_INSIGHTS_VERDICTS_SQL, window_days)
+            status_rows = await conn.fetch(_INSIGHTS_STATUSES_SQL, window_days)
             discovered = await conn.fetch(
                 _insights_day_sql("jobs", "discovered_at"), window_days
             )
@@ -3722,7 +3774,7 @@ class PostgresStore:
                 _insights_day_sql("evaluations", "stage_a_at"), window_days
             )
             applied = await conn.fetch(
-                _insights_day_sql("applied", "applied_at"), window_days
+                _insights_day_sql("job_status_history", "changed_at"), window_days
             )
         return InsightsOverview(
             window_days=window_days,
@@ -4763,19 +4815,23 @@ class PostgresStore:
     async def application_stats(
         self,
         *,
-        since_days_ago: int = 30,
+        since_days_ago: int | None = 30,
         by_resume: bool = False,
     ) -> ApplicationStats:
         """Aggregate application statistics.
 
         Args:
-            since_days_ago: Time window.
+            since_days_ago: Time window, or None for all time.
             by_resume: Include per-variant breakdown.
 
         Returns:
             Application statistics.
         """
-        cutoff = datetime.now(UTC) - timedelta(days=since_days_ago)
+        cutoff = (
+            None
+            if since_days_ago is None
+            else datetime.now(UTC) - timedelta(days=since_days_ago)
+        )
         _empty = ApplicationStats(
             applied_count=0,
             response_count=0,
@@ -4793,7 +4849,7 @@ class PostgresStore:
                 """SELECT DISTINCT job_id
                    FROM job_status_history
                    WHERE to_status = 'applied'
-                     AND changed_at >= $1""",
+                     AND ($1::timestamptz IS NULL OR changed_at >= $1)""",
                 cutoff,
             )
             applied_job_ids = {r["job_id"] for r in applied_rows}
@@ -4812,7 +4868,7 @@ class PostgresStore:
                         FROM job_status_history
                         WHERE job_id = ANY($1)
                           AND to_status = 'applied'
-                          AND changed_at >= $3
+                          AND ($3::timestamptz IS NULL OR changed_at >= $3)
                         ORDER BY job_id, id ASC
                     )
                     SELECT DISTINCT h.job_id, h.to_status
@@ -4841,7 +4897,7 @@ class PostgresStore:
                        FROM job_status_history
                        WHERE job_id = ANY($1)
                          AND to_status = 'applied'
-                         AND changed_at >= $3
+                         AND ($3::timestamptz IS NULL OR changed_at >= $3)
                        ORDER BY job_id, id ASC
                 ), response_event AS (
                        SELECT DISTINCT ON (h.job_id)
@@ -4875,7 +4931,8 @@ class PostgresStore:
                         FROM job_status_history
                         WHERE job_id IN ({id_ph})
                           AND to_status = 'applied'
-                          AND changed_at >= ${len(id_list) + 1}
+                          AND (${len(id_list) + 1}::timestamptz IS NULL
+                               OR changed_at >= ${len(id_list) + 1})
                         ORDER BY job_id, id ASC""",
                     *id_list,
                     cutoff,

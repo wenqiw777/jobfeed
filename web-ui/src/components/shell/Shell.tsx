@@ -1,10 +1,12 @@
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout-toolbar";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
 import { useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { Sidebar } from "@/components/shell/Sidebar";
 import { TopBar } from "@/components/shell/TopBar";
+import { Toaster } from "@/components/ui/toaster";
 import { useDensity } from "@/lib/density";
 
 /** Cloudscape productivity frame shared by all configured routes. */
@@ -15,13 +17,13 @@ export function Shell() {
   const navigate = useNavigate();
 
   return (
-    <div data-testid="jobfeed-workspace-layout" className="jobfeed-workspace">
+    <div data-testid="jobfeed-workspace-layout">
       <div id="jobfeed-top-navigation">
         <TopNavigation
           visualContext="top-navigation"
           identity={{
             href: "/triage",
-            title: "jobfeed",
+            title: "Jobfeed",
             onFollow: (event) => {
               event.preventDefault();
               navigate("/triage");
@@ -42,7 +44,6 @@ export function Shell() {
         />
       </div>
       <AppLayoutToolbar
-        headerSelector="#jobfeed-top-navigation"
         ariaLabels={{
           navigation: "Zones",
           navigationClose: "Collapse navigation",
@@ -57,17 +58,14 @@ export function Shell() {
         navigationWidth={216}
         onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
         toolsHide
+        notifications={<Toaster />}
         maxContentWidth={Number.MAX_VALUE}
         content={
-          <div
-            data-testid="jobfeed-route-surface"
-            data-density={density}
-            className="jobfeed-route-surface"
-          >
-            <TopBar />
-            <div className="jobfeed-route-content">
+          <div data-testid="jobfeed-route-surface" data-density={density}>
+            <SpaceBetween size="l">
+              <TopBar />
               <Outlet />
-            </div>
+            </SpaceBetween>
           </div>
         }
       />

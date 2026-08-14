@@ -4,7 +4,13 @@ import { ApiError } from "@/api/client";
 import { useTriggerScan } from "@/api/queries";
 import { toast } from "@/components/ui/use-toast";
 
-const SOURCES = ["all", "ats", "indeed", "linkedin-guest", "speedyapply"] as const;
+const SOURCES = [
+  { id: "all", text: "All sources" },
+  { id: "ats", text: "Company career pages" },
+  { id: "indeed", text: "Indeed" },
+  { id: "linkedin-guest", text: "LinkedIn guest search" },
+  { id: "speedyapply", text: "SpeedyApply lists" },
+] as const;
 
 /** Cloudscape source selector that starts a scan run. */
 export function TriggerScanButton() {
@@ -14,7 +20,7 @@ export function TriggerScanButton() {
     trigger.mutate(
       { source },
       {
-        onSuccess: () => toast({ title: `Scan started (${source})` }),
+        onSuccess: () => toast({ title: `Scan started (${sourceLabel(source)})` }),
         onError: (error) => {
           if (error instanceof ApiError && error.status === 409) {
             toast({
@@ -25,7 +31,7 @@ export function TriggerScanButton() {
             return;
           }
           toast({
-            title: "Scan failed",
+            title: "Scan could not start",
             description: error instanceof Error ? error.message : String(error),
             variant: "destructive",
           });
@@ -39,10 +45,14 @@ export function TriggerScanButton() {
       variant="primary"
       loading={trigger.isPending}
       loadingText="Starting scan"
-      items={SOURCES.map((source) => ({ id: source, text: source }))}
+      items={SOURCES}
       onItemClick={({ detail }) => fire(detail.id)}
     >
-      Scan
+      Start scan
     </ButtonDropdown>
   );
+}
+
+function sourceLabel(source: string): string {
+  return SOURCES.find((item) => item.id === source)?.text ?? source;
 }

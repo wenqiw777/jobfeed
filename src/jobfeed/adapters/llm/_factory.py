@@ -41,7 +41,7 @@ def build_llm_client(
 
     Args:
         spec: Provider routing string in ``backend/model`` format
-            (e.g. ``codex-cli/gpt-5.4-mini``).
+            (e.g. ``codex-cli/gpt-5.6-luna``).
         settings: LLM runtime settings with per-backend timeouts.
         price_table: Pre-loaded model pricing table for cost estimation.
         logger: Structured logger for adapter-level events.

@@ -6,7 +6,7 @@
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-/** Ages beyond this render as an absolute M/D/YY date. */
+/** Ages beyond this render as an unambiguous English date. */
 const DAY_CUTOFF = 30;
 
 export function formatRelativeAge(iso: string | null, now: Date = new Date()): string {
@@ -33,8 +33,24 @@ export function formatRelativeAge(iso: string | null, now: Date = new Date()): s
   if (days <= DAY_CUTOFF) {
     return `${days}d`;
   }
-  const yy = String(then.getFullYear()).slice(-2);
-  return `${then.getMonth() + 1}/${then.getDate()}/${yy}`;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(then);
+}
+
+/** Format an added timestamp as an explicitly estimated posting date. */
+export function formatEstimatedPostedDate(discoveredAt: string): string {
+  const date = new Date(discoveredAt);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  return `~${new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date)}`;
 }
 
 /** "2026-06-11" -> "6/11" for the mono chart axis ticks. */
@@ -55,6 +71,17 @@ export function formatLocalDateTime(iso: string | null): string {
   const pad = (value: number) => String(value).padStart(2, "0");
   const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   return `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** Compact local run timestamp for chart axes, for example "6/3 08:05". */
+export function formatRunAxisDateTime(iso: string): string {
+  const local = formatLocalDateTime(iso);
+  if (local === "—") {
+    return "Unknown time";
+  }
+  const [date = "", time = ""] = local.split(" ");
+  const [, month, day] = date.split("-");
+  return `${Number(month)}/${Number(day)} ${time}`;
 }
 
 /** ISO timestamp `days` from now — the followup preset payload (D12). */

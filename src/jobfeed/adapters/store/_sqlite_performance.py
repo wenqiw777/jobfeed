@@ -62,12 +62,14 @@ def _run_metrics(rows: Sequence[aiosqlite.Row]) -> tuple[float, float, float, fl
         finished = _parse_utc_timestamp(row["finished_at"])
         elapsed = (finished - started).total_seconds() * 1000
         source = str(row["source"])
-        if source != "evaluate":
+        status = str(row["status"])
+        is_evaluate = "evaluat" in source.casefold()
+        if status == "succeeded" and not is_evaluate:
             scan.append(elapsed)
-        if "evaluat" in source.casefold():
+        if status == "succeeded" and is_evaluate:
             evaluate.append(elapsed)
         cost += float(row["total_llm_cost_usd"])
-        errors += int(int(row["errors"]) > 0)
+        errors += int(int(row["errors"]) > 0 or status == "failed")
     return (
         mean(scan) if scan else 0.0,
         mean(evaluate) if evaluate else 0.0,
@@ -207,29 +209,33 @@ class _SqlitePerformance:
         async with self._lifecycle.connection() as connection:
             rows = await _fetch_rows(
                 connection,
-                """SELECT substr(timestamp, 1, 10) AS day, latency_ms,
-                          input_tokens, output_tokens
+                """SELECT substr(timestamp, 1, 10) AS day, model, stage,
+                          latency_ms, input_tokens, output_tokens
                    FROM llm_usage
                    WHERE timestamp>=?
-                   ORDER BY day, latency_ms, id""",
+                   ORDER BY day, model, stage, latency_ms, id""",
                 (_require_utc_timestamp(now - timedelta(days=window_days)),),
             )
-        by_day: dict[str, list[aiosqlite.Row]] = {}
+        by_day: dict[tuple[str, str, str | None], list[aiosqlite.Row]] = {}
         for row in rows:
-            by_day.setdefault(str(row["day"]), []).append(row)
+            key = (str(row["day"]), str(row["model"]), row["stage"])
+            by_day.setdefault(key, []).append(row)
         return [
             LLMDailyStats(
                 day=day,
+                model=model,
+                stage=stage,
                 p50_latency_ms=_percentile(
                     [float(row["latency_ms"]) for row in records], 0.5
                 ),
                 p95_latency_ms=_percentile(
                     [float(row["latency_ms"]) for row in records], 0.95
                 ),
+                call_count=len(records),
                 avg_input_tokens=mean(float(row["input_tokens"]) for row in records),
                 avg_output_tokens=mean(float(row["output_tokens"]) for row in records),
             )
-            for day, records in by_day.items()
+            for (day, model, stage), records in by_day.items()
         ]
 
     async def get_funnel_stats(self, window_days: int) -> list[FunnelStats]:

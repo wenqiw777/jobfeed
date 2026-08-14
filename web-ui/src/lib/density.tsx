@@ -7,20 +7,13 @@ import {
   type ReactNode,
 } from "react";
 
-/** DESIGN.md density: compact = 32px single-line rows (default), comfortable = 46px two-line. */
+/** Cloudscape table density preference. */
 export type Density = "compact" | "comfortable";
 
 const STORAGE_KEY = "jobfeed:density";
 
-/** Tailwind height classes backed by --row-compact/--row-comfortable. */
-const ROW_HEIGHT_CLASS: Record<Density, string> = {
-  compact: "h-row-compact",
-  comfortable: "h-row-comfortable",
-};
-
 interface DensityContextValue {
   density: Density;
-  rowHeightClass: string;
   setDensity: (density: Density) => void;
 }
 
@@ -53,7 +46,7 @@ export function DensityProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ density, rowHeightClass: ROW_HEIGHT_CLASS[density], setDensity }),
+    () => ({ density, setDensity }),
     [density, setDensity],
   );
 

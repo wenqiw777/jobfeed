@@ -39,6 +39,12 @@ def test_valid_transition_scored_to_shortlisted() -> None:
     assert validate_transition("scored", "shortlisted") is None
 
 
+def test_applied_can_return_to_wait_or_be_ignored() -> None:
+    """Applied jobs can return to triage or be dismissed without force."""
+    assert validate_transition("applied", "shortlisted") is None
+    assert validate_transition("applied", "ignored") is None
+
+
 def test_invalid_transition_scored_to_offer_without_force() -> None:
     """scored → offer should fail without force."""
     error = validate_transition("scored", "offer")
@@ -106,7 +112,15 @@ def test_transition_graph_matches_design_spec() -> None:
         {"applied", "archived"},
     )
     assert ALLOWED_TRANSITIONS["applied"] == frozenset(
-        {"interviewing", "offer", "rejected", "ghosted", "archived"},
+        {
+            "shortlisted",
+            "interviewing",
+            "offer",
+            "rejected",
+            "ghosted",
+            "archived",
+            "ignored",
+        },
     )
     assert ALLOWED_TRANSITIONS["interviewing"] == frozenset(
         {"offer", "rejected", "ghosted", "archived"},

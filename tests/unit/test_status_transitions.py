@@ -82,9 +82,17 @@ def test_awaiting_referral_transitions() -> None:
 
 
 def test_applied_transitions() -> None:
-    """applied fans out to interviewing, offer, rejected, ghosted, archived."""
+    """applied can be corrected to wait or ignored, then move through follow-up."""
     assert ALLOWED_TRANSITIONS["applied"] == frozenset(
-        {"interviewing", "offer", "rejected", "ghosted", "archived"},
+        {
+            "shortlisted",
+            "interviewing",
+            "offer",
+            "rejected",
+            "ghosted",
+            "archived",
+            "ignored",
+        },
     )
 
 

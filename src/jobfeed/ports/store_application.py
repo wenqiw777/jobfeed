@@ -89,13 +89,13 @@ class StoreApplicationMixin(Protocol):
     async def application_stats(
         self,
         *,
-        since_days_ago: int = 30,
+        since_days_ago: int | None = 30,
         by_resume: bool = False,
     ) -> ApplicationStats:
         """Aggregate application statistics.
 
         Args:
-            since_days_ago: Time window.
+            since_days_ago: Time window, or None for all time.
             by_resume: Include per-variant breakdown.
 
         Returns:

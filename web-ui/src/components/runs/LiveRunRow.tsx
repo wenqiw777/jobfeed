@@ -1,4 +1,5 @@
 import Badge from "@cloudscape-design/components/badge";
+import type { BadgeProps } from "@cloudscape-design/components/badge";
 import Box from "@cloudscape-design/components/box";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
@@ -6,6 +7,7 @@ import Header from "@cloudscape-design/components/header";
 import ProgressBar from "@cloudscape-design/components/progress-bar";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
+import Steps, { type StepsProps } from "@cloudscape-design/components/steps";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
@@ -13,10 +15,14 @@ import { runsKeys, type RunSummary } from "@/api/queries";
 import { formatLocalDateTime, formatRelativeAge } from "@/lib/dates";
 import { useSSE, type SSEState } from "@/lib/use-sse";
 
-const SCAN_COUNTERS: { key: keyof RunSummary; label: string; color?: "red" }[] = [
-  { key: "jobs_discovered", label: "discovered" },
-  { key: "jobs_inserted", label: "inserted" },
-  { key: "jobs_updated", label: "updated" },
+const SCAN_COUNTERS: {
+  key: keyof RunSummary;
+  label: string;
+  color: NonNullable<BadgeProps["color"]>;
+}[] = [
+  { key: "jobs_discovered", label: "discovered", color: "blue" },
+  { key: "jobs_inserted", label: "inserted", color: "green" },
+  { key: "jobs_updated", label: "updated", color: "grey" },
   { key: "errors", label: "errors", color: "red" },
 ];
 
@@ -59,7 +65,7 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
             description={`${formatLocalDateTime(run.started_at)} · ${run.run_id}`}
             actions={<LiveStatus sse={sse} />}
           >
-            {run.source} run
+            {liveRunLabel(run.source)}
           </Header>
         }
       >
@@ -80,21 +86,21 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
       <ColumnLayout columns={2} variant="text-grid">
         <SpaceBetween size="s">
           <StageProgress
-            label="ML gate"
+            label="Local filter"
             processed={run.ml_gate_processed}
             total={run.ml_gate_total}
             isDone={isAfter(run.progress_stage, "ml_gate")}
             isActive={isCurrent(run.progress_stage, "ml_gate")}
           />
           <StageProgress
-            label="Stage A"
+            label="Quick evaluation"
             processed={run.stage_a_processed}
             total={run.stage_a_total}
             isDone={isAfter(run.progress_stage, "stage_a")}
             isActive={isCurrent(run.progress_stage, "stage_a")}
           />
           <StageProgress
-            label="Stage B"
+            label="Detailed review"
             processed={run.stage_b_processed}
             total={run.stage_b_total}
             isDone={isAfter(run.progress_stage, "stage_b")}
@@ -121,23 +127,21 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
 
 function ProgressRail({ stage }: { stage: string | null | undefined }) {
   const steps = [
-    ["ml_gate", "ML gate"],
-    ["stage_a", "Stage A"],
-    ["stage_b", "Stage B"],
+    ["ml_gate", "Local filter"],
+    ["stage_a", "Quick evaluation"],
+    ["stage_b", "Detailed review"],
     ["finalizing", "Complete"],
   ] as const;
   return (
-    <ol className="jobfeed-progress-rail" aria-label="Evaluation stages">
-      {steps.map(([key, label], index) => {
-        const state = stepState(stage, key);
-        return (
-          <li key={key} data-state={state}>
-            <span className="jobfeed-progress-node">{state === "done" ? "✓" : index + 1}</span>
-            <span>{label}</span>
-          </li>
-        );
-      })}
-    </ol>
+    <Steps
+      ariaLabel="Evaluation progress"
+      orientation="horizontal"
+      connectorLines="visible"
+      steps={steps.map(([key, label]) => ({
+        status: stepStatus(stage, key),
+        header: label,
+      }))}
+    />
   );
 }
 
@@ -231,12 +235,19 @@ function stepState(
   return "pending";
 }
 
+function stepStatus(current: string | null | undefined, step: string): StepsProps.Status {
+  const state = stepState(current, step);
+  if (state === "done") return "success";
+  if (state === "active") return "in-progress";
+  return "pending";
+}
+
 function stageLabel(stage: string | null | undefined): string {
   const labels: Record<string, string> = {
     preparing: "Preparing evaluation",
-    ml_gate: "ML gate · filtering locally",
-    stage_a: "Stage A · fast score",
-    stage_b: "Stage B · deep review",
+    ml_gate: "Applying local filters",
+    stage_a: "Running quick evaluation",
+    stage_b: "Running detailed review",
     finalizing: "Saving final results",
   };
   return labels[stage ?? "preparing"] ?? "Evaluation running";
@@ -260,4 +271,10 @@ function LiveStatus({ sse }: { sse: SSEState<RunSummary> }) {
   if (sse.isDone) return <StatusIndicator type="success">Completed</StatusIndicator>;
   if (sse.error !== null) return <StatusIndicator type="warning">Reconnecting</StatusIndicator>;
   return <StatusIndicator type="in-progress">Running</StatusIndicator>;
+}
+
+function liveRunLabel(source: string): string {
+  if (source === "evaluate") return "Evaluation in progress";
+  if (source === "all") return "Scanning all sources";
+  return `Scanning ${source}`;
 }

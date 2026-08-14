@@ -38,6 +38,7 @@ from jobfeed.domain.models import (
     TransitionRequest,
     Verdict,
 )
+from jobfeed.domain.models_views import InsightsDay
 from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.web.app import create_web_app
 from tests.support.factories import make_job
@@ -178,6 +179,16 @@ async def _seed_overview_fixture(store: PostgresStore, dsn: str) -> dict[str, da
     await store.save_ml_gate_result(
         old.job_id, MLGateResult(score=0.1, result="fail", fail_reason="not_swe")
     )
+    await store.transition_status(
+        TransitionRequest(job_id=old.job_id, new_status="applied", force=True)
+    )
+    await _execute(
+        dsn,
+        "UPDATE job_status_history SET changed_at = $1 "
+        "WHERE job_id = $2 AND to_status = 'applied'",
+        now - timedelta(days=40),
+        int(old.job_id),
+    )
 
     boundary = await store.save_job(make_job("ins-boundary", discovered_at=boundary_at))
     await store.save_ml_gate_result(
@@ -230,10 +241,9 @@ async def test_overview_pins_totals_distributions_and_daily_series(
     """Overview math: all-time totals + distributions, exact UTC day series.
 
     The boundary job (discovered 00:00:00Z) must bucket into its own UTC day;
-    the 40-day-old job counts in totals but not in the windowed series; the
-    series contains only days having data. ``totals.ml_gate_passed`` counts
-    only the one gate-passed job: the gate-failed job and the two never-gated
-    jobs contribute nothing.
+    the 40-day-old job is outside the discovery-date cohort; the series
+    contains only days having data. ``totals.ml_gate_passed`` counts only the
+    one gate-passed job: the two never-gated jobs contribute nothing.
     """
     async with _seed_store(fresh_pg_dsn) as store:
         days = await _seed_overview_fixture(store, fresh_pg_dsn)
@@ -248,7 +258,7 @@ async def test_overview_pins_totals_distributions_and_daily_series(
     payload = response.json()
     assert payload["window_days"] == _WINDOW_DAYS
     assert payload["totals"] == {
-        "jobs": 4,
+        "jobs": 3,
         "ml_gate_passed": 1,
         "evaluated": 3,
         "applied": 1,
@@ -259,7 +269,6 @@ async def test_overview_pins_totals_distributions_and_daily_series(
         "below_threshold": 1,
     }
     assert payload["status_distribution"] == {
-        "new": 1,
         "scored": 1,
         "applied": 1,
         "shortlisted": 1,
@@ -278,23 +287,69 @@ async def test_overview_pins_totals_distributions_and_daily_series(
             "applied": 1,
         },
     ]
-    assert payload["applications"] == {
-        "applied_count": 1,
-        "response_count": 0,
-        "interview_count": 0,
-        "offer_count": 0,
-        "rejection_count": 0,
-        "median_days_to_response": None,
-        "by_resume": {
-            "unknown": {
-                "sent": 1,
-                "responses": 0,
-                "interviews": 0,
-                "offers": 0,
-                "rejections": 0,
-            }
-        },
+    assert "applications" not in payload
+
+
+async def test_overview_applied_uses_status_state_and_transition_history(
+    fresh_pg_dsn: str,
+) -> None:
+    """Insights do not require the legacy application record to show applied work."""
+    async with _seed_store(fresh_pg_dsn) as store:
+        now = datetime.now(UTC)
+        current = await store.save_job(
+            make_job("ins-current-applied", discovered_at=now)
+        )
+        await store.transition_status(
+            TransitionRequest(job_id=current.job_id, new_status="applied", force=True)
+        )
+        historical = await store.save_job(
+            make_job("ins-historical-applied", discovered_at=now)
+        )
+        await store.transition_status(
+            TransitionRequest(
+                job_id=historical.job_id, new_status="applied", force=True
+            )
+        )
+        await store.transition_status(
+            TransitionRequest(job_id=historical.job_id, new_status="interviewing")
+        )
+
+        overview = await store.insights_overview(window_days=_WINDOW_DAYS)
+
+    expected_applied_jobs = 2
+    assert overview.applied_jobs == expected_applied_jobs
+    assert overview.status_distribution == {"applied": 1, "interviewing": 1}
+    assert overview.daily == [
+        InsightsDay(day=now.date(), discovered=2, evaluated=0, applied=2)
+    ]
+
+
+async def test_overview_all_time_has_no_cutoff(
+    tmp_path: Path, fresh_pg_dsn: str
+) -> None:
+    """The all-time API includes old jobs without a cutoff."""
+    async with _seed_store(fresh_pg_dsn) as store:
+        await _seed_overview_fixture(store, fresh_pg_dsn)
+    app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
+
+    async with open_client(app) as client:
+        response = await client.get("/api/insights/overview", params={"window": "all"})
+
+    assert response.status_code == HTTP_OK, response.text
+    payload = response.json()
+    assert payload["window_days"] is None
+    assert payload["totals"] == {
+        "jobs": 4,
+        "ml_gate_passed": 1,
+        "evaluated": 3,
+        "applied": 2,
     }
+    assert payload["status_distribution"] == {
+        "applied": 2,
+        "scored": 1,
+        "shortlisted": 1,
+    }
+    assert "applications" not in payload
 
 
 async def test_overview_window_validation_and_empty_db_contract(
@@ -305,8 +360,7 @@ async def test_overview_window_validation_and_empty_db_contract(
     Out-of-range windows return the 422 error shape. A valid request against
     the same fresh (unseeded) schema pins the empty-DB contract: all-zero
     totals (including ``ml_gate_passed``), an empty daily series, empty
-    distributions, and an empty by-resume table — empty containers, never
-    null.
+    distributions — empty containers, never null.
     """
     app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
 
@@ -332,7 +386,7 @@ async def test_overview_window_validation_and_empty_db_contract(
     assert payload["daily"] == []
     assert payload["verdict_distribution"] == {}
     assert payload["status_distribution"] == {}
-    assert payload["applications"]["by_resume"] == {}
+    assert "applications" not in payload
 
 
 # ---------------------------------------------------------------------------

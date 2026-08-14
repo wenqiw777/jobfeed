@@ -14,21 +14,32 @@ from jobfeed.adapters.store._sqlite_capability_support import (
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.domain.models_views import InsightsDay, InsightsOverview
 
-_TOTALS_SQL = """SELECT
-    (SELECT COUNT(*) FROM jobs) AS total_jobs,
-    (SELECT COUNT(*) FROM jobs WHERE ml_gate_result='pass') AS gate_passed,
-    (SELECT COUNT(*) FROM evaluations WHERE stage_a_at IS NOT NULL) AS evaluated,
-    (SELECT COUNT(*) FROM applied) AS applied"""
+_TOTALS_SQL = """WITH cohort AS (
+    SELECT id, ml_gate_result FROM jobs
+    WHERE (? IS NULL OR discovered_at>=?) AND discovered_at<=?
+)
+SELECT
+    (SELECT COUNT(*) FROM cohort) AS total_jobs,
+    (SELECT COUNT(*) FROM cohort WHERE ml_gate_result='pass') AS gate_passed,
+    (SELECT COUNT(*) FROM evaluations e JOIN cohort c ON c.id=e.job_id
+        WHERE e.stage_a_at IS NOT NULL) AS evaluated,
+    (SELECT COUNT(*) FROM job_status s JOIN cohort c ON c.id=s.job_id
+        WHERE s.status IN
+          ('applied','interviewing','offer','rejected','ghosted')) AS applied"""
 _VERDICTS_SQL = """SELECT
     CASE WHEN stage_b_verdict IS NOT NULL THEN stage_b_verdict
          ELSE 'below_threshold' END AS bucket,
     COUNT(*) AS n
-    FROM evaluations
-    WHERE stage_b_verdict IS NOT NULL
+    FROM evaluations e JOIN jobs j ON j.id=e.job_id
+    WHERE (? IS NULL OR j.discovered_at>=?) AND j.discovered_at<=?
+      AND (stage_b_verdict IS NOT NULL
        OR stage_b_status='skipped_below_threshold'
+    )
     GROUP BY bucket"""
-_STATUSES_SQL = """SELECT status AS bucket, COUNT(*) AS n
-    FROM job_status GROUP BY status"""
+_STATUSES_SQL = """SELECT s.status AS bucket, COUNT(*) AS n
+    FROM job_status s JOIN jobs j ON j.id=s.job_id
+    WHERE (? IS NULL OR j.discovered_at>=?) AND j.discovered_at<=?
+    GROUP BY s.status"""
 
 
 def _utc_now() -> datetime:
@@ -39,16 +50,31 @@ async def _daily_counts(
     connection: aiosqlite.Connection,
     table: str,
     column: str,
-    cutoff: str,
+    cutoff: str | None,
     now: str,
 ) -> list[aiosqlite.Row]:
+    """Return daily event counts limited to the discovery-date cohort."""
+    if table == "jobs":
+        return await _fetch_rows(
+            connection,
+            f"""SELECT substr({column}, 1, 10) AS day, COUNT(*) AS n
+                FROM {table}
+                WHERE (? IS NULL OR {column}>=?) AND {column}<=?
+                GROUP BY day""",
+            (cutoff, cutoff, now),
+        )
+    transition_filter = (
+        " AND measure.to_status='applied'" if table == ("job_status_history") else ""
+    )
     return await _fetch_rows(
         connection,
-        f"""SELECT substr({column}, 1, 10) AS day, COUNT(*) AS n
-            FROM {table}
-            WHERE {column}>=? AND {column}<=?
+        f"""SELECT substr(measure.{column}, 1, 10) AS day, COUNT(*) AS n
+            FROM {table} measure JOIN jobs j ON j.id=measure.job_id
+            WHERE (? IS NULL OR j.discovered_at>=?) AND j.discovered_at<=?
+              AND (? IS NULL OR measure.{column}>=?)
+              AND measure.{column}<=?{transition_filter}
             GROUP BY day""",
-        (cutoff, now),
+        (cutoff, cutoff, now, cutoff, cutoff, now),
     )
 
 
@@ -89,17 +115,22 @@ class _SqliteInsights:
 
     _lifecycle: SqliteLifecycle
 
-    async def insights_overview(self, *, window_days: int) -> InsightsOverview:
-        """Return all-time totals and a closed UTC daily window."""
+    async def insights_overview(self, *, window_days: int | None) -> InsightsOverview:
+        """Return one discovery-date cohort and its closed UTC daily series."""
         now = _utc_now()
         now_text = _require_utc_timestamp(now)
-        cutoff = _require_utc_timestamp(
-            now - timedelta(days=window_days), "insights cutoff"
+        cutoff = (
+            None
+            if window_days is None
+            else _require_utc_timestamp(
+                now - timedelta(days=window_days), "insights cutoff"
+            )
         )
         async with self._lifecycle.connection() as connection:
-            totals = await _fetch_row(connection, _TOTALS_SQL)
-            verdicts = await _fetch_rows(connection, _VERDICTS_SQL)
-            statuses = await _fetch_rows(connection, _STATUSES_SQL)
+            cohort_params = (cutoff, cutoff, now_text)
+            totals = await _fetch_row(connection, _TOTALS_SQL, cohort_params)
+            verdicts = await _fetch_rows(connection, _VERDICTS_SQL, cohort_params)
+            statuses = await _fetch_rows(connection, _STATUSES_SQL, cohort_params)
             discovered = await _daily_counts(
                 connection, "jobs", "discovered_at", cutoff, now_text
             )
@@ -107,7 +138,7 @@ class _SqliteInsights:
                 connection, "evaluations", "stage_a_at", cutoff, now_text
             )
             applied = await _daily_counts(
-                connection, "applied", "applied_at", cutoff, now_text
+                connection, "job_status_history", "changed_at", cutoff, now_text
             )
         assert totals is not None
         return InsightsOverview(

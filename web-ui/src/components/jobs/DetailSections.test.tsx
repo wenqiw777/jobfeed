@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 
 import type { JobDetailResponse } from "@/api/queries";
-import { EvaluationSections } from "@/components/jobs/DetailSections";
+import { EvaluationSections, TwinsLine } from "@/components/jobs/DetailSections";
 
 type Evaluation = JobDetailResponse["evaluation"];
 type StageB = NonNullable<Evaluation["stage_b"]>;
@@ -32,7 +32,7 @@ test("renders every Stage B block when all fields are present", () => {
   expect(screen.getByText("Backend role.")).toBeInTheDocument();
   expect(screen.getByText("Strengths")).toBeInTheDocument();
   expect(screen.getByText("Gaps")).toBeInTheDocument();
-  expect(screen.getByText("Resume hooks")).toBeInTheDocument();
+  expect(screen.getByText("Resume guidance")).toBeInTheDocument();
   expect(screen.getByText("Lead with infra.")).toBeInTheDocument();
 });
 
@@ -54,7 +54,7 @@ test("null jd_summary suppresses the JD summary section (no empty label)", () =>
   expect(screen.queryByText("JD summary")).toBeNull();
   // The other blocks still render.
   expect(screen.getByText("Strengths")).toBeInTheDocument();
-  expect(screen.getByText("Resume hooks")).toBeInTheDocument();
+  expect(screen.getByText("Resume guidance")).toBeInTheDocument();
 });
 
 test("missing strengths/gaps render no Strengths/Gaps sections", () => {
@@ -91,5 +91,18 @@ test("a fully unscored Stage B (verdict only) renders no empty sections", () => 
   expect(screen.queryByText("JD summary")).toBeNull();
   expect(screen.queryByText("Strengths")).toBeNull();
   expect(screen.queryByText("Gaps")).toBeNull();
-  expect(screen.queryByText("Resume hooks")).toBeNull();
+  expect(screen.queryByText("Resume guidance")).toBeNull();
+});
+
+test("shows each twin source once when multiple URLs share a platform", () => {
+  render(
+    <TwinsLine
+      twins={[
+        { job_id: "2", platform: "linkedin_guest", status: "new", url: "https://example.com/2" },
+        { job_id: "3", platform: "linkedin_guest", status: "new", url: "https://example.com/3" },
+      ]}
+    />,
+  );
+
+  expect(screen.getAllByText("linkedin_guest (new)")).toHaveLength(1);
 });

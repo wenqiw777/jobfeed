@@ -1,69 +1,62 @@
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import Badge from "@cloudscape-design/components/badge";
+import Box from "@cloudscape-design/components/box";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Table from "@cloudscape-design/components/table";
 
 import type { RunSummary } from "@/api/queries";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
-
-const INITIAL_DIMENSION = { width: 600, height: 200 };
-
-/** Handled pipeline errors per run, from the runs' `errors` counter.
- * (Step-timing `is_error` only marks timed blocks that raised, so it
- * undercounts handled errors — the run counter is the honest source.)
- * `runs` arrives newest-first from the API; reverse for a left-to-right
- * timeline and keep the quiet zero-error runs off the chart. */
-function aggregate(runs: RunSummary[]): { run: string; errors: number }[] {
-  return runs
-    .filter((r) => r.errors > 0)
-    .slice(0, 20)
-    .reverse()
-    .map((r) => ({ run: r.run_id.slice(0, 8), errors: r.errors }));
-}
+import { formatRunAxisDateTime } from "@/lib/dates";
 
 export function ErrorsPerRun({ runs }: { runs: RunSummary[] }) {
-  const data = aggregate(runs);
+  const data = runs
+    .filter((run) => run.errors > 0 || run.status === "failed")
+    .slice(0, 3)
+    .map((run) => ({
+      id: run.run_id,
+      started: formatRunAxisDateTime(run.started_at),
+      status: run.status,
+      errors: run.errors,
+    }));
   if (data.length === 0) {
     return (
-      <ChartCard title="Errors per run">
-        <ChartEmpty>No errors in this period.</ChartEmpty>
+      <ChartCard title="Recent run errors">
+        <ChartEmpty>No errors in this time range.</ChartEmpty>
       </ChartCard>
     );
   }
+
   return (
-    <ChartCard title="Errors per run">
-      <div className="h-52" data-testid="errors-per-run">
-        <ResponsiveContainer width="100%" height="100%" initialDimension={INITIAL_DIMENSION}>
-          <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-            <CartesianGrid stroke="rgb(var(--hairline))" vertical={false} />
-            <XAxis
-              dataKey="run"
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
-            />
-            <YAxis
-              allowDecimals={false}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
-            />
-            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6 }} />
-            <Bar
-              dataKey="errors"
-              fill="rgb(var(--danger))"
-              barSize={16}
-              radius={[3, 3, 0, 0]}
-              isAnimationActive={false}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+    <ChartCard title="Recent run errors">
+      <Table
+        variant="embedded"
+        items={data}
+        trackBy="id"
+        contentDensity="compact"
+        wrapLines
+        ariaLabels={{ tableLabel: "Recent run errors" }}
+        columnDefinitions={[
+          {
+            id: "run",
+            header: "Run",
+            width: 140,
+            isRowHeader: true,
+            cell: (row) => (
+              <SpaceBetween size="xxs">
+                <Box variant="small">{row.started}</Box>
+                <Badge color={row.status === "failed" ? "red" : "grey"}>
+                  {row.status === "failed" ? "Failed" : "Completed"}
+                </Badge>
+              </SpaceBetween>
+            ),
+          },
+          {
+            id: "errors",
+            header: "Errors",
+            width: 64,
+            cell: (row) => row.errors.toLocaleString(),
+          },
+        ]}
+      />
     </ChartCard>
   );
 }

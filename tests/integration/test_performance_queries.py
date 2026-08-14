@@ -19,6 +19,7 @@ from jobfeed.domain.models_perf import StepTiming
 pytestmark = pytest.mark.postgres
 
 _WINDOW = 30
+_CALLS_PER_MODEL = 2
 
 
 def _run(
@@ -26,6 +27,7 @@ def _run(
     source: str = "ats",
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
+    status: str = "succeeded",
     **kw: object,
 ) -> PipelineRun:
     """Build a PipelineRun fixture with overrides.
@@ -35,6 +37,7 @@ def _run(
         source: Source name (used for scan vs evaluate).
         started_at: Start timestamp.
         finished_at: Finish timestamp.
+        status: Terminal status.
         **kw: Additional PipelineRun field overrides.
 
     Returns:
@@ -44,7 +47,7 @@ def _run(
     return PipelineRun(
         run_id=run_id,
         source=source,
-        status="succeeded",
+        status=status,
         started_at=started_at or now,
         finished_at=finished_at or (started_at or now) + timedelta(seconds=10),
         **kw,  # type: ignore[arg-type]
@@ -101,19 +104,65 @@ async def test_overview_computes_scan_and_eval_averages(
 
 
 async def test_overview_error_rate(store: PostgresStore) -> None:
-    """Error rate is fraction of runs with errors > 0."""
+    """Error rate treats failed runs as errors even when their counter is zero."""
     now = datetime.now(UTC)
     await store.record_pipeline_run(
         _run("perf-ok", started_at=now - timedelta(hours=1), errors=0)
     )
     await store.record_pipeline_run(
-        _run("perf-err", started_at=now - timedelta(minutes=30), errors=3)
+        _run(
+            "perf-err",
+            started_at=now - timedelta(minutes=30),
+            status="failed",
+            errors=0,
+        )
     )
 
     overview = await store.get_performance_overview(_WINDOW)
 
     expected_rate = 0.5
     assert overview.error_rate == pytest.approx(expected_rate)
+
+
+async def test_overview_excludes_failed_durations_but_keeps_their_cost(
+    store: PostgresStore,
+) -> None:
+    """Only succeeded runs shape durations; terminal runs still count toward cost."""
+    now = datetime.now(UTC)
+    await store.record_pipeline_run(
+        _run(
+            "perf-successful-scan",
+            source="scan",
+            started_at=now - timedelta(hours=3),
+            finished_at=now - timedelta(hours=3) + timedelta(seconds=5),
+            total_llm_cost_usd=1,
+        )
+    )
+    await store.record_pipeline_run(
+        _run(
+            "perf-evaluation-retry",
+            source="Evaluation Retry",
+            started_at=now - timedelta(hours=2),
+            finished_at=now - timedelta(hours=2) + timedelta(seconds=20),
+            total_llm_cost_usd=2,
+        )
+    )
+    await store.record_pipeline_run(
+        _run(
+            "perf-recovered-scan",
+            source="scan",
+            status="failed",
+            started_at=now - timedelta(hours=1),
+            finished_at=now,
+            total_llm_cost_usd=3,
+        )
+    )
+
+    overview = await store.get_performance_overview(_WINDOW)
+
+    assert overview.avg_scan_duration_ms == pytest.approx(5000, rel=0.01)
+    assert overview.avg_eval_duration_ms == pytest.approx(20000, rel=0.01)
+    assert overview.total_llm_cost_usd == pytest.approx(6)
 
 
 async def test_overview_cost_total(store: PostgresStore) -> None:
@@ -248,24 +297,28 @@ async def test_llm_daily_stats_computes_percentiles(
     for i in range(4):
         await store.record_llm_usage(
             LLMUsage(
-                model="test",
+                model="perf-mini" if i < _CALLS_PER_MODEL else "perf-large",
                 input_tokens=100 + i * 10,
                 output_tokens=50 + i * 5,
                 cost_usd=0.01,
                 cached=False,
                 latency_ms=100 + i * 100,
-                timestamp=now - timedelta(hours=i),
+                timestamp=now,
+                stage="a" if i < _CALLS_PER_MODEL else "b",
             )
         )
 
     stats = await store.get_llm_daily_stats(_WINDOW)
 
-    assert len(stats) >= 1
-    today = stats[-1]
-    assert today.p50_latency_ms > 0
-    assert today.p95_latency_ms >= today.p50_latency_ms
-    assert today.avg_input_tokens > 0
-    assert today.avg_output_tokens > 0
+    today = [row for row in stats if row.model.startswith("perf-")]
+    assert [(row.model, row.stage, row.call_count) for row in today] == [
+        ("perf-large", "b", 2),
+        ("perf-mini", "a", 2),
+    ]
+    assert all(row.p50_latency_ms > 0 for row in today)
+    assert all(row.p95_latency_ms >= row.p50_latency_ms for row in today)
+    assert all(row.avg_input_tokens > 0 for row in today)
+    assert all(row.avg_output_tokens > 0 for row in today)
 
 
 # ------------------------------------------------------------------

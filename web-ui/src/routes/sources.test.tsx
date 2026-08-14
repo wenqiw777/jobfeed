@@ -132,12 +132,43 @@ test("renders the Cloudscape source workspace and tracked-company table", async 
   renderSources();
 
   expect(await screen.findByTestId("cloudscape-sources")).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Company sources", level: 2 })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Add company boards", level: 2 })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Job sources", level: 2 })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Check and add company boards", level: 2 })).toBeVisible();
   expect(screen.getByRole("heading", { name: /Tracked companies/, level: 2 })).toBeVisible();
   expect(screen.getByRole("columnheader", { name: "Company" })).toBeVisible();
-  expect(screen.getByRole("columnheader", { name: "Vendor" })).toBeVisible();
-  expect(screen.getByRole("columnheader", { name: "Discovery health" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Board provider" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Scan health" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Tracking status" })).toBeVisible();
+  expect(
+    screen.getByText("Use this form when you already know the company board."),
+  ).toBeVisible();
+});
+
+test("tracked companies search and paginate every 25 rows without hiding the total", async () => {
+  state.companies = Array.from({ length: 205 }, (_, index) =>
+    company(`company-${String(index).padStart(3, "0")}`),
+  );
+  renderSources();
+
+  await screen.findByTestId("company-row-company-000");
+  expect(screen.getAllByTestId(/^company-row-/)).toHaveLength(25);
+  expect(screen.getByRole("heading", { name: "Tracked companies (205)" })).toBeVisible();
+  expect(screen.getByText("1–25 of 205 companies")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  expect(await screen.findByTestId("company-row-company-025")).toBeVisible();
+  expect(screen.getAllByTestId(/^company-row-/)).toHaveLength(25);
+
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search companies" }), {
+    target: { value: "company-199" },
+  });
+  expect(await screen.findByTestId("company-row-company-199")).toBeVisible();
+  expect(screen.getAllByTestId(/^company-row-/)).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Next page" })).toBeNull();
 });
 
 test("companies table: slug/vendor columns, failure tint, removed via toggle only", async () => {
@@ -152,10 +183,10 @@ test("companies table: slug/vendor columns, failure tint, removed via toggle onl
 
   // Soft-removed rows are hidden until the toggle re-includes them.
   expect(screen.queryByTestId("company-row-gone1")).toBeNull();
-  fireEvent.click(screen.getByRole("checkbox", { name: "Include removed" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show stopped companies" }));
   const removedRow = await screen.findByTestId("company-row-gone1");
   expect(calls.at(-1)?.url).toContain("include_removed=true");
-  expect(screen.getByText("Removed")).toBeInTheDocument();
+  expect(screen.getByText("Stopped")).toBeInTheDocument();
   // No remove affordance on an already-removed row.
   expect(within(removedRow).queryByRole("button", { name: /Remove/ })).toBeNull();
 });
@@ -164,7 +195,7 @@ test("remove is gated by the danger dialog; cancel sends no request", async () =
   renderSources();
   await screen.findByTestId("company-row-co1");
 
-  fireEvent.click(screen.getByRole("button", { name: "Remove co1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Stop tracking co1" }));
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByText("Stop tracking co1?")).toBeInTheDocument();
 
@@ -172,9 +203,9 @@ test("remove is gated by the danger dialog; cancel sends no request", async () =
   await waitFor(() => expect(screen.getByRole("dialog").className).toContain("hidden"));
   expect(calls.some((call) => call.method === "DELETE")).toBe(false);
 
-  fireEvent.click(screen.getByRole("button", { name: "Remove co1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Stop tracking co1" }));
   const reopened = await screen.findByRole("dialog");
-  fireEvent.click(within(reopened).getByRole("button", { name: "Remove" }));
+  fireEvent.click(within(reopened).getByRole("button", { name: "Stop tracking" }));
 
   expect(await screen.findByText("Stopped tracking co1")).toBeInTheDocument();
   const request = calls.find((call) => call.method === "DELETE");
@@ -189,16 +220,16 @@ test("single add: probe-one prefills slug + vendor, Add posts the pinned pair", 
 
   const slugInput = screen.getByLabelText("Company slug");
   fireEvent.change(slugInput, { target: { value: "https://boards.greenhouse.io/Acme" } });
-  fireEvent.click(screen.getByRole("button", { name: "Probe" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check board" }));
 
   // The probe resolved the URL — slug normalized, vendor pre-selected
   // (Add is gated on both, so enabled proves the vendor landed).
   await waitFor(() => expect(slugInput).toHaveValue("acme"));
-  expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Add company" })).toBeEnabled();
   const probeCall = calls.find((call) => call.url === "/api/companies/probe");
   expect(probeCall?.body).toEqual({ entries: ["https://boards.greenhouse.io/Acme"] });
 
-  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add company" }));
   expect(await screen.findByText("acme added")).toBeInTheDocument();
   const post = calls.find((call) => call.method === "POST" && call.url === "/api/companies");
   expect(post?.body).toEqual({ slug: "acme", vendor: "greenhouse" });
@@ -222,7 +253,7 @@ test("probe flow: 20-line paste → per-entry results → confirm inserts only c
   fireEvent.change(screen.getByLabelText("Company entries"), {
     target: { value: entries.join("\n") },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Probe list" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check boards" }));
 
   // Per-entry status: resolved rows pre-checked, errors flagged and
   // uncheckable, the definitive miss labeled (not an error).
@@ -232,12 +263,12 @@ test("probe flow: 20-line paste → per-entry results → confirm inserts only c
   expect(screen.getByRole("checkbox", { name: "Add bad1" })).not.toBeChecked();
   expect(screen.getAllByText("probe timeout")).toHaveLength(3);
   expect(screen.getByRole("checkbox", { name: "Add miss1" })).toBeDisabled();
-  expect(screen.getByText("no ATS detected")).toBeInTheDocument();
+  expect(screen.getByText("No supported board detected")).toBeInTheDocument();
 
   // Uncheck one resolved row; confirm must post exactly the checked 15.
   fireEvent.click(screen.getByRole("checkbox", { name: "Add co16" }));
   expect(screen.getByRole("heading", { name: /15 of 20 selected/ })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Add 15 companies" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add 15 selected companies" }));
 
   const bulk = await waitFor(() => {
     const call = calls.find((item) => item.url === "/api/companies/bulk");
@@ -281,19 +312,19 @@ test("bulk confirm failure: error toast, review stays interactive for a retry", 
   fireEvent.change(screen.getByLabelText("Company entries"), {
     target: { value: "alpha\nbeta" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Probe list" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check boards" }));
   expect(await screen.findByRole("heading", { name: /2 of 2 selected/ })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Add 2 companies" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add 2 selected companies" }));
   expect(await screen.findByText("Adding companies")).toBeInTheDocument();
   failBulk();
 
   // The failure surfaces as a toast…
-  expect(await screen.findByText("Bulk add failed")).toBeInTheDocument();
+  expect(await screen.findByText("Companies could not be added")).toBeInTheDocument();
   expect(screen.getByText("store exploded")).toBeInTheDocument();
   // …and the review is still interactive, not wedged: the confirm button is
   // back from its pending label and enabled, the result rows still render.
-  expect(screen.getByRole("button", { name: "Add 2 companies" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Add 2 selected companies" })).toBeEnabled();
   expect(screen.getByRole("heading", { name: /2 of 2 selected/ })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Add alpha" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Add beta" })).toBeChecked();
@@ -306,14 +337,14 @@ test("probe review: select all / none drive the confirm button", async () => {
   fireEvent.change(screen.getByLabelText("Company entries"), {
     target: { value: "alpha\nbeta\nbad9" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Probe list" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check boards" }));
   expect(await screen.findByRole("heading", { name: /2 of 3 selected/ })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "None" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
   expect(screen.getByRole("heading", { name: /0 of 3 selected/ })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Add 0 companies" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Add 0 selected companies" })).toBeDisabled();
 
-  fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+  fireEvent.click(screen.getByRole("button", { name: "Select all matched" }));
   expect(screen.getByRole("heading", { name: /2 of 3 selected/ })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Add 2 companies" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Add 2 selected companies" })).toBeEnabled();
 });

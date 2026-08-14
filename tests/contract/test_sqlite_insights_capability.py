@@ -8,6 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from jobfeed.adapters.store import _sqlite_insights
+from jobfeed.domain.models_views import InsightsDay
 from tests.support.sqlite_views_performance import (
     NOW,
     insert_job,
@@ -38,10 +39,10 @@ async def test_insights_empty_database_has_explicit_zero_semantics(
         await lifecycle.close()
 
 
-async def test_insights_all_time_totals_and_inclusive_windowed_days(
+async def test_insights_cohort_totals_and_inclusive_windowed_days(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Totals stay all-time while daily buckets use one inclusive UTC window."""
+    """Cohort totals and daily buckets use one inclusive UTC window."""
     monkeypatch.setattr(_sqlite_insights, "_utc_now", lambda: NOW)
     lifecycle, store = await open_views_performance(tmp_path / "insights.db")
     try:
@@ -98,24 +99,22 @@ async def test_insights_all_time_totals_and_inclusive_windowed_days(
                 (utc_text(NOW - timedelta(days=30)), old),
             )
             await connection.execute(
-                "INSERT INTO applied (job_id, applied_at) VALUES (?, ?)",
+                """INSERT INTO job_status_history
+                   (job_id, from_status, to_status, changed_at)
+                   VALUES (?, 'new', 'applied', ?)""",
                 (today, utc_text(NOW)),
             )
 
         result = await store.insights_overview(window_days=2)
+        all_time = await store.insights_overview(window_days=None)
 
-        assert result.total_jobs == 4
-        assert result.ml_gate_passed_jobs == 2
-        assert result.evaluated_jobs == 2
+        assert result.total_jobs == 2
+        assert result.ml_gate_passed_jobs == 1
+        assert result.evaluated_jobs == 1
         assert result.applied_jobs == 1
-        assert result.verdict_distribution == {
-            "below_threshold": 1,
-            "consider": 1,
-        }
+        assert result.verdict_distribution == {"consider": 1}
         assert result.status_distribution == {
             "applied": 1,
-            "archived": 1,
-            "new": 1,
             "scored": 1,
         }
         assert [day.day.isoformat() for day in result.daily] == [
@@ -132,6 +131,125 @@ async def test_insights_all_time_totals_and_inclusive_windowed_days(
             result.daily[1].evaluated,
             result.daily[1].applied,
         ) == (1, 0, 1)
+        assert all_time.window_days is None
+        assert all_time.total_jobs == 3
+        assert all_time.ml_gate_passed_jobs == 2
+        assert all_time.evaluated_jobs == 2
+        assert all_time.applied_jobs == 1
+        assert all_time.verdict_distribution == {
+            "below_threshold": 1,
+            "consider": 1,
+        }
+        assert all_time.status_distribution == {
+            "applied": 1,
+            "archived": 1,
+            "scored": 1,
+        }
+        assert [day.day.isoformat() for day in all_time.daily] == [
+            "2026-07-13",
+            "2026-08-10",
+            "2026-08-12",
+        ]
         assert future
+    finally:
+        await lifecycle.close()
+
+
+async def test_insights_applied_matches_the_triage_applied_group(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Applied totals include every status shown in the Triage Applied tab."""
+    monkeypatch.setattr(_sqlite_insights, "_utc_now", lambda: NOW)
+    lifecycle, store = await open_views_performance(tmp_path / "applied-status.db")
+    try:
+        await insert_job(
+            lifecycle,
+            "current-applied",
+            discovered_at=utc_text(NOW - timedelta(days=1)),
+            status="applied",
+        )
+        historical_applied = await insert_job(
+            lifecycle,
+            "historical-applied",
+            discovered_at=utc_text(NOW),
+            status="interviewing",
+        )
+        async with lifecycle.connection() as connection:
+            await connection.execute(
+                """INSERT INTO job_status_history
+                   (job_id, from_status, to_status, changed_at)
+                   VALUES (?, 'new', 'applied', ?)""",
+                (historical_applied, utc_text(NOW)),
+            )
+
+        result = await store.insights_overview(window_days=7)
+
+        assert result.applied_jobs == 2
+        assert result.status_distribution == {"applied": 1, "interviewing": 1}
+        assert result.daily == [
+            InsightsDay(
+                day=(NOW - timedelta(days=1)).date(),
+                discovered=1,
+                evaluated=0,
+                applied=0,
+            ),
+            InsightsDay(day=NOW.date(), discovered=1, evaluated=0, applied=1),
+        ]
+    finally:
+        await lifecycle.close()
+
+
+async def test_insights_window_filters_the_full_discovery_cohort(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Seven- and 30-day insights use different discovery cohorts everywhere."""
+    monkeypatch.setattr(_sqlite_insights, "_utc_now", lambda: NOW)
+    lifecycle, store = await open_views_performance(tmp_path / "cohort.db")
+    try:
+        older = await insert_job(
+            lifecycle,
+            "older",
+            discovered_at=utc_text(NOW - timedelta(days=8)),
+            status="applied",
+        )
+        recent = await insert_job(
+            lifecycle,
+            "recent",
+            discovered_at=utc_text(NOW - timedelta(days=1)),
+            status="interviewing",
+        )
+        async with lifecycle.connection() as connection:
+            await connection.execute(
+                "UPDATE jobs SET ml_gate_result='pass' WHERE id=?", (older,)
+            )
+            await connection.execute(
+                """INSERT INTO job_status_history
+                   (job_id, from_status, to_status, changed_at)
+                   VALUES (?, 'new', 'applied', ?)""",
+                (older, utc_text(NOW - timedelta(days=1))),
+            )
+        for job_id in (older, recent):
+            await set_evaluation(
+                lifecycle,
+                job_id,
+                stage_a_score=80,
+                verdict="consider",
+                stage_b_status="completed",
+                stage_a_at=utc_text(NOW - timedelta(days=1)),
+            )
+
+        week = await store.insights_overview(window_days=7)
+        month = await store.insights_overview(window_days=30)
+
+        assert (week.total_jobs, month.total_jobs) == (1, 2)
+        assert (week.ml_gate_passed_jobs, month.ml_gate_passed_jobs) == (0, 1)
+        assert (week.evaluated_jobs, month.evaluated_jobs) == (1, 2)
+        assert (week.applied_jobs, month.applied_jobs) == (1, 2)
+        assert week.verdict_distribution == {"consider": 1}
+        assert month.verdict_distribution == {"consider": 2}
+        assert week.status_distribution == {"interviewing": 1}
+        assert month.status_distribution == {"applied": 1, "interviewing": 1}
+        assert sum(day.applied for day in week.daily) == 0
+        assert sum(day.applied for day in month.daily) == 1
     finally:
         await lifecycle.close()

@@ -25,7 +25,17 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     ),
     "shortlisted": frozenset({"awaiting_referral", "applied", "archived"}),
     "awaiting_referral": frozenset({"applied", "archived"}),
-    "applied": frozenset({"interviewing", "offer", "rejected", "ghosted", "archived"}),
+    "applied": frozenset(
+        {
+            "shortlisted",
+            "interviewing",
+            "offer",
+            "rejected",
+            "ghosted",
+            "archived",
+            "ignored",
+        }
+    ),
     "interviewing": frozenset({"offer", "rejected", "ghosted", "archived"}),
     "ignored": frozenset(),
     "archived": frozenset(),

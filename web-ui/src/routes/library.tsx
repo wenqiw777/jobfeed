@@ -1,12 +1,13 @@
 import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
+import Alert from "@cloudscape-design/components/alert";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
 import Modal from "@cloudscape-design/components/modal";
-import Select from "@cloudscape-design/components/select";
+import Pagination from "@cloudscape-design/components/pagination";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import Spinner from "@cloudscape-design/components/spinner";
 import Tabs from "@cloudscape-design/components/tabs";
 import { useMemo, useState } from "react";
 
@@ -17,7 +18,6 @@ import {
 } from "@/api/queries";
 import { DetailPane } from "@/components/jobs/DetailPane";
 import { LibraryTable } from "@/components/jobs/LibraryTable";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useDebouncedCallback } from "@/lib/use-debounced";
 
 type LibraryTab = "all" | "wait" | "applied" | "ignored";
@@ -30,15 +30,7 @@ const TABS: { value: LibraryTab; label: string }[] = [
   { value: "ignored", label: "Ignored" },
 ];
 
-/** The four A4 sort values, default first. */
-const SORT_OPTIONS: { value: LibrarySort; label: string }[] = [
-  { value: "discovered_desc", label: "Newest discovered" },
-  { value: "posted_desc", label: "Newest posted" },
-  { value: "score_desc", label: "Highest score" },
-  { value: "company_asc", label: "Company A–Z" },
-];
-
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100;
 const SEARCH_DEBOUNCE_MS = 250;
 
 const DECISION_STATUSES = {
@@ -85,7 +77,6 @@ export default function LibraryPage() {
   };
 
   const activeTabLabel = TABS.find((tab) => tab.value === state.tab)?.label ?? "All";
-  const selectedSort = SORT_OPTIONS.find((option) => option.value === state.sort) ?? null;
 
   // Library shows everything: no apply_hard_filters / dedupe /
   // require_verdict — those are triage-ingest concerns (plan A4).
@@ -118,12 +109,12 @@ export default function LibraryPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto" data-testid="cloudscape-library">
+    <div data-testid="cloudscape-library">
       <ContentLayout
         header={
           <Header
             variant="h1"
-            description="Search and compare every posting captured by Jobfeed."
+            description="Search every saved posting and filter by your decision."
             counter={list.data ? `(${list.data.total})` : undefined}
           >
             Job library
@@ -131,9 +122,10 @@ export default function LibraryPage() {
         }
       >
         <SpaceBetween size="m">
-          <Container>
+          <Container key="filters">
             <SpaceBetween size="m">
               <Tabs
+                key="decision-tabs"
                 ariaLabel="Library views"
                 activeTabId={state.tab}
                 onChange={({ detail }) =>
@@ -145,40 +137,25 @@ export default function LibraryPage() {
                   content: null,
                 }))}
               />
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="min-w-60 flex-1">
-                  <Input
-                    value={searchInput}
-                    onChange={({ detail }) => {
-                      setSearchInput(detail.value);
-                      commitSearch(detail.value);
-                    }}
-                    placeholder="Search company or title"
-                    ariaLabel="Search jobs"
-                    type="search"
-                  />
-                </div>
-                <div className="w-52">
-                  <Select
-                    ariaLabel="Sort"
-                    selectedOption={selectedSort}
-                    options={SORT_OPTIONS}
-                    onChange={({ detail }) => {
-                      const value = detail.selectedOption.value;
-                      if (value !== undefined) {
-                        applyFilter({ sort: value as LibrarySort });
-                      }
-                    }}
-                  />
-                </div>
-              </div>
+              <Input
+                key="search"
+                value={searchInput}
+                onChange={({ detail }) => {
+                  setSearchInput(detail.value);
+                  commitSearch(detail.value);
+                }}
+                placeholder="Search company or title"
+                ariaLabel="Search jobs"
+                type="search"
+              />
             </SpaceBetween>
           </Container>
           <Container
+            key="results"
             header={
               <Header
                 variant="h2"
-                description="Open a row to read its evaluation evidence."
+                description="Open a job to review its scores and evidence."
               >
                 {activeTabLabel} postings
               </Header>
@@ -193,14 +170,12 @@ export default function LibraryPage() {
               />
             }
           >
-            <div className="flex h-[min(62vh,44rem)] min-h-80">
-              <ListBody
-                list={list}
-                activeId={drawerJob?.id ?? null}
-                pageKey={`${state.tab}|${state.sort}|${state.search}|${state.page}`}
-                onOpen={setDrawerJob}
-              />
-            </div>
+            <ListBody
+              list={list}
+              onOpen={setDrawerJob}
+              sort={state.sort}
+              onSort={(sort) => applyFilter({ sort })}
+            />
           </Container>
         </SpaceBetween>
       </ContentLayout>
@@ -209,13 +184,12 @@ export default function LibraryPage() {
           visible
           onDismiss={() => setDrawerJob(null)}
           closeAriaLabel="Close job detail"
-          header="Job detail"
+          header="Job scores and evidence"
           size="large"
           position="top"
         >
           <DetailPane
             jobId={drawerJob.id}
-            showDecide={false}
           />
         </Modal>
       )}
@@ -225,23 +199,19 @@ export default function LibraryPage() {
 
 interface ListBodyProps {
   list: ReturnType<typeof useJobsList>;
-  activeId: string | null;
-  pageKey: string;
   onOpen: (job: JobSummary) => void;
+  sort: LibrarySort;
+  onSort: (sort: LibrarySort) => void;
 }
 
-function ListBody({ list, activeId, pageKey, onOpen }: ListBodyProps) {
+function ListBody({ list, onOpen, sort, onSort }: ListBodyProps) {
   if (list.isPending) {
     return (
-      <div className="flex flex-col gap-1 px-4 py-3" aria-label="Loading jobs">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <Skeleton key={i} className="h-7 w-full" />
-        ))}
-      </div>
+      <Box textAlign="center" padding="l"><Spinner size="large" /></Box>
     );
   }
   if (list.isError) {
-    return <Box color="text-status-error">{list.error.message}</Box>;
+    return <Alert type="error">{list.error.message}</Alert>;
   }
   const jobs = list.data.jobs;
   if (jobs.length === 0) {
@@ -256,7 +226,7 @@ function ListBody({ list, activeId, pageKey, onOpen }: ListBodyProps) {
       </Box>
     );
   }
-  return <LibraryTable jobs={jobs} activeId={activeId} pageKey={pageKey} onOpen={onOpen} />;
+  return <LibraryTable jobs={jobs} onOpen={onOpen} sort={sort} onSort={onSort} />;
 }
 
 interface PagerProps {
@@ -269,26 +239,27 @@ interface PagerProps {
   onPage: (page: number) => void;
 }
 
-/** Server-side pagination footer: prev/next plus the exact range label. */
+/** Server-side Cloudscape pagination with an exact visible range. */
 function Pager({ page, pageRows, total, isPlaceholder, onPage }: PagerProps) {
   const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const end = page * PAGE_SIZE + pageRows;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <SpaceBetween direction="horizontal" size="m" alignItems="center">
       <Box variant="small" color="text-body-secondary">
         {total === 0 ? "0 results" : `${start}–${end} of ${total}`}
       </Box>
-      <SpaceBetween direction="horizontal" size="xs">
-        <Button disabled={page === 0} onClick={() => onPage(page - 1)}>
-          Prev
-        </Button>
-        <Button
-          disabled={isPlaceholder || end >= total}
-          onClick={() => onPage(page + 1)}
-        >
-          Next
-        </Button>
-      </SpaceBetween>
-    </div>
+      <Pagination
+        currentPageIndex={page + 1}
+        pagesCount={Math.max(1, Math.ceil(total / PAGE_SIZE))}
+        disabled={isPlaceholder}
+        ariaLabels={{
+          paginationLabel: "Library pagination",
+          previousPageLabel: "Previous page",
+          nextPageLabel: "Next page",
+          pageLabel: (pageNumber) => `Page ${pageNumber}`,
+        }}
+        onChange={({ detail }) => onPage(detail.currentPageIndex - 1)}
+      />
+    </SpaceBetween>
   );
 }

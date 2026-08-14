@@ -2,7 +2,9 @@ import {
   dateInputToIso,
   dateTimeInputToIso,
   followupAtFromNow,
+  formatEstimatedPostedDate,
   formatLocalDateTime,
+  formatRunAxisDateTime,
   formatRelativeAge,
 } from "./dates";
 
@@ -29,9 +31,13 @@ describe("formatRelativeAge", () => {
     expect(formatRelativeAge("2026-06-10T01:00:00", NOW)).toBe("1d");
   });
 
-  test("older than 30 days renders an absolute M/D/YY date", () => {
-    expect(formatRelativeAge("2026-01-05T10:00:00", NOW)).toBe("1/5/26");
+  test("older than 30 days renders an unambiguous readable date", () => {
+    expect(formatRelativeAge("2026-01-05T10:00:00", NOW)).toBe("Jan 5, 2026");
   });
+});
+
+test("labels a missing posting date as an estimate from its added date", () => {
+  expect(formatEstimatedPostedDate("2026-06-14T12:00:00Z")).toBe("~Jun 14, 2026");
 });
 
 describe("formatLocalDateTime", () => {
@@ -45,6 +51,12 @@ describe("formatLocalDateTime", () => {
     expect(formatLocalDateTime(null)).toBe("—");
     expect(formatLocalDateTime("not-a-date")).toBe("—");
   });
+});
+
+test("formatRunAxisDateTime uses a readable compact local timestamp", () => {
+  const local = new Date(2026, 5, 3, 8, 5).toISOString();
+  expect(formatRunAxisDateTime(local)).toBe("6/3 08:05");
+  expect(formatRunAxisDateTime("not-a-date")).toBe("Unknown time");
 });
 
 describe("followupAtFromNow", () => {

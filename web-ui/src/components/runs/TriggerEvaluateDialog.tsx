@@ -15,9 +15,9 @@ import { toast } from "@/components/ui/use-toast";
 type Stage = "a" | "b" | "both";
 
 const STAGE_OPTIONS = [
-  { label: "Both stages", value: "both", description: "Fast score, then deep review" },
-  { label: "Stage A only", value: "a", description: "Fast score only" },
-  { label: "Stage B only", value: "b", description: "Deep review for eligible jobs" },
+  { label: "Quick score and detailed review", value: "both", description: "Run the complete evaluation" },
+  { label: "Quick score only", value: "a", description: "Score eligible jobs without detailed evidence" },
+  { label: "Detailed review only", value: "b", description: "Review jobs that already passed the quick score" },
 ];
 
 /** Cloudscape evaluation form with stage and optional batch limit. */
@@ -38,7 +38,7 @@ export function TriggerEvaluateButton() {
           setIsOpen(false);
           setStage("both");
           setLimitText("");
-          toast({ title: `Evaluate started (stage ${stage})` });
+          toast({ title: `Evaluation started (${stageLabel(stage)})` });
         },
         onError: (error) => handleError(error),
       },
@@ -48,14 +48,14 @@ export function TriggerEvaluateButton() {
   const handleError = (error: unknown) => {
     if (error instanceof ApiError && error.status === 409) {
       toast({
-        title: "Evaluate already running",
+        title: "Evaluation already running",
         description: "Wait for the current evaluation to finish.",
         variant: "destructive",
       });
       return;
     }
     toast({
-      title: "Evaluate failed",
+      title: "Evaluation could not start",
       description: error instanceof Error ? error.message : String(error),
       variant: "destructive",
     });
@@ -63,12 +63,12 @@ export function TriggerEvaluateButton() {
 
   return (
     <>
-      <Button iconName="gen-ai" onClick={() => setIsOpen(true)}>Evaluate</Button>
+      <Button iconName="gen-ai" onClick={() => setIsOpen(true)}>Start evaluation</Button>
       <Modal
         visible={isOpen}
         onDismiss={() => setIsOpen(false)}
         closeAriaLabel="Close evaluation form"
-        header="Trigger Evaluate"
+        header="Start evaluation"
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
@@ -80,7 +80,7 @@ export function TriggerEvaluateButton() {
                 loadingText="Starting evaluation"
                 onClick={submit}
               >
-                Start evaluate
+                Start evaluation
               </Button>
             </SpaceBetween>
           </Box>
@@ -88,24 +88,24 @@ export function TriggerEvaluateButton() {
       >
         <Form>
           <SpaceBetween size="l">
-            <FormField label="Stage" description="Choose which evaluation work to schedule.">
+            <FormField label="Evaluation depth" description="Choose how much evaluation to run.">
               <RadioGroup
                 value={stage}
                 items={STAGE_OPTIONS}
-                ariaLabel="Stage"
+                ariaLabel="Evaluation depth"
                 onChange={({ detail }) => setStage(detail.value as Stage)}
               />
             </FormField>
             <FormField
-              label="Limit (optional)"
-              description="Leave empty to process every eligible job."
-              errorText={isLimitInvalid ? "Limit must be a number of at least 1." : undefined}
+              label="Maximum jobs (optional)"
+              description="Leave empty to evaluate every eligible job."
+              errorText={isLimitInvalid ? "Maximum jobs must be a number of at least 1." : undefined}
             >
               <Input
                 type="number"
                 value={limitText}
-                placeholder="all"
-                ariaLabel="Limit"
+                placeholder="All eligible jobs"
+                ariaLabel="Maximum jobs"
                 invalid={isLimitInvalid}
                 nativeInputAttributes={{ min: 1 }}
                 onChange={({ detail }) => setLimitText(detail.value)}
@@ -116,4 +116,10 @@ export function TriggerEvaluateButton() {
       </Modal>
     </>
   );
+}
+
+function stageLabel(stage: Stage): string {
+  if (stage === "a") return "quick score only";
+  if (stage === "b") return "detailed review only";
+  return "quick score and detailed review";
 }

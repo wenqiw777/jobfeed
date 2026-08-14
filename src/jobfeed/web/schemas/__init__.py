@@ -28,13 +28,11 @@ from jobfeed.web.schemas.companies import (
     company_out,
 )
 from jobfeed.web.schemas.insights import (
-    ApplicationStatsBlock,
     AttentionResponse,
     InsightsDayEntry,
     InsightsOverviewResponse,
     InsightsTotals,
     PipelineAttentionEntry,
-    ResumeVariantStatsRow,
     WorkflowAttentionEntry,
     attention_response,
     insights_overview_response,
@@ -76,7 +74,6 @@ from jobfeed.web.schemas.workflow import (
 __all__ = [
     "REMOVED_SENTINEL",
     "ApplicationRow",
-    "ApplicationStatsBlock",
     "ApplicationsListResponse",
     "ApplyResponse",
     "AttentionResponse",
@@ -108,7 +105,6 @@ __all__ = [
     "ProbeEntryResult",
     "ProbeResponse",
     "RestoreResponse",
-    "ResumeVariantStatsRow",
     "RunSummary",
     "RunsListResponse",
     "TransitionBody",

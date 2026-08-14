@@ -1,7 +1,9 @@
 import { useState } from "react";
 import Alert from "@cloudscape-design/components/alert";
+import Box from "@cloudscape-design/components/box";
 import Grid from "@cloudscape-design/components/grid";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import Spinner from "@cloudscape-design/components/spinner";
 
 import {
   useFunnelStats,
@@ -20,7 +22,6 @@ import { LlmLatency } from "@/components/performance/LlmLatency";
 import { ScanSourceDuration } from "@/components/performance/ScanSourceDuration";
 import { TimeFilter } from "@/components/performance/TimeFilter";
 import { TokenUsage } from "@/components/performance/TokenUsage";
-import { Skeleton } from "@/components/ui/skeleton";
 
 /** Display cap for the per-run error chart (runs, not step timings,
  * carry the handled-error counters); the runs query is additionally
@@ -29,11 +30,10 @@ const ERROR_RUNS_LIMIT = 20;
 
 /**
  * Performance zone: operational metrics and charts.
- * Lazy-loaded like Insights to keep the recharts bundle out of the
- * eager chunk.
+ * Lazy-loaded like Insights to keep chart code out of the eager chunk.
  */
 export default function PerformancePage() {
-  const [windowDays, setWindowDays] = useState<number>(30);
+  const [windowDays, setWindowDays] = useState<number>(90);
   const overview = usePerformanceOverview(windowDays);
   const stepTimings = useStepTimings(windowDays);
   const llmStats = useLLMStats(windowDays);
@@ -44,7 +44,7 @@ export default function PerformancePage() {
   const runs = useRuns({ limit: ERROR_RUNS_LIMIT, days: windowDays });
 
   return (
-    <div data-testid="cloudscape-performance" className="jobfeed-dashboard-page">
+    <div data-testid="cloudscape-performance">
       <SpaceBetween size="l">
         <TimeFilter windowDays={windowDays} onChange={setWindowDays} />
         <Body overview={overview} stepTimings={stepTimings} llmStats={llmStats} funnel={funnel} runs={runs} />
@@ -76,17 +76,7 @@ function Body({
     overview.error ?? stepTimings.error ?? llmStats.error ?? funnel.error ?? runs.error;
 
   if (isPending) {
-    return (
-      <div className="flex flex-col gap-3" aria-label="Loading performance">
-        <Skeleton className="h-20 w-full" />
-        <div className="grid gap-3 lg:grid-cols-2">
-          <Skeleton className="h-64 w-full" />
-          <Skeleton className="h-64 w-full" />
-          <Skeleton className="h-64 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      </div>
-    );
+    return <Box padding="xxl" textAlign="center"><Spinner size="large" /></Box>;
   }
   if (firstError) {
     return <Alert type="error" header="Performance data unavailable">{firstError.message}</Alert>;
@@ -101,7 +91,7 @@ function Body({
   return (
     <>
       <KpiCards overview={overviewData} />
-      <Grid gridDefinition={Array.from({ length: 8 }, () => ({ colspan: { default: 12, l: 6 } }))}>
+      <Grid gridDefinition={Array.from({ length: 8 }, () => ({ colspan: { default: 12, s: 3 } }))}>
         <ScanSourceDuration timings={timings} />
         <EvaluateBreakdown timings={timings} />
         <GatePassFail funnel={funnelData} />

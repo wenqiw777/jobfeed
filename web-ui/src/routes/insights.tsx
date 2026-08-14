@@ -1,32 +1,46 @@
 import { useState } from "react";
 import Alert from "@cloudscape-design/components/alert";
+import Box from "@cloudscape-design/components/box";
 import Grid from "@cloudscape-design/components/grid";
 import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import Spinner from "@cloudscape-design/components/spinner";
 
 import { useInsightsOverview } from "@/api/queries";
-import { ByResumeTable } from "@/components/insights/ByResumeTable";
-import { DailyTimeline } from "@/components/insights/DailyTimeline";
+import { EvaluationCoverage } from "@/components/insights/EvaluationCoverage";
+import { JobStatusChart } from "@/components/insights/JobStatusChart";
 import { KpiCards } from "@/components/insights/KpiCards";
-import { SankeyFunnel } from "@/components/insights/SankeyFunnel";
-import { StatusDonut } from "@/components/insights/StatusDonut";
-import { Skeleton } from "@/components/ui/skeleton";
 
-const WINDOW_PRESETS = [30, 60, 90] as const;
+const WINDOW_PRESETS = [7, 30, 60, 90, "all"] as const;
+type WindowPreset = (typeof WINDOW_PRESETS)[number];
 
 /**
- * Insights: the funnel at a glance. The window presets re-query
- * `?window=`; totals stay all-time regardless (KPI cards label which).
+ * Insights: evaluation coverage for one selected discovery period.
+ * The window presets re-query `?window=` and scope every visible metric.
  */
 export default function InsightsPage() {
-  const [windowDays, setWindowDays] = useState<number>(30);
+  const [windowDays, setWindowDays] = useState<WindowPreset>(30);
   const overview = useInsightsOverview(windowDays);
 
   return (
-    <div data-testid="cloudscape-insights" className="jobfeed-dashboard-page">
+    <div data-testid="cloudscape-insights">
       <SpaceBetween size="l">
-        <div role="group" aria-label="Window">
-          <SegmentedControl label="Window" selectedId={String(windowDays)} options={WINDOW_PRESETS.map((preset) => ({ id: String(preset), text: `${preset}d` }))} onChange={({ detail }) => setWindowDays(Number(detail.selectedId))} />
+        <div role="group" aria-label="Time range">
+          <SegmentedControl
+            label="Time range"
+            selectedId={String(windowDays)}
+            options={WINDOW_PRESETS.map((preset) => ({
+              id: String(preset),
+              text: preset === "all" ? "All time" : `${preset} days`,
+            }))}
+            onChange={({ detail }) =>
+              setWindowDays(
+                detail.selectedId === "all"
+                  ? "all"
+                  : (Number(detail.selectedId) as WindowPreset),
+              )
+            }
+          />
         </div>
         <Body overview={overview} />
       </SpaceBetween>
@@ -36,16 +50,7 @@ export default function InsightsPage() {
 
 function Body({ overview }: { overview: ReturnType<typeof useInsightsOverview> }) {
   if (overview.isPending) {
-    return (
-      <div className="flex flex-col gap-3" aria-label="Loading insights">
-        <Skeleton className="h-20 w-full" />
-        <div className="grid gap-3 lg:grid-cols-2">
-          <Skeleton className="h-64 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
+    return <Box padding="xxl" textAlign="center"><Spinner size="large" /></Box>;
   }
   if (overview.isError) {
     return <Alert type="error" header="Insights unavailable">{overview.error.message}</Alert>;
@@ -54,12 +59,13 @@ function Body({ overview }: { overview: ReturnType<typeof useInsightsOverview> }
   return (
     <>
       <KpiCards overview={data} />
-      <Grid gridDefinition={[{ colspan: { default: 12, l: 6 } }, { colspan: { default: 12, l: 6 } }] }>
-        <SankeyFunnel overview={data} />
-        <StatusDonut distribution={data.status_distribution} />
+      <Grid gridDefinition={[
+        { colspan: { default: 12, s: 8 } },
+        { colspan: { default: 12, s: 4 } },
+      ]}>
+        <EvaluationCoverage overview={data} />
+        <JobStatusChart distribution={data.status_distribution} />
       </Grid>
-      <DailyTimeline overview={data} />
-      <ByResumeTable byResume={data.applications.by_resume} />
     </>
   );
 }

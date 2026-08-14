@@ -25,3 +25,17 @@ def test_apply_hard_filters_passes_clean_job() -> None:
     filters = HardFilters(title_blocklist=["sales"], company_blocklist=["agency"])
 
     assert apply_hard_filters(make_job(), filters) is None
+
+
+def test_united_states_allowlist_accepts_state_codes_and_rejects_foreign_jobs() -> None:
+    """The GUI's United States choice recognizes normal ATS location formats."""
+    filters = HardFilters(location_allowlist=["United States"])
+
+    assert apply_hard_filters(make_job(location="San Francisco, CA"), filters) is None
+    assert (
+        apply_hard_filters(make_job(location="United States, Remote"), filters) is None
+    )
+    assert (
+        apply_hard_filters(make_job(location="Ljubljana, Slovenia"), filters)
+        == "location not in allowlist"
+    )

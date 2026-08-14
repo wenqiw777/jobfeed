@@ -12,16 +12,7 @@ export function TopBar() {
   const location = useLocation();
   const zone = zoneForPath(location.pathname);
 
-  return (
-    <div className="jobfeed-route-header">
-      <Header
-        variant="h1"
-        actions={<ViewMenu />}
-      >
-        {zone?.label ?? "Jobfeed"}
-      </Header>
-    </div>
-  );
+  return <Header variant="h1" actions={<ViewMenu />}>{zone?.label ?? "Jobfeed"}</Header>;
 }
 
 function ViewMenu() {
@@ -29,16 +20,16 @@ function ViewMenu() {
   return (
     <SpaceBetween direction="horizontal" size="xs" alignItems="center">
       <Box variant="small" color="text-status-inactive">
-        {density === "compact" ? "Compact" : "Comfortable"}
+        {density === "compact" ? "Compact rows" : "Comfortable rows"}
       </Box>
       <ButtonDropdown
         items={[
-          { id: "compact", text: "Compact" },
-          { id: "comfortable", text: "Comfortable" },
+          { id: "compact", text: "Compact rows" },
+          { id: "comfortable", text: "Comfortable rows" },
         ]}
         onItemClick={({ detail }) => setDensity(detail.id as Density)}
       >
-        View
+        Row density
       </ButtonDropdown>
     </SpaceBetween>
   );

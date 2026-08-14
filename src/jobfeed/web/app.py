@@ -135,9 +135,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
         cast(ApplicationStore, context["store"]), logger
     )
     app.state.application_service = application_service
-    app.state.insights_service = InsightsService(
-        cast(InsightsStore, context["store"]), application_service
-    )
+    app.state.insights_service = InsightsService(cast(InsightsStore, context["store"]))
     app.state.performance_service = PerformanceService(cast(StorePerfMixin, store))
     config_path = context.get("config_path") or Path("config.toml")
     app.state.configuration_editor = ConfigurationEditor(

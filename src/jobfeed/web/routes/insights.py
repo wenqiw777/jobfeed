@@ -8,9 +8,10 @@ on the store ops port, both with default thresholds).
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import Field
 
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ops import StoreOpsMixin
@@ -32,27 +33,29 @@ router = APIRouter()
 _Insights = Annotated[InsightsService, Depends(get_insights_service)]
 _Workflow = Annotated[WorkflowService, Depends(get_workflow_service)]
 _Store = Annotated[JobStore, Depends(get_store)]
+_WindowDays = Annotated[int, Field(ge=1, le=_MAX_WINDOW_DAYS)]
+_Window = _WindowDays | Literal["all"]
 
 
 @router.get("/insights/overview")
 async def insights_overview(
     service: _Insights,
-    window: Annotated[int, Query(ge=1, le=_MAX_WINDOW_DAYS)] = _DEFAULT_WINDOW_DAYS,
+    window: Annotated[_Window, Query()] = _DEFAULT_WINDOW_DAYS,
 ) -> InsightsOverviewResponse:
-    """Aggregate insights: totals, distributions, daily series, app stats.
+    """Aggregate insights: totals, distributions, and daily series.
 
-    Totals and distributions are all-time; the daily series and the
-    application stats cover the requested window.
+    The requested window selects the discovery-date cohort for totals,
+    distributions, and the daily series.
 
     Args:
         service: Shared insights service from the app state.
-        window: Window in days (1..365) for the daily series and app stats.
+        window: Window in days (1..365), or ``all`` for no lower cutoff.
 
     Returns:
         Composed overview response.
     """
-    bundle = await service.overview(window_days=window)
-    return insights_overview_response(bundle)
+    overview = await service.overview(window_days=None if window == "all" else window)
+    return insights_overview_response(overview)
 
 
 @router.get("/attention")

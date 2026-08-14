@@ -1,6 +1,7 @@
 import SideNavigation, {
   type SideNavigationProps,
 } from "@cloudscape-design/components/side-navigation";
+import Icon, { type IconProps } from "@cloudscape-design/components/icon";
 import { useLocation, useNavigate } from "react-router";
 
 import { useJobsTabCounts } from "@/api/queries";
@@ -30,7 +31,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
       type: "link" as const,
       text: "Settings",
       href: "/setup",
-      icon: <span aria-hidden="true">⚙</span>,
+      icon: <Icon name="settings" />,
     },
   ];
 
@@ -38,7 +39,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
     <SideNavigation
       collapsed={collapsed}
       activeHref={location.pathname}
-      header={{ href: "/triage", text: "Workspace" }}
+      header={{ href: "/triage", text: "Jobfeed" }}
       items={items}
       onFollow={(event) => {
         event.preventDefault();
@@ -58,13 +59,13 @@ function zoneText(
 }
 
 function ZoneIcon({ zone }: { zone: string }) {
-  const glyph: Record<string, string> = {
-    "/triage": "◆",
-    "/library": "▤",
-    "/insights": "◫",
-    "/runs": "▶",
-    "/performance": "⌁",
-    "/sources": "◎",
+  const icon: Record<string, IconProps.Name> = {
+    "/triage": "filter",
+    "/library": "folder-open",
+    "/insights": "view-full",
+    "/runs": "play",
+    "/performance": "status-info",
+    "/sources": "globe",
   };
-  return <span aria-hidden="true">{glyph[zone]}</span>;
+  return <Icon name={icon[zone] ?? "status-info"} />;
 }

@@ -92,6 +92,26 @@ export function useJobsList(query: JobsQuery, options: { keepPrevious?: boolean 
   });
 }
 
+/** Load every job id matching a jobs query, across the API's 10k-row windows. */
+export async function fetchAllMatchingJobIds(
+  query: JobsQuery,
+  total: number,
+): Promise<string[]> {
+  const ids: string[] = [];
+  const windowSize = 10_000;
+  for (let offset = 0; offset < total; offset += windowSize) {
+    const page = await apiFetch<JobsListResponse>(
+      `/api/jobs?${buildJobsParams({
+        ...query,
+        limit: Math.min(windowSize, total - offset),
+        offset,
+      })}`,
+    );
+    ids.push(...page.jobs.map((job) => job.id));
+  }
+  return ids;
+}
+
 /** Full detail aggregation for one job; disabled while nothing is selected. */
 export function useJobDetail(id: string | null) {
   return useQuery({
@@ -175,12 +195,11 @@ export function useJobsTabCounts() {
 }
 
 /**
- * Insights overview for one window. Totals and distributions are
- * all-time; `daily` and `applications` cover the window (backend
- * docstring). Window switches keep the previous charts up while the new
- * window loads instead of flashing skeletons.
+ * Insights overview for one discovery cohort. Every metric uses the selected
+ * window; `all` removes the lower cutoff. Window switches keep the previous
+ * charts up while the new window loads instead of flashing skeletons.
  */
-export function useInsightsOverview(windowDays: number) {
+export function useInsightsOverview(windowDays: number | "all") {
   return useQuery({
     queryKey: ["insights", "overview", windowDays] as const,
     queryFn: () =>

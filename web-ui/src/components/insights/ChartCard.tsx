@@ -3,14 +3,14 @@ import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import type { ReactNode } from "react";
 
-/** Cloudscape chart container with an accessible section heading. */
-export function ChartCard({ title, children }: { title: string; children: ReactNode }) {
+/** Cloudscape data container with an accessible section heading. */
+export function ChartCard({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <section aria-label={title}>
-      <Container header={<Header variant="h2">{title}</Header>}>
+    <Container fitHeight header={<Header variant="h2" description={description}>{title}</Header>}>
+      <section aria-label={title}>
         {children}
-      </Container>
-    </section>
+      </section>
+    </Container>
   );
 }
 

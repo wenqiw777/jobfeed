@@ -82,8 +82,10 @@ async def test_jobs_view_unicode_literal_search_and_shared_counts(
         await lifecycle.close()
 
 
-async def test_jobs_view_sorts_nulls_last_and_pages_stably(tmp_path: Path) -> None:
-    """Every sort applies its NULL rule and deterministic pagination tie-break."""
+async def test_jobs_view_uses_discovered_time_for_missing_posted_at(
+    tmp_path: Path,
+) -> None:
+    """Posted sort falls back to added time and remains deterministic."""
     lifecycle, store = await open_views_performance(tmp_path / "sorts.db")
     try:
         newest = await insert_job(
@@ -126,9 +128,9 @@ async def test_jobs_view_sorts_nulls_last_and_pages_stably(tmp_path: Path) -> No
         assert discovered.rows[0].job.id == str(newest)
         assert discovered.total == 3
         assert [row.job.canonical_id for row in posted.rows] == [
+            "none",
             "oldest",
             "middle",
-            "none",
         ]
         assert [row.job.canonical_id for row in score.rows] == [
             "middle",

@@ -56,13 +56,22 @@ _COLUMNS = (
 _SORTS = {
     "discovered_desc": "j.discovered_at DESC, j.id DESC",
     "posted_desc": (
-        "j.posted_at IS NULL, j.posted_at DESC, j.discovered_at DESC, j.id DESC"
+        "COALESCE(j.posted_at, j.discovered_at) DESC, j.discovered_at DESC, j.id DESC"
+    ),
+    "posted_asc": (
+        "COALESCE(j.posted_at, j.discovered_at) ASC, j.discovered_at DESC, j.id DESC"
     ),
     "score_desc": (
         "COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
         " AS INTEGER), e.stage_a_score) IS NULL,"
         " COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
         " AS INTEGER), e.stage_a_score) DESC, j.discovered_at DESC, j.id DESC"
+    ),
+    "score_asc": (
+        "COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
+        " AS INTEGER), e.stage_a_score) IS NULL,"
+        " COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
+        " AS INTEGER), e.stage_a_score) ASC, j.discovered_at DESC, j.id DESC"
     ),
     "company_asc": (
         "j.company_norm IS NULL, j.company_norm ASC, j.discovered_at DESC, j.id DESC"

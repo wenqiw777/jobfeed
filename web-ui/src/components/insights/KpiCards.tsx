@@ -5,20 +5,20 @@ import Header from "@cloudscape-design/components/header";
 
 import type { InsightsOverviewResponse } from "@/api/queries";
 
-/** Headline funnel totals with explicit all-time/window scopes. */
+/** Headline totals for the currently selected discovery period. */
 export function KpiCards({ overview }: { overview: InsightsOverviewResponse }) {
-  const { totals, applications, window_days: windowDays } = overview;
+  const { totals, window_days: windowDays } = overview;
+  const selectedPeriod = windowDays === null ? "all time" : `last ${windowDays} days`;
   const items = [
-    { label: "Discovered", value: totals.jobs, meta: "all-time" },
-    { label: "Gate passed", value: totals.ml_gate_passed, meta: "all-time" },
-    { label: "Evaluated", value: totals.evaluated, meta: "all-time" },
-    { label: "Applied", value: totals.applied, meta: "all-time" },
-    { label: "Applications", value: applications.applied_count, meta: `last ${windowDays}d` },
+    { label: "Discovered", value: totals.jobs, meta: selectedPeriod },
+    { label: "Passed local filter", value: totals.ml_gate_passed, meta: selectedPeriod },
+    { label: "Evaluated", value: totals.evaluated, meta: selectedPeriod },
+    { label: "Applied", value: totals.applied, meta: selectedPeriod },
   ];
   return (
     <section aria-label="Key numbers">
       <Container header={<Header variant="h2">Key numbers</Header>}>
-        <ColumnLayout columns={5} minColumnWidth={140} borders="vertical">
+        <ColumnLayout columns={4} minColumnWidth={140} borders="vertical">
           {items.map(({ label, value, meta }) => (
             <div key={label}>
               <Box variant="awsui-key-label">{label}</Box>

@@ -18,6 +18,11 @@ from jobfeed.adapters.llm._pricing import (
 # ---------------------------------------------------------------------------
 
 KNOWN_MODEL = "gpt-5.4-mini"
+CURRENT_CODEX_MODELS = {
+    "gpt-5.6-sol": (5e-6, 30e-6),
+    "gpt-5.6-terra": (2e-6, 12e-6),
+    "gpt-5.6-luna": (0.2e-6, 1.2e-6),
+}
 UNKNOWN_MODEL = "nonexistent/model-xyz-99"
 
 TOKEN_COUNT_1K = 1_000
@@ -53,6 +58,15 @@ def test_load_price_table_contains_known_model(
 ) -> None:
     """Table should contain a well-known OpenAI model."""
     assert KNOWN_MODEL in price_table
+
+
+def test_load_price_table_contains_current_codex_models(
+    price_table: dict[str, ModelPricing],
+) -> None:
+    """Every model offered by Settings must have exact vendored pricing."""
+    for model, (input_rate, output_rate) in CURRENT_CODEX_MODELS.items():
+        assert price_table[model].input_cost_per_token == pytest.approx(input_rate)
+        assert price_table[model].output_cost_per_token == pytest.approx(output_rate)
 
 
 def test_load_price_table_entries_are_model_pricing(

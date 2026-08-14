@@ -3,11 +3,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { DensityProvider, useDensity } from "./density";
 
 function Probe() {
-  const { density, rowHeightClass, setDensity } = useDensity();
+  const { density, setDensity } = useDensity();
   return (
     <div>
       <span data-testid="mode">{density}</span>
-      <span data-testid="row-class">{rowHeightClass}</span>
       <button onClick={() => setDensity("comfortable")}>go comfortable</button>
       <button onClick={() => setDensity("compact")}>go compact</button>
     </div>
@@ -26,20 +25,18 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
-test("defaults to compact with the 32px row class", () => {
+test("defaults to Cloudscape compact density", () => {
   renderProbe();
 
   expect(screen.getByTestId("mode")).toHaveTextContent("compact");
-  expect(screen.getByTestId("row-class")).toHaveTextContent("h-row-compact");
 });
 
-test("toggle switches the row-height class and persists", () => {
+test("toggle switches the Cloudscape density and persists", () => {
   renderProbe();
 
   fireEvent.click(screen.getByText("go comfortable"));
 
   expect(screen.getByTestId("mode")).toHaveTextContent("comfortable");
-  expect(screen.getByTestId("row-class")).toHaveTextContent("h-row-comfortable");
   expect(window.localStorage.getItem("jobfeed:density")).toBe("comfortable");
 });
 
@@ -51,7 +48,6 @@ test("persisted density survives a re-mount (reload)", () => {
   renderProbe();
 
   expect(screen.getByTestId("mode")).toHaveTextContent("comfortable");
-  expect(screen.getByTestId("row-class")).toHaveTextContent("h-row-comfortable");
 });
 
 test("garbage in localStorage falls back to compact", () => {
@@ -78,7 +74,6 @@ test("throwing localStorage (privacy mode) still works in-memory", () => {
     // Persistence fails silently; the toggle itself must not crash.
     fireEvent.click(screen.getByText("go comfortable"));
     expect(screen.getByTestId("mode")).toHaveTextContent("comfortable");
-    expect(screen.getByTestId("row-class")).toHaveTextContent("h-row-comfortable");
   } finally {
     getSpy.mockRestore();
     setSpy.mockRestore();

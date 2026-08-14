@@ -1,45 +1,28 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
+import Alert from "@cloudscape-design/components/alert";
+import Box from "@cloudscape-design/components/box";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Spinner from "@cloudscape-design/components/spinner";
 
 import { useConfiguration } from "@/api/configuration";
 import { Shell } from "@/components/shell/Shell";
-import { Skeleton } from "@/components/ui/skeleton";
 import ConfigurationPage from "@/routes/configuration";
 import LibraryPage from "@/routes/library";
 import RunsPage from "@/routes/runs";
 import SourcesPage from "@/routes/sources";
 import TriagePage from "@/routes/triage";
 
-// Insights and Performance are the recharts consumers — route-level lazy
-// keeps the charting bundle (~880KB pre-split) out of the eager chunk
-// every other zone pays for.
+// Keep dashboard routes lazy so ordinary triage startup stays small.
 const InsightsPage = lazy(() => import("@/routes/insights"));
 const PerformancePage = lazy(() => import("@/routes/performance"));
 
-/** Suspense fallback while the insights chunk loads — skeleton page, the
- * same shape the route shows while its query is pending (no spinners). */
 function InsightsFallback() {
-  return (
-    <div className="flex flex-col gap-3 px-4 py-3" aria-label="Loading insights">
-      <Skeleton className="h-20 w-full" />
-      <div className="grid gap-3 lg:grid-cols-2">
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    </div>
-  );
+  return <Loading label="Loading insights" />;
 }
 
 function PerformanceFallback() {
-  return (
-    <div className="flex flex-col gap-3 px-4 py-3" aria-label="Loading performance">
-      <Skeleton className="h-20 w-full" />
-      <div className="grid gap-3 lg:grid-cols-2">
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    </div>
-  );
+  return <Loading label="Loading performance" />;
 }
 
 export default function App() {
@@ -89,25 +72,26 @@ export default function App() {
 }
 
 function ConfigurationLoading() {
-  return (
-    <main className="min-h-screen bg-bg px-5 py-12" aria-label="Loading settings">
-      <div className="mx-auto max-w-4xl space-y-3">
-        <Skeleton className="h-14 w-72" />
-        <Skeleton className="h-96 w-full" />
-      </div>
-    </main>
-  );
+  return <Loading label="Loading settings" />;
 }
 
 function ConfigurationUnavailable() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-bg px-5">
-      <div className="max-w-md rounded-panel border border-border bg-surface p-5">
-        <h1 className="text-h1 text-ink">Configuration unavailable</h1>
-        <p className="mt-2 text-body text-ink-2">
-          Jobfeed could not read local settings. Refresh after checking the server log.
-        </p>
-      </div>
-    </main>
+    <Box padding="xxl">
+      <Alert type="error" header="Settings could not be loaded">
+        Check the Jobfeed terminal for the error, then refresh this page.
+      </Alert>
+    </Box>
+  );
+}
+
+function Loading({ label }: { label: string }) {
+  return (
+    <Box padding="xxl" textAlign="center">
+      <SpaceBetween size="s" alignItems="center">
+        <Spinner size="large" />
+        <Box color="text-body-secondary">{label}</Box>
+      </SpaceBetween>
+    </Box>
   );
 }

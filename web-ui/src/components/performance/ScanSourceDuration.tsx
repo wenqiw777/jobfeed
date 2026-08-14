@@ -1,80 +1,51 @@
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import Table from "@cloudscape-design/components/table";
 
 import type { StepTimingRow } from "@/api/queries";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
 
-const INITIAL_DIMENSION = { width: 600, height: 200 };
-
-/** Average fetch duration per source. The backend writes one
- * `step_type="source_fetch"` row per source per scan run, with
- * `step_name` carrying the source name. */
-function aggregate(timings: StepTimingRow[]): { source: string; duration_s: number }[] {
-  const fetchSteps = timings.filter((t) => t.step_type === "source_fetch");
-  const bySource = new Map<string, { total_ms: number; count: number }>();
-  for (const row of fetchSteps) {
-    const entry = bySource.get(row.step_name) ?? { total_ms: 0, count: 0 };
-    entry.total_ms += row.elapsed_ms;
-    entry.count += 1;
-    bySource.set(row.step_name, entry);
+function aggregate(timings: StepTimingRow[]) {
+  const bySource = new Map<string, { total: number; count: number }>();
+  for (const row of timings.filter((item) => item.step_type === "source_fetch")) {
+    const value = bySource.get(row.step_name) ?? { total: 0, count: 0 };
+    value.total += row.elapsed_ms;
+    value.count += 1;
+    bySource.set(row.step_name, value);
   }
-  return [...bySource.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([source, { total_ms, count }]) => ({
+  return [...bySource]
+    .map(([source, value]) => ({
       source,
-      duration_s: total_ms / count / 1000,
-    }));
+      seconds: value.total / value.count / 1000,
+    }))
+    .sort((a, b) => b.seconds - a.seconds);
 }
 
 export function ScanSourceDuration({ timings }: { timings: StepTimingRow[] }) {
   const data = aggregate(timings);
-  if (data.length === 0) {
-    return (
-      <ChartCard title="Scan duration by source">
-        <ChartEmpty>No scan timings in this period.</ChartEmpty>
-      </ChartCard>
-    );
-  }
+  if (data.length === 0) return <ChartCard title="Scan time by source"><ChartEmpty>No scan timing data in this time range.</ChartEmpty></ChartCard>;
   return (
-    <ChartCard title="Scan duration by source">
-      <div className="h-52" data-testid="scan-source-duration">
-        <ResponsiveContainer width="100%" height="100%" initialDimension={INITIAL_DIMENSION}>
-          <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-            <CartesianGrid stroke="rgb(var(--hairline))" vertical={false} />
-            <XAxis
-              dataKey="source"
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
-            />
-            <YAxis
-              allowDecimals={false}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
-              unit="s"
-            />
-            <Tooltip
-              contentStyle={{ fontSize: 12, borderRadius: 6 }}
-              formatter={(value) => [`${Number(value).toFixed(1)}s`, "avg duration"]}
-            />
-            <Bar
-              dataKey="duration_s"
-              fill="rgb(var(--accent))"
-              barSize={16}
-              radius={[3, 3, 0, 0]}
-              isAnimationActive={false}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+    <ChartCard title="Scan time by source">
+      <Table
+        variant="embedded"
+        contentDensity="compact"
+        wrapLines
+        items={data}
+        trackBy="source"
+        ariaLabels={{ tableLabel: "Scan time by source" }}
+        columnDefinitions={[
+          {
+            id: "source",
+            header: "Source",
+            width: 100,
+            cell: (row) => row.source,
+          },
+          {
+            id: "duration",
+            header: "Average",
+            width: 100,
+            cell: (row) => `${row.seconds.toFixed(1)}s`,
+          },
+        ]}
+      />
     </ChartCard>
   );
 }

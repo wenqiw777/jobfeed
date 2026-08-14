@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 
 import type { RunSummary } from "@/api/queries";
 import { Toaster } from "@/components/ui/toaster";
+import { DensityProvider } from "@/lib/density";
 import RunsPage from "@/routes/runs";
 
 /** Minimal EventSource stub: LiveRunRow (rendered for active runs)
@@ -111,8 +112,10 @@ function renderRuns() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <RunsPage />
-      <Toaster />
+      <DensityProvider>
+        <RunsPage />
+        <Toaster />
+      </DensityProvider>
     </QueryClientProvider>,
   );
 }
@@ -128,7 +131,10 @@ beforeEach(() => {
         started_at: "2026-06-10T09:30:00Z",
         jobs_discovered: 12,
         jobs_inserted: 4,
+        jobs_updated: 3,
+        jobs_ml_gated: 2,
         stage_a_scored: 8,
+        stage_b_scored: 1,
         total_llm_cost_usd: 0.42,
       }),
       runRow("r1", { started_at: "2026-06-09T07:00:00Z", errors: 2, finished_at: null }),
@@ -139,6 +145,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.localStorage.removeItem("jobfeed:density");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -147,12 +154,22 @@ test("renders the Cloudscape run operations workspace and history table", async 
   renderRuns();
 
   expect(await screen.findByTestId("cloudscape-runs")).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Run operations", level: 2 })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Scans and evaluations", level: 2 })).toBeVisible();
   expect(screen.getByRole("heading", { name: /Run history/, level: 2 })).toBeVisible();
   expect(screen.getByRole("columnheader", { name: "Started" })).toBeVisible();
-  expect(screen.getByRole("columnheader", { name: "Source" })).toBeVisible();
+  expect(screen.getByRole("columnheader", { name: "Run type" })).toBeVisible();
   expect(screen.getByRole("columnheader", { name: "Activity" })).toBeVisible();
   expect(screen.getByRole("columnheader", { name: "Cost" })).toBeVisible();
+});
+
+test("run history table follows the selected row density", async () => {
+  window.localStorage.setItem("jobfeed:density", "comfortable");
+  renderRuns();
+
+  expect(await screen.findByTestId("run-history-density")).toHaveAttribute(
+    "data-density",
+    "comfortable",
+  );
 });
 
 test("rows mirror the server's newest-first order with mono timestamps", async () => {
@@ -172,7 +189,7 @@ test("rows mirror the server's newest-first order with mono timestamps", async (
   expect(screen.queryByText(/triggering scans from this page arrives with Phase 9/)).toBeNull();
 });
 
-test("rows show only non-zero counter chips; cost only when > 0", async () => {
+test("activity badges use semantic colors and hide zero counters", async () => {
   renderRuns();
   await screen.findByTestId("run-row-r2");
   const row1 = screen.getByTestId("run-row-r1");
@@ -181,14 +198,24 @@ test("rows show only non-zero counter chips; cost only when > 0", async () => {
 
   // r2: discovered/inserted/stage A non-zero; the zero counters stay quiet.
   expect(within(activity2).getByText("12 discovered")).toBeInTheDocument();
-  expect(within(activity2).getByText("4 inserted")).toBeInTheDocument();
-  expect(within(activity2).getByText("8 stage A")).toBeInTheDocument();
-  expect(within(activity2).queryByText(/updated/)).toBeNull();
+  expect(within(activity2).getByText("4 new")).toBeInTheDocument();
+  expect(within(activity2).getByText("3 updated")).toBeInTheDocument();
+  expect(within(activity2).getByText("2 excluded by local filter")).toBeInTheDocument();
+  expect(within(activity2).getByText("8 quick evaluations")).toBeInTheDocument();
+  expect(within(activity2).getByText("1 detailed reviews")).toBeInTheDocument();
   expect(within(activity2).queryByText(/errors/)).toBeNull();
   expect(screen.getByText("$0.42")).toBeInTheDocument();
 
+  expect(within(activity2).getByText("12 discovered").className).toContain("badge-color-blue");
+  expect(within(activity2).getByText("4 new").className).toContain("badge-color-green");
+  expect(within(activity2).getByText("3 updated").className).toContain("badge-color-grey");
+  expect(within(activity2).getByText("2 excluded by local filter").className).toContain("badge-color-severity-neutral");
+  expect(within(activity2).getByText("8 quick evaluations").className).toContain("badge-color-severity-low");
+  expect(within(activity2).getByText("1 detailed reviews").className).toContain("badge-color-severity-medium");
+
   // r1: only the errors chip — and no cost cell at $0.
   expect(within(activity1).getByText("2 errors")).toBeInTheDocument();
+  expect(within(activity1).getByText("2 errors").className).toContain("badge-color-red");
   expect(within(activity1).queryByText(/discovered/)).toBeNull();
   expect(within(row1).queryByText(/\$/)).toBeNull();
 });
@@ -197,8 +224,10 @@ test("failed runs use an error indicator instead of a success check", async () =
   state.runs = [runRow("failed-run", { status: "failed" })];
   renderRuns();
 
-  const failed = await screen.findByText("failed");
+  const failed = await screen.findByText("Failed");
   expect(failed.closest('[class*="status-error"]')).not.toBeNull();
+  expect(screen.getByText("No activity recorded")).toBeVisible();
+  expect(screen.queryByText("No counters")).not.toBeInTheDocument();
 });
 
 test("expanding a row reveals the full counter grid, run id, and finished time", async () => {
@@ -211,7 +240,7 @@ test("expanding a row reveals the full counter grid, run id, and finished time",
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   // Zero counters appear in the expanded grid even though their chips don't.
   expect(within(row).getByText("updated")).toBeInTheDocument();
-  expect(within(row).getByText("scored")).toBeInTheDocument();
+  expect(within(row).getByText("evaluated")).toBeInTheDocument();
   expect(within(row).getByText("finished")).toBeInTheDocument();
   expect(within(row).getByText("r2")).toBeInTheDocument();
 
@@ -223,23 +252,23 @@ test("pagination drives offset and the mono range label", async () => {
   state.runs = Array.from({ length: 30 }, (_, i) => runRow(`p${30 - i}`));
   renderRuns();
   await screen.findByText("1–25 of 30");
-  expect(screen.getByRole("button", { name: "Prev" })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute("aria-disabled", "true");
 
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
   await screen.findByText("26–30 of 30");
   expect(calls.some((c) => c.url.includes("offset=25"))).toBe(true);
-  expect(screen.getByRole("button", { name: "Next" })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("button", { name: "Next page" })).toHaveAttribute("aria-disabled", "true");
 
-  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
+  fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
   await screen.findByText("1–25 of 30");
 });
 
-test("empty history teaches ./scan", async () => {
+test("empty history points to the visible scan action", async () => {
   state.runs = [];
   renderRuns();
 
   expect(await screen.findByText("No runs yet")).toBeInTheDocument();
-  expect(screen.getByText("./scan")).toBeInTheDocument();
+  expect(screen.getByText("Use Start scan above to collect jobs.")).toBeInTheDocument();
   expect(screen.getByText("0 runs")).toBeInTheDocument();
 });
 
@@ -252,8 +281,8 @@ test("trigger scan and evaluate buttons render in the header", async () => {
   await screen.findByTestId("run-row-r2");
 
   // Both trigger buttons are present.
-  expect(screen.getByRole("button", { name: /Scan/ })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Evaluate/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Start scan" })).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Start evaluation" }).length).toBeGreaterThanOrEqual(1);
 
   // The read-only hint is gone.
   expect(screen.queryByText(/read-only/i)).toBeNull();
@@ -264,13 +293,14 @@ test("trigger evaluate dialog opens and submits with defaults", async () => {
   renderRuns();
   await screen.findByTestId("run-row-r2");
 
-  fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
-  expect(await screen.findByText("Trigger Evaluate")).toBeInTheDocument();
-  expect(screen.getByRole("radio", { name: /Both stages/ })).toBeInTheDocument();
-  expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Start evaluate" })).toBeInTheDocument();
+  fireEvent.click(screen.getAllByRole("button", { name: "Start evaluation" })[0]!);
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("heading", { name: "Start evaluation" })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /Quick score and detailed review/ })).toBeInTheDocument();
+  expect(screen.getByLabelText("Maximum jobs")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Start evaluation" })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Start evaluate" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Start evaluation" }));
 
   const postCall = await waitFor(() => {
     const call = calls.find((c) => c.method === "POST" && c.url === "/api/runs/evaluate");
@@ -278,18 +308,18 @@ test("trigger evaluate dialog opens and submits with defaults", async () => {
     return call!;
   });
   expect(postCall.body).toEqual({ stage: "both" });
-  expect(await screen.findByText(/Evaluate started/)).toBeInTheDocument();
+  expect(await screen.findByText(/Evaluation started/)).toBeInTheDocument();
 });
 
 test("trigger evaluate submits a non-default stage", async () => {
   renderRuns();
   await screen.findByTestId("run-row-r2");
 
-  fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
-  await screen.findByText("Trigger Evaluate");
-  fireEvent.click(screen.getByRole("radio", { name: /Stage B only/ }));
-  fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "1" } });
-  fireEvent.click(screen.getByRole("button", { name: "Start evaluate" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Start evaluation" })[0]!);
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(screen.getByRole("radio", { name: /Detailed review only/ }));
+  fireEvent.change(screen.getByLabelText("Maximum jobs"), { target: { value: "1" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Start evaluation" }));
 
   const postCall = await waitFor(() => {
     const call = calls.find((c) => c.method === "POST" && c.url === "/api/runs/evaluate");
@@ -320,11 +350,11 @@ test("evaluate 409 shows conflict toast", async () => {
   renderRuns();
   await screen.findByTestId("run-row-r2");
 
-  fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
-  await screen.findByText("Trigger Evaluate");
-  fireEvent.click(screen.getByRole("button", { name: "Start evaluate" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Start evaluation" })[0]!);
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Start evaluation" }));
 
-  expect(await screen.findByText("Evaluate already running")).toBeInTheDocument();
+  expect(await screen.findByText("Evaluation already running")).toBeInTheDocument();
 });
 
 test("active runs query fetches GET /api/runs/active", async () => {
@@ -339,22 +369,22 @@ test("invalid limit disables submit, shows inline error, and blocks the POST", a
   renderRuns();
   await screen.findByTestId("run-row-r2");
 
-  fireEvent.click(screen.getByRole("button", { name: /Evaluate/ }));
-  await screen.findByText("Trigger Evaluate");
+  fireEvent.click(screen.getAllByRole("button", { name: "Start evaluation" })[0]!);
+  const dialog = await screen.findByRole("dialog");
 
-  fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "0" } });
+  fireEvent.change(screen.getByLabelText("Maximum jobs"), { target: { value: "0" } });
   expect(screen.getByText(/at least 1/)).toBeInTheDocument();
-  expect(screen.getByLabelText("Limit")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Maximum jobs")).toHaveAttribute("aria-invalid", "true");
 
-  const submit = screen.getByRole("button", { name: "Start evaluate" });
+  const submit = within(dialog).getByRole("button", { name: "Start evaluation" });
   expect(submit).toBeDisabled();
   fireEvent.click(submit);
   expect(calls.some((c) => c.method === "POST" && c.url === "/api/runs/evaluate")).toBe(false);
 
   // Clearing the field recovers.
-  fireEvent.change(screen.getByLabelText("Limit"), { target: { value: "5" } });
+  fireEvent.change(screen.getByLabelText("Maximum jobs"), { target: { value: "5" } });
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByRole("button", { name: "Start evaluate" })).toBeEnabled();
+  expect(within(dialog).getByRole("button", { name: "Start evaluation" })).toBeEnabled();
 });
 
 test("a running run renders only as a live row, not in history too", async () => {

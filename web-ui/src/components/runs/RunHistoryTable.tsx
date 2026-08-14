@@ -1,5 +1,6 @@
 import Alert from "@cloudscape-design/components/alert";
 import Badge from "@cloudscape-design/components/badge";
+import type { BadgeProps } from "@cloudscape-design/components/badge";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
@@ -11,6 +12,7 @@ import Table from "@cloudscape-design/components/table";
 
 import type { RunSummary } from "@/api/queries";
 import { formatLocalDateTime } from "@/lib/dates";
+import { useDensity } from "@/lib/density";
 
 type CounterKey = Extract<
   keyof RunSummary,
@@ -25,16 +27,36 @@ type CounterKey = Extract<
   | "errors"
 >;
 
-const FULL_COUNTERS: { key: CounterKey; label: string }[] = [
-  { key: "jobs_discovered", label: "discovered" },
-  { key: "jobs_inserted", label: "inserted" },
-  { key: "jobs_updated", label: "updated" },
-  { key: "jobs_filtered", label: "filtered" },
-  { key: "jobs_ml_gated", label: "gated" },
-  { key: "jobs_scored", label: "scored" },
-  { key: "stage_a_scored", label: "stage A" },
-  { key: "stage_b_scored", label: "stage B" },
-  { key: "errors", label: "errors" },
+const FULL_COUNTERS: {
+  key: CounterKey;
+  label: string;
+  color: NonNullable<BadgeProps["color"]>;
+}[] = [
+  { key: "jobs_discovered", label: "discovered", color: "blue" },
+  { key: "jobs_inserted", label: "new", color: "green" },
+  { key: "jobs_updated", label: "updated", color: "grey" },
+  {
+    key: "jobs_filtered",
+    label: "excluded by job filters",
+    color: "severity-neutral",
+  },
+  {
+    key: "jobs_ml_gated",
+    label: "excluded by local filter",
+    color: "severity-neutral",
+  },
+  { key: "jobs_scored", label: "evaluated", color: "severity-low" },
+  {
+    key: "stage_a_scored",
+    label: "quick evaluations",
+    color: "severity-low",
+  },
+  {
+    key: "stage_b_scored",
+    label: "detailed reviews",
+    color: "severity-medium",
+  },
+  { key: "errors", label: "errors", color: "red" },
 ];
 
 const SUMMARY_COUNTERS = FULL_COUNTERS.filter(({ key }) => key !== "jobs_scored");
@@ -55,16 +77,18 @@ interface RunHistoryTableProps {
 
 /** Cloudscape table for finished and failed pipeline runs. */
 export function RunHistoryTable(props: RunHistoryTableProps) {
+  const { density } = useDensity();
   const pagesCount = Math.max(1, Math.ceil(props.total / props.pageSize));
   return (
-    <SpaceBetween size="s">
+    <div data-testid="run-history-density" data-density={density}>
+      <SpaceBetween size="s">
       <Table
         items={props.runs}
         trackBy="run_id"
         loading={props.isLoading}
         loadingText="Loading runs"
         skeleton={{ totalRows: 6 }}
-        contentDensity="compact"
+        contentDensity={density}
         ariaLabels={{ tableLabel: "Run history" }}
         header={
           <Header
@@ -84,7 +108,7 @@ export function RunHistoryTable(props: RunHistoryTableProps) {
             verticalAlign: "top",
             cell: (run) => <StartedCell run={run} isExpanded={props.expandedId === run.run_id} onToggle={() => props.onExpandedChange(props.expandedId === run.run_id ? null : run.run_id)} />,
           },
-          { id: "source", header: "Source", cell: (run) => run.source },
+          { id: "source", header: "Run type", cell: (run) => runLabel(run.source) },
           { id: "status", header: "Status", cell: (run) => <RunStatus run={run} /> },
           {
             id: "activity",
@@ -107,8 +131,8 @@ export function RunHistoryTable(props: RunHistoryTableProps) {
             disabled={props.isPlaceholder}
             ariaLabels={{
               paginationLabel: "Run history pages",
-              previousPageLabel: "Prev",
-              nextPageLabel: "Next",
+              previousPageLabel: "Previous page",
+              nextPageLabel: "Next page",
               pageLabel: (page) => `Page ${page}`,
             }}
             onChange={({ detail }) => props.onPageChange(detail.currentPageIndex - 1)}
@@ -126,7 +150,8 @@ export function RunHistoryTable(props: RunHistoryTableProps) {
         total={props.total}
       />
       {props.error !== null && <Alert type="error" header="Run history could not be loaded">{props.error.message}</Alert>}
-    </SpaceBetween>
+      </SpaceBetween>
+    </div>
   );
 }
 
@@ -165,21 +190,23 @@ function RunDetail({ run }: { run: RunSummary }) {
 
 function Activity({ run }: { run: RunSummary }) {
   const counters = SUMMARY_COUNTERS.filter(({ key }) => run[key] > 0);
-  if (counters.length === 0) return <Box color="text-body-secondary">No counters</Box>;
+  if (counters.length === 0) {
+    return <Box color="text-body-secondary">No activity recorded</Box>;
+  }
   return (
     <SpaceBetween direction="horizontal" size="xxs">
-      {counters.map(({ key, label }) => (
-        <Badge key={key} color={key === "errors" ? "red" : "blue"}>{run[key]} {label}</Badge>
+      {counters.map(({ key, label, color }) => (
+        <Badge key={key} color={color}>{run[key]} {label}</Badge>
       ))}
     </SpaceBetween>
   );
 }
 
 function RunStatus({ run }: { run: RunSummary }) {
-  if (run.status === "failed") return <StatusIndicator type="error">{run.status}</StatusIndicator>;
-  if (run.errors > 0) return <StatusIndicator type="warning">{run.status}</StatusIndicator>;
-  if (run.finished_at === null) return <StatusIndicator type="in-progress">{run.status}</StatusIndicator>;
-  return <StatusIndicator type="success">{run.status}</StatusIndicator>;
+  if (run.status === "failed") return <StatusIndicator type="error">Failed</StatusIndicator>;
+  if (run.errors > 0) return <StatusIndicator type="warning">Completed with errors</StatusIndicator>;
+  if (run.finished_at === null) return <StatusIndicator type="in-progress">Running</StatusIndicator>;
+  return <StatusIndicator type="success">Succeeded</StatusIndicator>;
 }
 
 function EmptyHistory({ hasActiveRuns }: { hasActiveRuns: boolean }) {
@@ -190,7 +217,7 @@ function EmptyHistory({ hasActiveRuns }: { hasActiveRuns: boolean }) {
         <Box variant="p" color="text-body-secondary">
           {hasActiveRuns
             ? "Live counters appear above; completed evidence will land here."
-            : <>Start Scan above or run <code>./scan</code> from the repo root.</>}
+            : "Use Start scan above to collect jobs."}
         </Box>
       </SpaceBetween>
     </Box>
@@ -204,4 +231,10 @@ function RangeLabel({ page, pageSize, pageRows, total }: { page: number; pageSiz
 
 function formatCost(usd: number): string {
   return `$${usd.toFixed(usd > 0 && usd < 0.01 ? 4 : 2)}`;
+}
+
+function runLabel(source: string): string {
+  if (source === "evaluate") return "Evaluation";
+  if (source === "all") return "Scan · all sources";
+  return `Scan · ${source}`;
 }

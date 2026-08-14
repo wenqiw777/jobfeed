@@ -2,6 +2,7 @@ import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import Checkbox from "@cloudscape-design/components/checkbox";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
@@ -9,8 +10,9 @@ import Form from "@cloudscape-design/components/form";
 import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
+import Select from "@cloudscape-design/components/select";
+import type { SelectProps } from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Textarea from "@cloudscape-design/components/textarea";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { useNavigate } from "react-router";
@@ -25,6 +27,39 @@ import type { components } from "@/api/types.gen";
 type Sources = components["schemas"]["SourcesConfig"];
 type SourceKey = keyof Sources;
 type LinkedInSearch = string | components["schemas"]["SourcesLinkedInSearchConfig"];
+
+const MODEL_OPTIONS: SelectProps.Options = [
+  {
+    label: "Signed-in local apps",
+    description: "Uses your installed Codex or Claude app. No API key required.",
+    options: [
+      { label: "GPT-5.6 Luna — Codex login", value: "codex-cli/gpt-5.6-luna" },
+      { label: "GPT-5.6 Terra — Codex login", value: "codex-cli/gpt-5.6-terra" },
+      { label: "GPT-5.6 Sol — Codex login", value: "codex-cli/gpt-5.6-sol" },
+      { label: "Claude Sonnet 5 — Claude login", value: "claude-cli/claude-sonnet-5" },
+      { label: "Claude Opus 4.8 — Claude login", value: "claude-cli/claude-opus-4-8" },
+      { label: "Claude Fable 5 — Claude login", value: "claude-cli/claude-fable-5" },
+    ],
+  },
+  {
+    label: "Direct API",
+    description: "Calls the configured OpenAI-compatible endpoint with an API key.",
+    options: [
+      { label: "GPT-5.6 Luna — API key", value: "openai-compat/gpt-5.6-luna" },
+      { label: "GPT-5.6 Terra — API key", value: "openai-compat/gpt-5.6-terra" },
+      { label: "GPT-5.6 Sol — API key", value: "openai-compat/gpt-5.6-sol" },
+    ],
+  },
+  {
+    label: "Older local models",
+    description: "Still available for existing configurations.",
+    options: [
+      { label: "GPT-5.5 — Codex login", value: "codex-cli/gpt-5.5" },
+      { label: "GPT-5.4 — Codex login", value: "codex-cli/gpt-5.4" },
+      { label: "GPT-5.4 mini — Codex login", value: "codex-cli/gpt-5.4-mini" },
+    ],
+  },
+];
 
 /** First-run onboarding and persistent local workspace settings. */
 export default function ConfigurationPage() {
@@ -65,7 +100,7 @@ export default function ConfigurationPage() {
   const error = validation ?? save.error?.message;
 
   return (
-    <div data-testid="cloudscape-configuration" className="jobfeed-configuration">
+    <div data-testid="cloudscape-configuration">
       <ContentLayout
         maxContentWidth={1180}
         header={
@@ -83,9 +118,7 @@ export default function ConfigurationPage() {
             errorIconAriaLabel="Error"
             actions={
               <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                <StatusIndicator type="success">
-                  Changes apply without a restart
-                </StatusIndicator>
+                <Box color="text-body-secondary">Saved changes apply without a restart.</Box>
                 <Button
                   variant="primary"
                   formAction="submit"
@@ -100,26 +133,36 @@ export default function ConfigurationPage() {
             <SpaceBetween size="l">
               <LocalDataNotice />
               <SettingsSection
-                title="Scoring profile"
+                title="Evaluation settings"
                 description="Models, evidence, and limits used to evaluate each role."
               >
-                <div className="jobfeed-form-grid">
-                  <Field label="Master resume" wide>
+                <ColumnLayout columns={2} minColumnWidth={280}>
+                  <Field label="Resume file">
                     <Input value={llm.master_resume_path} onChange={({ detail }) => updateSection("llm", { ...llm, master_resume_path: detail.value })} />
                   </Field>
-                  <Field label="Fast score model">
-                    <Input value={llm.stage_a} onChange={({ detail }) => updateSection("llm", { ...llm, stage_a: detail.value })} />
+                  <Field label="Quick evaluation model">
+                    <Select
+                      selectedOption={modelOption(llm.stage_a)}
+                      options={MODEL_OPTIONS}
+                      onChange={({ detail }) => updateSection("llm", { ...llm, stage_a: detail.selectedOption.value! })}
+                    />
                   </Field>
-                  <Field label="Deep review model">
-                    <Input value={llm.stage_b} onChange={({ detail }) => updateSection("llm", { ...llm, stage_b: detail.value })} />
+                  <Field label="Detailed review model">
+                    <Select
+                      selectedOption={modelOption(llm.stage_b)}
+                      options={MODEL_OPTIONS}
+                      onChange={({ detail }) => updateSection("llm", { ...llm, stage_b: detail.selectedOption.value! })}
+                    />
                   </Field>
-                  <NumberField label="Score threshold" value={scoring.stage_a_threshold} min={0} max={100} onChange={(value) => updateSection("scoring", { ...scoring, stage_a_threshold: value })} />
-                  <NumberField label="Daily scoring limit" value={llm.max_daily_score_calls} min={0} onChange={(value) => updateSection("llm", { ...llm, max_daily_score_calls: value })} />
+                  <NumberField label="Detailed review threshold" value={scoring.stage_a_threshold} min={0} max={100} onChange={(value) => updateSection("scoring", { ...scoring, stage_a_threshold: value })} />
+                  <NumberField label="Daily model call limit" value={llm.max_daily_score_calls} min={0} onChange={(value) => updateSection("llm", { ...llm, max_daily_score_calls: value })} />
                   <NumberField label="Daily cost limit (USD)" value={llm.max_daily_cost_usd} min={0} step="0.5" onChange={(value) => updateSection("llm", { ...llm, max_daily_cost_usd: value })} />
                   <NumberField label="Parallel evaluations" value={llm.max_concurrent} min={1} onChange={(value) => updateSection("llm", { ...llm, max_concurrent: value })} />
-                </div>
+                </ColumnLayout>
                 <Box variant="small" color="text-body-secondary">
-                  API keys are read from <code>{llm.openai_compat_api_key_env}</code> and are never stored in this form.
+                  Signed-in models use your installed Codex or Claude app. API-key models
+                  call the configured endpoint with <code>{llm.openai_compat_api_key_env}</code>;
+                  Jobfeed never stores the key.
                 </Box>
               </SettingsSection>
 
@@ -138,31 +181,31 @@ export default function ConfigurationPage() {
                 </SourceToggle>
               </SettingsSection>
 
-              <SettingsSection title="Signal filters" description="Remove noise before any model call.">
-                <div className="jobfeed-form-grid">
+              <SettingsSection title="Job filters" description="Exclude irrelevant jobs before evaluation.">
+                <ColumnLayout columns={2} minColumnWidth={280}>
                   <ListField label="Allowed locations" value={filters.location_allowlist} onChange={(value) => updateSection("hard_filters", { ...filters, location_allowlist: value })} />
                   <ListField label="Blocked locations" value={filters.location_blocklist} onChange={(value) => updateSection("hard_filters", { ...filters, location_blocklist: value })} />
                   <ListField label="Blocked companies" value={filters.company_blocklist} onChange={(value) => updateSection("hard_filters", { ...filters, company_blocklist: value })} />
                   <ListField label="Large companies" value={filters.big_company_list} onChange={(value) => updateSection("hard_filters", { ...filters, big_company_list: value })} />
-                  <Field label="Only jobs posted within days">
+                  <Field label="Maximum job age (days)">
                     <Input type="number" placeholder="Any age" value={filters.posted_within_days?.toString() ?? ""} nativeInputAttributes={{ min: 1 }} onChange={({ detail }) => updateSection("hard_filters", { ...filters, posted_within_days: detail.value === "" ? null : Number(detail.value) })} />
                   </Field>
-                  <NumberField label="Large-company age limit" value={filters.big_company_days} min={1} onChange={(value) => updateSection("hard_filters", { ...filters, big_company_days: value })} />
-                </div>
+                  <NumberField label="Large-company maximum age (days)" value={filters.big_company_days} min={1} onChange={(value) => updateSection("hard_filters", { ...filters, big_company_days: value })} />
+                </ColumnLayout>
                 <Checkbox checked={scoring.ml_gate_enabled} onChange={({ detail }) => updateSection("scoring", { ...scoring, ml_gate_enabled: detail.checked })}>
-                  Use the local ML gate before paid scoring
+                  Use the local filter before paid evaluation
                 </Checkbox>
               </SettingsSection>
 
               <ExpandableSection variant="container" headerText="Advanced settings" headerDescription="Custom model endpoints, calibration, and authenticated search.">
                 <SpaceBetween size="m">
-                  <div className="jobfeed-form-grid">
-                    <Field label="Personal calibration file" wide><Input placeholder="Optional Markdown path" value={llm.preamble_personal_path ?? ""} onChange={({ detail }) => updateSection("llm", { ...llm, preamble_personal_path: detail.value || null })} /></Field>
+                  <ColumnLayout columns={2} minColumnWidth={280}>
+                    <Field label="Personal calibration file"><Input placeholder="Optional Markdown path" value={llm.preamble_personal_path ?? ""} onChange={({ detail }) => updateSection("llm", { ...llm, preamble_personal_path: detail.value || null })} /></Field>
                     <Field label="OpenAI-compatible base URL"><Input value={llm.openai_compat_base_url} onChange={({ detail }) => updateSection("llm", { ...llm, openai_compat_base_url: detail.value })} /></Field>
                     <Field label="API key environment variable"><Input value={llm.openai_compat_api_key_env} onChange={({ detail }) => updateSection("llm", { ...llm, openai_compat_api_key_env: detail.value })} /></Field>
-                    <NumberField label="Default evaluation batch" value={scoring.default_eval_limit} min={0} onChange={(value) => updateSection("scoring", { ...scoring, default_eval_limit: value })} />
-                    <NumberField label="ML candidate cap" value={form.ml_gate!.max_candidates} min={1} onChange={(value) => updateSection("ml_gate", { ...form.ml_gate!, max_candidates: value })} />
-                  </div>
+                    <NumberField label="Default jobs per evaluation" value={scoring.default_eval_limit} min={0} onChange={(value) => updateSection("scoring", { ...scoring, default_eval_limit: value })} />
+                    <NumberField label="Local filter candidate limit" value={form.ml_gate!.max_candidates} min={1} onChange={(value) => updateSection("ml_gate", { ...form.ml_gate!, max_candidates: value })} />
+                  </ColumnLayout>
                   <SourceToggle label="Authenticated LinkedIn search" detail="Uses your local browser profile" checked={sources.linkedin!.enabled} onChange={(enabled) => updateSource("linkedin", { ...sources.linkedin!, enabled })}>
                     <ListField label="Authenticated LinkedIn search URLs" value={linkedinValues(sources.linkedin!.search_urls)} onChange={(value) => updateSource("linkedin", { ...sources.linkedin!, search_urls: value })} />
                   </SourceToggle>
@@ -176,6 +219,18 @@ export default function ConfigurationPage() {
   );
 }
 
+function modelOption(value: string) {
+  const option = MODEL_OPTIONS.flatMap((group) =>
+    "options" in group ? group.options : [group],
+  ).find(
+    (candidate) => candidate.value === value,
+  );
+  return option ?? {
+    label: value,
+    value,
+  };
+}
+
 function LocalDataNotice() {
   return <Alert type="info" header="Local by default">Your workspace is stored in <code>data/jobfeed.sqlite</code>. Ordinary use does not require Docker or PostgreSQL.</Alert>;
 }
@@ -184,8 +239,8 @@ function SettingsSection({ title, description, children }: { title: string; desc
   return <Container header={<Header variant="h2" description={description}>{title}</Header>}><SpaceBetween size="m">{children}</SpaceBetween></Container>;
 }
 
-function Field({ label, wide = false, children }: { label: string; wide?: boolean; children: ReactNode }) {
-  return <div className={wide ? "jobfeed-form-wide" : undefined}><FormField label={label}>{children}</FormField></div>;
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return <FormField label={label}>{children}</FormField>;
 }
 
 function NumberField({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max?: number; step?: string; onChange: (value: number) => void }) {
@@ -193,7 +248,19 @@ function NumberField({ label, value, min, max, step, onChange }: { label: string
 }
 
 function SourceToggle({ label, detail, checked, onChange, children }: { label: string; detail: string; checked: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {
-  return <div className="jobfeed-source-toggle"><Checkbox ariaLabel={label} checked={checked} onChange={({ detail: event }) => onChange(event.checked)}><span className="jobfeed-source-label"><strong>{label}</strong><span>{detail}</span></span></Checkbox>{checked && <div className="jobfeed-source-fields">{children}</div>}</div>;
+  return (
+    <Container>
+      <SpaceBetween size="m">
+        <Checkbox ariaLabel={label} checked={checked} onChange={({ detail: event }) => onChange(event.checked)}>
+          <SpaceBetween size="xxs">
+            <Box variant="strong">{label}</Box>
+            <Box color="text-body-secondary">{detail}</Box>
+          </SpaceBetween>
+        </Checkbox>
+        {checked && children}
+      </SpaceBetween>
+    </Container>
+  );
 }
 
 function ListField({ label, value, onChange }: { label: string; value?: string[]; onChange: (value: string[]) => void }) {

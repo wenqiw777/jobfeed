@@ -1,32 +1,25 @@
-"""Insights service: composes the store overview with application stats.
-
-The store aggregate (totals, distributions, daily series) and the windowed
-``ApplicationService.stats(by_resume=True)`` table are independent reads;
-this service only bundles them for the web overview endpoint.
-"""
+"""Insights service for the selected discovery-period overview."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from jobfeed.domain.models import ApplicationStats
 from jobfeed.domain.models_views import InsightsOverview
-from jobfeed.services.application import ApplicationService
 
 
 @runtime_checkable
 class InsightsStore(Protocol):
     """Store capability required by InsightsService."""
 
-    async def insights_overview(self, *, window_days: int) -> InsightsOverview:
+    async def insights_overview(self, *, window_days: int | None) -> InsightsOverview:
         """Aggregate the insights overview.
 
-        Totals and the verdict/status distributions are all-time; only the
-        daily series is windowed (UTC day buckets, days having data only).
+        The window selects the discovery-date cohort for totals,
+        distributions, and daily UTC buckets (days having data only).
 
         Args:
-            window_days: Daily-series window in days (caller-validated).
+            window_days: Daily-series window in days (caller-validated), or
+                None for all time.
 
         Returns:
             Insights overview aggregate.
@@ -34,43 +27,27 @@ class InsightsStore(Protocol):
         ...
 
 
-@dataclass(kw_only=True)
-class InsightsBundle:
-    """Overview aggregate plus the windowed application stats table."""
-
-    overview: InsightsOverview
-    applications: ApplicationStats
-
-
 class InsightsService:
-    """Composes the insights overview with the by-resume application stats."""
+    """Returns the selected discovery-period overview."""
 
-    def __init__(self, store: InsightsStore, applications: ApplicationService) -> None:
+    def __init__(self, store: InsightsStore) -> None:
         """Create the service with injected dependencies.
 
         Args:
             store: Persistence port with the insights aggregate capability.
-            applications: Application service for the by-resume stats table.
         """
         self._store = store
-        self._applications = applications
 
-    async def overview(self, *, window_days: int) -> InsightsBundle:
-        """Compose the full insights overview for one request.
+    async def overview(self, *, window_days: int | None) -> InsightsOverview:
+        """Return the insights overview for one request.
 
         Args:
-            window_days: Window in days, shared by the store's daily series
-                and the application stats look-back.
+            window_days: Discovery window in days, or None for all time.
 
         Returns:
-            Store aggregate plus application stats with the by-resume
-            breakdown.
+            Selected-period store aggregate.
         """
-        overview = await self._store.insights_overview(window_days=window_days)
-        applications = await self._applications.stats(
-            since_days_ago=window_days, by_resume=True
-        )
-        return InsightsBundle(overview=overview, applications=applications)
+        return await self._store.insights_overview(window_days=window_days)
 
 
-__all__ = ["InsightsBundle", "InsightsService", "InsightsStore"]
+__all__ = ["InsightsService", "InsightsStore"]

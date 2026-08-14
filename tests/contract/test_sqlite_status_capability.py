@@ -68,6 +68,29 @@ async def test_transition_status_and_history_are_atomic_and_ordered(
     await lifecycle.close()
 
 
+@pytest.mark.parametrize("target", ["shortlisted", "ignored"])
+async def test_applied_decisions_can_return_to_wait_or_ignore(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    """Applied decisions can be corrected through the regular SQLite transition path."""
+    lifecycle = await _open_lifecycle(tmp_path)
+    status = _AtTime(lifecycle)
+    job_id = await _seed_job(lifecycle, f"applied-{target}")
+    await status.transition_status(
+        TransitionRequest(job_id=job_id, new_status="applied", force=True)
+    )
+
+    assert (
+        await status.transition_status(
+            TransitionRequest(job_id=job_id, new_status=target)
+        )
+        == target
+    )
+    assert (await status.get_status(job_id)).status == target  # type: ignore[union-attr]
+    await lifecycle.close()
+
+
 async def test_followup_note_list_decay_and_attention_use_application_utc(
     tmp_path: Path,
 ) -> None:

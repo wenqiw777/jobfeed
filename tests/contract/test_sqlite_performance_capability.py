@@ -78,7 +78,7 @@ async def test_step_timing_write_uses_database_time_and_batch_is_atomic(
 async def test_performance_overview_windows_deltas_and_empty_semantics(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Completed runs use disjoint current/previous windows and explicit zeros."""
+    """Terminal runs keep cost/error accounting separate from duration KPIs."""
     monkeypatch.setattr(_sqlite_performance, "_utc_now", lambda: NOW)
     lifecycle, store = await open_views_performance(tmp_path / "overview.db")
     try:
@@ -125,19 +125,35 @@ async def test_performance_overview_windows_deltas_and_empty_semantics(
                 source="scan",
                 status="running",
             ),
+            PipelineRun(
+                run_id="failed-stale-eval",
+                started_at=NOW - timedelta(days=6),
+                finished_at=NOW,
+                source="evaluate",
+                total_llm_cost_usd=1,
+                status="failed",
+            ),
+            PipelineRun(
+                run_id="failed-stale-scan",
+                started_at=NOW - timedelta(days=5),
+                finished_at=NOW,
+                source="scan",
+                total_llm_cost_usd=4,
+                status="failed",
+            ),
         )
         for run in runs:
             await insert_run(lifecycle, run)
 
         overview = await store.get_performance_overview(7)
 
-        assert overview.avg_scan_duration_ms == 43_200_500
+        assert overview.avg_scan_duration_ms == 86_400_000
         assert overview.avg_eval_duration_ms == 500
-        assert overview.total_llm_cost_usd == 8
-        assert overview.error_rate == pytest.approx(1 / 3)
-        assert overview.scan_duration_delta == 21_599.25
+        assert overview.total_llm_cost_usd == 13
+        assert overview.error_rate == pytest.approx(3 / 5)
+        assert overview.scan_duration_delta == 43_199
         assert overview.eval_duration_delta is None
-        assert overview.cost_delta == 3
+        assert overview.cost_delta == 5.5
         assert overview.error_rate_delta is None
     finally:
         await lifecycle.close()
@@ -211,17 +227,17 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
             await connection.executemany(
                 """
                 INSERT INTO llm_usage
-                    (model, input_tokens, output_tokens, cost_usd, cached,
+                    (model, stage, input_tokens, output_tokens, cost_usd, cached,
                      latency_ms, timestamp, run_id)
-                VALUES ('test', ?, ?, 0, 0, ?, ?, 'eval-new')
+                VALUES (?, ?, ?, ?, 0, 0, ?, ?, 'eval-new')
                 """,
                 [
-                    (10, 20, 10, utc_text(NOW - timedelta(days=2))),
-                    (20, 30, 20, utc_text(NOW)),
-                    (30, 40, 30, utc_text(NOW)),
-                    (40, 50, 40, utc_text(NOW)),
-                    (50, 60, 50, utc_text(NOW)),
-                    (999, 999, 999, utc_text(NOW - timedelta(days=3))),
+                    ("gpt-mini", "a", 10, 20, 10, utc_text(NOW - timedelta(days=2))),
+                    ("gpt-mini", "a", 20, 30, 20, utc_text(NOW)),
+                    ("gpt-mini", "a", 30, 40, 30, utc_text(NOW)),
+                    ("gpt-large", "b", 40, 50, 40, utc_text(NOW)),
+                    ("gpt-large", "b", 50, 60, 50, utc_text(NOW)),
+                    ("gpt-old", None, 999, 999, 999, utc_text(NOW - timedelta(days=3))),
                 ],
             )
 
@@ -233,11 +249,22 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
             ("a", False),
             ("b", True),
         ]
-        assert [item.day for item in daily] == ["2026-08-10", "2026-08-12"]
+        assert [item.day for item in daily] == [
+            "2026-08-10",
+            "2026-08-12",
+            "2026-08-12",
+        ]
+        assert [(item.model, item.stage) for item in daily] == [
+            ("gpt-mini", "a"),
+            ("gpt-large", "b"),
+            ("gpt-mini", "a"),
+        ]
         assert daily[0].p50_latency_ms == daily[0].p95_latency_ms == 10
-        assert daily[1].p50_latency_ms == 35
-        assert daily[1].p95_latency_ms == pytest.approx(48.5)
-        assert daily[1].avg_input_tokens == 35
+        assert daily[1].p50_latency_ms == 45
+        assert daily[1].p95_latency_ms == pytest.approx(49.5)
+        assert daily[0].call_count == 1
+        assert [item.call_count for item in daily] == [1, 2, 2]
+        assert daily[1].avg_input_tokens == 45
         assert [item.run_id for item in funnel] == ["eval-new", "eval-boundary"]
         assert funnel[0].total_candidates == 11
         assert funnel[0].after_gate == 6

@@ -56,8 +56,11 @@ function timingRow(over: Partial<StepTimingRow> = {}): StepTimingRow {
 function llmRow(over: Partial<LLMDailyStatsRow> = {}): LLMDailyStatsRow {
   return {
     day: "2026-06-10",
+    model: "gpt-mini",
+    stage: "a",
     p50_latency_ms: 1200,
     p95_latency_ms: 3400,
+    call_count: 1,
     avg_input_tokens: 800,
     avg_output_tokens: 200,
     ...over,
@@ -204,7 +207,7 @@ test("all chart panels render with mocked data", async () => {
   expect(screen.getByTestId("cloudscape-performance")).toBeInTheDocument();
 
   // KPI cards.
-  const kpis = await screen.findByRole("region", { name: "Performance KPIs" });
+  const kpis = await screen.findByRole("region", { name: "Performance summary" });
   expect(kpis).toBeInTheDocument();
   expect(screen.getByText("4.2s")).toBeInTheDocument(); // avg_scan_duration_ms = 4200
   expect(screen.getByText("12.5s")).toBeInTheDocument(); // avg_eval_duration_ms = 12500
@@ -215,14 +218,14 @@ test("all chart panels render with mocked data", async () => {
   // no honest producer (that detail level lives in logs/OTel spans), so
   // no such panels exist.
   const panels = [
-    "Scan duration by source",
-    "Evaluate breakdown",
-    "Gate pass / fail",
-    "LLM latency",
-    "Daily token usage",
-    "Token usage",
-    "Funnel conversion",
-    "Errors per run",
+    "Scan time by source",
+    "Evaluation time by step",
+    "Local filter results",
+    "Model response time",
+    "Daily average tokens per model call",
+    "Overall average token mix per model call",
+    "Evaluation conversion",
+    "Recent run errors",
   ];
   for (const title of panels) {
     expect(screen.getByRole("region", { name: title })).toBeInTheDocument();
@@ -251,14 +254,13 @@ test("empty state renders per panel, not crashes", async () => {
   renderPerformance();
 
   // Each chart should show its empty message.
-  expect(await screen.findByText(/No scan timings/)).toBeInTheDocument();
-  expect(screen.getByText(/No evaluate timings/)).toBeInTheDocument();
-  expect(screen.getByText(/No gate data/)).toBeInTheDocument();
-  expect(screen.getByText(/No LLM latency data/)).toBeInTheDocument();
-  expect(screen.getByText(/No LLM token data/)).toBeInTheDocument();
-  expect(screen.getByText(/No token data/)).toBeInTheDocument();
-  expect(screen.getByText(/No funnel data/)).toBeInTheDocument();
-  expect(screen.getByText(/No errors in this period/)).toBeInTheDocument();
+  expect(await screen.findByText(/No scan timing data/)).toBeInTheDocument();
+  expect(screen.getByText(/No evaluation timing data/)).toBeInTheDocument();
+  expect(screen.getByText(/No local filter data/)).toBeInTheDocument();
+  expect(screen.getByText(/No model timing data/)).toBeInTheDocument();
+  expect(screen.getAllByText(/No token data in this time range/)).toHaveLength(2);
+  expect(screen.getByText(/No evaluation funnel data/)).toBeInTheDocument();
+  expect(screen.getByText(/No errors in this time range/)).toBeInTheDocument();
 
   // KPI zeros still render (two 0ms: scan + eval).
   expect(screen.getAllByText("0ms")).toHaveLength(2);
@@ -283,8 +285,8 @@ test("legacy invented step types and unknown stage names are ignored", async () 
   });
   renderPerformance();
 
-  expect(await screen.findByText(/No scan timings/)).toBeInTheDocument();
-  expect(screen.getByText(/No evaluate timings/)).toBeInTheDocument();
+  expect(await screen.findByText(/No scan timing data/)).toBeInTheDocument();
+  expect(screen.getByText(/No evaluation timing data/)).toBeInTheDocument();
 });
 
 test("gate pass / fail derives from funnel stats, not step timings", async () => {
@@ -293,33 +295,125 @@ test("gate pass / fail derives from funnel stats, not step timings", async () =>
   mockApi({ ...defaultData, timings: { timings: [] } });
   renderPerformance();
 
-  const card = await screen.findByRole("region", { name: "Gate pass / fail" });
-  expect(within(card).queryByText(/No gate data/)).toBeNull();
-  expect(within(card).getByTestId("gate-pass-fail")).toBeInTheDocument();
-  expect(within(card).getByText("pass")).toBeInTheDocument();
-  expect(within(card).getByText("fail")).toBeInTheDocument();
+  const card = await screen.findByRole("region", { name: "Local filter results" });
+  expect(within(card).queryByText(/No local filter data/)).toBeNull();
+  expect(within(card).getByRole("application", { name: "Local filter results" })).toBeInTheDocument();
+  expect(within(card).getAllByText("Passed").length).toBeGreaterThan(0);
+  expect(within(card).getAllByText("Excluded").length).toBeGreaterThan(0);
+  expect(within(card).getByText("50%")).toBeInTheDocument();
 });
 
-test("errors per run charts the runs' error counters", async () => {
+test("performance uses the visualization matching each metric", async () => {
   renderPerformance();
 
-  const card = await screen.findByRole("region", { name: "Errors per run" });
-  // run-err-1 has errors=2 → chart renders; run-ok-1 (0 errors) is quiet.
-  expect(within(card).getByTestId("errors-per-run")).toBeInTheDocument();
+  const scanCard = await screen.findByRole("region", { name: "Scan time by source" });
+  expect(within(scanCard).getByRole("table", { name: "Scan time by source" })).toBeInTheDocument();
+  expect(within(scanCard).getByText("Source")).toBeInTheDocument();
+  expect(within(scanCard).getByText("Average")).toBeInTheDocument();
+
+  const timingCard = screen.getByRole("region", { name: "Evaluation time by step" });
+  expect(within(timingCard).getByRole("table", { name: "Evaluation time by step" })).toBeInTheDocument();
+  expect(within(timingCard).getByText("Average per run that recorded this step.")).toBeInTheDocument();
+  expect(within(timingCard).getAllByText("Quick evaluation").length).toBeGreaterThan(0);
+
+  const modelCard = screen.getByRole("region", { name: "Model response time" });
+  expect(within(modelCard).getByRole("table", { name: "Model response time" })).toBeInTheDocument();
+  expect(within(modelCard).getByText("gpt-mini")).toBeInTheDocument();
+  expect(within(modelCard).getByText("Quick evaluation")).toBeInTheDocument();
+
+  const mixCard = screen.getByRole("region", { name: "Overall average token mix per model call" });
+  expect(within(mixCard).getByRole("application", { name: "Overall average token mix per model call" })).toBeInTheDocument();
+  expect(within(mixCard).getAllByText("Input").length).toBeGreaterThan(0);
+  expect(within(mixCard).getAllByText("Output").length).toBeGreaterThan(0);
+});
+
+test("token chart uses compact axis labels", async () => {
+  mockApi({
+    ...defaultData,
+    llmStats: {
+      stats: [llmRow({ avg_input_tokens: 26_345, avg_output_tokens: 1_000 })],
+    },
+  });
+  renderPerformance();
+
+  const card = await screen.findByRole("region", { name: "Daily average tokens per model call" });
+  expect(within(card).getAllByText("20K").length).toBeGreaterThan(0);
+  expect(within(card).queryByText("20,000")).toBeNull();
+});
+
+test("overall token mix is weighted by model-call count", async () => {
+  mockApi({
+    ...defaultData,
+    llmStats: {
+      stats: [
+        llmRow({ day: "2026-06-10", call_count: 1, avg_input_tokens: 100, avg_output_tokens: 50 }),
+        llmRow({ day: "2026-06-11", call_count: 9, avg_input_tokens: 1_000, avg_output_tokens: 500 }),
+      ],
+    },
+  });
+  renderPerformance();
+
+  const card = await screen.findByRole("region", { name: "Overall average token mix per model call" });
+  expect(within(card).getAllByText("910 tokens").length).toBeGreaterThan(0);
+  expect(within(card).getAllByText("455 tokens").length).toBeGreaterThan(0);
+});
+
+test("old server rows never render NaN while waiting for the backend reload", async () => {
+  const legacyRow = {
+    day: "2026-06-10",
+    p50_latency_ms: 12_000,
+    p95_latency_ms: 30_000,
+    avg_input_tokens: 800,
+    avg_output_tokens: 200,
+  } as unknown as LLMDailyStatsRow;
+  mockApi({
+    ...defaultData,
+    llmStats: { stats: [legacyRow] },
+  });
+  renderPerformance();
+
+  const modelCard = await screen.findByRole("region", { name: "Model response time" });
+  expect(within(modelCard).getByText("Model unavailable")).toBeInTheDocument();
+  expect(within(modelCard).getByText("Calls unavailable")).toBeInTheDocument();
+  expect(within(modelCard).queryByText(/NaN/)).toBeNull();
+
+  const tokenCard = screen.getByRole("region", { name: "Overall average token mix per model call" });
+  expect(within(tokenCard).queryByText(/NaN/)).toBeNull();
+});
+
+test("recent run errors lists readable times, error counters, and failed runs", async () => {
+  mockApi({
+    ...defaultData,
+    runs: {
+      runs: [runRow("run-err-1", { errors: 186 }), runRow("run-failed", { status: "failed" })],
+      total: 2,
+    },
+  });
+  renderPerformance();
+
+  const card = await screen.findByRole("region", { name: "Recent run errors" });
+  expect(within(card).getByRole("table", { name: "Recent run errors" })).toBeInTheDocument();
+  expect(within(card).getByRole("columnheader", { name: "Run" })).toBeInTheDocument();
+  expect(within(card).getByRole("columnheader", { name: "Errors" })).toBeInTheDocument();
+  expect(within(card).queryByRole("columnheader", { name: "Time" })).toBeNull();
+  expect(within(card).queryByRole("columnheader", { name: "Status" })).toBeNull();
+  expect(within(card).getByText("186")).toBeInTheDocument();
+  expect(within(card).getByText("Failed")).toBeInTheDocument();
+  expect(within(card).queryByText("run-err-")).toBeNull();
   expect(calls.some((c) => c.startsWith("/api/runs?"))).toBe(true);
 });
 
 test("errors per run honors the time window and refetches on switch", async () => {
   renderPerformance();
-  await screen.findByRole("region", { name: "Errors per run" });
+  await screen.findByRole("region", { name: "Recent run errors" });
 
-  // The runs request is bounded to the default 30d window.
+  // The default 90d view includes older failures still visible in Runs.
   expect(
-    calls.some((c) => c.startsWith("/api/runs?") && c.includes("days=30")),
+    calls.some((c) => c.startsWith("/api/runs?") && c.includes("days=90")),
   ).toBe(true);
 
   // Switching the window re-fires the runs query with the new bound.
-  fireEvent.click(screen.getByRole("button", { name: "7d" }));
+  fireEvent.click(screen.getByRole("button", { name: "7 days" }));
   await waitFor(() =>
     expect(
       calls.some((c) => c.startsWith("/api/runs?") && c.includes("days=7")),
@@ -329,19 +423,19 @@ test("errors per run honors the time window and refetches on switch", async () =
 
 test("time filter switches trigger new queries", async () => {
   renderPerformance();
-  await screen.findByRole("region", { name: "Performance KPIs" });
+  await screen.findByRole("region", { name: "Performance summary" });
 
-  // Default 30d.
-  expect(screen.getByRole("button", { name: "30d" })).toHaveAttribute("aria-pressed", "true");
-  expect(calls.some((c) => c.includes("window=30"))).toBe(true);
+  // Default 90d keeps persisted failures in view.
+  expect(screen.getByRole("button", { name: "90 days" })).toHaveAttribute("aria-pressed", "true");
+  expect(calls.some((c) => c.includes("window=90"))).toBe(true);
 
   // Switch to 7d.
-  fireEvent.click(screen.getByRole("button", { name: "7d" }));
+  fireEvent.click(screen.getByRole("button", { name: "7 days" }));
   await waitFor(() =>
     expect(calls.some((c) => c.includes("window=7"))).toBe(true),
   );
-  expect(screen.getByRole("button", { name: "7d" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: "30d" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("button", { name: "7 days" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "90 days" })).toHaveAttribute("aria-pressed", "false");
 });
 
 test("nav includes Performance entry in zones", () => {
@@ -357,39 +451,63 @@ test("nav includes Performance entry in zones", () => {
   expect(sourcesIdx).toBe(perfIdx + 1);
 });
 
-test("funnel conversion shows stage labels and values in the legend", async () => {
+test("evaluation conversion shows only meaningful progressive stages", async () => {
   renderPerformance();
-  const funnelCard = await screen.findByRole("region", { name: "Funnel conversion" });
+  const funnelCard = await screen.findByRole("region", { name: "Evaluation conversion" });
   expect(funnelCard).toBeInTheDocument();
-  // The dl summary carries stage labels as <dt> elements (scoped to the
-  // card to avoid recharts SVG duplicates).
   const card = within(funnelCard);
-  expect(card.getByText("Candidates", { selector: "dt" })).toBeInTheDocument();
-  expect(card.getByText("After filter", { selector: "dt" })).toBeInTheDocument();
-  expect(card.getByText("After gate", { selector: "dt" })).toBeInTheDocument();
-  expect(card.getByText("Scored", { selector: "dt" })).toBeInTheDocument();
+  for (const label of ["Candidates", "Passed local filter", "Evaluated"]) {
+    expect(card.getAllByText(label).length).toBeGreaterThanOrEqual(1);
+  }
+  expect(card.queryByText("Passed job filters")).toBeNull();
+  expect(card.getAllByRole("progressbar")).toHaveLength(3);
 });
 
 test("delta arrows show directional coloring", async () => {
   renderPerformance();
-  await screen.findByRole("region", { name: "Performance KPIs" });
+  await screen.findByRole("region", { name: "Performance summary" });
 
   // Cost delta is -0.08 = -8% (down is good for cost -> green/apply).
-  const downArrows = screen.getAllByText(/↓/);
-  expect(downArrows.length).toBeGreaterThanOrEqual(1);
+  const decreases = screen.getAllByText(/Decreased/);
+  expect(decreases.length).toBeGreaterThanOrEqual(1);
 
   // Error rate delta is +0.025 = +2.5% (up is bad for errors -> red/danger).
-  const upArrows = screen.getAllByText(/↑/);
-  expect(upArrows.length).toBeGreaterThanOrEqual(1);
+  const increases = screen.getAllByText(/Increased/);
+  expect(increases.length).toBeGreaterThanOrEqual(1);
 });
 
 test("delta ratios are scaled to percents (0.08 → 8%, not 0.1%)", async () => {
   renderPerformance();
-  await screen.findByRole("region", { name: "Performance KPIs" });
+  await screen.findByRole("region", { name: "Performance summary" });
 
-  // cost_delta -0.08 → "↓8%"; the old unscaled formatter rendered "↓0.1%".
-  expect(screen.getByText("↓8%")).toBeInTheDocument();
-  expect(screen.queryByText("↓0.1%")).toBeNull();
-  // error_rate_delta 0.025 → 2.5, ≥1 rounds to whole percents: "↑3%".
-  expect(screen.getByText("↑3%")).toBeInTheDocument();
+  expect(screen.getByText("Decreased 8%")).toBeInTheDocument();
+  expect(screen.queryByText("Decreased 0.1%")).toBeNull();
+  expect(screen.getByText("Increased 3%")).toBeInTheDocument();
+});
+
+test("long evaluation durations use days and hours instead of a large seconds count", async () => {
+  mockApi({
+    ...defaultData,
+    overview: overviewFixture({ avg_eval_duration_ms: 438_944_300 }),
+  });
+  renderPerformance();
+
+  expect(await screen.findByText("5d 1h 55m")).toBeInTheDocument();
+  expect(screen.queryByText("438944.3s")).toBeNull();
+});
+
+test("normal and minute-scale average durations stay in seconds", async () => {
+  mockApi({
+    ...defaultData,
+    overview: overviewFixture({
+      avg_scan_duration_ms: 119_200,
+      avg_eval_duration_ms: 693_800,
+    }),
+  });
+  renderPerformance();
+
+  expect(await screen.findByText("119.2s")).toBeInTheDocument();
+  expect(screen.getByText("693.8s")).toBeInTheDocument();
+  expect(screen.queryByText("1m")).toBeNull();
+  expect(screen.queryByText("11m")).toBeNull();
 });

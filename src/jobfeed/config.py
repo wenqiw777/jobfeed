@@ -57,8 +57,8 @@ class LLMSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    stage_a: str = "codex-cli/gpt-5.4-mini"
-    stage_b: str = "codex-cli/gpt-5.5"
+    stage_a: str = "codex-cli/gpt-5.6-luna"
+    stage_b: str = "codex-cli/gpt-5.6-sol"
     codex_timeout_s: float = 60.0
     claude_timeout_s: float = 210.0
     openai_compat_base_url: str = "https://api.openai.com/v1"

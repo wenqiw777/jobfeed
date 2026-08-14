@@ -1,92 +1,132 @@
-import { useEffect, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import Badge from "@cloudscape-design/components/badge";
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import Table, { type TableProps } from "@cloudscape-design/components/table";
 
 import type { JobSummary } from "@/api/queries";
-import { JobRow } from "@/components/jobs/JobRow";
+import { formatEstimatedPostedDate, formatRelativeAge } from "@/lib/dates";
 import { useDensity } from "@/lib/density";
 
 interface JobListProps {
   jobs: JobSummary[];
-  selectedId: string | null;
-  collapsingId: string | null;
   isChecked: (id: string) => boolean;
   onOpen: (id: string) => void;
   onToggle: (id: string) => void;
+  sort: JobListSort;
+  onSort: (sort: JobListSort) => void;
 }
 
-const ROW_PX = { compact: 32, comfortable: 46 } as const;
+export type JobListSort = "posted_asc" | "posted_desc" | "score_asc" | "score_desc";
 
-/** Virtualized triage list; rendered order mirrors the API order 1:1. */
+/** Cloudscape table for one paginated Triage result page. */
 export function JobList({
   jobs,
-  selectedId,
-  collapsingId,
   isChecked,
   onOpen,
   onToggle,
+  sort,
+  onSort,
 }: JobListProps) {
-  const parentRef = useRef<HTMLDivElement>(null);
   const { density } = useDensity();
-  const rowHeight = ROW_PX[density];
-
-  // TanStack Virtual returns unmemoizable functions, so the React
-  // Compiler skips this component — fine: it is small and re-renders
-  // cheaply; the rows themselves stay virtualized.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const virtualizer = useVirtualizer({
-    count: jobs.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => rowHeight,
-    overscan: 12,
-  });
-
-  // estimateSize is sampled at mount; a density flip must re-measure.
-  useEffect(() => {
-    virtualizer.measure();
-  }, [virtualizer, rowHeight]);
-
-  // Selection changes must keep the active row inside the viewport.
-  useEffect(() => {
-    if (selectedId === null) {
-      return;
-    }
-    const index = jobs.findIndex((job) => job.id === selectedId);
-    if (index >= 0) {
-      virtualizer.scrollToIndex(index);
-    }
-  }, [virtualizer, jobs, selectedId]);
+  const selectedItems = jobs.filter((job) => isChecked(job.id));
+  const columnDefinitions: TableProps.ColumnDefinition<JobSummary>[] = [
+    {
+      id: "job",
+      header: "Job",
+      cell: (job) => (
+        <span data-testid={`job-row-${job.id}`}>
+          <Button
+            variant="inline-link"
+            ariaLabel={`Open ${job.company} ${job.title}`}
+            onClick={() => onOpen(job.id)}
+          >
+            {job.company} · {job.title}
+          </Button>
+        </span>
+      ),
+      width: 360,
+    },
+    {
+      id: "verdict",
+      header: "Recommendation",
+      cell: (job) => <VerdictBadge job={job} />,
+      width: 120,
+    },
+    {
+      id: "score",
+      header: "Fit score",
+      sortingField: "score",
+      cell: (job) => job.stage_b_fit_score ?? job.stage_a_score ?? "—",
+      width: 70,
+    },
+    {
+      id: "posted",
+      header: "Posted",
+      sortingField: "posted",
+      cell: (job) => (
+        <Box color="text-body-secondary">
+          {job.posted_at === null
+            ? formatEstimatedPostedDate(job.discovered_at)
+            : formatRelativeAge(job.posted_at)}
+        </Box>
+      ),
+      width: 120,
+    },
+  ];
+  const sortingField = sort.startsWith("score") ? "score" : "posted";
+  const sortingColumn = columnDefinitions.find(
+    (column) => column.sortingField === sortingField,
+  );
 
   return (
-    <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto">
-      <div
-        role="list"
-        aria-label="Jobs"
-        className="relative w-full"
-        style={{ height: virtualizer.getTotalSize() }}
-      >
-        {virtualizer.getVirtualItems().map((item) => {
-          const job = jobs[item.index];
-          if (job === undefined) {
-            return null;
+    <Table
+      variant="embedded"
+      trackBy="id"
+      items={jobs}
+      stripedRows
+      wrapLines={false}
+      contentDensity={density}
+      sortingColumn={sortingColumn}
+      sortingDescending={sort.endsWith("_desc")}
+      onSortingChange={({ detail }) => {
+        const field = detail.sortingColumn.sortingField;
+        if (field === "score" || field === "posted") {
+          onSort(`${field}_${detail.isDescending ? "desc" : "asc"}`);
+        }
+      }}
+      selectionType="multi"
+      selectedItems={selectedItems}
+      onSelectionChange={({ detail }) => {
+        const nextIds = new Set(detail.selectedItems.map((job) => job.id));
+        for (const job of jobs) {
+          if (nextIds.has(job.id) !== isChecked(job.id)) {
+            onToggle(job.id);
           }
-          return (
-            <div
-              key={job.id}
-              className="absolute inset-x-0 top-0"
-              style={{ height: item.size, transform: `translateY(${item.start}px)` }}
-            >
-              <JobRow
-                job={job}
-                isActive={job.id === selectedId}
-                isChecked={isChecked(job.id)}
-                isCollapsing={job.id === collapsingId}
-                onOpen={onOpen}
-                onToggle={onToggle}
-              />
-            </div>
-          );
-        })}
-      </div>
-    </div>
+        }
+      }}
+      ariaLabels={{
+        tableLabel: "Jobs",
+        selectionGroupLabel: "Job selection",
+        allItemsSelectionLabel: () => "Select current page",
+        itemSelectionLabel: (_state, job) => `Select ${job.company} ${job.title}`,
+      }}
+      columnDefinitions={columnDefinitions}
+    />
   );
+}
+
+function VerdictBadge({ job }: { job: JobSummary }) {
+  if (job.stage_b_status === "error") {
+    return <Badge color="red">Evaluation error</Badge>;
+  }
+  if (job.verdict === "apply") {
+    return <Badge color="green">Apply</Badge>;
+  }
+  if (job.verdict === "consider") {
+    return <Badge color="blue">Consider</Badge>;
+  }
+  if (job.verdict === "skip") {
+    return <Badge color="grey">Skip</Badge>;
+  }
+  return <Badge color="grey">Not evaluated</Badge>;
 }

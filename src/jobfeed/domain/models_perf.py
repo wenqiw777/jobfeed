@@ -50,11 +50,14 @@ class StepTimingSeries:
 
 @dataclass(kw_only=True)
 class LLMDailyStats:
-    """Per-day LLM latency and token aggregates."""
+    """Per-day, per-model LLM latency and token aggregates."""
 
     day: str
+    model: str
+    stage: str | None
     p50_latency_ms: float
     p95_latency_ms: float
+    call_count: int
     avg_input_tokens: float
     avg_output_tokens: float
 

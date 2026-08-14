@@ -273,14 +273,14 @@ export interface paths {
         };
         /**
          * Insights Overview
-         * @description Aggregate insights: totals, distributions, daily series, app stats.
+         * @description Aggregate insights: totals, distributions, and daily series.
          *
-         *     Totals and distributions are all-time; the daily series and the
-         *     application stats cover the requested window.
+         *     The requested window selects the discovery-date cohort for totals,
+         *     distributions, and the daily series.
          *
          *     Args:
          *         service: Shared insights service from the app state.
-         *         window: Window in days (1..365) for the daily series and app stats.
+         *         window: Window in days (1..365), or ``all`` for no lower cutoff.
          *
          *     Returns:
          *         Composed overview response.
@@ -992,31 +992,6 @@ export interface components {
             tailored_resume_hash: string | null;
         };
         /**
-         * ApplicationStatsBlock
-         * @description Windowed application stats including the by-resume table.
-         *
-         *     ``by_resume`` is empty (never null) when no application falls inside
-         *     the window.
-         */
-        ApplicationStatsBlock: {
-            /** Applied Count */
-            applied_count: number;
-            /** By Resume */
-            by_resume: {
-                [key: string]: components["schemas"]["ResumeVariantStatsRow"];
-            };
-            /** Interview Count */
-            interview_count: number;
-            /** Median Days To Response */
-            median_days_to_response: number | null;
-            /** Offer Count */
-            offer_count: number;
-            /** Rejection Count */
-            rejection_count: number;
-            /** Response Count */
-            response_count: number;
-        };
-        /**
          * ApplicationsListResponse
          * @description ``GET /api/applications`` response.
          */
@@ -1325,13 +1300,13 @@ export interface components {
          * InsightsOverviewResponse
          * @description ``GET /api/insights/overview`` response.
          *
-         *     Totals and distributions are all-time; ``daily`` and ``applications``
-         *     cover the requested window. ``verdict_distribution`` includes the derived
+         *     The requested window selects the discovery-date cohort for totals,
+         *     distributions, and ``daily``.
+         *     ``verdict_distribution`` includes the derived
          *     ``below_threshold`` bucket (triage grouping); both distributions carry
          *     only nonzero buckets.
          */
         InsightsOverviewResponse: {
-            applications: components["schemas"]["ApplicationStatsBlock"];
             /** Daily */
             daily: components["schemas"]["InsightsDayEntry"][];
             /** Status Distribution */
@@ -1344,11 +1319,11 @@ export interface components {
                 [key: string]: number;
             };
             /** Window Days */
-            window_days: number;
+            window_days: number | null;
         };
         /**
          * InsightsTotals
-         * @description All-time funnel totals: discovered, gate-passed, evaluated, applied.
+         * @description Selected-cohort totals: discovered, gate-passed, evaluated, applied.
          *
          *     ``ml_gate_passed`` counts gate survivors (``ml_gate_result = 'pass'``) —
          *     the funnel-stage semantic, not gate failures; jobs never gated count
@@ -1531,19 +1506,25 @@ export interface components {
         };
         /**
          * LLMDailyStatsRow
-         * @description One day of LLM stats.
+         * @description One day of stats for one model and evaluation stage.
          */
         LLMDailyStatsRow: {
             /** Avg Input Tokens */
             avg_input_tokens: number;
             /** Avg Output Tokens */
             avg_output_tokens: number;
+            /** Call Count */
+            call_count: number;
             /** Day */
             day: string;
+            /** Model */
+            model: string;
             /** P50 Latency Ms */
             p50_latency_ms: number;
             /** P95 Latency Ms */
             p95_latency_ms: number;
+            /** Stage */
+            stage: string | null;
         };
         /**
          * LLMSettings
@@ -1599,12 +1580,12 @@ export interface components {
             preamble_personal_path?: string | null;
             /**
              * Stage A
-             * @default codex-cli/gpt-5.4-mini
+             * @default codex-cli/gpt-5.6-luna
              */
             stage_a: string;
             /**
              * Stage B
-             * @default codex-cli/gpt-5.5
+             * @default codex-cli/gpt-5.6-sol
              */
             stage_b: string;
         };
@@ -1760,22 +1741,6 @@ export interface components {
             lead_with: string;
             /** Supporting */
             supporting: string[];
-        };
-        /**
-         * ResumeVariantStatsRow
-         * @description Per-resume-variant application outcomes.
-         */
-        ResumeVariantStatsRow: {
-            /** Interviews */
-            interviews: number;
-            /** Offers */
-            offers: number;
-            /** Rejections */
-            rejections: number;
-            /** Responses */
-            responses: number;
-            /** Sent */
-            sent: number;
         };
         /**
          * RunSummary
@@ -2608,7 +2573,7 @@ export interface operations {
     insights_overview_api_insights_overview_get: {
         parameters: {
             query?: {
-                window?: number;
+                window?: number | "all";
             };
             header?: never;
             path?: never;
@@ -2646,7 +2611,7 @@ export interface operations {
                 require_verdict?: boolean;
                 apply_hard_filters?: boolean;
                 dedupe?: boolean;
-                sort?: "discovered_desc" | "posted_desc" | "score_desc" | "company_asc";
+                sort?: "discovered_desc" | "posted_asc" | "posted_desc" | "score_asc" | "score_desc" | "company_asc";
                 limit?: number;
                 offset?: number;
             };

@@ -120,60 +120,6 @@
         "title": "ApplicationRow",
         "type": "object"
       },
-      "ApplicationStatsBlock": {
-        "description": "Windowed application stats including the by-resume table.\n\n``by_resume`` is empty (never null) when no application falls inside\nthe window.",
-        "properties": {
-          "applied_count": {
-            "title": "Applied Count",
-            "type": "integer"
-          },
-          "by_resume": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/ResumeVariantStatsRow"
-            },
-            "title": "By Resume",
-            "type": "object"
-          },
-          "interview_count": {
-            "title": "Interview Count",
-            "type": "integer"
-          },
-          "median_days_to_response": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Median Days To Response"
-          },
-          "offer_count": {
-            "title": "Offer Count",
-            "type": "integer"
-          },
-          "rejection_count": {
-            "title": "Rejection Count",
-            "type": "integer"
-          },
-          "response_count": {
-            "title": "Response Count",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "applied_count",
-          "response_count",
-          "interview_count",
-          "offer_count",
-          "rejection_count",
-          "median_days_to_response",
-          "by_resume"
-        ],
-        "title": "ApplicationStatsBlock",
-        "type": "object"
-      },
       "ApplicationsListResponse": {
         "description": "``GET /api/applications`` response.",
         "properties": {
@@ -869,11 +815,8 @@
         "type": "object"
       },
       "InsightsOverviewResponse": {
-        "description": "``GET /api/insights/overview`` response.\n\nTotals and distributions are all-time; ``daily`` and ``applications``\ncover the requested window. ``verdict_distribution`` includes the derived\n``below_threshold`` bucket (triage grouping); both distributions carry\nonly nonzero buckets.",
+        "description": "``GET /api/insights/overview`` response.\n\nThe requested window selects the discovery-date cohort for totals,\ndistributions, and ``daily``.\n``verdict_distribution`` includes the derived\n``below_threshold`` bucket (triage grouping); both distributions carry\nonly nonzero buckets.",
         "properties": {
-          "applications": {
-            "$ref": "#/components/schemas/ApplicationStatsBlock"
-          },
           "daily": {
             "items": {
               "$ref": "#/components/schemas/InsightsDayEntry"
@@ -899,8 +842,15 @@
             "type": "object"
           },
           "window_days": {
-            "title": "Window Days",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Days"
           }
         },
         "required": [
@@ -908,14 +858,13 @@
           "totals",
           "verdict_distribution",
           "status_distribution",
-          "daily",
-          "applications"
+          "daily"
         ],
         "title": "InsightsOverviewResponse",
         "type": "object"
       },
       "InsightsTotals": {
-        "description": "All-time funnel totals: discovered, gate-passed, evaluated, applied.\n\n``ml_gate_passed`` counts gate survivors (``ml_gate_result = 'pass'``) \u2014\nthe funnel-stage semantic, not gate failures; jobs never gated count\ntoward neither.",
+        "description": "Selected-cohort totals: discovered, gate-passed, evaluated, applied.\n\n``ml_gate_passed`` counts gate survivors (``ml_gate_result = 'pass'``) \u2014\nthe funnel-stage semantic, not gate failures; jobs never gated count\ntoward neither.",
         "properties": {
           "applied": {
             "title": "Applied",
@@ -1436,7 +1385,7 @@
         "type": "object"
       },
       "LLMDailyStatsRow": {
-        "description": "One day of LLM stats.",
+        "description": "One day of stats for one model and evaluation stage.",
         "properties": {
           "avg_input_tokens": {
             "title": "Avg Input Tokens",
@@ -1446,8 +1395,16 @@
             "title": "Avg Output Tokens",
             "type": "number"
           },
+          "call_count": {
+            "title": "Call Count",
+            "type": "integer"
+          },
           "day": {
             "title": "Day",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
             "type": "string"
           },
           "p50_latency_ms": {
@@ -1457,12 +1414,26 @@
           "p95_latency_ms": {
             "title": "P95 Latency Ms",
             "type": "number"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
           }
         },
         "required": [
           "day",
+          "model",
+          "stage",
           "p50_latency_ms",
           "p95_latency_ms",
+          "call_count",
           "avg_input_tokens",
           "avg_output_tokens"
         ],
@@ -1532,12 +1503,12 @@
             "title": "Preamble Personal Path"
           },
           "stage_a": {
-            "default": "codex-cli/gpt-5.4-mini",
+            "default": "codex-cli/gpt-5.6-luna",
             "title": "Stage A",
             "type": "string"
           },
           "stage_b": {
-            "default": "codex-cli/gpt-5.5",
+            "default": "codex-cli/gpt-5.6-sol",
             "title": "Stage B",
             "type": "string"
           }
@@ -1880,40 +1851,6 @@
           "avoid_mentioning"
         ],
         "title": "ResumeHooksDetail",
-        "type": "object"
-      },
-      "ResumeVariantStatsRow": {
-        "description": "Per-resume-variant application outcomes.",
-        "properties": {
-          "interviews": {
-            "title": "Interviews",
-            "type": "integer"
-          },
-          "offers": {
-            "title": "Offers",
-            "type": "integer"
-          },
-          "rejections": {
-            "title": "Rejections",
-            "type": "integer"
-          },
-          "responses": {
-            "title": "Responses",
-            "type": "integer"
-          },
-          "sent": {
-            "title": "Sent",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "sent",
-          "responses",
-          "interviews",
-          "offers",
-          "rejections"
-        ],
-        "title": "ResumeVariantStatsRow",
         "type": "object"
       },
       "RunSummary": {
@@ -3312,7 +3249,7 @@
     },
     "/api/insights/overview": {
       "get": {
-        "description": "Aggregate insights: totals, distributions, daily series, app stats.\n\nTotals and distributions are all-time; the daily series and the\napplication stats cover the requested window.\n\nArgs:\n    service: Shared insights service from the app state.\n    window: Window in days (1..365) for the daily series and app stats.\n\nReturns:\n    Composed overview response.",
+        "description": "Aggregate insights: totals, distributions, and daily series.\n\nThe requested window selects the discovery-date cohort for totals,\ndistributions, and the daily series.\n\nArgs:\n    service: Shared insights service from the app state.\n    window: Window in days (1..365), or ``all`` for no lower cutoff.\n\nReturns:\n    Composed overview response.",
         "operationId": "insights_overview_api_insights_overview_get",
         "parameters": [
           {
@@ -3320,11 +3257,19 @@
             "name": "window",
             "required": false,
             "schema": {
+              "anyOf": [
+                {
+                  "maximum": 365,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "const": "all",
+                  "type": "string"
+                }
+              ],
               "default": 30,
-              "maximum": 365,
-              "minimum": 1,
-              "title": "Window",
-              "type": "integer"
+              "title": "Window"
             }
           }
         ],
@@ -3466,7 +3411,9 @@
               "default": "discovered_desc",
               "enum": [
                 "discovered_desc",
+                "posted_asc",
                 "posted_desc",
+                "score_asc",
                 "score_desc",
                 "company_asc"
               ],

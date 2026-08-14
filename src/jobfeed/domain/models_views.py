@@ -23,7 +23,9 @@ VALID_TABS: tuple[str, ...] = (
 #: ``services/_jobs_view_sort.py`` and the SQL ORDER BY map in the store.
 VALID_SORTS: tuple[str, ...] = (
     "discovered_desc",
+    "posted_asc",
     "posted_desc",
+    "score_asc",
     "score_desc",
     "company_asc",
 )
@@ -139,7 +141,8 @@ class InsightsDay:
         discovered: Jobs first discovered that day (``jobs.discovered_at``).
         evaluated: Jobs whose Stage A completed that day
             (``evaluations.stage_a_at``).
-        applied: Applications recorded that day (``applied.applied_at``).
+        applied: Status transitions to applied that day
+            (``job_status_history.changed_at``).
     """
 
     day: date
@@ -150,28 +153,29 @@ class InsightsDay:
 
 @dataclass(kw_only=True)
 class InsightsOverview:
-    """Insights aggregate: all-time totals/distributions + a windowed series.
+    """Insights aggregate for one discovery-date cohort and daily event series.
 
     Attributes:
-        window_days: Daily-series window in days ([now - N days, now], UTC).
-        total_jobs: All-time job count.
-        ml_gate_passed_jobs: All-time gate survivors
+        window_days: Daily-series window in days ([now - N days, now], UTC),
+            or None for all time through now.
+        total_jobs: Jobs discovered within the requested window.
+        ml_gate_passed_jobs: Cohort gate survivors
             (``ml_gate_result = 'pass'``) — the funnel-stage semantic, not
             gate failures. Jobs never gated count toward neither.
-        evaluated_jobs: All-time jobs with a completed Stage A
+        evaluated_jobs: Cohort jobs with a completed Stage A
             (``stage_a_at`` set).
-        applied_jobs: All-time recorded applications.
-        verdict_distribution: All-time ``stage_b_verdict`` counts plus the
+        applied_jobs: Cohort jobs whose current status is ``applied``.
+        verdict_distribution: Cohort ``stage_b_verdict`` counts plus the
             derived ``below_threshold`` bucket (verdict-less rows with
             ``stage_b_status = 'skipped_below_threshold'`` — the same
             grouping the triage view uses). Only nonzero buckets appear.
-        status_distribution: All-time ``job_status.status`` counts. Only
+        status_distribution: Cohort ``job_status.status`` counts. Only
             nonzero buckets appear.
-        daily: Ascending per-day funnel counts over the window; only days
-            having data appear (consumers zero-fill gaps).
+        daily: Ascending per-day event counts for cohort jobs; only days having
+            data appear (consumers zero-fill gaps).
     """
 
-    window_days: int
+    window_days: int | None
     total_jobs: int
     ml_gate_passed_jobs: int
     evaluated_jobs: int

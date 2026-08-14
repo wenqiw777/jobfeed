@@ -190,7 +190,7 @@ test("renders the real evaluate phase, denominators, cost, and errors", () => {
   });
 
   const row = screen.getByTestId("live-run-r-live-1");
-  expect(row).toHaveTextContent("Stage B · deep review");
+  expect(row).toHaveTextContent("Running detailed review");
   expect(row).toHaveTextContent("150 / 150");
   expect(row).toHaveTextContent("20 / 62");
   expect(row).not.toHaveTextContent("0 processed");

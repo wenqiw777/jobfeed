@@ -191,3 +191,24 @@ async def test_application_stats_use_append_order_and_first_causal_response(
     assert stats.by_resume["alpha"].interviews == 1
     assert stats.by_resume["unknown"].rejections == 1
     await lifecycle.close()
+
+
+async def test_application_stats_all_time_has_no_cutoff(tmp_path: Path) -> None:
+    """None includes an old application that a finite window excludes."""
+    lifecycle = await _open_lifecycle(tmp_path)
+    applications = _AtTime(lifecycle)
+    old = await _seed_job(lifecycle, "stats-old")
+    assert await applications.record_application_with_snapshots(_record(old))
+    async with lifecycle.connection() as connection:
+        await connection.execute(
+            "UPDATE job_status_history SET changed_at=? "
+            "WHERE job_id=? AND to_status='applied'",
+            ("2026-01-01T12:00:00.000000Z", int(old)),
+        )
+
+    recent = await applications.application_stats(since_days_ago=30)
+    all_time = await applications.application_stats(since_days_ago=None)
+
+    assert recent.applied_count == 0
+    assert all_time.applied_count == 1
+    await lifecycle.close()

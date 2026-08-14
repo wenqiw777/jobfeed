@@ -4,7 +4,9 @@ import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import Checkbox from "@cloudscape-design/components/checkbox";
 import Header from "@cloudscape-design/components/header";
+import Input from "@cloudscape-design/components/input";
 import Modal from "@cloudscape-design/components/modal";
+import Pagination from "@cloudscape-design/components/pagination";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
@@ -21,6 +23,8 @@ interface CompaniesTableProps {
   onIncludeRemovedChange: (includeRemoved: boolean) => void;
 }
 
+const PAGE_SIZE = 25;
+
 /** Cloudscape resource table for tracked company boards. */
 export function CompaniesTable({
   companies,
@@ -30,7 +34,20 @@ export function CompaniesTable({
   onIncludeRemovedChange,
 }: CompaniesTableProps) {
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
   const remove = useRemoveCompany();
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const filteredCompanies = companies.filter(
+    (company) =>
+      normalizedSearch.length === 0 ||
+      company.slug.toLocaleLowerCase().includes(normalizedSearch) ||
+      company.vendor?.toLocaleLowerCase().includes(normalizedSearch),
+  );
+  const pagesCount = Math.max(1, Math.ceil(filteredCompanies.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pagesCount - 1);
+  const pageStart = currentPage * PAGE_SIZE;
+  const pageCompanies = filteredCompanies.slice(pageStart, pageStart + PAGE_SIZE);
 
   const confirmRemove = () => {
     if (removeTarget === null || remove.isPending) return;
@@ -44,7 +61,7 @@ export function CompaniesTable({
         onError: (mutationError) =>
           toast({
             variant: "destructive",
-            title: "Remove failed",
+            title: "Could not stop tracking",
             description: mutationError.message,
           }),
       },
@@ -55,7 +72,7 @@ export function CompaniesTable({
     <>
       <Table
         trackBy="slug"
-        items={companies}
+        items={pageCompanies}
         loading={isLoading}
         loadingText="Loading companies"
         skeleton={{ totalRows: 4 }}
@@ -70,17 +87,17 @@ export function CompaniesTable({
               <span data-testid={`company-row-${company.slug}`}>{company.slug}</span>
             ),
           },
-          { id: "vendor", header: "Vendor", cell: (company) => company.vendor ?? "—" },
+          { id: "vendor", header: "Board provider", cell: (company) => company.vendor ?? "—" },
           {
             id: "health",
-            header: "Discovery health",
+            header: "Scan health",
             cell: (company) => <DiscoveryHealth company={company} />,
           },
           {
             id: "state",
-            header: "State",
+            header: "Tracking status",
             cell: (company) =>
-              company.removed ? <Badge color="grey">Removed</Badge> : <Badge color="green">Active</Badge>,
+              company.removed ? <Badge color="grey">Stopped</Badge> : <Badge color="green">Tracked</Badge>,
           },
           {
             id: "actions",
@@ -89,10 +106,10 @@ export function CompaniesTable({
               company.removed ? null : (
                 <Button
                   variant="inline-link"
-                  ariaLabel={`Remove ${company.slug}`}
+                  ariaLabel={`Stop tracking ${company.slug}`}
                   onClick={() => setRemoveTarget(company.slug)}
                 >
-                  Remove
+                  Stop tracking
                 </Button>
               ),
           },
@@ -103,24 +120,57 @@ export function CompaniesTable({
             counter={`(${companies.length})`}
             description="Active rows are included in the next ATS scan. Discovery failures reset after a successful fetch."
             actions={
-              <Checkbox
-                checked={includeRemoved}
-                onChange={({ detail }) => onIncludeRemovedChange(detail.checked)}
-                ariaLabel="Include removed"
-              >
-                Include removed
-              </Checkbox>
+              <SpaceBetween direction="horizontal" size="s" alignItems="center">
+                <Input
+                  value={search}
+                  type="search"
+                  placeholder="Search companies"
+                  ariaLabel="Search companies"
+                  clearAriaLabel="Clear search"
+                  onChange={({ detail }) => {
+                    setSearch(detail.value);
+                    setPage(0);
+                  }}
+                />
+                <Checkbox
+                  checked={includeRemoved}
+                  onChange={({ detail }) => onIncludeRemovedChange(detail.checked)}
+                  ariaLabel="Show stopped companies"
+                >
+                  Show stopped companies
+                </Checkbox>
+              </SpaceBetween>
             }
           >
             Tracked companies
           </Header>
         }
+        pagination={
+          filteredCompanies.length > PAGE_SIZE ? (
+            <SpaceBetween direction="horizontal" size="s" alignItems="center">
+              <Box color="text-body-secondary">
+                {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredCompanies.length)} of{" "}
+                {filteredCompanies.length} companies
+              </Box>
+              <Pagination
+                currentPageIndex={currentPage + 1}
+                pagesCount={pagesCount}
+                ariaLabels={{
+                  previousPageLabel: "Previous page",
+                  nextPageLabel: "Next page",
+                  pageLabel: (pageNumber) => `Page ${pageNumber}`,
+                }}
+                onChange={({ detail }) => setPage(detail.currentPageIndex - 1)}
+              />
+            </SpaceBetween>
+          ) : null
+        }
         empty={
           <Box textAlign="center" color="inherit">
             <SpaceBetween size="xs">
-              <b>No companies tracked</b>
+              <b>{normalizedSearch.length === 0 ? "No companies tracked" : "No companies match"}</b>
               <Box variant="p" color="text-body-secondary">
-                Probe a board above, review the vendor match, then add it to the scan roster.
+                Check a board above, review the match, then add it to future scans.
               </Box>
             </SpaceBetween>
           </Box>
@@ -137,7 +187,7 @@ export function CompaniesTable({
             <SpaceBetween direction="horizontal" size="xs">
               <Button onClick={() => setRemoveTarget(null)}>Cancel</Button>
               <Button variant="primary" loading={remove.isPending} onClick={confirmRemove}>
-                Remove
+                Stop tracking
               </Button>
             </SpaceBetween>
           </Box>

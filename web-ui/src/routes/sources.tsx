@@ -2,6 +2,7 @@ import Button from "@cloudscape-design/components/button";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import FormField from "@cloudscape-design/components/form-field";
+import Grid from "@cloudscape-design/components/grid";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
 import Select from "@cloudscape-design/components/select";
@@ -33,9 +34,9 @@ export default function SourcesPage() {
         header={
           <Header
             variant="h2"
-            description="Discover ATS vendors, review every match, and control which company boards scans cover."
+            description="Add company career pages and choose which boards are included in scans."
           >
-            Company sources
+            Job sources
           </Header>
         }
       >
@@ -44,9 +45,9 @@ export default function SourcesPage() {
             header={
               <Header
                 variant="h2"
-                description="Paste board slugs or URLs. Probing identifies the vendor without changing the tracked list."
+                description="Paste company slugs or board URLs. Checking them does not add them automatically."
               >
-                Add company boards
+                Check and add company boards
               </Header>
             }
           >
@@ -88,12 +89,16 @@ function SingleAddForm() {
         }
         toast({
           variant: "destructive",
-          title: "Probe found no vendor",
+          title: "Board type not detected",
           description: result?.error ?? "No ATS board answered for this entry.",
         });
       },
       onError: (error) =>
-        toast({ variant: "destructive", title: "Probe failed", description: error.message }),
+        toast({
+          variant: "destructive",
+          title: "Board could not be checked",
+          description: error.message,
+        }),
     });
   };
 
@@ -109,7 +114,11 @@ function SingleAddForm() {
           setVendor("");
         },
         onError: (error) =>
-          toast({ variant: "destructive", title: "Add failed", description: error.message }),
+          toast({
+            variant: "destructive",
+            title: "Company could not be added",
+            description: error.message,
+          }),
       },
     );
   };
@@ -117,14 +126,17 @@ function SingleAddForm() {
   return (
     <Container
       header={
-        <Header variant="h3" description="Use this compact path for a known board.">
-          Add one company
+        <Header
+          variant="h3"
+          description="Use this form when you already know the company board."
+        >
+          Add one company board
         </Header>
       }
     >
       <SpaceBetween size="m">
-        <div className="jobfeed-form-grid">
-          <FormField label="Company slug or board URL">
+        <Grid gridDefinition={[{ colspan: { default: 12, s: 8 } }, { colspan: { default: 12, s: 4 } }]}>
+          <FormField key="company" label="Company slug or board URL">
             <Input
               value={slug}
               onChange={({ detail }) => setSlug(detail.value)}
@@ -133,7 +145,7 @@ function SingleAddForm() {
               disabled={probe.isPending || add.isPending}
             />
           </FormField>
-          <FormField label="ATS vendor">
+          <FormField key="provider" label="Board provider">
             <Select
               selectedOption={
                 vendor === "" ? null : { label: vendor, value: vendor }
@@ -143,19 +155,19 @@ function SingleAddForm() {
                 setVendor((detail.selectedOption.value ?? "") as CompanyVendor | "")
               }
               placeholder="Choose vendor"
-              ariaLabel="Vendor"
+              ariaLabel="Board provider"
               disabled={add.isPending}
             />
           </FormField>
-        </div>
+        </Grid>
         <SpaceBetween direction="horizontal" size="xs">
           <Button
             disabled={slug.trim() === ""}
             loading={probe.isPending}
-            loadingText="Probing company"
+            loadingText="Checking board"
             onClick={runProbeOne}
           >
-            Probe
+            Check board
           </Button>
           <Button
             variant="primary"
@@ -164,7 +176,7 @@ function SingleAddForm() {
             loadingText="Adding company"
             onClick={submit}
           >
-            Add
+            Add company
           </Button>
         </SpaceBetween>
       </SpaceBetween>

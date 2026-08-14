@@ -1,6 +1,6 @@
 """Jobs routes: list view and detail aggregation (thin parse/format shell).
 
-All composition (hard filters, fold, verdict-group sort, pagination) lives in
+All composition (hard filters, fold, requested sort, pagination) lives in
 ``services/jobs_view.py``; these handlers only parse parameters, call the
 service, and render DTOs.
 """

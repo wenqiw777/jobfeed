@@ -101,15 +101,17 @@ class StoreViewsMixin(Protocol):
         """
         ...
 
-    async def insights_overview(self, *, window_days: int) -> InsightsOverview:
+    async def insights_overview(self, *, window_days: int | None) -> InsightsOverview:
         """Aggregate the insights overview.
 
-        Totals and the verdict/status distributions are all-time; only the
-        daily series is windowed (UTC day buckets over
-        ``[now - window_days, now]``, emitting only days having data).
+        The window defines a discovery-date cohort for totals, distributions,
+        and the daily series. Daily events use UTC buckets over
+        ``[now - window_days, now]``, or all time through now when None,
+        emitting only days having data.
 
         Args:
-            window_days: Daily-series window in days (caller-validated).
+            window_days: Daily-series window in days (caller-validated), or
+                None for all time.
 
         Returns:
             Insights overview aggregate.

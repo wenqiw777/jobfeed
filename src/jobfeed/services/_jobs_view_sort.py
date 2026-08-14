@@ -74,16 +74,30 @@ def _key_discovered_desc(row: JobsViewRow) -> tuple[float, int]:
 
 
 def _key_posted_desc(row: JobsViewRow) -> tuple[int, float, float, int]:
-    """Library order: most recently posted first, missing posted_at last."""
-    posted = row.job.posted_at
-    if posted is None:
-        return (1, 0.0, *_tiebreak(row))
+    """Library order: newest posting, estimating missing dates from discovery."""
+    posted = row.job.posted_at or row.job.discovered_at
     return (0, -posted.timestamp(), *_tiebreak(row))
+
+
+def _key_posted_asc(row: JobsViewRow) -> tuple[int, float, float, int]:
+    """Library order: oldest posting, estimating missing dates from discovery."""
+    posted = row.job.posted_at or row.job.discovered_at
+    return (0, posted.timestamp(), *_tiebreak(row))
 
 
 def _key_score_desc(row: JobsViewRow) -> tuple[int, int, float, int]:
     """Library order: best score first (fit score, Stage A fallback)."""
     return (*_score_rank(row), *_tiebreak(row))
+
+
+def _key_score_asc(row: JobsViewRow) -> tuple[int, int, float, int]:
+    """Lowest score first (fit score, Stage A fallback), unscored last."""
+    score = row.stage_b_fit_score
+    if score is None:
+        score = row.stage_a_score
+    if score is None:
+        return (1, 0, *_tiebreak(row))
+    return (0, score, *_tiebreak(row))
 
 
 def _key_company_asc(row: JobsViewRow) -> tuple[str, float, int]:
@@ -95,7 +109,9 @@ def _key_company_asc(row: JobsViewRow) -> tuple[str, float, int]:
 LIBRARY_SORT_KEYS: dict[str, Callable[[JobsViewRow], tuple[float | int | str, ...]]]
 LIBRARY_SORT_KEYS = {
     "discovered_desc": _key_discovered_desc,
+    "posted_asc": _key_posted_asc,
     "posted_desc": _key_posted_desc,
+    "score_asc": _key_score_asc,
     "score_desc": _key_score_desc,
     "company_asc": _key_company_asc,
 }

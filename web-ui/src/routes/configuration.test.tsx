@@ -162,9 +162,55 @@ test("fresh checkout is gated on configuration and saves without TOML editing", 
   expect(await screen.findByRole("heading", { name: "Set up your feed" })).toBeVisible();
   expect(screen.getByTestId("cloudscape-configuration")).toBeVisible();
   expect(screen.queryByRole("navigation", { name: "Zones" })).toBeNull();
-  expect(screen.getByLabelText("Master resume")).toHaveValue("resume.example.md");
+  expect(screen.getByRole("heading", { name: "Evaluation settings" })).toBeVisible();
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Use the local filter before paid evaluation",
+    }),
+  ).toBeVisible();
+  expect(screen.getByLabelText("Resume file")).toHaveValue("resume.example.md");
+  expect(
+    screen.getByRole("button", { name: /Quick evaluation model/ }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Detailed review model/ }),
+  ).toBeVisible();
+  fireEvent.mouseDown(
+    screen.getByRole("button", { name: /Quick evaluation model/ }),
+  );
+  expect(screen.getByText("Signed-in local apps")).toBeVisible();
+  expect(screen.getByText("Direct API")).toBeVisible();
+  expect(screen.getByText("Older local models")).toBeVisible();
+  expect(
+    await screen.findByRole("option", { name: /GPT-5.6 Sol.*Codex login/ }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: /Claude Sonnet 5.*Claude login/ }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: /Claude Fable 5.*Claude login/ }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: /Claude Opus 4.8.*Claude login/ }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: /GPT-5.6 Sol.*API key/ }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: /GPT-5.5.*Codex login/ }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: /GPT-5.4 mini.*Codex login/ }),
+  ).toBeVisible();
+  fireEvent.mouseUp(
+    screen.getByRole("option", { name: /GPT-5.6 Luna.*Codex login/ }),
+  );
 
-  fireEvent.change(screen.getByLabelText("Master resume"), {
+  expect(
+    screen.getByText(/Signed-in models use your installed Codex or Claude app/),
+  ).toBeVisible();
+
+  fireEvent.change(screen.getByLabelText("Resume file"), {
     target: { value: "data/wenqi-resume.md" },
   });
   fireEvent.click(screen.getByRole("checkbox", { name: "LinkedIn guest search" }));
@@ -182,6 +228,7 @@ test("fresh checkout is gated on configuration and saves without TOML editing", 
     expect(request).toBeDefined();
     const body = request?.body as typeof CONFIG;
     expect(body.llm.master_resume_path).toBe("data/wenqi-resume.md");
+    expect(body.llm.stage_a).toBe("codex-cli/gpt-5.6-luna");
     expect(body.sources.linkedin_guest.enabled).toBe(true);
     expect(body.sources.linkedin_guest.search_urls).toEqual([
       "https://www.linkedin.com/jobs/search/?keywords=founding%20engineer",

@@ -13,7 +13,14 @@ from jobfeed.services.jobs_view import JOBS_VIEW_CORPUS_LIMIT
 _DEFAULT_PAGE_LIMIT = 50
 
 TabName = Literal["queue", "pending_jd", "all", "scored", "shortlisted", "archived"]
-SortName = Literal["discovered_desc", "posted_desc", "score_desc", "company_asc"]
+SortName = Literal[
+    "discovered_desc",
+    "posted_asc",
+    "posted_desc",
+    "score_asc",
+    "score_desc",
+    "company_asc",
+]
 
 
 class JobsListParams(BaseModel):
@@ -21,8 +28,8 @@ class JobsListParams(BaseModel):
 
     ``apply_hard_filters`` and ``dedupe`` default to false — the raw endpoint
     is neutral; the frontend's typed param builders set them per zone.
-    ``sort`` is honored on Library tabs only; triage tabs always use the
-    fixed verdict-group order.
+    ``sort`` is honored by both Library and Triage. Triage uses the fixed
+    verdict-group order only when the default discovered sort is requested.
     """
 
     tab: TabName = "all"

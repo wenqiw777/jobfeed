@@ -1,80 +1,65 @@
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import Box from "@cloudscape-design/components/box";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Table from "@cloudscape-design/components/table";
 
 import type { LLMDailyStatsRow } from "@/api/queries";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
-import { dayTick } from "@/lib/dates";
 
-const INITIAL_DIMENSION = { width: 600, height: 200 };
-
-const SERIES = [
-  { key: "p50_latency_ms", label: "P50", color: "rgb(var(--accent))" },
-  { key: "p95_latency_ms", label: "P95", color: "rgb(var(--danger))" },
-] as const;
+function formatSeconds(value: number): string {
+  return `${Number(value.toFixed(1))}s`;
+}
 
 export function LlmLatency({ stats }: { stats: LLMDailyStatsRow[] }) {
-  if (stats.length === 0) {
-    return (
-      <ChartCard title="LLM latency">
-        <ChartEmpty>No LLM latency data in this period.</ChartEmpty>
-      </ChartCard>
-    );
+  if (stats.length === 0) return <ChartCard title="Model response time"><ChartEmpty>No model timing data in this time range.</ChartEmpty></ChartCard>;
+  const byModel = new Map<string, { model: string; stage: string | null; calls: number; weight: number; hasCallCount: boolean; median: number; p95: number }>();
+  for (const row of stats) {
+    const model = row.model?.trim() || "Model unavailable";
+    const stage = row.stage ?? null;
+    const hasCallCount = Number.isFinite(row.call_count) && row.call_count > 0;
+    const weight = hasCallCount ? row.call_count : 1;
+    const key = `${model}\u0000${stage ?? ""}`;
+    const value = byModel.get(key) ?? { model, stage, calls: 0, weight: 0, hasCallCount: true, median: 0, p95: 0 };
+    value.calls += hasCallCount ? row.call_count : 0;
+    value.weight += weight;
+    value.hasCallCount &&= hasCallCount;
+    value.median += row.p50_latency_ms * weight;
+    value.p95 += row.p95_latency_ms * weight;
+    byModel.set(key, value);
   }
+  const data = [...byModel.values()]
+    .map((row) => ({ ...row, median: row.median / row.weight / 1000, p95: row.p95 / row.weight / 1000 }))
+    .sort((a, b) => b.calls - a.calls);
+  const hasMissingCallCounts = data.some((row) => !row.hasCallCount);
+  const stageLabel = (stage: string | null) => stage === "a" ? "Quick evaluation" : stage === "b" ? "Detailed review" : "Unspecified stage";
   return (
-    <ChartCard title="LLM latency">
-      <div className="h-52" data-testid="llm-latency">
-        <ResponsiveContainer width="100%" height="100%" initialDimension={INITIAL_DIMENSION}>
-          <LineChart data={stats} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-            <CartesianGrid stroke="rgb(var(--hairline))" vertical={false} />
-            <XAxis
-              dataKey="day"
-              tickFormatter={dayTick}
-              axisLine={false}
-              tickLine={false}
-              interval="preserveStartEnd"
-              tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
-            />
-            <YAxis
-              allowDecimals={false}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "rgb(var(--mute))", fontSize: 11 }}
-              unit="ms"
-            />
-            <Tooltip
-              contentStyle={{ fontSize: 12, borderRadius: 6 }}
-              formatter={(value) => `${Math.round(Number(value))}ms`}
-            />
-            {SERIES.map(({ key, label, color }) => (
-              <Line
-                key={key}
-                type="monotone"
-                dataKey={key}
-                name={label}
-                stroke={color}
-                strokeWidth={1.5}
-                dot={false}
-                isAnimationActive={false}
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-        {SERIES.map(({ key, label, color }) => (
-          <li key={key} className="flex items-center gap-1.5">
-            <span aria-hidden="true" className="h-0.5 w-3" style={{ backgroundColor: color }} />
-            <span className="text-micro text-mute">{label}</span>
-          </li>
-        ))}
-      </ul>
+    <ChartCard title="Model response time">
+      <SpaceBetween size="xs">
+        <Box variant="small" color="text-body-secondary">
+          {hasMissingCallCounts ? "Daily average latency; call counts unavailable from current server." : "Call-weighted average of daily latency."}
+        </Box>
+        <Table
+          variant="embedded"
+          contentDensity="compact"
+          wrapLines
+          items={data}
+          trackBy={(row) => `${row.model}-${row.stage ?? "unknown"}`}
+          ariaLabels={{ tableLabel: "Model response time" }}
+          columnDefinitions={[
+            {
+              id: "model",
+              header: "Model / stage",
+              width: 120,
+              cell: (row) => <SpaceBetween size="xxs"><Box variant="strong">{row.model}</Box><Box variant="small">{stageLabel(row.stage)}</Box></SpaceBetween>,
+            },
+            {
+              id: "latency",
+              header: "Calls / latency",
+              width: 100,
+              cell: (row) => <SpaceBetween size="xxs"><Box variant="small">{row.hasCallCount ? `${row.calls.toLocaleString()} calls` : "Calls unavailable"}</Box><Box variant="small">Median {formatSeconds(row.median)}</Box><Box variant="small">P95 {formatSeconds(row.p95)}</Box></SpaceBetween>,
+            },
+          ]}
+        />
+      </SpaceBetween>
     </ChartCard>
   );
 }

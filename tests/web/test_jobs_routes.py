@@ -376,10 +376,10 @@ async def _seed_sortable_rows(store: PostgresStore) -> dict[str, str]:
     return ids
 
 
-async def test_sort_honored_on_library_ignored_on_queue(
+async def test_sort_honored_on_library_and_queue(
     tmp_path: Path, fresh_pg_dsn: str
 ) -> None:
-    """Library tabs honor the sort param; triage keeps verdict-group order."""
+    """Library and triage tabs honor an explicit sort parameter."""
     async with _seed_store(fresh_pg_dsn) as store:
         ids = await _seed_sortable_rows(store)
     app = create_web_app(_write_config(tmp_path, fresh_pg_dsn))
@@ -397,7 +397,7 @@ async def test_sort_honored_on_library_ignored_on_queue(
 
     assert _ordered_ids(by_company.json(), ids) == ["alpha", "beta", "gamma"]
     assert _ordered_ids(by_score.json(), ids) == ["beta", "gamma", "alpha"]
-    assert _ordered_ids(queue.json(), ids) == ["beta", "gamma", "alpha"]
+    assert _ordered_ids(queue.json(), ids) == ["alpha", "beta", "gamma"]
 
 
 _POSTED_NEW = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)

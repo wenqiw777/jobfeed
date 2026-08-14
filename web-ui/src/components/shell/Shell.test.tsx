@@ -52,15 +52,6 @@ const EMPTY_OVERVIEW = {
   verdict_distribution: {},
   status_distribution: {},
   daily: [],
-  applications: {
-    applied_count: 0,
-    response_count: 0,
-    interview_count: 0,
-    offer_count: 0,
-    rejection_count: 0,
-    median_days_to_response: null,
-    by_resume: {},
-  },
 };
 
 function mockApi(): void {
@@ -168,9 +159,9 @@ test("application pipeline is not a product zone and legacy links return to tria
 test("lazy-loaded insights route renders after its chunk resolves", async () => {
   renderShell("/insights");
 
-  // The route is React.lazy (recharts split out of the eager bundle) —
+  // The route is React.lazy (charts split out of the eager bundle) —
   // its content can only appear after the dynamic import settles.
-  expect(await screen.findByRole("group", { name: "Window" })).toBeInTheDocument();
+  expect(await screen.findByRole("group", { name: "Time range" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Insights");
 });
 
@@ -180,8 +171,8 @@ test("view menu density toggle switches the content density attribute", async ()
   const surface = screen.getByTestId("jobfeed-route-surface");
   expect(surface).toHaveAttribute("data-density", "compact");
 
-  fireEvent.click(screen.getByRole("button", { name: "View" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Comfortable" }));
+  fireEvent.click(screen.getByRole("button", { name: "Row density" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Comfortable rows" }));
 
   expect(surface).toHaveAttribute("data-density", "comfortable");
   expect(window.localStorage.getItem("jobfeed:density")).toBe("comfortable");

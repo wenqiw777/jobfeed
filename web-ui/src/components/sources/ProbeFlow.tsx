@@ -45,7 +45,11 @@ export function ProbeFlow() {
         setChecked(new Set(response.results.flatMap((row, i) => isResolved(row) ? [i] : [])));
       },
       onError: (error) =>
-        toast({ variant: "destructive", title: "Probe failed", description: error.message }),
+        toast({
+          variant: "destructive",
+          title: "Boards could not be checked",
+          description: error.message,
+        }),
     });
   };
 
@@ -85,7 +89,11 @@ export function ProbeFlow() {
         setChecked(new Set());
       },
       onError: (error) =>
-        toast({ variant: "destructive", title: "Bulk add failed", description: error.message }),
+        toast({
+          variant: "destructive",
+          title: "Companies could not be added",
+          description: error.message,
+        }),
     });
   };
 
@@ -108,7 +116,7 @@ export function ProbeFlow() {
     <SpaceBetween size="m">
       <FormField
         label="Company slugs or board URLs"
-        description="One entry per line. A probe reads the board but does not add it."
+        description="One entry per line. Checking a board does not add it."
         constraintText={`${entries.length} of ${MAX_ENTRIES} entries`}
         errorText={isOverLimit ? `Use no more than ${MAX_ENTRIES} entries.` : undefined}
       >
@@ -128,10 +136,10 @@ export function ProbeFlow() {
           variant="primary"
           disabled={entries.length === 0 || isOverLimit}
           loading={probe.isPending}
-          loadingText="Probing company boards"
+          loadingText="Checking company boards"
           onClick={runProbe}
         >
-          Probe list
+          Check boards
         </Button>
       </Box>
     </SpaceBetween>
@@ -156,25 +164,25 @@ function ProbeReview(props: ProbeReviewProps) {
         items={rows}
         trackBy="index"
         contentDensity="compact"
-        ariaLabels={{ tableLabel: "Probe results" }}
+        ariaLabels={{ tableLabel: "Board check results" }}
         header={
           <Header
             variant="h3"
             counter={`(${props.checked.size} of ${props.results.length} selected)`}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button variant="inline-link" onClick={() => props.onSetAll(true)}>Select all</Button>
-                <Button variant="inline-link" onClick={() => props.onSetAll(false)}>None</Button>
+                <Button variant="inline-link" onClick={() => props.onSetAll(true)}>Select all matched</Button>
+                <Button variant="inline-link" onClick={() => props.onSetAll(false)}>Clear selection</Button>
               </SpaceBetween>
             }
           >
-            Review probe results
+            Review matched boards
           </Header>
         }
         columnDefinitions={[
           {
             id: "selection",
-            header: "Add",
+            header: "Select",
             width: 72,
             cell: ({ result, index }) => (
               <Checkbox
@@ -187,8 +195,8 @@ function ProbeReview(props: ProbeReviewProps) {
           },
           { id: "input", header: "Input", cell: ({ result }) => result.input },
           { id: "company", header: "Company", cell: ({ result }) => result.slug ?? "—" },
-          { id: "vendor", header: "Vendor", cell: ({ result }) => result.vendor ?? "—" },
-          { id: "result", header: "Probe result", cell: ({ result }) => <ProbeStatus row={result} /> },
+          { id: "vendor", header: "Board provider", cell: ({ result }) => result.vendor ?? "—" },
+          { id: "result", header: "Check result", cell: ({ result }) => <ProbeStatus row={result} /> },
         ]}
       />
       <SpaceBetween direction="horizontal" size="xs">
@@ -199,9 +207,9 @@ function ProbeReview(props: ProbeReviewProps) {
           loadingText="Adding companies"
           onClick={props.onConfirm}
         >
-          Add {props.checked.size} {props.checked.size === 1 ? "company" : "companies"}
+          Add {props.checked.size} selected {props.checked.size === 1 ? "company" : "companies"}
         </Button>
-        <Button disabled={props.isConfirming} onClick={props.onBack}>Back to list</Button>
+        <Button disabled={props.isConfirming} onClick={props.onBack}>Edit list</Button>
       </SpaceBetween>
     </SpaceBetween>
   );
@@ -210,5 +218,5 @@ function ProbeReview(props: ProbeReviewProps) {
 function ProbeStatus({ row }: { row: ProbeEntryResult }) {
   if (isResolved(row)) return <StatusIndicator type="success">Vendor matched</StatusIndicator>;
   if (row.error !== null) return <StatusIndicator type="error">{row.error}</StatusIndicator>;
-  return <Alert type="info">no ATS detected</Alert>;
+  return <Alert type="info">No supported board detected</Alert>;
 }

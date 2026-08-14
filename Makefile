@@ -39,6 +39,6 @@ web-schema:
 	python3 scripts/dump_openapi.py
 
 # Rebuild the committed SPA bundle that `jobfeed serve` mounts at /.
-# End users receive this artifact and never need Node/npm.
+# End users receive this artifact and never need Node/pnpm.
 web-build:
-	cd web-ui && npm ci && npm run build
+	cd web-ui && pnpm install --frozen-lockfile && pnpm build

@@ -210,18 +210,24 @@ class _SqliteApplication:
     async def application_stats(
         self,
         *,
-        since_days_ago: int = 30,
+        since_days_ago: int | None = 30,
         by_resume: bool = False,
     ) -> ApplicationStats:
         """Aggregate causal append-order outcomes for the application cohort."""
-        cutoff = self._application_time() - timedelta(days=since_days_ago)
+        cutoff = (
+            None
+            if since_days_ago is None
+            else _require_utc_timestamp(
+                self._application_time() - timedelta(days=since_days_ago)
+            )
+        )
         async with self._lifecycle.connection() as connection:
             applied_rows = await _fetch_rows(
                 connection,
                 """SELECT id,job_id,changed_at,resume_variant_at_change
                    FROM job_status_history WHERE to_status='applied'
-                     AND changed_at>=? ORDER BY id ASC""",
-                (_require_utc_timestamp(cutoff),),
+                     AND (? IS NULL OR changed_at>=?) ORDER BY id ASC""",
+                (cutoff, cutoff),
             )
             first_applied = _first_apply_by_job(applied_rows)
             if not first_applied:

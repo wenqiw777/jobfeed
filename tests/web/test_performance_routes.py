@@ -37,6 +37,7 @@ _P50 = 150.0
 _P95 = 450.0
 _AVG_IN = 800.0
 _AVG_OUT = 200.0
+_CALL_COUNT = 4
 _FUNNEL_TOTAL = 100
 _FUNNEL_FILTER = 80
 _FUNNEL_GATE = 60
@@ -101,8 +102,11 @@ class FakePerformanceService:
         return [
             LLMDailyStats(
                 day="2026-06-16",
+                model="gpt-mini",
+                stage="a",
                 p50_latency_ms=_P50,
                 p95_latency_ms=_P95,
+                call_count=_CALL_COUNT,
                 avg_input_tokens=_AVG_IN,
                 avg_output_tokens=_AVG_OUT,
             )
@@ -205,8 +209,11 @@ async def test_llm_stats_returns_list(_app) -> None:
     assert len(body["stats"]) == 1
     row = body["stats"][0]
     assert row["day"] == "2026-06-16"
+    assert row["model"] == "gpt-mini"
+    assert row["stage"] == "a"
     assert row["p50_latency_ms"] == pytest.approx(_P50)
     assert row["p95_latency_ms"] == pytest.approx(_P95)
+    assert row["call_count"] == _CALL_COUNT
     assert row["avg_input_tokens"] == pytest.approx(_AVG_IN)
     assert row["avg_output_tokens"] == pytest.approx(_AVG_OUT)
 

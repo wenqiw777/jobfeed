@@ -19,7 +19,6 @@ from jobfeed.domain.dedupe import INFLIGHT_STATUSES
 from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.models_views import (
-    DEFAULT_SORT,
     JobsViewPage,
     JobsViewQuery,
     JobsViewRow,
@@ -68,6 +67,18 @@ def _row(
         stage_b_fit_score=None,
         stage_b_status=None,
     )
+
+
+def _posted_row(id: str, posted_at: datetime | None) -> JobsViewRow:
+    row = _row(id)
+    row.job.posted_at = posted_at
+    return row
+
+
+def _fit_row(id: str, fit_score: int) -> JobsViewRow:
+    row = _row(id)
+    row.stage_b_fit_score = fit_score
+    return row
 
 
 class _RecordingStore:
@@ -120,21 +131,57 @@ async def test_plain_library_sort_routes_to_sql_pagination() -> None:
     )
 
 
-async def test_triage_overfetches_corpus_and_ignores_sort() -> None:
-    """Triage tabs over-fetch the corpus and pin the default SQL order."""
-    store = _RecordingStore()
+@pytest.mark.parametrize(
+    ("sort", "rows", "expected"),
+    [
+        (
+            "posted_asc",
+            [
+                _posted_row("1", datetime(2026, 5, 1, tzinfo=UTC)),
+                _posted_row("2", datetime(2026, 6, 1, tzinfo=UTC)),
+                _posted_row("3", None),
+            ],
+            ["1", "3", "2"],
+        ),
+        (
+            "posted_desc",
+            [
+                _posted_row("1", datetime(2026, 5, 1, tzinfo=UTC)),
+                _posted_row("2", datetime(2026, 6, 1, tzinfo=UTC)),
+                _posted_row("3", None),
+            ],
+            ["3", "2", "1"],
+        ),
+        (
+            "score_asc",
+            [_fit_row("1", 72), _fit_row("2", 95)],
+            ["1", "2"],
+        ),
+        (
+            "score_desc",
+            [_fit_row("1", 72), _fit_row("2", 95)],
+            ["2", "1"],
+        ),
+    ],
+)
+async def test_triage_overfetches_and_honors_explicit_sort(
+    sort: str, rows: list[JobsViewRow], expected: list[str]
+) -> None:
+    """Triage sorts the complete over-fetched corpus before pagination."""
+    store = _RecordingStore(rows=rows)
 
-    await _service(store).list_jobs(
-        JobsViewQuery(tab="queue", limit=_PAGE_LIMIT, offset=_PAGE_OFFSET),
-        sort="company_asc",
+    page = await _service(store).list_jobs(
+        JobsViewQuery(tab="queue", limit=_PAGE_LIMIT, offset=0),
+        sort=sort,
     )
 
     sent = store.queries[0]
     assert (sent.limit, sent.offset, sent.sort) == (
         JOBS_VIEW_CORPUS_LIMIT,
         0,
-        DEFAULT_SORT,
+        sort,
     )
+    assert [row.job.id for row in page.rows] == expected
 
 
 async def test_dedupe_pulls_inflight_twins_and_suppresses_their_clusters() -> None:

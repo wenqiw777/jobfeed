@@ -33,7 +33,7 @@ export default function RunsPage() {
         header={
           <Header
             variant="h2"
-            description="Start scans and evaluations, watch live counters, and inspect each run."
+            description="Start a scan or evaluation, follow live progress, and review completed work."
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <TriggerEvaluateButton />
@@ -41,7 +41,7 @@ export default function RunsPage() {
               </SpaceBetween>
             }
           >
-            Run operations
+            Scans and evaluations
           </Header>
         }
       >

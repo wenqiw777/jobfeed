@@ -60,11 +60,14 @@ class StepTimingsResponse(BaseModel):
 
 
 class LLMDailyStatsRow(BaseModel):
-    """One day of LLM stats."""
+    """One day of stats for one model and evaluation stage."""
 
     day: str
+    model: str
+    stage: str | None
     p50_latency_ms: float
     p95_latency_ms: float
+    call_count: int
     avg_input_tokens: float
     avg_output_tokens: float
 
@@ -174,8 +177,11 @@ async def llm_stats(
         stats=[
             LLMDailyStatsRow(
                 day=r.day,
+                model=r.model,
+                stage=r.stage,
                 p50_latency_ms=r.p50_latency_ms,
                 p95_latency_ms=r.p95_latency_ms,
+                call_count=r.call_count,
                 avg_input_tokens=r.avg_input_tokens,
                 avg_output_tokens=r.avg_output_tokens,
             )
