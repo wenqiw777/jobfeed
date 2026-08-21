@@ -53,7 +53,7 @@ _SWE_JD = (
 # a non-``None`` reason marks a deterministic hard-fail (assert exact reason +
 # score == 0.0). All decisions were confirmed against the committed model.
 _HARD_FAIL_CASES: list[tuple[GateInput, str]] = [
-    # 5+ years experience => yoe_min >= 2 hard-fail rule (fires before model).
+    # 5+ years experience => yoe_min >= 3 hard-fail rule (fires before model).
     (
         GateInput(
             job_id="hardfail-yoe",
