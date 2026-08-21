@@ -48,6 +48,17 @@ async def test_open_close_are_idempotent_and_initializer_runs_once(
     assert not lifecycle.is_open
 
 
+async def test_open_creates_missing_database_parent(tmp_path: Path) -> None:
+    """A fresh checkout can open the default database before data exists."""
+    database = tmp_path / "missing" / "nested" / "jobfeed.db"
+    lifecycle = SqliteLifecycle(database, _initialize_labels)
+
+    await lifecycle.open()
+
+    assert database.is_file()
+    await lifecycle.close()
+
+
 async def test_every_connection_has_required_pragmas_and_unicode_casefold(
     tmp_path: Path,
 ) -> None:
