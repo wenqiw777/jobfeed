@@ -31,6 +31,7 @@ _VB = re.IGNORECASE | re.VERBOSE
 _MAX_CANDIDATE_YOE = 20
 _SENIOR_YOE = 5
 _MID_YOE = 2
+_HARD_FAIL_YOE = 3
 _SWE_JD_SAMPLE_CHARS = 3000
 _SWE_JD_MIN_SIGNALS = 3
 
@@ -506,7 +507,7 @@ def hard_fail_reason(features: MLGateFeatures) -> str | None:
     """Return a deterministic hard-fail reason, or ``None`` when the role passes.
 
     Faithful port of legacy ``rules.hard_fail_from_extracted`` with the exact
-    reason strings and order: a ``yoe_min`` at/above 2 fails first, then an
+    reason strings and order: a ``yoe_min`` at/above 3 fails first, then an
     active/ambiguous clearance (keyed on ``clearance_status``), then a
     non-software role. Hard requirements deliberately bypass any model score.
 
@@ -517,7 +518,7 @@ def hard_fail_reason(features: MLGateFeatures) -> str | None:
         The first violated rule's reason string, or ``None`` when none fire.
     """
     yoe = features.yoe_min
-    if yoe is not None and int(yoe) >= _MID_YOE:
+    if yoe is not None and int(yoe) >= _HARD_FAIL_YOE:
         return f"yoe_min >= {int(yoe)}"
     if features.clearance_status in ("active_required", "ambiguous"):
         return "active clearance required"

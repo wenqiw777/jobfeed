@@ -412,8 +412,20 @@ def test_hard_fail_keys_on_clearance_status_not_required() -> None:
     assert hard_fail_reason(features) is None
 
 
-def test_hard_fail_yoe_threshold_is_two() -> None:
-    """yoe_min == 2 trips the hard fail; yoe_min == 1 does not."""
+def test_hard_fail_yoe_threshold_is_three() -> None:
+    """yoe_min == 3 trips the hard fail; yoe_min == 2 does not."""
+    three = MLGateFeatures(
+        seniority_level="mid",
+        degree_required="none",
+        clearance_required=0,
+        clearance_status="none",
+        school_restricted=0,
+        domain_tags=[],
+        tech_required=[],
+        role_type="fte",
+        yoe_min=3,
+        is_swe_role=True,
+    )
     two = MLGateFeatures(
         seniority_level="mid",
         degree_required="none",
@@ -426,20 +438,8 @@ def test_hard_fail_yoe_threshold_is_two() -> None:
         yoe_min=2,
         is_swe_role=True,
     )
-    one = MLGateFeatures(
-        seniority_level="entry",
-        degree_required="none",
-        clearance_required=0,
-        clearance_status="none",
-        school_restricted=0,
-        domain_tags=[],
-        tech_required=[],
-        role_type="fte",
-        yoe_min=1,
-        is_swe_role=True,
-    )
-    assert hard_fail_reason(two) == "yoe_min >= 2"
-    assert hard_fail_reason(one) is None
+    assert hard_fail_reason(three) == "yoe_min >= 3"
+    assert hard_fail_reason(two) is None
 
 
 def test_vocab_counts_and_structured_dim() -> None:
