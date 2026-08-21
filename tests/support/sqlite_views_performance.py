@@ -12,7 +12,9 @@ from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
 from jobfeed.adapters.store.sqlite_views_performance import SqliteViewsPerformance
 from jobfeed.domain.models import PipelineRun
 
-NOW = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+# Keep freshness-window contracts relative to the day the suite runs while
+# preserving one stable reference instant for every test in the process.
+NOW = datetime.now(UTC).replace(microsecond=0)
 
 
 async def open_views_performance(
