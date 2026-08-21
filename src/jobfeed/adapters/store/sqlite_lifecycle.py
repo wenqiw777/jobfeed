@@ -50,7 +50,7 @@ class SqliteLifecycle:
         """Create a closed lifecycle.
 
         Args:
-            path: Persistent SQLite database file. Its parent must exist.
+            path: Persistent SQLite database file. Its parent is created on open.
             initializer: Async schema initializer or migrator callback. It receives
                 a fully configured connection and must finish its transaction.
         """
@@ -90,6 +90,7 @@ class SqliteLifecycle:
             if self._is_restoring:
                 msg = "SQLite lifecycle is restoring and cannot be opened"
                 raise SqliteLifecycleStateError(msg)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
             database_lock = DatabaseFileLock(self._path)
             database_lock.acquire_shared()
             connection: aiosqlite.Connection | None = None
