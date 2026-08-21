@@ -250,9 +250,9 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
             ("b", True),
         ]
         assert [item.day for item in daily] == [
-            "2026-08-10",
-            "2026-08-12",
-            "2026-08-12",
+            (NOW - timedelta(days=2)).date().isoformat(),
+            NOW.date().isoformat(),
+            NOW.date().isoformat(),
         ]
         assert [(item.model, item.stage) for item in daily] == [
             ("gpt-mini", "a"),

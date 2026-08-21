@@ -159,8 +159,8 @@ async def test_insights_cohort_totals_and_inclusive_windowed_days(
             "results": 1,
         }
         assert [day.day.isoformat() for day in result.daily] == [
-            "2026-08-10",
-            "2026-08-12",
+            (NOW - timedelta(days=2)).date().isoformat(),
+            NOW.date().isoformat(),
         ]
         assert (
             result.daily[0].discovered,
@@ -187,9 +187,9 @@ async def test_insights_cohort_totals_and_inclusive_windowed_days(
             "results": 1,
         }
         assert [day.day.isoformat() for day in all_time.daily] == [
-            "2026-07-13",
-            "2026-08-10",
-            "2026-08-12",
+            (NOW - timedelta(days=30)).date().isoformat(),
+            (NOW - timedelta(days=2)).date().isoformat(),
+            NOW.date().isoformat(),
         ]
         assert future
     finally:
