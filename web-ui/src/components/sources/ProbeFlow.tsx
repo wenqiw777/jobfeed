@@ -20,6 +20,26 @@ import { isVendor } from "@/lib/vendors";
 
 const MAX_ENTRIES = 200;
 
+interface TrackedCompany {
+  slug: string;
+  vendor: "greenhouse" | "ashby" | "lever";
+}
+
+interface CompletedAddition {
+  rows: TrackedCompany[];
+  inserted: number;
+  batchSize: number;
+}
+
+function mergeTrackedCompanies(
+  current: TrackedCompany[],
+  added: TrackedCompany[],
+): TrackedCompany[] {
+  const bySlug = new Map(current.map((row) => [row.slug, row]));
+  added.forEach((row) => bySlug.set(row.slug, row));
+  return [...bySlug.values()];
+}
+
 function isResolved(result: ProbeEntryResult): boolean {
   return result.slug !== null && isVendor(result.vendor) && result.error === null;
 }
@@ -33,6 +53,8 @@ export function ProbeFlow() {
   const [text, setText] = useState("");
   const [results, setResults] = useState<ProbeEntryResult[] | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<number>>(new Set());
+  const [completed, setCompleted] = useState<CompletedAddition | null>(null);
+  const [isAddingMore, setIsAddingMore] = useState(true);
   const probe = useProbeCompanies();
   const bulkAdd = useBulkAddCompanies();
   const entries = parseEntries(text);
@@ -84,6 +106,12 @@ export function ProbeFlow() {
           title: `${inserted} added`,
           description: inserted < rows.length ? `${rows.length - inserted} already tracked` : undefined,
         });
+        setCompleted((current) => ({
+          rows: mergeTrackedCompanies(current?.rows ?? [], rows),
+          inserted,
+          batchSize: rows.length,
+        }));
+        setIsAddingMore(false);
         setText("");
         setResults(null);
         setChecked(new Set());
@@ -99,49 +127,111 @@ export function ProbeFlow() {
 
   if (results !== null) {
     return (
-      <ProbeReview
-        results={results}
-        checked={checked}
-        isConfirming={bulkAdd.isPending}
-        onToggle={toggle}
-        onSetAll={setAll}
-        onConfirm={confirm}
-        onBack={() => setResults(null)}
+      <SpaceBetween size="l">
+        {completed !== null && <CompletedAdditionSummary completed={completed} />}
+        <ProbeReview
+          results={results}
+          checked={checked}
+          isConfirming={bulkAdd.isPending}
+          onToggle={toggle}
+          onSetAll={setAll}
+          onConfirm={confirm}
+          onBack={() => setResults(null)}
+        />
+      </SpaceBetween>
+    );
+  }
+
+  if (completed !== null && !isAddingMore) {
+    return (
+      <CompletedAdditionSummary
+        completed={completed}
+        onAddMore={() => setIsAddingMore(true)}
       />
     );
   }
 
   const isOverLimit = entries.length > MAX_ENTRIES;
   return (
-    <SpaceBetween size="m">
-      <FormField
-        label="Company slugs or board URLs"
-        description="One entry per line. Checking a board does not add it."
-        constraintText={`${entries.length} of ${MAX_ENTRIES} entries`}
-        errorText={isOverLimit ? `Use no more than ${MAX_ENTRIES} entries.` : undefined}
-      >
-        <Textarea
-          value={text}
-          onChange={({ detail }) => setText(detail.value)}
-          placeholder={"acme\nhttps://boards.greenhouse.io/initech\n…one entry per line"}
-          rows={5}
-          resize="vertical"
-          disabled={probe.isPending}
-          ariaLabel="Company entries"
-          invalid={isOverLimit}
-        />
-      </FormField>
-      <Box>
-        <Button
-          variant="primary"
-          disabled={entries.length === 0 || isOverLimit}
-          loading={probe.isPending}
-          loadingText="Checking company boards"
-          onClick={runProbe}
+    <SpaceBetween size="l">
+      {completed !== null && <CompletedAdditionSummary completed={completed} />}
+      <SpaceBetween size="m">
+        <FormField
+          label="Company slugs or board URLs"
+          description="One entry per line. Checking a board does not add it."
+          constraintText={`${entries.length} of ${MAX_ENTRIES} entries`}
+          errorText={isOverLimit ? `Use no more than ${MAX_ENTRIES} entries.` : undefined}
         >
-          Check boards
-        </Button>
-      </Box>
+          <Textarea
+            value={text}
+            onChange={({ detail }) => setText(detail.value)}
+            placeholder={"acme\nhttps://boards.greenhouse.io/initech\n…one entry per line"}
+            rows={5}
+            resize="vertical"
+            disabled={probe.isPending}
+            ariaLabel="Company entries"
+            invalid={isOverLimit}
+          />
+        </FormField>
+        <Box>
+          <Button
+            variant="primary"
+            disabled={entries.length === 0 || isOverLimit}
+            loading={probe.isPending}
+            loadingText="Checking company boards"
+            onClick={runProbe}
+          >
+            Check boards
+          </Button>
+        </Box>
+      </SpaceBetween>
+    </SpaceBetween>
+  );
+}
+
+function CompletedAdditionSummary({
+  completed,
+  onAddMore,
+}: {
+  completed: CompletedAddition;
+  onAddMore?: () => void;
+}) {
+  const existing = completed.batchSize - completed.inserted;
+  return (
+    <SpaceBetween size="m">
+      <Alert type="success" header={`${completed.inserted} new ${completed.inserted === 1 ? "company" : "companies"} added`}>
+        <SpaceBetween size="xxs">
+          {existing > 0 && (
+            <Box>{existing} {existing === 1 ? "was" : "were"} already tracked</Box>
+          )}
+          <Box>Every company below is tracked and will be included in the next ATS scan.</Box>
+        </SpaceBetween>
+      </Alert>
+      <Table
+        items={completed.rows}
+        trackBy="slug"
+        contentDensity="compact"
+        ariaLabels={{ tableLabel: "Added companies" }}
+        header={
+          <Header variant="h3" counter={`(${completed.rows.length})`}>
+            Manually added companies
+          </Header>
+        }
+        columnDefinitions={[
+          { id: "company", header: "Company", cell: (row) => row.slug },
+          { id: "vendor", header: "Board provider", cell: (row) => row.vendor },
+          {
+            id: "status",
+            header: "Status",
+            cell: () => <StatusIndicator type="success">Tracked</StatusIndicator>,
+          },
+        ]}
+      />
+      {onAddMore !== undefined && (
+        <Box>
+          <Button onClick={onAddMore}>Add more companies</Button>
+        </Box>
+      )}
     </SpaceBetween>
   );
 }

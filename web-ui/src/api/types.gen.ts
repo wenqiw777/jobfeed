@@ -662,6 +662,410 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/onboarding/calibration-job": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Calibration Job
+         * @description Fetch a representative real JD from confirmed Indeed searches.
+         *
+         *     Args:
+         *         sampler: Shared confirmed-search sampler.
+         *         resume: Shared résumé/profile onboarding workflow.
+         *
+         *     Returns:
+         *         Real posting closest to the bounded sample's mean JD length.
+         *
+         *     Raises:
+         *         ApiError: If the profile is unconfirmed or no complete JD is available.
+         */
+        get: operations["get_calibration_job_api_onboarding_calibration_job_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/companies/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Onboarding Company Catalog Entries
+         * @description Load broad canonical company/vendor rows from public job lists.
+         *
+         *     Args:
+         *         load_catalog: Injected public ATS catalog loader.
+         *
+         *     Returns:
+         *         Deduplicated company/vendor catalog and per-source counts.
+         *
+         *     Raises:
+         *         ApiError: If every public catalog fails to load.
+         */
+        get: operations["get_onboarding_company_catalog_entries_api_onboarding_companies_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/companies/recommend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recommend Onboarding Companies
+         * @description Generate or resume company candidates for the confirmed profile.
+         *
+         *     Args:
+         *         service: Shared company recommendation workflow.
+         *         refresh: Whether to bypass matching persisted suggestions.
+         *
+         *     Returns:
+         *         Profile-bound company recommendation state.
+         *
+         *     Raises:
+         *         ApiError: If provider or profile setup is incomplete.
+         */
+        post: operations["recommend_onboarding_companies_api_onboarding_companies_recommend_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/evaluation-calibration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Calibrate Evaluation
+         * @description Run one real Quick + Detailed pair and return measured usage.
+         *
+         *     Args:
+         *         body: Representative job description to evaluate.
+         *         calibrator: Shared real evaluation calibration workflow.
+         *
+         *     Returns:
+         *         Actual tokens, equivalent cost, latency, and plan-window delta.
+         *
+         *     Raises:
+         *         ApiError: If provider or profile setup cannot support calibration.
+         */
+        post: operations["calibrate_evaluation_api_onboarding_evaluation_calibration_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish Onboarding
+         * @description Atomically apply the complete onboarding draft to active configuration.
+         *
+         *     Args:
+         *         body: Editable non-onboarding configuration fields.
+         *         editor: Project-local configuration editor.
+         *         provider_service: Verified provider and model draft.
+         *         resume_service: Confirmed résumé and profile draft.
+         *         search_service: Confirmed search selection draft.
+         *
+         *     Returns:
+         *         Saved effective configuration marked complete.
+         *
+         *     Raises:
+         *         ApiError: If any required onboarding step is incomplete.
+         */
+        post: operations["finish_onboarding_api_onboarding_finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/plan-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan Usage
+         * @description Return live subscription-window usage when the provider exposes it.
+         *
+         *     Args:
+         *         service: Shared provider-onboarding workflow.
+         *         reader: Local Codex plan-usage reader.
+         *
+         *     Returns:
+         *         Live non-secret usage, or an explicit unavailable response.
+         */
+        get: operations["get_plan_usage_api_onboarding_plan_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Confirm Profile
+         * @description Persist the user's edited profile as explicitly confirmed.
+         *
+         *     Args:
+         *         body: Complete edited profile.
+         *         service: Shared résumé onboarding workflow.
+         *
+         *     Returns:
+         *         Confirmed resumable draft.
+         *
+         *     Raises:
+         *         ApiError: If no résumé draft exists.
+         */
+        put: operations["confirm_profile_api_onboarding_profile_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/provider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Provider State
+         * @description Return resumable provider state with secret presence only.
+         *
+         *     Args:
+         *         service: Shared provider-onboarding workflow.
+         *
+         *     Returns:
+         *         Secret-free provider state.
+         */
+        get: operations["get_provider_state_api_onboarding_provider_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/provider/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save Provider Models
+         * @description Persist provider-specific Quick and Detailed model choices.
+         *
+         *     Args:
+         *         body: Provider and selected model ids.
+         *         service: Shared provider-onboarding workflow.
+         *
+         *     Returns:
+         *         Updated provider draft.
+         *
+         *     Raises:
+         *         ApiError: If the provider or models do not match verified state.
+         */
+        put: operations["save_provider_models_api_onboarding_provider_models_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/provider/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Provider Connection
+         * @description Verify provider authentication and return available models.
+         *
+         *     Args:
+         *         body: Provider and optional write-only API key.
+         *         service: Shared provider-onboarding workflow.
+         *
+         *     Returns:
+         *         Redacted connection result and model catalog.
+         */
+        post: operations["test_provider_connection_api_onboarding_provider_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Resume State
+         * @description Return the resumable path-free résumé and profile draft.
+         *
+         *     Args:
+         *         service: Shared résumé onboarding workflow.
+         *
+         *     Returns:
+         *         Browser-safe résumé and profile state.
+         */
+        get: operations["get_resume_state_api_onboarding_resume_get"];
+        put?: never;
+        /**
+         * Upload Resume
+         * @description Validate, extract, and save one original résumé upload.
+         *
+         *     Args:
+         *         service: Shared résumé onboarding workflow.
+         *         file: Supported original résumé file.
+         *
+         *     Returns:
+         *         Extracted preview without a local path.
+         *
+         *     Raises:
+         *         ApiError: If the upload cannot be validated or extracted.
+         */
+        post: operations["upload_resume_api_onboarding_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/resume/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Analyze Resume
+         * @description Analyze the uploaded résumé with the selected Detailed model.
+         *
+         *     Args:
+         *         service: Shared résumé onboarding workflow.
+         *
+         *     Returns:
+         *         Draft containing the validated profile suggestion.
+         *
+         *     Raises:
+         *         ApiError: If upload or provider setup is incomplete or analysis fails.
+         */
+        post: operations["analyze_resume_api_onboarding_resume_analyze_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/onboarding/searches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Onboarding Searches
+         * @description Generate or resume searches for the confirmed profile.
+         *
+         *     Args:
+         *         service: Shared search-selection workflow.
+         *
+         *     Returns:
+         *         Profile-bound editable search suggestions.
+         *
+         *     Raises:
+         *         ApiError: If the profile has not been explicitly confirmed.
+         */
+        get: operations["get_onboarding_searches_api_onboarding_searches_get"];
+        /**
+         * Put Onboarding Searches
+         * @description Persist edited, added, and deselected search rows.
+         *
+         *     Args:
+         *         body: Complete validated search selection.
+         *         service: Shared search-selection workflow.
+         *
+         *     Returns:
+         *         Persisted profile-bound search draft.
+         *
+         *     Raises:
+         *         ApiError: If the profile has not been explicitly confirmed.
+         */
+        put: operations["put_onboarding_searches_api_onboarding_searches_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/performance/funnel": {
         parameters: {
             query?: never;
@@ -763,6 +1167,63 @@ export interface paths {
          *         Step timings response.
          */
         get: operations["step_timings_api_performance_step_timings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/personal-ml/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activate Personal Ml
+         * @description Explicitly enable only a threshold that passed future shadow checks.
+         *
+         *     Args:
+         *         service: Shared personal learning policy service.
+         *         editor: Effective local configuration editor.
+         *
+         *     Returns:
+         *         Saved configuration with the validated filter enabled.
+         *
+         *     Raises:
+         *         ApiError: If shadow validation has not made the model ready.
+         */
+        post: operations["activate_personal_ml_api_personal_ml_activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/personal-ml/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Personal Ml Status
+         * @description Return current teacher-label, ranking, and shadow progress.
+         *
+         *     Args:
+         *         service: Shared personal learning policy service.
+         *         editor: Effective local configuration editor.
+         *
+         *     Returns:
+         *         Current lifecycle state and measured validation evidence.
+         */
+        get: operations["get_personal_ml_status_api_personal_ml_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -954,6 +1415,25 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ApiErrorDetail
+         * @description Shared machine-readable API error details.
+         */
+        ApiErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Request Id */
+            request_id: string;
+        };
+        /**
+         * ApiErrorResponse
+         * @description Shared JSON error envelope returned by onboarding mutations.
+         */
+        ApiErrorResponse: {
+            error: components["schemas"]["ApiErrorDetail"];
+        };
+        /**
          * ApplicationDetail
          * @description Application audit refs: snapshot hashes only, never contents.
          */
@@ -1048,6 +1528,11 @@ export interface components {
             /** Variant */
             variant?: string | null;
         };
+        /** Body_upload_resume_api_onboarding_resume_post */
+        Body_upload_resume_api_onboarding_resume_post: {
+            /** File */
+            file: string;
+        };
         /**
          * BulkCompanyRow
          * @description One company of a bulk-insert request.
@@ -1120,6 +1605,35 @@ export interface components {
             succeeded: number;
         };
         /**
+         * CalibrationJobResponse
+         * @description One mean-length real posting from the confirmed Indeed searches.
+         */
+        CalibrationJobResponse: {
+            /** Company */
+            company: string;
+            /** Id */
+            id: string;
+            /** Jd Text */
+            jd_text: string;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+        };
+        /**
+         * CatalogCompany
+         * @description One canonical company/vendor pair extracted from a real ATS URL.
+         */
+        CatalogCompany: {
+            /** Slug */
+            slug: string;
+            /**
+             * Vendor
+             * @enum {string}
+             */
+            vendor: "greenhouse" | "ashby" | "lever";
+        };
+        /**
          * CompaniesBulkBody
          * @description ``POST /api/companies/bulk`` request body.
          */
@@ -1149,6 +1663,18 @@ export interface components {
             vendor: "greenhouse" | "ashby" | "lever";
         };
         /**
+         * CompanyCatalogState
+         * @description Broad public-job-list catalog available for one-click bulk addition.
+         */
+        CompanyCatalogState: {
+            /** Companies */
+            companies: components["schemas"]["CatalogCompany"][];
+            /** Source Counts */
+            source_counts: {
+                [key: string]: number;
+            };
+        };
+        /**
          * CompanyOut
          * @description One tracked company row of the wire contract.
          */
@@ -1161,6 +1687,28 @@ export interface components {
             slug: string;
             /** Vendor */
             vendor: string | null;
+        };
+        /**
+         * CompanyRecommendation
+         * @description One model-suggested company candidate awaiting a real ATS probe.
+         */
+        CompanyRecommendation: {
+            /** Name */
+            name: string;
+            /** Rationale */
+            rationale: string;
+            /** Slug */
+            slug: string;
+        };
+        /**
+         * CompanyRecommendationState
+         * @description Provider/profile-bound resumable recommendation draft.
+         */
+        CompanyRecommendationState: {
+            /** Profile Fingerprint */
+            profile_fingerprint?: string | null;
+            /** Recommendations */
+            recommendations?: components["schemas"]["CompanyRecommendation"][];
         };
         /**
          * ConfigurationResponse
@@ -1185,6 +1733,31 @@ export interface components {
             ml_gate?: components["schemas"]["MLGateSettings"];
             scoring?: components["schemas"]["ScoringSettings"];
             sources?: components["schemas"]["SourcesConfig"];
+        };
+        /**
+         * EvaluationCalibrationBody
+         * @description One representative JD used for a real two-stage calibration.
+         */
+        EvaluationCalibrationBody: {
+            /** Job Description */
+            job_description: string;
+        };
+        /**
+         * EvaluationCalibrationResponse
+         * @description Measured Quick + Detailed usage and subscription-meter delta.
+         */
+        EvaluationCalibrationResponse: {
+            /** Allowance After Percent */
+            allowance_after_percent: number | null;
+            /** Allowance Before Percent */
+            allowance_before_percent: number | null;
+            /**
+             * Allowance Resolution Percent
+             * @default 1
+             */
+            allowance_resolution_percent: number;
+            detailed: components["schemas"]["MeasuredEvaluationCallResponse"];
+            quick: components["schemas"]["MeasuredEvaluationCallResponse"];
         };
         /**
          * EvaluationDetail
@@ -1452,6 +2025,42 @@ export interface components {
             twins: components["schemas"]["TwinDetail"][];
         };
         /**
+         * JobProfile
+         * @description Structured AI suggestion that the user must edit or confirm.
+         */
+        JobProfile: {
+            /** Company Sizes */
+            company_sizes: string[];
+            /** Desired Titles */
+            desired_titles: string[];
+            /** Excluded Companies */
+            excluded_companies: string[];
+            /** Excluded Keywords */
+            excluded_keywords: string[];
+            /** Excluded Locations */
+            excluded_locations: string[];
+            /** Excluded Titles */
+            excluded_titles: string[];
+            /** Hiring Timeline */
+            hiring_timeline: string;
+            /** Industries */
+            industries: string[];
+            /** Maximum Posting Age Days */
+            maximum_posting_age_days: number;
+            /** Resume Evidence */
+            resume_evidence: string[];
+            /** Seniority Levels */
+            seniority_levels: string[];
+            /** Target Countries */
+            target_countries: string[];
+            /** Target Locations */
+            target_locations: string[];
+            /** Work Authorization */
+            work_authorization: string;
+            /** Work Modes */
+            work_modes: ("remote" | "hybrid" | "on-site")[];
+        };
+        /**
          * JobSummary
          * @description One jobs-list row (the DTO form of ``JobsViewRow``).
          */
@@ -1635,6 +2244,22 @@ export interface components {
             threshold_override?: number | null;
         };
         /**
+         * MeasuredEvaluationCallResponse
+         * @description Measured usage for one real evaluation-stage model call.
+         */
+        MeasuredEvaluationCallResponse: {
+            /** Cost Usd */
+            cost_usd: number;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Model */
+            model: string;
+            /** Output Tokens */
+            output_tokens: number;
+        };
+        /**
          * NoteBody
          * @description ``POST /api/jobs/{id}/note`` request body.
          */
@@ -1652,6 +2277,15 @@ export interface components {
              * @default true
              */
             ok: boolean;
+        };
+        /**
+         * OnboardingFinishBody
+         * @description Final editable settings plus the disclosed usage-estimate input.
+         */
+        OnboardingFinishBody: {
+            configuration: components["schemas"]["EditableConfiguration"];
+            /** Expected Jobs */
+            expected_jobs: number;
         };
         /**
          * PerformanceOverviewResponse
@@ -1676,6 +2310,39 @@ export interface components {
             total_llm_cost_usd: number;
         };
         /**
+         * PersonalMLStatusResponse
+         * @description User-visible progress and shadow-quality evidence.
+         */
+        PersonalMLStatusResponse: {
+            /** Baseline Rejection */
+            baseline_rejection: number | null;
+            /** Category Recall */
+            category_recall: number | null;
+            /** Estimated Call Reduction */
+            estimated_call_reduction: number | null;
+            /** Label Count */
+            label_count: number;
+            /** Model Threshold */
+            model_threshold: number | null;
+            /** Next Target */
+            next_target: number | null;
+            /** Quick Fail Rejection */
+            quick_fail_rejection: number | null;
+            /** Quick Pass Recall */
+            quick_pass_recall: number | null;
+            /** Ranking Count */
+            ranking_count: number;
+            /** Rolling Recall */
+            rolling_recall: number | null;
+            /** Shadow Count */
+            shadow_count: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "collecting" | "ranking" | "shadow" | "ready" | "active" | "paused";
+        };
+        /**
          * PipelineAttentionEntry
          * @description One pipeline-health row (enrich error, low quality, stuck scoring).
          */
@@ -1690,6 +2357,31 @@ export interface components {
             job_id: string;
             /** Title */
             title: string;
+        };
+        /**
+         * PlanUsageResponse
+         * @description Live provider-plan allowance safe to show during onboarding.
+         */
+        PlanUsageResponse: {
+            /** Detail */
+            detail: string;
+            /** Plan Name */
+            plan_name?: string | null;
+            /** Provider */
+            provider: ("openai_api" | "anthropic_api" | "codex_cli" | "claude_cli") | null;
+            /** Remaining Percent */
+            remaining_percent?: number | null;
+            /** Resets At */
+            resets_at?: number | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "live" | "unavailable";
+            /** Used Percent */
+            used_percent?: number | null;
+            /** Window Minutes */
+            window_minutes?: number | null;
         };
         /**
          * ProbeBody
@@ -1725,6 +2417,64 @@ export interface components {
             results: components["schemas"]["ProbeEntryResult"][];
         };
         /**
+         * ProviderConnectionBody
+         * @description Provider selection plus an optional write-only API key.
+         */
+        ProviderConnectionBody: {
+            /** Api Key */
+            api_key?: string | null;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai_api" | "anthropic_api" | "codex_cli" | "claude_cli";
+        };
+        /**
+         * ProviderModelOut
+         * @description One provider model safe to expose to the browser.
+         */
+        ProviderModelOut: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+        };
+        /**
+         * ProviderModelsBody
+         * @description Quick and Detailed model selections from a verified catalog.
+         */
+        ProviderModelsBody: {
+            /** Detailed Model */
+            detailed_model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai_api" | "anthropic_api" | "codex_cli" | "claude_cli";
+            /** Quick Model */
+            quick_model: string;
+        };
+        /**
+         * ProviderStateResponse
+         * @description Resumable provider state containing no raw API key.
+         */
+        ProviderStateResponse: {
+            /** Connected */
+            connected: boolean;
+            /** Detail */
+            detail?: string | null;
+            /** Detailed Model */
+            detailed_model?: string | null;
+            /** Has Secret */
+            has_secret: boolean;
+            /** Models */
+            models: components["schemas"]["ProviderModelOut"][];
+            /** Provider */
+            provider?: ("openai_api" | "anthropic_api" | "codex_cli" | "claude_cli") | null;
+            /** Quick Model */
+            quick_model?: string | null;
+        };
+        /**
          * RestoreResponse
          * @description ``POST /api/jobs/{id}/restore`` response: where the job landed.
          */
@@ -1745,6 +2495,22 @@ export interface components {
             lead_with: string;
             /** Supporting */
             supporting: string[];
+        };
+        /**
+         * ResumeStateResponse
+         * @description Resumable résumé preview and profile without local filesystem paths.
+         */
+        ResumeStateResponse: {
+            /** Extracted Text */
+            extracted_text?: string | null;
+            /**
+             * Is Confirmed
+             * @default false
+             */
+            is_confirmed: boolean;
+            /** Original Name */
+            original_name?: string | null;
+            profile?: components["schemas"]["JobProfile"] | null;
         };
         /**
          * RunSummary
@@ -1846,6 +2612,48 @@ export interface components {
             stage_a_threshold: number;
         };
         /**
+         * SearchDraftState
+         * @description Profile-bound local search selection.
+         */
+        SearchDraftState: {
+            /** Profile Fingerprint */
+            profile_fingerprint?: string | null;
+            /** Searches */
+            searches?: components["schemas"]["SearchSuggestion"][];
+        };
+        /**
+         * SearchSelectionBody
+         * @description Complete editable search selection submitted by the browser.
+         */
+        SearchSelectionBody: {
+            /** Searches */
+            searches: components["schemas"]["SearchSuggestion"][];
+        };
+        /**
+         * SearchSuggestion
+         * @description One editable source/query/location/URL selection.
+         */
+        SearchSuggestion: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /** Query */
+            query: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "linkedin_guest" | "indeed";
+            /** Url */
+            url: string;
+        };
+        /**
          * SourcesATSConfig
          * @description Runtime limits and tuning knobs for the ATS source.
          */
@@ -1866,6 +2674,11 @@ export interface components {
              */
             max_concurrent: number;
             /**
+             * Max Jobs
+             * @default 1000
+             */
+            max_jobs: number;
+            /**
              * Probe Timeout S
              * @default 5
              */
@@ -1882,6 +2695,8 @@ export interface components {
             scan_timeout_s: number;
             /** Seed Companies */
             seed_companies?: string[];
+            /** Title Keywords */
+            title_keywords?: string[];
         };
         /**
          * SourcesConfig
@@ -2059,6 +2874,11 @@ export interface components {
              * @default 10
              */
             max_concurrent: number;
+            /**
+             * Max Jobs
+             * @default 1000
+             */
+            max_jobs: number;
             /** Search Urls */
             search_urls?: string[];
         };
@@ -3020,6 +3840,453 @@ export interface operations {
             };
         };
     };
+    get_calibration_job_api_onboarding_calibration_job_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalibrationJobResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_onboarding_company_catalog_entries_api_onboarding_companies_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyCatalogState"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    recommend_onboarding_companies_api_onboarding_companies_recommend_post: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyRecommendationState"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    calibrate_evaluation_api_onboarding_evaluation_calibration_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationCalibrationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationCalibrationResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    finish_onboarding_api_onboarding_finish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardingFinishBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigurationResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_plan_usage_api_onboarding_plan_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanUsageResponse"];
+                };
+            };
+        };
+    };
+    confirm_profile_api_onboarding_profile_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobProfile"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeStateResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_provider_state_api_onboarding_provider_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderStateResponse"];
+                };
+            };
+        };
+    };
+    save_provider_models_api_onboarding_provider_models_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderModelsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderStateResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    test_provider_connection_api_onboarding_provider_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderConnectionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderStateResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_resume_state_api_onboarding_resume_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeStateResponse"];
+                };
+            };
+        };
+    };
+    upload_resume_api_onboarding_resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_resume_api_onboarding_resume_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeStateResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    analyze_resume_api_onboarding_resume_analyze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeStateResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_onboarding_searches_api_onboarding_searches_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchDraftState"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    put_onboarding_searches_api_onboarding_searches_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchSelectionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchDraftState"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     funnel_api_performance_funnel_get: {
         parameters: {
             query?: {
@@ -3141,6 +4408,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_personal_ml_api_personal_ml_activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigurationResponse"];
+                };
+            };
+        };
+    };
+    get_personal_ml_status_api_personal_ml_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalMLStatusResponse"];
                 };
             };
         };

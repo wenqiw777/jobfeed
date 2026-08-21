@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from jobfeed.domain.filtering import HardFilters
+from jobfeed.personal_ml_learning import PersonalMLLearningService
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.ml_gate import MLGate
 from jobfeed.ports.prompts import PromptRenderer
@@ -27,6 +28,7 @@ class EvaluateDependencies:
     llm_stage_b_sweep: LLMClient | None = None
     ml_gate: MLGate | None = None
     hard_filters: HardFilters | None = None
+    personal_ml: PersonalMLLearningService | None = None
     stage_b_threshold_sync: StageBThresholdSync | None = None
 
 

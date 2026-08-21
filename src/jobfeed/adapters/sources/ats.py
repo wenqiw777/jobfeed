@@ -20,6 +20,7 @@ from jobfeed.adapters.sources._http import (
     ProbeIndeterminateError,
     ProbeNetworkError,
 )
+from jobfeed.adapters.sources._target_titles import filter_target_titles
 from jobfeed.config import SourcesATSConfig
 from jobfeed.domain.models import CompanyRecord, JobPosting
 from jobfeed.observability import JobfeedLogger
@@ -81,7 +82,8 @@ class ATSSource:
         all_jobs: list[JobPosting] = []
         for job_list in results:
             all_jobs.extend(job_list)
-        return all_jobs
+        relevant = filter_target_titles(all_jobs, self._config.title_keywords)
+        return relevant[: self._config.max_jobs]
 
     async def _process_company(
         self, company: CompanyRecord, started: datetime, sem: asyncio.Semaphore

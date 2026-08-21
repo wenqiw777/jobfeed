@@ -48,12 +48,14 @@ class RunManager:
         evaluate_service_factory: Callable[..., EvaluateService],
         scan_source_resolver: SourceResolver | None = None,
         run_orchestrator: RunLeaseOrchestrator | None = None,
+        post_scan_hook: Callable[[list[SourceSpec]], Awaitable[None]] | None = None,
     ) -> None:
         """Create a RunManager with injected factories and source resolver."""
         self._logger = logger
         self._scan_factory = scan_service_factory
         self._eval_factory = evaluate_service_factory
         self._source_resolver = scan_source_resolver
+        self._post_scan_hook = post_scan_hook
         self._run_orchestrator = run_orchestrator or RunLeaseOrchestrator(
             cast(RunLeaseStore, store)
         )
@@ -92,6 +94,8 @@ class RunManager:
                     on_progress=cb,
                     lease_session=active_session,
                 )
+                if self._post_scan_hook is not None:
+                    await self._post_scan_hook(specs)
 
             self._tasks[session.run.run_id] = asyncio.create_task(
                 self._execute_run(self._scan_lock, session, _work, stack)

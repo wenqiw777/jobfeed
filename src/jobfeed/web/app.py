@@ -29,6 +29,11 @@ from jobfeed.services.scan import ScanService, SourceSpec
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
 from jobfeed.web.config_runtime import apply_runtime_settings
 from jobfeed.web.errors import install_error_handling
+from jobfeed.web.onboarding_app import (
+    _configure_onboarding,
+    _include_onboarding_routers,
+    _make_post_scan_hook,
+)
 from jobfeed.web.routes.applications import router as applications_router
 from jobfeed.web.routes.companies import router as companies_router
 from jobfeed.web.routes.configuration import router as configuration_router
@@ -120,6 +125,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
         ),
         scan_source_resolver=_make_scan_source_resolver(context),
         run_orchestrator=context.get("run_orchestrator"),
+        post_scan_hook=_make_post_scan_hook(context),
     )
 
     app.state.jobs_view_service = JobsViewService(
@@ -143,9 +149,12 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
         context["settings"],
         lambda settings: apply_runtime_settings(app, context, settings),
     )
+    project_root = config_path.resolve().parent
+    _configure_onboarding(app, context, project_root, logger, store)
     install_error_handling(app)
     app.include_router(health_router, prefix="/api")
     app.include_router(configuration_router, prefix="/api")
+    _include_onboarding_routers(app)
     app.include_router(jobs_router, prefix="/api")
     app.include_router(workflow_router, prefix="/api")
     app.include_router(applications_router, prefix="/api")

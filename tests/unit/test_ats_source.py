@@ -177,11 +177,11 @@ class MockLogger:
 # ---------------------------------------------------------------------------
 
 
-def _gh_job(job_id: int = 1001) -> dict[str, object]:
+def _gh_job(job_id: int = 1001, title: str = "Backend Engineer") -> dict[str, object]:
     """Build a synthetic Greenhouse job dict."""
     return {
         "id": job_id,
-        "title": "Backend Engineer",
+        "title": title,
         "absolute_url": f"https://boards.greenhouse.io/{SLUG}/jobs/{job_id}",
         "location": {"name": "San Francisco, CA"},
         "content": GH_CONTENT,
@@ -293,6 +293,53 @@ class TestBasicFetch:
         assert len(jobs) == 1
         assert jobs[0].platform == "greenhouse"
         assert jobs[0].title == "Backend Engineer"
+
+    @respx.mock
+    async def test_greenhouse_uses_first_published_as_posted_at(self) -> None:
+        """Greenhouse updates must not masquerade as newly posted jobs."""
+        source, store, _log = _make_source()
+        store.seed(_company())
+        job = _gh_job()
+        job["first_published"] = "2026-04-14T06:00:34-04:00"
+        job["updated_at"] = "2026-05-01T10:00:00Z"
+        _mock_gh_success(jobs=[job])
+
+        jobs = await source.fetch_jobs({})
+
+        assert jobs[0].posted_at == datetime.fromisoformat("2026-04-14T06:00:34-04:00")
+
+    @respx.mock
+    async def test_greenhouse_without_first_published_has_no_posted_at(self) -> None:
+        """An update timestamp is not a safe fallback for publication time."""
+        source, store, _log = _make_source()
+        store.seed(_company())
+        _mock_gh_success()
+
+        jobs = await source.fetch_jobs({})
+
+        assert jobs[0].posted_at is None
+
+    @respx.mock
+    async def test_target_titles_filter_before_source_total_limit(self) -> None:
+        """Irrelevant ATS roles do not consume the configured source budget."""
+        source, store, _log = _make_source(
+            config=SourcesATSConfig(
+                max_jobs=1,
+                title_keywords=["Software Engineer", "Backend Engineer"],
+            )
+        )
+        store.seed(_company())
+        _mock_gh_success(
+            jobs=[
+                _gh_job(1, "Product Manager"),
+                _gh_job(2, "Backend Engineer"),
+                _gh_job(3, "Software Engineer Intern"),
+            ]
+        )
+
+        jobs = await source.fetch_jobs({})
+
+        assert [job.title for job in jobs] == ["Backend Engineer"]
 
     @respx.mock
     async def test_success_resets_failures_and_updates_count(self) -> None:

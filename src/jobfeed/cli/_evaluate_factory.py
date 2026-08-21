@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from jobfeed.domain.errors import ResumeNotConfiguredError
+from jobfeed.personal_ml_learning import (
+    PersonalMLLearningService,
+    PersonalMLObservationStore,
+)
 
 if TYPE_CHECKING:
     from jobfeed.cli import AppContext
@@ -145,9 +149,7 @@ def build_evaluate_service(
         else settings.scoring.stage_a_threshold
     )
     ml_gate_enabled = settings.scoring.ml_gate_enabled
-    needs_gate = needs_ml_gate(
-        params.stage, params.limit, ml_gate_enabled=ml_gate_enabled
-    )
+    needs_gate = needs_ml_gate(params.stage, params.limit, ml_gate_enabled=True)
     return EvaluateService(
         deps=EvaluateDependencies(
             store=store,
@@ -157,8 +159,13 @@ def build_evaluate_service(
             llm_stage_a=llm_a,
             llm_stage_b=llm_b,
             llm_stage_b_sweep=llm_b_sweep,
-            ml_gate=build_ml_gate(settings) if needs_gate else None,
+            ml_gate=(
+                build_ml_gate(settings, allow_disabled=True) if needs_gate else None
+            ),
             hard_filters=build_hard_filters(settings),
+            personal_ml=PersonalMLLearningService(
+                cast(PersonalMLObservationStore, store)
+            ),
             stage_b_threshold_sync=app.get("stage_b_threshold_sync"),
         ),
         config=EvaluateRuntimeConfig(

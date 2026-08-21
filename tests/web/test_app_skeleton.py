@@ -18,6 +18,8 @@ from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.cli import AppContext, cli
 from jobfeed.config import Settings
 from jobfeed.domain.models import JobPosting
+from jobfeed.services.enrich import EnrichSummary
+from jobfeed.web import onboarding_app as onboarding_app_module
 from jobfeed.web.app import build_web_app, create_web_app
 
 UUID4_HEX_LENGTH = 32
@@ -176,6 +178,61 @@ async def test_unknown_api_path_returns_error_shape_and_logs_request_id() -> Non
         entry["request_id"] for entry in logs if entry["event"] == "http_request"
     ]
     assert error["request_id"] in logged_ids
+
+
+async def test_web_post_scan_hook_enriches_guest_up_to_source_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The web Runs path automatically follows guest discovery with JD fetches."""
+    settings = Settings.model_validate(
+        {
+            "sources": {
+                "linkedin_guest": {
+                    "enabled": True,
+                    "search_urls": [
+                        "https://www.linkedin.com/jobs/search/?keywords=swe"
+                    ],
+                    "max_jobs": 7,
+                    "enrich_batch_limit": 2,
+                }
+            }
+        }
+    )
+    calls: list[tuple[object, int]] = []
+
+    async def fake_enrich(
+        _context: object,
+        config: object,
+        *,
+        batch_limit: int | None = None,
+    ) -> EnrichSummary:
+        calls.append((config, batch_limit or 0))
+        return EnrichSummary(
+            enriched=7,
+            closed=0,
+            blocked=0,
+            skipped=0,
+            stopped_early=False,
+        )
+
+    monkeypatch.setattr(
+        onboarding_app_module,
+        "run_guest_enrich_pass",
+        fake_enrich,
+    )
+    context = cast(
+        AppContext,
+        {
+            "settings": settings,
+            "logger": structlog.get_logger(),
+            "store": FakeStore(),
+        },
+    )
+
+    hook = onboarding_app_module._make_post_scan_hook(context)
+    await hook([("linkedin_guest", object(), {})])
+
+    assert calls == [(settings.sources.linkedin_guest, 7)]
 
 
 async def test_validation_error_uses_error_shape() -> None:

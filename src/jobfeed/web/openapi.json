@@ -1,6 +1,43 @@
 {
   "components": {
     "schemas": {
+      "ApiErrorDetail": {
+        "description": "Shared machine-readable API error details.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "title": "ApiErrorDetail",
+        "type": "object"
+      },
+      "ApiErrorResponse": {
+        "description": "Shared JSON error envelope returned by onboarding mutations.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ApiErrorResponse",
+        "type": "object"
+      },
       "ApplicationDetail": {
         "description": "Application audit refs: snapshot hashes only, never contents.",
         "properties": {
@@ -283,6 +320,20 @@
         "title": "Body_apply_to_job_api_jobs__job_id__apply_post",
         "type": "object"
       },
+      "Body_upload_resume_api_onboarding_resume_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_resume_api_onboarding_resume_post",
+        "type": "object"
+      },
       "BulkCompanyRow": {
         "description": "One company of a bulk-insert request.",
         "properties": {
@@ -428,6 +479,65 @@
         "title": "BulkTransitionResponse",
         "type": "object"
       },
+      "CalibrationJobResponse": {
+        "description": "One mean-length real posting from the confirmed Indeed searches.",
+        "properties": {
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "jd_text": {
+            "title": "Jd Text",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "company",
+          "url",
+          "jd_text"
+        ],
+        "title": "CalibrationJobResponse",
+        "type": "object"
+      },
+      "CatalogCompany": {
+        "additionalProperties": false,
+        "description": "One canonical company/vendor pair extracted from a real ATS URL.",
+        "properties": {
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "vendor": {
+            "enum": [
+              "greenhouse",
+              "ashby",
+              "lever"
+            ],
+            "title": "Vendor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "vendor"
+        ],
+        "title": "CatalogCompany",
+        "type": "object"
+      },
       "CompaniesBulkBody": {
         "description": "``POST /api/companies/bulk`` request body.",
         "properties": {
@@ -487,6 +597,32 @@
         "title": "CompanyAddBody",
         "type": "object"
       },
+      "CompanyCatalogState": {
+        "additionalProperties": false,
+        "description": "Broad public-job-list catalog available for one-click bulk addition.",
+        "properties": {
+          "companies": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogCompany"
+            },
+            "title": "Companies",
+            "type": "array"
+          },
+          "source_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Source Counts",
+            "type": "object"
+          }
+        },
+        "required": [
+          "source_counts",
+          "companies"
+        ],
+        "title": "CompanyCatalogState",
+        "type": "object"
+      },
       "CompanyOut": {
         "description": "One tracked company row of the wire contract.",
         "properties": {
@@ -521,6 +657,57 @@
           "removed"
         ],
         "title": "CompanyOut",
+        "type": "object"
+      },
+      "CompanyRecommendation": {
+        "additionalProperties": false,
+        "description": "One model-suggested company candidate awaiting a real ATS probe.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "slug",
+          "rationale"
+        ],
+        "title": "CompanyRecommendation",
+        "type": "object"
+      },
+      "CompanyRecommendationState": {
+        "additionalProperties": false,
+        "description": "Provider/profile-bound resumable recommendation draft.",
+        "properties": {
+          "profile_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Fingerprint"
+          },
+          "recommendations": {
+            "items": {
+              "$ref": "#/components/schemas/CompanyRecommendation"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          }
+        },
+        "title": "CompanyRecommendationState",
         "type": "object"
       },
       "ConfigurationResponse": {
@@ -574,6 +761,69 @@
           }
         },
         "title": "EditableConfiguration",
+        "type": "object"
+      },
+      "EvaluationCalibrationBody": {
+        "additionalProperties": false,
+        "description": "One representative JD used for a real two-stage calibration.",
+        "properties": {
+          "job_description": {
+            "maxLength": 30000,
+            "minLength": 100,
+            "title": "Job Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_description"
+        ],
+        "title": "EvaluationCalibrationBody",
+        "type": "object"
+      },
+      "EvaluationCalibrationResponse": {
+        "description": "Measured Quick + Detailed usage and subscription-meter delta.",
+        "properties": {
+          "allowance_after_percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowance After Percent"
+          },
+          "allowance_before_percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowance Before Percent"
+          },
+          "allowance_resolution_percent": {
+            "default": 1,
+            "title": "Allowance Resolution Percent",
+            "type": "integer"
+          },
+          "detailed": {
+            "$ref": "#/components/schemas/MeasuredEvaluationCallResponse"
+          },
+          "quick": {
+            "$ref": "#/components/schemas/MeasuredEvaluationCallResponse"
+          }
+        },
+        "required": [
+          "quick",
+          "detailed",
+          "allowance_before_percent",
+          "allowance_after_percent"
+        ],
+        "title": "EvaluationCalibrationResponse",
         "type": "object"
       },
       "EvaluationDetail": {
@@ -1204,6 +1454,134 @@
         "title": "JobDetailResponse",
         "type": "object"
       },
+      "JobProfile": {
+        "additionalProperties": false,
+        "description": "Structured AI suggestion that the user must edit or confirm.",
+        "properties": {
+          "company_sizes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Company Sizes",
+            "type": "array"
+          },
+          "desired_titles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Desired Titles",
+            "type": "array"
+          },
+          "excluded_companies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Companies",
+            "type": "array"
+          },
+          "excluded_keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Keywords",
+            "type": "array"
+          },
+          "excluded_locations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Locations",
+            "type": "array"
+          },
+          "excluded_titles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Titles",
+            "type": "array"
+          },
+          "hiring_timeline": {
+            "title": "Hiring Timeline",
+            "type": "string"
+          },
+          "industries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Industries",
+            "type": "array"
+          },
+          "maximum_posting_age_days": {
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Maximum Posting Age Days",
+            "type": "integer"
+          },
+          "resume_evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Resume Evidence",
+            "type": "array"
+          },
+          "seniority_levels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Seniority Levels",
+            "type": "array"
+          },
+          "target_countries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Countries",
+            "type": "array"
+          },
+          "target_locations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Locations",
+            "type": "array"
+          },
+          "work_authorization": {
+            "title": "Work Authorization",
+            "type": "string"
+          },
+          "work_modes": {
+            "items": {
+              "enum": [
+                "remote",
+                "hybrid",
+                "on-site"
+              ],
+              "type": "string"
+            },
+            "title": "Work Modes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "desired_titles",
+          "seniority_levels",
+          "target_countries",
+          "target_locations",
+          "work_modes",
+          "industries",
+          "company_sizes",
+          "work_authorization",
+          "hiring_timeline",
+          "excluded_titles",
+          "excluded_companies",
+          "excluded_locations",
+          "excluded_keywords",
+          "maximum_posting_age_days",
+          "resume_evidence"
+        ],
+        "title": "JobProfile",
+        "type": "object"
+      },
       "JobSummary": {
         "description": "One jobs-list row (the DTO form of ``JobsViewRow``).",
         "properties": {
@@ -1604,6 +1982,40 @@
         "title": "MLGateSettings",
         "type": "object"
       },
+      "MeasuredEvaluationCallResponse": {
+        "description": "Measured usage for one real evaluation-stage model call.",
+        "properties": {
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model",
+          "input_tokens",
+          "output_tokens",
+          "cost_usd",
+          "latency_ms"
+        ],
+        "title": "MeasuredEvaluationCallResponse",
+        "type": "object"
+      },
       "NoteBody": {
         "description": "``POST /api/jobs/{id}/note`` request body.",
         "properties": {
@@ -1628,6 +2040,27 @@
           }
         },
         "title": "OkResponse",
+        "type": "object"
+      },
+      "OnboardingFinishBody": {
+        "additionalProperties": false,
+        "description": "Final editable settings plus the disclosed usage-estimate input.",
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/EditableConfiguration"
+          },
+          "expected_jobs": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Expected Jobs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "configuration",
+          "expected_jobs"
+        ],
+        "title": "OnboardingFinishBody",
         "type": "object"
       },
       "PerformanceOverviewResponse": {
@@ -1707,6 +2140,140 @@
         "title": "PerformanceOverviewResponse",
         "type": "object"
       },
+      "PersonalMLStatusResponse": {
+        "additionalProperties": false,
+        "description": "User-visible progress and shadow-quality evidence.",
+        "properties": {
+          "baseline_rejection": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Rejection"
+          },
+          "category_recall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Recall"
+          },
+          "estimated_call_reduction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Call Reduction"
+          },
+          "label_count": {
+            "title": "Label Count",
+            "type": "integer"
+          },
+          "model_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Threshold"
+          },
+          "next_target": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Target"
+          },
+          "quick_fail_rejection": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quick Fail Rejection"
+          },
+          "quick_pass_recall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quick Pass Recall"
+          },
+          "ranking_count": {
+            "title": "Ranking Count",
+            "type": "integer"
+          },
+          "rolling_recall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolling Recall"
+          },
+          "shadow_count": {
+            "title": "Shadow Count",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "collecting",
+              "ranking",
+              "shadow",
+              "ready",
+              "active",
+              "paused"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "label_count",
+          "ranking_count",
+          "shadow_count",
+          "next_target",
+          "model_threshold",
+          "quick_pass_recall",
+          "quick_fail_rejection",
+          "category_recall",
+          "baseline_rejection",
+          "estimated_call_reduction",
+          "rolling_recall"
+        ],
+        "title": "PersonalMLStatusResponse",
+        "type": "object"
+      },
       "PipelineAttentionEntry": {
         "description": "One pipeline-health row (enrich error, low quality, stuck scoring).",
         "properties": {
@@ -1739,6 +2306,102 @@
           "detail"
         ],
         "title": "PipelineAttentionEntry",
+        "type": "object"
+      },
+      "PlanUsageResponse": {
+        "description": "Live provider-plan allowance safe to show during onboarding.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "plan_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Name"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "openai_api",
+                  "anthropic_api",
+                  "codex_cli",
+                  "claude_cli"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "remaining_percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Percent"
+          },
+          "resets_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resets At"
+          },
+          "source": {
+            "enum": [
+              "live",
+              "unavailable"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "used_percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Percent"
+          },
+          "window_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Minutes"
+          }
+        },
+        "required": [
+          "provider",
+          "source",
+          "detail"
+        ],
+        "title": "PlanUsageResponse",
         "type": "object"
       },
       "ProbeBody": {
@@ -1827,6 +2490,167 @@
         "title": "ProbeResponse",
         "type": "object"
       },
+      "ProviderConnectionBody": {
+        "additionalProperties": false,
+        "description": "Provider selection plus an optional write-only API key.",
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "format": "password",
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "provider": {
+            "enum": [
+              "openai_api",
+              "anthropic_api",
+              "codex_cli",
+              "claude_cli"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "title": "ProviderConnectionBody",
+        "type": "object"
+      },
+      "ProviderModelOut": {
+        "description": "One provider model safe to expose to the browser.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "ProviderModelOut",
+        "type": "object"
+      },
+      "ProviderModelsBody": {
+        "additionalProperties": false,
+        "description": "Quick and Detailed model selections from a verified catalog.",
+        "properties": {
+          "detailed_model": {
+            "title": "Detailed Model",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "openai_api",
+              "anthropic_api",
+              "codex_cli",
+              "claude_cli"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "quick_model": {
+            "title": "Quick Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "quick_model",
+          "detailed_model"
+        ],
+        "title": "ProviderModelsBody",
+        "type": "object"
+      },
+      "ProviderStateResponse": {
+        "description": "Resumable provider state containing no raw API key.",
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "detailed_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detailed Model"
+          },
+          "has_secret": {
+            "title": "Has Secret",
+            "type": "boolean"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderModelOut"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "openai_api",
+                  "anthropic_api",
+                  "codex_cli",
+                  "claude_cli"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "quick_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quick Model"
+          }
+        },
+        "required": [
+          "connected",
+          "models",
+          "has_secret"
+        ],
+        "title": "ProviderStateResponse",
+        "type": "object"
+      },
       "RestoreResponse": {
         "description": "``POST /api/jobs/{id}/restore`` response: where the job landed.",
         "properties": {
@@ -1874,6 +2698,50 @@
           "avoid_mentioning"
         ],
         "title": "ResumeHooksDetail",
+        "type": "object"
+      },
+      "ResumeStateResponse": {
+        "description": "Resumable r\u00e9sum\u00e9 preview and profile without local filesystem paths.",
+        "properties": {
+          "extracted_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extracted Text"
+          },
+          "is_confirmed": {
+            "default": false,
+            "title": "Is Confirmed",
+            "type": "boolean"
+          },
+          "original_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Name"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ResumeStateResponse",
         "type": "object"
       },
       "RunSummary": {
@@ -2097,6 +2965,94 @@
         "title": "ScoringSettings",
         "type": "object"
       },
+      "SearchDraftState": {
+        "additionalProperties": false,
+        "description": "Profile-bound local search selection.",
+        "properties": {
+          "profile_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Fingerprint"
+          },
+          "searches": {
+            "items": {
+              "$ref": "#/components/schemas/SearchSuggestion"
+            },
+            "title": "Searches",
+            "type": "array"
+          }
+        },
+        "title": "SearchDraftState",
+        "type": "object"
+      },
+      "SearchSelectionBody": {
+        "additionalProperties": false,
+        "description": "Complete editable search selection submitted by the browser.",
+        "properties": {
+          "searches": {
+            "items": {
+              "$ref": "#/components/schemas/SearchSuggestion"
+            },
+            "title": "Searches",
+            "type": "array"
+          }
+        },
+        "required": [
+          "searches"
+        ],
+        "title": "SearchSelectionBody",
+        "type": "object"
+      },
+      "SearchSuggestion": {
+        "additionalProperties": false,
+        "description": "One editable source/query/location/URL selection.",
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "linkedin_guest",
+              "indeed"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "query",
+          "location",
+          "url"
+        ],
+        "title": "SearchSuggestion",
+        "type": "object"
+      },
       "SourcesATSConfig": {
         "additionalProperties": false,
         "description": "Runtime limits and tuning knobs for the ATS source.",
@@ -2116,6 +3072,12 @@
             "default": 10,
             "minimum": 1.0,
             "title": "Max Concurrent",
+            "type": "integer"
+          },
+          "max_jobs": {
+            "default": 1000,
+            "minimum": 1.0,
+            "title": "Max Jobs",
             "type": "integer"
           },
           "probe_timeout_s": {
@@ -2141,6 +3103,13 @@
               "type": "string"
             },
             "title": "Seed Companies",
+            "type": "array"
+          },
+          "title_keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Title Keywords",
             "type": "array"
           }
         },
@@ -2413,6 +3382,12 @@
             "default": 10,
             "minimum": 1.0,
             "title": "Max Concurrent",
+            "type": "integer"
+          },
+          "max_jobs": {
+            "default": 1000,
+            "minimum": 1.0,
+            "title": "Max Jobs",
             "type": "integer"
           },
           "search_urls": {
@@ -4048,6 +5023,499 @@
         "summary": "Transition Job"
       }
     },
+    "/api/onboarding/calibration-job": {
+      "get": {
+        "description": "Fetch a representative real JD from confirmed Indeed searches.\n\nArgs:\n    sampler: Shared confirmed-search sampler.\n    resume: Shared r\u00e9sum\u00e9/profile onboarding workflow.\n\nReturns:\n    Real posting closest to the bounded sample's mean JD length.\n\nRaises:\n    ApiError: If the profile is unconfirmed or no complete JD is available.",
+        "operationId": "get_calibration_job_api_onboarding_calibration_job_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalibrationJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Calibration Job"
+      }
+    },
+    "/api/onboarding/companies/catalog": {
+      "get": {
+        "description": "Load broad canonical company/vendor rows from public job lists.\n\nArgs:\n    load_catalog: Injected public ATS catalog loader.\n\nReturns:\n    Deduplicated company/vendor catalog and per-source counts.\n\nRaises:\n    ApiError: If every public catalog fails to load.",
+        "operationId": "get_onboarding_company_catalog_entries_api_onboarding_companies_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyCatalogState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Onboarding Company Catalog Entries"
+      }
+    },
+    "/api/onboarding/companies/recommend": {
+      "post": {
+        "description": "Generate or resume company candidates for the confirmed profile.\n\nArgs:\n    service: Shared company recommendation workflow.\n    refresh: Whether to bypass matching persisted suggestions.\n\nReturns:\n    Profile-bound company recommendation state.\n\nRaises:\n    ApiError: If provider or profile setup is incomplete.",
+        "operationId": "recommend_onboarding_companies_api_onboarding_companies_recommend_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Refresh",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyRecommendationState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Recommend Onboarding Companies"
+      }
+    },
+    "/api/onboarding/evaluation-calibration": {
+      "post": {
+        "description": "Run one real Quick + Detailed pair and return measured usage.\n\nArgs:\n    body: Representative job description to evaluate.\n    calibrator: Shared real evaluation calibration workflow.\n\nReturns:\n    Actual tokens, equivalent cost, latency, and plan-window delta.\n\nRaises:\n    ApiError: If provider or profile setup cannot support calibration.",
+        "operationId": "calibrate_evaluation_api_onboarding_evaluation_calibration_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationCalibrationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationCalibrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Calibrate Evaluation"
+      }
+    },
+    "/api/onboarding/finish": {
+      "post": {
+        "description": "Atomically apply the complete onboarding draft to active configuration.\n\nArgs:\n    body: Editable non-onboarding configuration fields.\n    editor: Project-local configuration editor.\n    provider_service: Verified provider and model draft.\n    resume_service: Confirmed r\u00e9sum\u00e9 and profile draft.\n    search_service: Confirmed search selection draft.\n\nReturns:\n    Saved effective configuration marked complete.\n\nRaises:\n    ApiError: If any required onboarding step is incomplete.",
+        "operationId": "finish_onboarding_api_onboarding_finish_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingFinishBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigurationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Finish Onboarding"
+      }
+    },
+    "/api/onboarding/plan-usage": {
+      "get": {
+        "description": "Return live subscription-window usage when the provider exposes it.\n\nArgs:\n    service: Shared provider-onboarding workflow.\n    reader: Local Codex plan-usage reader.\n\nReturns:\n    Live non-secret usage, or an explicit unavailable response.",
+        "operationId": "get_plan_usage_api_onboarding_plan_usage_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanUsageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Plan Usage"
+      }
+    },
+    "/api/onboarding/profile": {
+      "put": {
+        "description": "Persist the user's edited profile as explicitly confirmed.\n\nArgs:\n    body: Complete edited profile.\n    service: Shared r\u00e9sum\u00e9 onboarding workflow.\n\nReturns:\n    Confirmed resumable draft.\n\nRaises:\n    ApiError: If no r\u00e9sum\u00e9 draft exists.",
+        "operationId": "confirm_profile_api_onboarding_profile_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobProfile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Confirm Profile"
+      }
+    },
+    "/api/onboarding/provider": {
+      "get": {
+        "description": "Return resumable provider state with secret presence only.\n\nArgs:\n    service: Shared provider-onboarding workflow.\n\nReturns:\n    Secret-free provider state.",
+        "operationId": "get_provider_state_api_onboarding_provider_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Provider State"
+      }
+    },
+    "/api/onboarding/provider/models": {
+      "put": {
+        "description": "Persist provider-specific Quick and Detailed model choices.\n\nArgs:\n    body: Provider and selected model ids.\n    service: Shared provider-onboarding workflow.\n\nReturns:\n    Updated provider draft.\n\nRaises:\n    ApiError: If the provider or models do not match verified state.",
+        "operationId": "save_provider_models_api_onboarding_provider_models_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderModelsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Save Provider Models"
+      }
+    },
+    "/api/onboarding/provider/test": {
+      "post": {
+        "description": "Verify provider authentication and return available models.\n\nArgs:\n    body: Provider and optional write-only API key.\n    service: Shared provider-onboarding workflow.\n\nReturns:\n    Redacted connection result and model catalog.",
+        "operationId": "test_provider_connection_api_onboarding_provider_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderConnectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Test Provider Connection"
+      }
+    },
+    "/api/onboarding/resume": {
+      "get": {
+        "description": "Return the resumable path-free r\u00e9sum\u00e9 and profile draft.\n\nArgs:\n    service: Shared r\u00e9sum\u00e9 onboarding workflow.\n\nReturns:\n    Browser-safe r\u00e9sum\u00e9 and profile state.",
+        "operationId": "get_resume_state_api_onboarding_resume_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Resume State"
+      },
+      "post": {
+        "description": "Validate, extract, and save one original r\u00e9sum\u00e9 upload.\n\nArgs:\n    service: Shared r\u00e9sum\u00e9 onboarding workflow.\n    file: Supported original r\u00e9sum\u00e9 file.\n\nReturns:\n    Extracted preview without a local path.\n\nRaises:\n    ApiError: If the upload cannot be validated or extracted.",
+        "operationId": "upload_resume_api_onboarding_resume_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_resume_api_onboarding_resume_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Upload Resume"
+      }
+    },
+    "/api/onboarding/resume/analyze": {
+      "post": {
+        "description": "Analyze the uploaded r\u00e9sum\u00e9 with the selected Detailed model.\n\nArgs:\n    service: Shared r\u00e9sum\u00e9 onboarding workflow.\n\nReturns:\n    Draft containing the validated profile suggestion.\n\nRaises:\n    ApiError: If upload or provider setup is incomplete or analysis fails.",
+        "operationId": "analyze_resume_api_onboarding_resume_analyze_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Analyze Resume"
+      }
+    },
+    "/api/onboarding/searches": {
+      "get": {
+        "description": "Generate or resume searches for the confirmed profile.\n\nArgs:\n    service: Shared search-selection workflow.\n\nReturns:\n    Profile-bound editable search suggestions.\n\nRaises:\n    ApiError: If the profile has not been explicitly confirmed.",
+        "operationId": "get_onboarding_searches_api_onboarding_searches_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchDraftState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Get Onboarding Searches"
+      },
+      "put": {
+        "description": "Persist edited, added, and deselected search rows.\n\nArgs:\n    body: Complete validated search selection.\n    service: Shared search-selection workflow.\n\nReturns:\n    Persisted profile-bound search draft.\n\nRaises:\n    ApiError: If the profile has not been explicitly confirmed.",
+        "operationId": "put_onboarding_searches_api_onboarding_searches_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchSelectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchDraftState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Put Onboarding Searches"
+      }
+    },
     "/api/performance/funnel": {
       "get": {
         "description": "Evaluation funnel snapshots from pipeline runs.\n\nArgs:\n    service: Shared performance service.\n    window: Window in days (1..365).\n\nReturns:\n    Funnel response.",
@@ -4234,6 +5702,44 @@
           }
         },
         "summary": "Step Timings"
+      }
+    },
+    "/api/personal-ml/activate": {
+      "post": {
+        "description": "Explicitly enable only a threshold that passed future shadow checks.\n\nArgs:\n    service: Shared personal learning policy service.\n    editor: Effective local configuration editor.\n\nReturns:\n    Saved configuration with the validated filter enabled.\n\nRaises:\n    ApiError: If shadow validation has not made the model ready.",
+        "operationId": "activate_personal_ml_api_personal_ml_activate_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigurationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Activate Personal Ml"
+      }
+    },
+    "/api/personal-ml/status": {
+      "get": {
+        "description": "Return current teacher-label, ranking, and shadow progress.\n\nArgs:\n    service: Shared personal learning policy service.\n    editor: Effective local configuration editor.\n\nReturns:\n    Current lifecycle state and measured validation evidence.",
+        "operationId": "get_personal_ml_status_api_personal_ml_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalMLStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Personal Ml Status"
       }
     },
     "/api/runs": {

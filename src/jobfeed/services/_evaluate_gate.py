@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import Literal
 
 from jobfeed.domain.models import JobPosting, MLGateResult, PipelineRun
 from jobfeed.ports.ml_gate import GateInput, MLGate
 from jobfeed.ports.store_claims import GateCandidate
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
+
+GateMode = Literal["off", "shadow", "filter"]
+_EXPLORATION_BUCKETS = 10
 
 
 async def gate_representatives(  # noqa: PLR0913 - live progress is an optional observer
@@ -23,6 +27,7 @@ async def gate_representatives(  # noqa: PLR0913 - live progress is an optional 
     representatives: list[GateCandidate],
     dry_run: bool,
     *,
+    mode: GateMode | None = None,
     on_progress: Callable[[], None] | None = None,
 ) -> list[JobPosting]:
     """Gate only NULL-gate reps and return the surviving job postings.
@@ -52,7 +57,18 @@ async def gate_representatives(  # noqa: PLR0913 - live progress is an optional 
     if on_progress is not None:
         on_progress()
     gate = deps.ml_gate
-    if not config.ml_gate_enabled or gate is None:
+    active_mode = mode or await resolve_gate_mode(deps, config, dry_run=dry_run)
+    if gate is not None and active_mode == "shadow":
+        await _score_in_shadow(
+            deps,
+            gate,
+            run,
+            representatives,
+            max_concurrent=config.llm.max_concurrent,
+            on_persisted=on_progress,
+        )
+        return [candidate.job for candidate in representatives]
+    if active_mode != "filter" or gate is None:
         run.ml_gate_processed = len(representatives)
         if on_progress is not None:
             on_progress()
@@ -86,6 +102,80 @@ async def gate_representatives(  # noqa: PLR0913 - live progress is an optional 
     # counters can't stand in for it (Stage A limit/budget cap them).
     run.jobs_gate_passed += len(survivors)
     return survivors
+
+
+async def resolve_gate_mode(
+    deps: EvaluateDependencies,
+    config: EvaluateRuntimeConfig,
+    *,
+    dry_run: bool,
+) -> GateMode:
+    """Resolve off, safe-shadow, or filtering before the candidate query.
+
+    Args:
+        deps: Evaluation dependencies including optional personal-ML state.
+        config: Effective evaluation and gate configuration.
+        dry_run: Whether evaluation will avoid persistence and model calls.
+
+    Returns:
+        Gate mode to apply to this evaluation run.
+    """
+    if deps.ml_gate is None:
+        return "off"
+    if deps.personal_ml is None:
+        return "filter" if config.ml_gate_enabled else "off"
+    status = await deps.personal_ml.status(
+        quick_pass_threshold=config.stage_a_threshold,
+        enabled=config.ml_gate_enabled,
+    )
+    if status.state == "paused":
+        return "shadow"
+    if config.ml_gate_enabled:
+        return "filter"
+    if not dry_run and status.state in {"ranking", "shadow", "ready"}:
+        return "shadow"
+    return "off"
+
+
+async def _score_in_shadow(  # noqa: PLR0913 - persistence uses shared gate controls
+    deps: EvaluateDependencies,
+    gate: MLGate,
+    run: PipelineRun,
+    representatives: list[GateCandidate],
+    *,
+    max_concurrent: int,
+    on_persisted: Callable[[], None] | None,
+) -> None:
+    """Persist missing predictions while returning every candidate to Quick."""
+    to_score = [
+        candidate.job
+        for candidate in representatives
+        if candidate.ml_gate_result is None
+    ]
+    run.ml_gate_total = len(representatives)
+    run.ml_gate_processed = len(representatives) - len(to_score)
+    if not to_score:
+        return
+    results = await gate.predict_batch(
+        [
+            GateInput(job_id=_job_id(job), title=job.title, jd_text=job.jd_text or "")
+            for job in to_score
+        ]
+    )
+
+    def _persisted() -> None:
+        run.ml_gate_processed += 1
+        if on_persisted is not None:
+            on_persisted()
+
+    await _persist_gate_results(
+        deps,
+        to_score,
+        results,
+        False,
+        max_concurrent=max_concurrent,
+        on_persisted=_persisted,
+    )
 
 
 async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurrency cap
@@ -133,12 +223,26 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
         max_concurrent=max_concurrent,
         on_persisted=on_persisted,
     )
-    run.jobs_ml_gated += sum(1 for result in results if result.result != "pass")
+    explored = {
+        _job_id(job)
+        for job, result in zip(to_gate, results, strict=True)
+        if result.result != "pass" and _is_exploration(job)
+    }
+    run.jobs_ml_gated += sum(
+        result.result != "pass" and _job_id(job) not in explored
+        for job, result in zip(to_gate, results, strict=True)
+    )
     return [
         job
         for job, result in zip(to_gate, results, strict=True)
-        if result.result == "pass"
+        if result.result == "pass" or _job_id(job) in explored
     ]
+
+
+def _is_exploration(job: JobPosting) -> bool:
+    """Select a stable 10% of model failures for continued Quick labels."""
+    job_id = _job_id(job)
+    return job_id.isdigit() and int(job_id) % _EXPLORATION_BUCKETS == 0
 
 
 async def _persist_gate_results(  # noqa: PLR0913 - bounded persistence needs its observer
@@ -173,4 +277,4 @@ def _job_id(job: JobPosting) -> str:
     return job.id
 
 
-__all__ = ["gate_representatives", "gate_unrated"]
+__all__ = ["gate_representatives", "gate_unrated", "resolve_gate_mode"]

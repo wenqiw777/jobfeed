@@ -239,6 +239,31 @@ async def test_scan_completes_with_succeeded_status() -> None:
 
 
 @pytest.mark.asyncio
+async def test_successful_web_scan_runs_post_scan_hook() -> None:
+    """Web-triggered scans run source-specific follow-up work before finishing."""
+    called = asyncio.Event()
+    captured: list[list[SourceSpec]] = []
+    specs: list[SourceSpec] = [("linkedin_guest", object(), {})]
+
+    async def post_scan_hook(received: list[SourceSpec]) -> None:
+        captured.append(received)
+        called.set()
+
+    mgr = RunManager(
+        store=RecordingStore(),
+        logger=RecordingLogger(),
+        scan_service_factory=FakeScanService,
+        evaluate_service_factory=lambda **_kw: FakeEvaluateService(),
+        post_scan_hook=post_scan_hook,
+    )
+
+    await mgr.trigger_scan(specs)
+    await asyncio.wait_for(called.wait(), timeout=1)
+
+    assert captured == [specs]
+
+
+@pytest.mark.asyncio
 async def test_concurrent_scan_raises_conflict() -> None:
     """A second scan trigger while one is active raises RunConflictError."""
     gate = asyncio.Event()

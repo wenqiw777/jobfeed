@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import cast
 
 from fastapi import Request
@@ -9,6 +10,14 @@ from fastapi import Request
 from jobfeed.cli import AppContext
 from jobfeed.cli._probe import ProbeVendorFn
 from jobfeed.config_editor import ConfigurationEditor
+from jobfeed.onboarding import OnboardingProviderService
+from jobfeed.onboarding_calibration_job import OnboardingCalibrationJobSampler
+from jobfeed.onboarding_companies import CompanyCatalogState, OnboardingCompanyService
+from jobfeed.onboarding_evaluation_calibration import OnboardingEvaluationCalibrator
+from jobfeed.onboarding_plan_usage import CodexPlanUsageReader
+from jobfeed.onboarding_resume import ResumeOnboardingService
+from jobfeed.onboarding_searches import OnboardingSearchService
+from jobfeed.personal_ml_learning import PersonalMLLearningService
 from jobfeed.ports.store import JobStore
 from jobfeed.services.application import ApplicationService
 from jobfeed.services.insights import InsightsService
@@ -55,6 +64,121 @@ def get_configuration_editor(request: Request) -> ConfigurationEditor:
         Shared editor that persists and applies validated settings.
     """
     return cast(ConfigurationEditor, request.app.state.configuration_editor)
+
+
+def get_personal_ml_service(request: Request) -> PersonalMLLearningService:
+    """Return the shared personal relevance-learning service.
+    Args: Current request carrying application state.
+    Returns: Shared personal relevance-learning service.
+    """
+    return cast(PersonalMLLearningService, request.app.state.personal_ml_service)
+
+
+def get_onboarding_provider_service(request: Request) -> OnboardingProviderService:
+    """Return the provider-onboarding workflow assembled by the app factory.
+
+    Args:
+        request: Current request carrying application state.
+
+    Returns:
+        Shared provider-onboarding workflow.
+    """
+    return cast(
+        OnboardingProviderService,
+        request.app.state.onboarding_provider_service,
+    )
+
+
+def get_onboarding_plan_usage_reader(request: Request) -> CodexPlanUsageReader:
+    """Return the local provider-plan usage reader.
+    Args: Current request carrying application state.
+    Returns: Shared local Codex plan-usage reader.
+    """
+    return cast(
+        CodexPlanUsageReader,
+        request.app.state.onboarding_plan_usage_reader,
+    )
+
+
+def get_onboarding_evaluation_calibrator(
+    request: Request,
+) -> OnboardingEvaluationCalibrator:
+    """Return the real two-stage evaluation calibration workflow.
+    Args: Current request carrying application state.
+    Returns: Shared evaluation calibration workflow.
+    """
+    return cast(
+        OnboardingEvaluationCalibrator,
+        request.app.state.onboarding_evaluation_calibrator,
+    )
+
+
+def get_onboarding_calibration_job_sampler(
+    request: Request,
+) -> OnboardingCalibrationJobSampler:
+    """Return the confirmed-search sampler used by onboarding calibration.
+    Args: Current request carrying application state.
+    Returns: Shared representative-JD sampler.
+    """
+    return cast(
+        OnboardingCalibrationJobSampler,
+        request.app.state.onboarding_calibration_job_sampler,
+    )
+
+
+def get_onboarding_resume_service(request: Request) -> ResumeOnboardingService:
+    """Return the résumé/profile onboarding workflow assembled by the app.
+
+    Args:
+        request: Current request carrying application state.
+
+    Returns:
+        Shared résumé/profile onboarding workflow.
+    """
+    return cast(
+        ResumeOnboardingService,
+        request.app.state.onboarding_resume_service,
+    )
+
+
+def get_onboarding_search_service(request: Request) -> OnboardingSearchService:
+    """Return the confirmed-profile search onboarding workflow.
+
+    Args:
+        request: Current request carrying application state.
+
+    Returns:
+        Shared resumable search-selection workflow.
+    """
+    return cast(
+        OnboardingSearchService,
+        request.app.state.onboarding_search_service,
+    )
+
+
+def get_onboarding_company_service(request: Request) -> OnboardingCompanyService:
+    """Return the profile-derived company recommendation workflow.
+    Args: Current request carrying application state.
+    Returns: Shared company recommendation workflow.
+    """
+    return cast(
+        OnboardingCompanyService,
+        request.app.state.onboarding_company_service,
+    )
+
+
+CompanyCatalogLoader = Callable[[], Awaitable[CompanyCatalogState]]
+
+
+def get_onboarding_company_catalog(request: Request) -> CompanyCatalogLoader:
+    """Return the injected public ATS company-catalog loader.
+    Args: Current request carrying application state.
+    Returns: Async public catalog loader.
+    """
+    return cast(
+        CompanyCatalogLoader,
+        request.app.state.onboarding_company_catalog,
+    )
 
 
 def get_jobs_view_service(request: Request) -> JobsViewService:
@@ -156,12 +280,18 @@ def get_performance_service(request: Request) -> PerformanceService:
 
 
 __all__ = [
+    "CompanyCatalogLoader",
     "ProbeVendorFn",
     "get_application_service",
     "get_configuration_editor",
     "get_context",
     "get_insights_service",
     "get_jobs_view_service",
+    "get_onboarding_company_catalog",
+    "get_onboarding_company_service",
+    "get_onboarding_plan_usage_reader",
+    "get_onboarding_provider_service",
+    "get_onboarding_resume_service",
     "get_performance_service",
     "get_probe_company",
     "get_run_manager",

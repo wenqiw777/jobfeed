@@ -68,7 +68,8 @@ def _gh_job(**overrides: object) -> dict:
         ),
         "location": {"name": overrides.pop("location_name", "San Francisco, CA")},
         "content": overrides.pop("content", _GH_DEFAULT_CONTENT),
-        "updated_at": overrides.pop("updated_at", "2026-05-01T10:00:00Z"),
+        "first_published": overrides.pop("first_published", "2026-05-01T10:00:00Z"),
+        "updated_at": overrides.pop("updated_at", "2026-05-20T10:00:00Z"),
     }
     company_name = overrides.pop("company_name", None)
     if company_name is not None:
@@ -296,9 +297,9 @@ class TestGreenhouseFetchJobs:
         assert "systems" in postings[0].jd_text
 
     @respx.mock
-    async def test_fetch_jobs_parses_updated_at_as_posted_at(self) -> None:
-        """fetch_jobs parses updated_at into posted_at datetime."""
-        job = _gh_job(updated_at="2026-05-01T10:00:00Z")
+    async def test_fetch_jobs_parses_first_published_as_posted_at(self) -> None:
+        """fetch_jobs parses first_published into posted_at datetime."""
+        job = _gh_job(first_published="2026-05-01T10:00:00Z")
         respx.get(GH_JOBS_URL).mock(
             return_value=httpx.Response(HTTP_200, json={"jobs": [job]})
         )
@@ -307,9 +308,9 @@ class TestGreenhouseFetchJobs:
         assert postings[0].posted_at is not None
 
     @respx.mock
-    async def test_fetch_jobs_invalid_updated_at_becomes_none(self) -> None:
-        """fetch_jobs sets posted_at=None when updated_at is invalid."""
-        job = _gh_job(updated_at="not-a-date")
+    async def test_fetch_jobs_invalid_first_published_becomes_none(self) -> None:
+        """fetch_jobs sets posted_at=None when first_published is invalid."""
+        job = _gh_job(first_published="not-a-date")
         respx.get(GH_JOBS_URL).mock(
             return_value=httpx.Response(HTTP_200, json={"jobs": [job]})
         )
@@ -318,9 +319,9 @@ class TestGreenhouseFetchJobs:
         assert postings[0].posted_at is None
 
     @respx.mock
-    async def test_fetch_jobs_null_updated_at_becomes_none(self) -> None:
-        """fetch_jobs sets posted_at=None when updated_at is null."""
-        job = _gh_job(updated_at=None)
+    async def test_fetch_jobs_null_first_published_becomes_none(self) -> None:
+        """fetch_jobs sets posted_at=None when first_published is null."""
+        job = _gh_job(first_published=None)
         respx.get(GH_JOBS_URL).mock(
             return_value=httpx.Response(HTTP_200, json={"jobs": [job]})
         )
