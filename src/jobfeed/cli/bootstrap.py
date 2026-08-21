@@ -20,6 +20,7 @@ from jobfeed.adapters.sources._http import create_http_client
 from jobfeed.cli import AppContext, require_app, run_with_store
 from jobfeed.cli.companies import _store_ops
 from jobfeed.domain.models import CompanyRecord
+from jobfeed.onboarding_companies import CatalogCompany, CompanyCatalogState
 
 _SOURCE_CHOICES = click.Choice([*sorted(BOOTSTRAP_SOURCES), "all"])
 
@@ -84,6 +85,32 @@ async def _run_bootstrap(
     )
 
 
+async def load_company_catalog() -> CompanyCatalogState:
+    """Load and deduplicate every public job-list ATS company for the web UI.
+
+    Returns:
+        Source counts and canonical company/vendor pairs.
+
+    Raises:
+        ValueError: If every configured public catalog fails to load.
+    """
+    names = sorted(BOOTSTRAP_SOURCES)
+    bodies = await _fetch_sources(names)
+    if not bodies:
+        raise ValueError("All public company catalogs failed to load")
+    source_pairs = {name: extract_ats_slugs(body) for name, body in bodies.items()}
+    by_slug: dict[str, str] = {}
+    for slug, vendor in sorted(set().union(*source_pairs.values())):
+        by_slug.setdefault(slug, vendor)
+    return CompanyCatalogState(
+        source_counts={name: len(pairs) for name, pairs in source_pairs.items()},
+        companies=[
+            CatalogCompany.model_validate({"slug": slug, "vendor": vendor})
+            for slug, vendor in sorted(by_slug.items())
+        ],
+    )
+
+
 async def _fetch_sources(names: list[str]) -> dict[str, str]:
     """Fetch each named README; a failed source is warned about and dropped."""
     client = create_http_client(timeout=_FETCH_TIMEOUT_S)
@@ -131,4 +158,4 @@ async def _diff_and_write(
     click.echo(f"Added {len(to_add)} new, {skipped} already tracked.")
 
 
-__all__ = ["bootstrap_companies"]
+__all__ = ["bootstrap_companies", "load_company_catalog"]

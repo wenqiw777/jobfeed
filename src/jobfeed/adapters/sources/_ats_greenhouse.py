@@ -212,7 +212,7 @@ def _build_posting(
         discovered_at=discovered_at,
         jd_text=jd_text,
         jd_quality=assess_quality(jd_text),
-        posted_at=_parse_updated_at(job.get("updated_at")),
+        posted_at=_parse_first_published(job.get("first_published")),
         enriched_at=discovered_at,
         enrich_source="api-greenhouse",
     )
@@ -238,19 +238,19 @@ def _extract_location(job: Any) -> str:
     return str(location_obj.get("name") or "").strip()
 
 
-def _parse_updated_at(updated_at: Any) -> datetime | None:
-    """Parse Greenhouse updated_at timestamp string.
+def _parse_first_published(first_published: Any) -> datetime | None:
+    """Parse Greenhouse first_published timestamp string.
 
     Args:
-        updated_at: Raw timestamp value from API.
+        first_published: Raw timestamp value from API.
 
     Returns:
         Parsed datetime, or None if invalid.
     """
-    if not updated_at:
+    if not first_published:
         return None
     try:
-        return datetime.fromisoformat(str(updated_at))
+        return datetime.fromisoformat(str(first_published))
     except (ValueError, TypeError):
         return None
 

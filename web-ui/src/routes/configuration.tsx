@@ -18,11 +18,13 @@ import { type FormEvent, type ReactNode, useState } from "react";
 import { useNavigate } from "react-router";
 
 import {
+  type ConfigurationResponse,
   type EditableConfiguration,
   useConfiguration,
   useSaveConfiguration,
 } from "@/api/configuration";
 import type { components } from "@/api/types.gen";
+import OnboardingProviderPage from "@/routes/onboarding-provider";
 
 type Sources = components["schemas"]["SourcesConfig"];
 type SourceKey = keyof Sources;
@@ -64,6 +66,11 @@ const MODEL_OPTIONS: SelectProps.Options = [
 /** First-run onboarding and persistent local workspace settings. */
 export default function ConfigurationPage() {
   const current = useConfiguration().data!;
+  if (!current.configured) return <OnboardingProviderPage />;
+  return <WorkspaceSettings current={current} />;
+}
+
+function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
   const [form, setForm] = useState<EditableConfiguration>(() => {
     const editable: Partial<typeof current> = structuredClone(current);
     delete editable.configured;
@@ -72,7 +79,6 @@ export default function ConfigurationPage() {
   const [validation, setValidation] = useState<string | null>(null);
   const save = useSaveConfiguration();
   const navigate = useNavigate();
-  const isFirstRun = !current.configured;
 
   function updateSection<K extends keyof EditableConfiguration>(
     section: K,
@@ -108,7 +114,7 @@ export default function ConfigurationPage() {
             variant="h1"
             description="Choose what Jobfeed watches and how it scores. Settings and job data stay on this computer."
           >
-            {isFirstRun ? "Set up your feed" : "Workspace settings"}
+            Workspace settings
           </Header>
         }
       >
@@ -125,7 +131,7 @@ export default function ConfigurationPage() {
                   loading={save.isPending}
                   loadingText="Saving settings"
                 >
-                  {isFirstRun ? "Save and open Jobfeed" : "Save changes"}
+                  Save changes
                 </Button>
               </SpaceBetween>
             }
@@ -168,16 +174,30 @@ export default function ConfigurationPage() {
 
               <SettingsSection title="Job sources" description="Start narrow; additional feeds can be enabled later.">
                 <SourceToggle label="Company career pages" detail="Greenhouse, Lever and Ashby companies" checked={sources.ats!.enabled} onChange={(enabled) => updateSource("ats", { ...sources.ats!, enabled })}>
-                  <ListField label="Company slugs" value={sources.ats!.seed_companies} onChange={(value) => updateSource("ats", { ...sources.ats!, seed_companies: value })} />
+                  <SpaceBetween size="m">
+                    <NumberField label="Company career pages maximum jobs per scan" value={sources.ats!.max_jobs} min={1} onChange={(value) => updateSource("ats", { ...sources.ats!, max_jobs: value })} />
+                    <ListField label="ATS target job titles" value={sources.ats!.title_keywords} onChange={(value) => updateSource("ats", { ...sources.ats!, title_keywords: value })} />
+                    <Box variant="small" color="text-body-secondary">Only matching ATS titles count toward this source limit. Onboarding fills these from your confirmed searches.</Box>
+                    <ListField label="Company slugs" value={sources.ats!.seed_companies} onChange={(value) => updateSource("ats", { ...sources.ats!, seed_companies: value })} />
+                  </SpaceBetween>
                 </SourceToggle>
                 <SourceToggle label="LinkedIn guest search" detail="Anonymous search; no browser login" checked={sources.linkedin_guest!.enabled} onChange={(enabled) => updateSource("linkedin_guest", { ...sources.linkedin_guest!, enabled })}>
-                  <ListField label="LinkedIn search URLs" value={sources.linkedin_guest!.search_urls} onChange={(value) => updateSource("linkedin_guest", { ...sources.linkedin_guest!, search_urls: value })} />
+                  <SpaceBetween size="m">
+                    <NumberField label="LinkedIn guest maximum jobs per scan" value={sources.linkedin_guest!.max_jobs} min={1} onChange={(value) => updateSource("linkedin_guest", { ...sources.linkedin_guest!, max_jobs: value })} />
+                    <ListField label="LinkedIn search URLs" value={sources.linkedin_guest!.search_urls} onChange={(value) => updateSource("linkedin_guest", { ...sources.linkedin_guest!, search_urls: value })} />
+                  </SpaceBetween>
                 </SourceToggle>
                 <SourceToggle label="Indeed search" detail="JobSpy search URLs" checked={sources.indeed!.enabled} onChange={(enabled) => updateSource("indeed", { ...sources.indeed!, enabled })}>
-                  <ListField label="Indeed search URLs" value={sources.indeed!.search_urls} onChange={(value) => updateSource("indeed", { ...sources.indeed!, search_urls: value })} />
+                  <SpaceBetween size="m">
+                    <NumberField label="Indeed maximum jobs per scan" value={sources.indeed!.max_jobs} min={1} onChange={(value) => updateSource("indeed", { ...sources.indeed!, max_jobs: value })} />
+                    <ListField label="Indeed search URLs" value={sources.indeed!.search_urls} onChange={(value) => updateSource("indeed", { ...sources.indeed!, search_urls: value })} />
+                  </SpaceBetween>
                 </SourceToggle>
                 <SourceToggle label="SpeedyApply lists" detail="Curated GitHub markdown feeds" checked={sources.speedyapply!.enabled} onChange={(enabled) => updateSource("speedyapply", { ...sources.speedyapply!, enabled })}>
-                  <ListField label="SpeedyApply URLs" value={sources.speedyapply!.search_urls} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, search_urls: value })} />
+                  <SpaceBetween size="m">
+                    <NumberField label="SpeedyApply maximum jobs per scan" value={sources.speedyapply!.max_jobs} min={1} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, max_jobs: value })} />
+                    <ListField label="SpeedyApply URLs" value={sources.speedyapply!.search_urls} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, search_urls: value })} />
+                  </SpaceBetween>
                 </SourceToggle>
               </SettingsSection>
 
@@ -192,9 +212,21 @@ export default function ConfigurationPage() {
                   </Field>
                   <NumberField label="Large-company maximum age (days)" value={filters.big_company_days} min={1} onChange={(value) => updateSection("hard_filters", { ...filters, big_company_days: value })} />
                 </ColumnLayout>
-                <Checkbox checked={scoring.ml_gate_enabled} onChange={({ detail }) => updateSection("scoring", { ...scoring, ml_gate_enabled: detail.checked })}>
-                  Use the local filter before paid evaluation
-                </Checkbox>
+                <Alert type={scoring.ml_gate_enabled ? "success" : "info"} header={`Personal job filter · ${form.ml_gate!.model_version}`}>
+                  <SpaceBetween size="xs">
+                    <Checkbox
+                      checked={scoring.ml_gate_enabled}
+                      onChange={({ detail }) => updateSection("scoring", { ...scoring, ml_gate_enabled: detail.checked })}
+                    >
+                      Enable personal ML filter
+                    </Checkbox>
+                    <Box variant="small" color="text-body-secondary">
+                      {scoring.ml_gate_enabled
+                        ? "Active. Jobs predicted irrelevant skip Quick evaluation and remain recoverable in the Job library."
+                        : "Uses the existing trained model immediately. Readiness checks remain advisory; recent recall can still pause filtering automatically."}
+                    </Box>
+                  </SpaceBetween>
+                </Alert>
               </SettingsSection>
 
               <ExpandableSection variant="container" headerText="Advanced settings" headerDescription="Custom model endpoints, calibration, and authenticated search.">
@@ -203,11 +235,14 @@ export default function ConfigurationPage() {
                     <Field label="Personal calibration file"><Input placeholder="Optional Markdown path" value={llm.preamble_personal_path ?? ""} onChange={({ detail }) => updateSection("llm", { ...llm, preamble_personal_path: detail.value || null })} /></Field>
                     <Field label="OpenAI-compatible base URL"><Input value={llm.openai_compat_base_url} onChange={({ detail }) => updateSection("llm", { ...llm, openai_compat_base_url: detail.value })} /></Field>
                     <Field label="API key environment variable"><Input value={llm.openai_compat_api_key_env} onChange={({ detail }) => updateSection("llm", { ...llm, openai_compat_api_key_env: detail.value })} /></Field>
-                    <NumberField label="Default jobs per evaluation" value={scoring.default_eval_limit} min={0} onChange={(value) => updateSection("scoring", { ...scoring, default_eval_limit: value })} />
+                    <NumberField label="Maximum unique jobs to evaluate per run" value={scoring.default_eval_limit} min={1} onChange={(value) => updateSection("scoring", { ...scoring, default_eval_limit: value })} />
                     <NumberField label="Local filter candidate limit" value={form.ml_gate!.max_candidates} min={1} onChange={(value) => updateSection("ml_gate", { ...form.ml_gate!, max_candidates: value })} />
                   </ColumnLayout>
                   <SourceToggle label="Authenticated LinkedIn search" detail="Uses your local browser profile" checked={sources.linkedin!.enabled} onChange={(enabled) => updateSource("linkedin", { ...sources.linkedin!, enabled })}>
-                    <ListField label="Authenticated LinkedIn search URLs" value={linkedinValues(sources.linkedin!.search_urls)} onChange={(value) => updateSource("linkedin", { ...sources.linkedin!, search_urls: value })} />
+                    <SpaceBetween size="m">
+                      <NumberField label="Authenticated LinkedIn maximum jobs per scan" value={sources.linkedin!.max_jobs} min={1} onChange={(value) => updateSource("linkedin", { ...sources.linkedin!, max_jobs: value })} />
+                      <ListField label="Authenticated LinkedIn search URLs" value={linkedinValues(sources.linkedin!.search_urls)} onChange={(value) => updateSource("linkedin", { ...sources.linkedin!, search_urls: value })} />
+                    </SpaceBetween>
                   </SourceToggle>
                 </SpaceBetween>
               </ExpandableSection>

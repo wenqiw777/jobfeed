@@ -43,6 +43,9 @@ dependencies = [
     "psycopg2-binary >= 2.9",
     "pydantic",
     "playwright >= 1.48",
+    # Onboarding extracts supported résumé formats locally before any model call.
+    "pypdf >= 5.0",
+    "python-docx >= 1.1",
     # >= 1.1.82: the version we validate against; older 1.1.x predates the
     # country_indeed / linkedin_fetch_description kwargs _jobspy.scrape passes,
     # which would otherwise raise (contained as JobSpyError -> silent 0 jobs).

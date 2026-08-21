@@ -150,6 +150,8 @@ async def _run_enrich_linkedin_guest(
 async def run_guest_enrich_pass(
     app: AppContext,
     config: SourcesLinkedInGuestConfig,
+    *,
+    batch_limit: int | None = None,
 ) -> EnrichSummary:
     """Build the guest enricher + service and run one enrichment pass.
 
@@ -161,6 +163,8 @@ async def run_guest_enrich_pass(
     Args:
         app: Initialized application context (store must be connected).
         config: The linkedin_guest source config (pacing/proxy/batch knobs).
+        batch_limit: Optional caller-specific cap; defaults to the configured
+            standalone enrichment batch size.
 
     Returns:
         Counters for the completed enrichment pass.
@@ -179,7 +183,7 @@ async def run_guest_enrich_pass(
         )
         return await service.run(
             platform="linkedin_guest",
-            batch_limit=config.enrich_batch_limit,
+            batch_limit=batch_limit or config.enrich_batch_limit,
         )
 
 

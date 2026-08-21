@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -11,6 +13,8 @@ class SourcesATSConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
+    max_jobs: int = Field(default=1000, ge=1)
+    title_keywords: list[str] = Field(default_factory=list)
     max_concurrent: int = Field(default=10, ge=1)
     probe_ttl_days: int = Field(default=7, ge=0)
     failure_threshold: int = Field(default=3, ge=1)
@@ -33,6 +37,7 @@ class SourcesSpeedyApplyConfig(BaseModel):
 
     enabled: bool = False
     search_urls: list[str] = Field(default_factory=list)
+    max_jobs: int = Field(default=1000, ge=1)
     max_concurrent: int = Field(default=10, ge=1)
     fetch_timeout_s: float = Field(default=30.0, gt=0)
 
@@ -202,11 +207,36 @@ class SourcesConfig(BaseModel):
     )
     linkedin: SourcesLinkedInConfig = Field(default_factory=SourcesLinkedInConfig)
 
+    @model_validator(mode="after")
+    def _derive_ats_titles_from_searches(self) -> SourcesConfig:
+        """Backfill ATS relevance terms for configs saved before this field existed."""
+        if self.ats.title_keywords:
+            return self
+        titles: list[str] = []
+        if self.indeed.enabled:
+            titles.extend(_search_terms(self.indeed.search_urls, "q"))
+        if self.linkedin_guest.enabled:
+            titles.extend(_search_terms(self.linkedin_guest.search_urls, "keywords"))
+        if titles:
+            self.ats = self.ats.model_copy(
+                update={"title_keywords": list(dict.fromkeys(titles))}
+            )
+        return self
+
 
 def _is_blank_linkedin_search(value: str | SourcesLinkedInSearchConfig) -> bool:
     if isinstance(value, str):
         return not value.strip()
     return not value.url.strip()
+
+
+def _search_terms(urls: list[str], parameter: str) -> list[str]:
+    terms: list[str] = []
+    for url in urls:
+        value = parse_qs(urlparse(url).query).get(parameter, [""])[0].strip()
+        if value:
+            terms.append(value)
+    return terms
 
 
 __all__ = [

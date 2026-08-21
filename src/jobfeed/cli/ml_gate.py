@@ -219,7 +219,7 @@ def needs_ml_gate(stage: str, limit: int | None, *, ml_gate_enabled: bool) -> bo
     return ml_gate_enabled and stage != "b" and (limit is None or limit > 0)
 
 
-def build_ml_gate(settings: Settings) -> MLGate | None:
+def build_ml_gate(settings: Settings, *, allow_disabled: bool = False) -> MLGate | None:
     """Build the ML gate only when enabled; keep all ML imports lazy.
 
     Returns None when ``scoring.ml_gate_enabled`` is false so that ``xgboost`` /
@@ -235,7 +235,7 @@ def build_ml_gate(settings: Settings) -> MLGate | None:
     Returns:
         An MLGate implementation, or None when the gate is disabled.
     """
-    if not settings.scoring.ml_gate_enabled:
+    if not settings.scoring.ml_gate_enabled and not allow_disabled:
         return None
     ml = settings.ml_gate
     if ml.model_dir == MOCK_MODEL_DIR:

@@ -233,6 +233,17 @@ def test_build_ml_gate_mock_escape_hatch_returns_mock_gate() -> None:
     assert isinstance(gate, MockGate)
 
 
+def test_build_ml_gate_can_load_disabled_gate_for_safe_shadow_learning() -> None:
+    """Shadow mode can predict while the user-facing filter remains disabled."""
+    with _no_ml_toolchain_imported():
+        gate = build_ml_gate(
+            _settings(ml_gate_enabled=False, model_dir=MOCK_MODEL_DIR),
+            allow_disabled=True,
+        )
+
+    assert isinstance(gate, MockGate)
+
+
 def test_build_hard_filters_is_pure_domain_even_when_gate_disabled() -> None:
     """Hard filters are always built from config (pure domain, no toolchain)."""
     settings = Settings.model_validate(

@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import "@cloudscape-design/global-styles/index.css";
+import "@/styles.css";
 
 import App from "./App";
 import { DensityProvider } from "@/lib/density";

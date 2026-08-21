@@ -450,6 +450,44 @@ async def test_scrape_urls_contains_one_failing_url(
     assert {p.canonical_id for p in postings} == {"in-1", "in-3"}
 
 
+async def test_scrape_urls_treats_max_jobs_as_one_source_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Several Indeed URLs share one budget instead of multiplying it."""
+    source_limit = 5
+    requested: list[int] = []
+
+    def _fake_run_scrape_process(request: object, timeout_s: float) -> object:
+        assert timeout_s == _DEFAULT_JOBSPY_TIMEOUT_S
+        requested.append(request.max_jobs)
+        suffix = request.search_url.rsplit("=", 1)[-1]
+        return _scrape_outcome(
+            [
+                _posting_with_id(f"{suffix}-{index}", platform=request.platform)
+                for index in range(request.max_jobs)
+            ]
+        )
+
+    monkeypatch.setattr(
+        _jobspy_process, "_run_scrape_process", _fake_run_scrape_process
+    )
+
+    postings = await _jobspy_process.scrape_urls(
+        site_name="indeed",
+        platform="indeed",
+        search_urls=["https://indeed.com/jobs?q=one", "https://indeed.com/jobs?q=two"],
+        max_jobs=source_limit,
+        hours_old=None,
+        timeout_s=_DEFAULT_JOBSPY_TIMEOUT_S,
+        max_concurrent=2,
+        logger=get_logger(),
+        discovered_at=_DISCOVERED_AT,
+    )
+
+    assert requested == [3, 3]
+    assert len(postings) == source_limit
+
+
 def test_run_scrape_process_terminates_and_kills_timed_out_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

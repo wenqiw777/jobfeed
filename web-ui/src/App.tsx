@@ -12,6 +12,10 @@ import LibraryPage from "@/routes/library";
 import RunsPage from "@/routes/runs";
 import SourcesPage from "@/routes/sources";
 import TriagePage from "@/routes/triage";
+import OnboardingResumePage from "@/routes/onboarding-resume";
+import OnboardingSearchesPage from "@/routes/onboarding-searches";
+import OnboardingCompaniesPage from "@/routes/onboarding-companies";
+import OnboardingReviewPage from "@/routes/onboarding-review";
 
 // Keep dashboard routes lazy so ordinary triage startup stays small.
 const InsightsPage = lazy(() => import("@/routes/insights"));
@@ -35,13 +39,17 @@ export default function App() {
   if (configuration.isError || configuration.data === undefined) {
     return <ConfigurationUnavailable />;
   }
-  if (!configuration.data.configured && location.pathname !== "/setup") {
+  if (!configuration.data.configured && !location.pathname.startsWith("/setup")) {
     return <Navigate to="/setup" replace />;
   }
 
   return (
     <Routes>
       <Route path="/setup" element={<ConfigurationPage />} />
+      <Route path="/setup/resume" element={<OnboardingResumePage />} />
+      <Route path="/setup/searches" element={<OnboardingSearchesPage />} />
+      <Route path="/setup/companies" element={<OnboardingCompaniesPage />} />
+      <Route path="/setup/review" element={<OnboardingReviewPage />} />
       <Route element={<Shell />}>
         <Route path="/" element={<Navigate to="/triage" replace />} />
         <Route path="/triage" element={<TriagePage />} />

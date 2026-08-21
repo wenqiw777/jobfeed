@@ -285,8 +285,34 @@ test("probe flow: 20-line paste → per-entry results → confirm inserts only c
   expect(await screen.findByText("13 added")).toBeInTheDocument();
   expect(screen.getByText("2 already tracked")).toBeInTheDocument();
 
-  // The flow resets to a fresh paste box and the table picks up the rows.
-  await waitFor(() => expect(screen.getByLabelText("Company entries")).toHaveValue(""));
+  // Success remains visible after the toast disappears, with the selected
+  // companies explicitly shown as tracked.
+  expect(
+    await screen.findByRole("heading", { name: "Manually added companies (15)" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("13 new companies added")).toBeInTheDocument();
+  expect(screen.getByText("2 were already tracked")).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("table", { name: "Added companies" })).getAllByText("Tracked"),
+  ).toHaveLength(15);
+  fireEvent.click(screen.getByRole("button", { name: "Add more companies" }));
+  expect(
+    screen.getByRole("heading", { name: "Manually added companies (15)" }),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Company entries")).toHaveValue("");
+
+  fireEvent.change(screen.getByLabelText("Company entries"), {
+    target: { value: "co16" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Check boards" }));
+  expect(await screen.findByRole("heading", { name: /1 of 1 selected/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Add 1 selected company" }));
+  expect(
+    await screen.findByRole("heading", { name: "Manually added companies (16)" }),
+  ).toBeInTheDocument();
+  const manualTable = screen.getByRole("table", { name: "Added companies" });
+  expect(within(manualTable).getByText("co3")).toBeInTheDocument();
+  expect(within(manualTable).getByText("co16")).toBeInTheDocument();
   expect(await screen.findByTestId("company-row-co3")).toBeInTheDocument();
 });
 

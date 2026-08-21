@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { Sidebar } from "@/components/shell/Sidebar";
+import { PersonalMLBanner } from "@/components/shell/PersonalMLBanner";
 import { TopBar } from "@/components/shell/TopBar";
 import { Toaster } from "@/components/ui/toaster";
 import { useDensity } from "@/lib/density";
@@ -63,6 +64,7 @@ export function Shell() {
         content={
           <div data-testid="jobfeed-route-surface" data-density={density}>
             <SpaceBetween size="l">
+              <PersonalMLBanner />
               <TopBar />
               <Outlet />
             </SpaceBetween>

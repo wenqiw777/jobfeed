@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 import App from "@/App";
@@ -23,6 +23,7 @@ const ATTENTION = {
   low_quality_scored: [],
   stuck_scoring: [],
 };
+const apiCalls: { url: string; method: string }[] = [];
 
 function attentionEntry(jobId: string) {
   return {
@@ -54,13 +55,34 @@ const EMPTY_OVERVIEW = {
   daily: [],
 };
 
-function mockApi(): void {
+function mockApi(personalML: Record<string, unknown> = { state: "collecting" }): void {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      const method = init?.method ?? "GET";
+      apiCalls.push({ url, method });
       if (url === "/api/config") {
         return jsonResponse({ configured: true });
+      }
+      if (url === "/api/personal-ml/status") {
+        return jsonResponse({
+          label_count: 40,
+          ranking_count: 0,
+          shadow_count: 0,
+          next_target: 100,
+          model_threshold: null,
+          quick_pass_recall: null,
+          quick_fail_rejection: null,
+          category_recall: null,
+          baseline_rejection: null,
+          estimated_call_reduction: null,
+          rolling_recall: null,
+          ...personalML,
+        });
+      }
+      if (url === "/api/personal-ml/activate" && method === "POST") {
+        return jsonResponse({ configured: true, scoring: { ml_gate_enabled: true } });
       }
       if (url.startsWith("/api/jobs")) {
         return jsonResponse({ jobs: [], total: 0, tab_counts: TAB_COUNTS });
@@ -100,6 +122,7 @@ function renderShell(initialPath = "/triage") {
 
 beforeEach(() => {
   window.localStorage.clear();
+  apiCalls.length = 0;
   mockApi();
 });
 
@@ -176,4 +199,38 @@ test("view menu density toggle switches the content density attribute", async ()
 
   expect(surface).toHaveAttribute("data-density", "comfortable");
   expect(window.localStorage.getItem("jobfeed:density")).toBe("comfortable");
+});
+
+test("shows a persistent readiness notice with measured shadow evidence", async () => {
+  mockApi({
+    state: "ready",
+    label_count: 500,
+    ranking_count: 200,
+    shadow_count: 200,
+    next_target: null,
+    model_threshold: 0.71,
+    quick_pass_recall: 0.96,
+    quick_fail_rejection: 0.44,
+    category_recall: 0.92,
+    baseline_rejection: 0.08,
+    estimated_call_reduction: 0.31,
+    rolling_recall: 0.96,
+  });
+
+  renderShell();
+
+  expect(await screen.findByText("Your personal job filter is ready")).toBeVisible();
+  expect(screen.getAllByText(/Validated on 200 future jobs/)[0]).toHaveTextContent(
+    "96% recall · 44% irrelevant jobs rejected · about 31% fewer Quick evaluations",
+  );
+  expect(screen.getByRole("button", { name: "Review and turn on" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Keep learning" })).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Review and turn on" }));
+  const dialog = await screen.findByRole("dialog", { name: "Turn on personal job filtering" });
+  expect(within(dialog).getByText(/Jobs rejected by the filter remain recoverable in the Job library/)).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Turn on personal filter" }));
+  await waitFor(() => {
+    expect(apiCalls).toContainEqual({ url: "/api/personal-ml/activate", method: "POST" });
+  });
 });

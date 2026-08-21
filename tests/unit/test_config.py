@@ -38,6 +38,7 @@ LLM_DEFAULT_MAX_DAILY_COST_USD = 10.0
 
 # ATS config default values (mirrors SourcesATSConfig defaults)
 ATS_DEFAULT_MAX_CONCURRENT = 10
+ATS_DEFAULT_MAX_JOBS = 1000
 ATS_DEFAULT_PROBE_TTL_DAYS = 7
 ATS_DEFAULT_FAILURE_THRESHOLD = 3
 ATS_DEFAULT_PROBE_TIMEOUT_S = 5.0
@@ -46,6 +47,7 @@ ATS_ENV_MAX_CONCURRENT = 5
 
 # Phase 4a source config default values (mirror the new SourcesConfig models)
 SPEEDYAPPLY_DEFAULT_MAX_CONCURRENT = 10
+SPEEDYAPPLY_DEFAULT_MAX_JOBS = 1000
 SPEEDYAPPLY_DEFAULT_FETCH_TIMEOUT_S = 30.0
 JOBSPY_DEFAULT_MAX_JOBS = 100
 JOBSPY_DEFAULT_MAX_CONCURRENT = 2
@@ -422,6 +424,7 @@ def test_settings_exposes_phase4a_source_defaults() -> None:
     assert sources.indeed.enabled is False
 
     assert sources.speedyapply.search_urls == []
+    assert sources.speedyapply.max_jobs == SPEEDYAPPLY_DEFAULT_MAX_JOBS
     assert sources.speedyapply.max_concurrent == SPEEDYAPPLY_DEFAULT_MAX_CONCURRENT
     assert sources.speedyapply.fetch_timeout_s == SPEEDYAPPLY_DEFAULT_FETCH_TIMEOUT_S
 
@@ -432,6 +435,40 @@ def test_settings_exposes_phase4a_source_defaults() -> None:
     assert sources.indeed.timeout_s == JOBSPY_DEFAULT_TIMEOUT_S
     assert sources.indeed.country_indeed == JOBSPY_DEFAULT_COUNTRY_INDEED
     assert sources.indeed.repeat == JOBSPY_DEFAULT_REPEAT
+
+    assert sources.ats.max_jobs == ATS_DEFAULT_MAX_JOBS
+    assert sources.ats.title_keywords == []
+
+
+def test_source_total_limits_reject_zero() -> None:
+    """Every source-level scan limit must retain at least one job."""
+    with pytest.raises(ValidationError):
+        SourcesATSConfig(max_jobs=0)
+    with pytest.raises(ValidationError):
+        SourcesSpeedyApplyConfig(max_jobs=0)
+
+
+def test_sources_derive_ats_target_titles_from_existing_search_urls() -> None:
+    """Older configs gain ATS relevance terms without rerunning onboarding."""
+    sources = SourcesConfig(
+        indeed=SourcesIndeedConfig(
+            enabled=True,
+            search_urls=[
+                "https://www.indeed.com/jobs?q=Backend+Software+Engineer&l=United+States"
+            ],
+        ),
+        linkedin_guest=SourcesLinkedInGuestConfig(
+            enabled=True,
+            search_urls=[
+                "https://www.linkedin.com/jobs/search/?keywords=AI%2FLLM+Engineer+Intern"
+            ],
+        ),
+    )
+
+    assert sources.ats.title_keywords == [
+        "Backend Software Engineer",
+        "AI/LLM Engineer Intern",
+    ]
 
 
 def test_settings_exposes_phase4b_linkedin_defaults() -> None:

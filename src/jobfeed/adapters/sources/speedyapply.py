@@ -60,6 +60,7 @@ class SpeedyApplySource:
         discovered_at = datetime.now(UTC)
         rows = await self._collect_rows(discovered_at)
         rows = await self._drop_closed(rows)
+        rows = rows[: self._config.max_jobs]
         slug_cache: routing.SlugCache = {}
         sem = asyncio.Semaphore(self._config.max_concurrent)
         tasks = [

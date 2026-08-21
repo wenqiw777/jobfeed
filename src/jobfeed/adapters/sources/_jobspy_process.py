@@ -21,6 +21,7 @@ layer is independently testable (and both stay under the 300-line gate).
 from __future__ import annotations
 
 import asyncio
+import math
 import multiprocessing as mp
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -81,7 +82,7 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
         site_name: JobSpy site passed through to ``scrape``.
         platform: Platform tag passed through to ``scrape`` (and onto postings).
         search_urls: Search URLs to scrape, in order.
-        max_jobs: Per-URL cap.
+        max_jobs: Total source cap shared by all configured URLs.
         hours_old: Freshness override (see ``scrape``).
         timeout_s: Per-URL wall-clock timeout for the blocking JobSpy call.
         max_concurrent: Maximum number of URLs scraped concurrently.
@@ -95,7 +96,10 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
         Aggregated postings across all URLs that did not fail, deduped by
         canonical_id (so repeated draws of the same posting collapse to one).
     """
+    if not search_urls:
+        return []
     sem = asyncio.Semaphore(max_concurrent)
+    per_url_limit = max(1, math.ceil(max_jobs / len(search_urls)))
     batches = await asyncio.gather(
         *[
             _scrape_one_url(
@@ -103,7 +107,7 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
                 site_name=site_name,
                 platform=platform,
                 url=url,
-                max_jobs=max_jobs,
+                max_jobs=per_url_limit,
                 hours_old=hours_old,
                 timeout_s=timeout_s,
                 logger=logger,
@@ -114,7 +118,8 @@ async def scrape_urls(  # noqa: PLR0913 - shared loop needs each scrape input
             for _ in range(repeat)
         ]
     )
-    return _dedupe_by_canonical_id(posting for batch in batches for posting in batch)
+    unique = _dedupe_by_canonical_id(posting for batch in batches for posting in batch)
+    return unique[:max_jobs]
 
 
 def _dedupe_by_canonical_id(postings: Iterable[JobPosting]) -> list[JobPosting]:

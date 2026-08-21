@@ -314,10 +314,14 @@ async def test_unrouted_hosts_return_empty(url: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _source(search_urls: list[str]) -> SpeedyApplySource:
+def _source(search_urls: list[str], *, max_jobs: int = 1000) -> SpeedyApplySource:
     return SpeedyApplySource(
         client=create_http_client(),
-        config=SourcesSpeedyApplyConfig(search_urls=search_urls, enabled=True),
+        config=SourcesSpeedyApplyConfig(
+            search_urls=search_urls,
+            enabled=True,
+            max_jobs=max_jobs,
+        ),
         logger=get_logger(),
     )
 
@@ -389,6 +393,23 @@ async def test_source_dedupes_by_canonical_id() -> None:
     postings = await source.fetch_jobs({})
     assert len(postings) == 1
     assert postings[0].title == "SWE Intern"
+
+
+@respx.mock
+async def test_source_total_limit_applies_before_jd_enrichment() -> None:
+    """The scan returns and enriches no more than the configured source total."""
+    list_url = "https://lists.test/README.md"
+    md = """| Company | Position | Location | Posting | Age |
+|---|---|---|---|---|
+| <a><strong>Acme</strong></a> | SWE Intern | SF | <a href="https://example.com/1"><img src="x"/></a> | 2d |
+| <a><strong>Beta</strong></a> | SWE Intern | NY | <a href="https://example.com/2"><img src="x"/></a> | 2d |
+| <a><strong>Gamma</strong></a> | SWE Intern | LA | <a href="https://example.com/3"><img src="x"/></a> | 2d |
+"""
+    respx.get(list_url).mock(return_value=httpx.Response(200, text=md))
+
+    postings = await _source([list_url], max_jobs=2).fetch_jobs({})
+
+    assert [posting.company for posting in postings] == ["Acme", "Beta"]
 
 
 def _ashby_posting(uuid: str, discovered_at: datetime) -> JobPosting:

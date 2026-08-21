@@ -7,6 +7,7 @@ from jobfeed.adapters.store import (
     _sqlite_evaluation_queries,
     _sqlite_evaluations,
     _sqlite_jobs,
+    _sqlite_personal_ml,
 )
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.domain.models import (
@@ -17,6 +18,7 @@ from jobfeed.domain.models import (
     StageAResult,
     StageBResult,
 )
+from jobfeed.personal_ml_learning import PersonalMLObservation
 
 
 class SqliteJobsEvaluations:
@@ -79,6 +81,22 @@ class SqliteJobsEvaluations:
         Args: decimal job identity and validated Stage A result.
         """
         await _sqlite_evaluations._save_stage_a(self._lifecycle, job_id, result)
+
+    async def list_personal_ml_observations(
+        self, *, quick_pass_threshold: int
+    ) -> list[PersonalMLObservation]:
+        """Load chronological Quick labels and optional pre-Quick gate scores.
+
+        Args:
+            quick_pass_threshold: Inclusive score treated as a Quick pass.
+
+        Returns:
+            Ordered observations used by the personal learning policy.
+        """
+        return await _sqlite_personal_ml._list_personal_ml_observations(
+            self._lifecycle,
+            quick_pass_threshold=quick_pass_threshold,
+        )
 
     async def save_stage_a_error(self, job_id: str, error: str) -> None:
         """Record one retryable Stage A error.

@@ -53,6 +53,7 @@ class _DiscoverState:
     seen: set[str] = field(default_factory=set)
     group_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     source_search_urls: dict[str, str]
+    source_max_jobs: int
 
 
 async def discover_linkedin_jobs(
@@ -75,7 +76,10 @@ async def discover_linkedin_jobs(
         Discovery result with ordered postings or a reauth signal.
     """
     started = monotonic()
-    state = _DiscoverState(source_search_urls=source_search_urls)
+    state = _DiscoverState(
+        source_search_urls=source_search_urls,
+        source_max_jobs=config.max_jobs,
+    )
     for spec in build_search_specs(config):
         if await _discover_spec(page, spec, state, sleeper, logger):
             return _reauth_result(state.postings, started)
@@ -93,7 +97,7 @@ async def _discover_spec(
     # Returns True when the page hits an authwall and the caller must reauth.
     accepted = 0
     for search_url in paginated_urls(spec.url, spec.max_jobs):
-        if not _can_accept(spec, accepted, state.group_counts):
+        if not _can_accept(spec, accepted, state):
             return False
         await page.goto(search_url, wait_until="domcontentloaded")
         await sleeper(human_delay())
@@ -162,7 +166,7 @@ def _accept_jobs(
     for posting in new_jobs:
         if posting.canonical_id in state.seen:
             continue
-        if not _can_accept(spec, accepted, state.group_counts):
+        if not _can_accept(spec, accepted, state):
             break
         state.postings.append(posting)
         state.seen.add(posting.canonical_id)
@@ -176,13 +180,13 @@ def _accept_jobs(
 def _can_accept(
     spec: LinkedInSearchSpec,
     accepted: int,
-    group_counts: dict[str, int],
+    state: _DiscoverState,
 ) -> bool:
-    if accepted >= spec.max_jobs:
+    if accepted >= spec.max_jobs or len(state.postings) >= state.source_max_jobs:
         return False
     if spec.group is None or spec.group_max_jobs is None:
         return True
-    return group_counts[spec.group] < spec.group_max_jobs
+    return state.group_counts[spec.group] < spec.group_max_jobs
 
 
 async def _read_card_job_id(card: Any) -> str | None:

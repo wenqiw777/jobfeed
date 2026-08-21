@@ -23,6 +23,7 @@ from jobfeed.domain.models import (
     PipelineRun,
     StageAResult,
 )
+from jobfeed.personal_ml_learning import PersonalMLStatus
 from jobfeed.ports.ml_gate import GateInput
 from jobfeed.ports.prompts import PromptBundle
 from jobfeed.ports.store_claims import GateCandidate
@@ -215,6 +216,23 @@ class FakeStore:
         return self._decay_result
 
 
+class StubPersonalML:
+    """Return a fixed learning phase without reading persistence."""
+
+    def __init__(self, state: str) -> None:
+        self._state = state
+
+    async def status(self, **_kwargs: object) -> PersonalMLStatus:
+        return PersonalMLStatus(
+            state=self._state,  # type: ignore[arg-type]
+            label_count=150,
+            ranking_count=50,
+            shadow_count=0,
+            next_target=300,
+            model_threshold=None,
+        )
+
+
 class StubStoreOps:
     """StoreOps stub with unlimited budget for funnel handoff tests."""
 
@@ -325,7 +343,13 @@ def _job(
     )
 
 
-def _deps(store: FakeStore, *, gate: MockGate | None, filters: HardFilters | None):
+def _deps(
+    store: FakeStore,
+    *,
+    gate: MockGate | None,
+    filters: HardFilters | None,
+    personal_ml: StubPersonalML | None = None,
+):
     """Build EvaluateDependencies wired to fakes."""
     return EvaluateDependencies(
         store=store,  # type: ignore[arg-type]
@@ -336,6 +360,7 @@ def _deps(store: FakeStore, *, gate: MockGate | None, filters: HardFilters | Non
         llm_stage_b=StageALLM(),  # type: ignore[arg-type]
         ml_gate=gate,
         hard_filters=filters,
+        personal_ml=personal_ml,  # type: ignore[arg-type]
     )
 
 
@@ -501,6 +526,34 @@ async def test_gate_failed_reps_persisted_and_excluded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_active_gate_explores_ten_percent_of_failures_for_future_recall() -> None:
+    """A deterministic 10% failure sample still receives its Quick teacher label."""
+    exploration = _job(
+        "10",
+        title="Sales Manager",
+        company="ExploreCo",
+        jd_text="Sell our products to enterprise clients.",
+    )
+    store = FakeStore([exploration])
+    deps = _deps(store, gate=MockGate(), filters=None)
+    run = _run()
+
+    survivors = await run_funnel(
+        deps,
+        _config(ml_gate_enabled=True),
+        run,
+        "unrated",
+        None,
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+        dry_run=False,
+    )
+
+    assert survivors == ["10"]
+    assert store.gate_results[0][1].result == "fail"
+    assert run.jobs_ml_gated == 0
+
+
+@pytest.mark.asyncio
 async def test_already_pass_rep_survives_without_regating() -> None:
     """A rep persisted 'pass' survives WITHOUT being re-gated or re-persisted.
 
@@ -604,6 +657,66 @@ async def test_gate_disabled_skips_gating() -> None:
     assert set(survivors) == {"a", "b"}
     assert store.gate_results == []
     assert run.jobs_ml_gated == 0
+
+
+@pytest.mark.asyncio
+async def test_ranking_phase_scores_in_shadow_without_filtering() -> None:
+    """The shared gate teaches a user threshold but cannot hide ranking jobs."""
+    passing = _job("pass", company="PassCo")
+    failing = _job(
+        "fail",
+        title="Sales Manager",
+        company="FailCo",
+        jd_text="Sell our products to enterprise clients.",
+    )
+    store = FakeStore([passing, failing])
+    deps = _deps(
+        store,
+        gate=MockGate(),
+        filters=None,
+        personal_ml=StubPersonalML("ranking"),
+    )
+    run = _run()
+
+    survivors = await run_funnel(
+        deps,
+        _config(ml_gate_enabled=False),
+        run,
+        "unrated",
+        None,
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+        dry_run=False,
+    )
+
+    assert set(survivors) == {"pass", "fail"}
+    assert {job_id for job_id, _result in store.gate_results} == {"pass", "fail"}
+    assert run.jobs_ml_gated == 0
+
+
+@pytest.mark.asyncio
+async def test_paused_model_restores_previously_rejected_candidates() -> None:
+    """Recall drift disables persisted gate failures before the candidate query."""
+    candidate = _job("previously-failed")
+    store = FakeStore([candidate], gate_state={"previously-failed": "fail"})
+    deps = _deps(
+        store,
+        gate=MockGate(),
+        filters=None,
+        personal_ml=StubPersonalML("paused"),
+    )
+
+    survivors = await run_funnel(
+        deps,
+        _config(ml_gate_enabled=True),
+        _run(),
+        "unrated",
+        None,
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+        dry_run=False,
+    )
+
+    assert survivors == ["previously-failed"]
+    assert store.load_gate_kwargs[0]["exclude_gate_failed"] is False
 
 
 @pytest.mark.asyncio

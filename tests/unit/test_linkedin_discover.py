@@ -71,6 +71,26 @@ def test_build_search_specs_accepts_plain_and_structured_urls() -> None:
     assert specs[1].group_max_jobs == GROUP_MAX_JOBS
 
 
+def test_authenticated_linkedin_uses_one_total_across_searches() -> None:
+    """A later search cannot exceed the source-level total job budget."""
+    state = discover_module._DiscoverState(
+        postings=[_posting("one", "SWE"), _posting("two", "Backend Engineer")],
+        seen={"one", "two"},
+        group_counts={},
+        source_search_urls={},
+        source_max_jobs=2,
+    )
+    spec = build_search_specs(
+        SourcesLinkedInConfig(
+            enabled=True,
+            max_jobs=2,
+            search_urls=["https://linkedin.test/jobs?keywords=second"],
+        )
+    )[0]
+
+    assert discover_module._can_accept(spec, 0, state) is False
+
+
 def test_order_discovered_postings_prioritizes_fall_interns() -> None:
     """LinkedIn discovery output should be intern-first before ScanService sees it."""
     rest = _posting("rest", "Software Engineer")

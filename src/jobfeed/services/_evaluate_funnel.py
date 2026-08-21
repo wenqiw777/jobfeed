@@ -22,7 +22,7 @@ from jobfeed.domain.models import (
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store_claims import GateCandidate
 from jobfeed.services._evaluate_claims import load_gate_candidates_for_run
-from jobfeed.services._evaluate_gate import gate_representatives
+from jobfeed.services._evaluate_gate import gate_representatives, resolve_gate_mode
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 
 # Generous safety bound on candidate pages scanned per funnel run, so a long
@@ -69,8 +69,15 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
     Returns:
         Survivor job-ids to hand to Stage A (empty in dry-run).
     """
+    gate_mode = await resolve_gate_mode(deps, config, dry_run=dry_run)
     representatives = await _load_representatives(
-        deps, config, run, corpus, max_days, logger
+        deps,
+        config,
+        run,
+        corpus,
+        max_days,
+        logger,
+        exclude_gate_failed=gate_mode == "filter",
     )
     survivors = await gate_representatives(
         deps,
@@ -78,6 +85,7 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
         run,
         representatives,
         dry_run,
+        mode=gate_mode,
         on_progress=on_progress,
     )
     if dry_run:
@@ -96,6 +104,8 @@ async def _load_representatives(  # noqa: PLR0913 - paginated load inputs
     corpus: str,
     max_days: int | None,
     logger: JobfeedLogger,
+    *,
+    exclude_gate_failed: bool,
 ) -> list[GateCandidate]:
     """Page + hard-filter + dedupe candidates until enough REPRESENTATIVES.
 
@@ -125,7 +135,7 @@ async def _load_representatives(  # noqa: PLR0913 - paginated load inputs
             corpus,
             page_size,
             max_days,
-            exclude_gate_failed=config.ml_gate_enabled,
+            exclude_gate_failed=exclude_gate_failed,
             after=after,
         )
         survivors.extend(_apply_hard_filters(page, deps.hard_filters, run))
