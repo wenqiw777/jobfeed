@@ -10,6 +10,14 @@ type JobProfile = components["schemas"]["JobProfile"];
 
 const CONFIG = {
   configured: false,
+  ml_gate_performance: {
+    threshold: 0.19,
+    recall: 0.9730377471539844,
+    precision: 0.5438713998660415,
+    f1: 0.6977443609022557,
+    irrelevant_rejection: 0.7446090380648791,
+    training_jobs: 7002,
+  },
   llm: {
     stage_a: "codex-cli/gpt-5.4-mini",
     stage_b: "codex-cli/gpt-5.5",
@@ -866,6 +874,10 @@ test("trained personal ML can be explicitly enabled from workspace settings", as
   renderApp("/setup");
   await screen.findByRole("heading", { name: "Workspace settings" });
 
+  expect(screen.getByText(/Model evaluation at threshold 0\.19/)).toHaveTextContent(
+    "97.3% recall · 74.5% irrelevant jobs rejected · 54.4% precision · 69.8% F1 · 7,002 labeled jobs",
+  );
+
   fireEvent.click(screen.getByRole("checkbox", { name: "Enable personal ML filter" }));
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -874,6 +886,7 @@ test("trained personal ML can be explicitly enabled from workspace settings", as
       (call) => call.url === "/api/config" && call.method === "PUT",
     );
     expect((request?.body as typeof CONFIG).scoring.ml_gate_enabled).toBe(true);
+    expect(request?.body).not.toHaveProperty("ml_gate_performance");
   });
 });
 
