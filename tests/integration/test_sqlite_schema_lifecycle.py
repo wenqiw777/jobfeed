@@ -69,6 +69,40 @@ async def test_schema_lifecycle_backup_and_restore_round_trip(tmp_path: Path) ->
     await lifecycle.close()
 
 
+async def test_schema_open_backfills_missing_role_types(tmp_path: Path) -> None:
+    """Opening an existing database repairs legacy NULL role_type rows."""
+    database_path = tmp_path / "jobfeed.db"
+    lifecycle = SqliteLifecycle(database_path, ensure_sqlite_schema)
+    await lifecycle.open()
+    async with lifecycle.connection() as connection:
+        await connection.execute(
+            """INSERT INTO jobs(
+                   platform,canonical_id,url,title,company,location,discovered_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                "linkedin_guest",
+                "legacy-intern",
+                "https://example.test/legacy-intern",
+                "Software Engineer Intern",
+                "Example",
+                "Detroit, MI",
+                "2026-08-25T12:00:00.000000Z",
+            ),
+        )
+    await lifecycle.close()
+
+    await lifecycle.open()
+    async with lifecycle.connection() as connection:
+        assert (
+            await _scalar(
+                connection,
+                "SELECT role_type FROM jobs WHERE canonical_id='legacy-intern'",
+            )
+            == "intern"
+        )
+    await lifecycle.close()
+
+
 @pytest.mark.parametrize("invalid_source", ["unrelated_schema", "wrong_version"])
 async def test_restore_rejects_non_jobfeed_schema_before_replacing_target(
     tmp_path: Path,

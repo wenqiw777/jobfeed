@@ -143,12 +143,36 @@ _RE_ROLE_INTERN = re.compile(
 )
 _RE_ROLE_COOP = re.compile(r"\b(co[\s\-]?op)\b", _IC)
 _RE_ROLE_NEW_GRAD = re.compile(
-    r"\b(new[\s\-]grad(?:uate)?|recent\s+grad(?:uate)?|new\s+graduates?)\b", _IC
+    r"\b(?:new[\s\-]+grad(?:uate)?s?|recent[\s\-]+grad(?:uate)?s?"
+    r"|university[\s\-]+(?:grad(?:uate)?|hire)|campus[\s\-]+hire"
+    r"|early[\s\-]+careers?|graduate[\s\-]+program(?:me)?"
+    r"|new[\s\-]+college[\s\-]+graduate|ncg)\b",
+    _IC,
+)
+_RE_ROLE_NEW_GRAD_JD = re.compile(
+    r"\b(?:new[\s\-]+grad(?:uate)?s?|recent[\s\-]+grad(?:uate)?s?)\b", _IC
+)
+_RE_ROLE_RECRUITING_TITLE = re.compile(
+    r"\b(?:recruit(?:er|ing)|talent[\s\-]+acquisition)\b", _IC
 )
 _RE_ROLE_CONTRACT = re.compile(
     r"\b(contract(?:or)?|contractor|contract\s+position|contract\s+role"
     r"|w2\s+contract|c2c)\b",
     _IC,
+)
+_RE_ROLE_INTERN_JD = re.compile(
+    r"\b(?:this|our)\s+(?:paid\s+)?(?:summer\s+)?intern(?:ship)?\b"
+    r"|\b(?:summer|fall|spring|winter)\s+intern(?:ship)?\b"
+    r"|\bas\s+(?:an?\s+)?(?:summer\s+)?intern\b"
+    r"|\bthe\s+intern\s+will\b"
+    r"|\binternship\s+(?:role|position|program|opportunity)\b",
+    _IC,
+)
+_RE_ROLE_COOP_JD = re.compile(
+    r"\bco[\s\-]?op\s+(?:role|position|program|opportunity)\b", _IC
+)
+_RE_ROLE_CONTRACT_JD = re.compile(
+    r"\b(contract\s+(?:position|role)|w2\s+contract|c2c)\b", _IC
 )
 
 # --- domain tags (order == DOMAIN_NAMES) ---
@@ -440,15 +464,33 @@ def _tech_required(jd_text: str) -> list[str]:
     return [tech for tech, pat in _TECH_PATTERNS if pat.search(jd_text)]
 
 
-def _role_type(title: str, jd_text: str) -> str:
-    combined = f"{title} {jd_text}"
-    if _RE_ROLE_INTERN.search(combined):
+def classify_role_type(title: str, jd_text: str) -> str:
+    """Classify a posting independently from the optional ML gate.
+
+    Args:
+        title: Job title.
+        jd_text: Full job description, or an empty string before enrichment.
+
+    Returns:
+        One canonical value from ``ROLE_TYPES``.
+    """
+    if _RE_ROLE_INTERN.search(title):
         return "intern"
-    if _RE_ROLE_COOP.search(combined):
+    if _RE_ROLE_COOP.search(title):
         return "coop"
-    if _RE_ROLE_NEW_GRAD.search(combined):
+    if _RE_ROLE_CONTRACT.search(title):
+        return "contract"
+    if _RE_ROLE_RECRUITING_TITLE.search(title):
+        return "fte"
+    if _RE_ROLE_NEW_GRAD.search(title):
         return "new_grad"
-    if _RE_ROLE_CONTRACT.search(combined):
+    if _RE_ROLE_INTERN_JD.search(jd_text):
+        return "intern"
+    if _RE_ROLE_COOP_JD.search(jd_text):
+        return "coop"
+    if _RE_ROLE_NEW_GRAD_JD.search(jd_text):
+        return "new_grad"
+    if _RE_ROLE_CONTRACT_JD.search(jd_text):
         return "contract"
     return "fte"
 
@@ -497,7 +539,7 @@ def extract_features(title: str, jd_text: str) -> MLGateFeatures:
         school_restricted=_school_restricted(jd_text),
         domain_tags=_domain_tags(title, jd_text),
         tech_required=_tech_required(jd_text),
-        role_type=_role_type(title, jd_text),
+        role_type=classify_role_type(title, jd_text),
         yoe_min=_yoe_min(jd_text),
         is_swe_role=_is_swe_role(title, jd_text),
     )
@@ -535,6 +577,7 @@ __all__ = [
     "STRUCTURED_DIM",
     "TECH_NAMES",
     "MLGateFeatures",
+    "classify_role_type",
     "extract_features",
     "hard_fail_reason",
 ]

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from jobfeed.adapters.store._sqlite_capability_support import _fetch_row, _fetch_rows
 from jobfeed.adapters.store._sqlite_values import _datetime_from_text, _utc_text
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.domain.ml_features import classify_role_type
 from jobfeed.domain.models import QualityBand, UnenrichedJob
 from jobfeed.domain.quality import assess_quality
 from jobfeed.ports.source import StoredEnrichment
@@ -27,12 +28,17 @@ async def _record_enrichment(  # noqa: PLR0913
 ) -> None:
     numeric_id = int(job_id)
     async with lifecycle.connection() as connection:
+        row = await _fetch_row(
+            connection, "SELECT title FROM jobs WHERE id=?", (numeric_id,)
+        )
+        if row is None:
+            raise ValueError(f"job not found: {job_id}")
         await connection.execute(
             """UPDATE jobs SET jd_text=?,jd_quality=?,enriched_at=?,
                 enrich_source=?,jd_lang=?,enrich_error=NULL,closed_at=NULL,
                 posted_at=COALESCE(posted_at,?),ml_gate_score=NULL,
                 ml_gate_result=NULL,ml_gate_fail_reason=NULL,ml_gate_at=NULL,
-                ml_gate_version=NULL WHERE id=?""",
+                ml_gate_version=NULL,role_type=? WHERE id=?""",
             (
                 jd_text,
                 jd_quality,
@@ -40,6 +46,7 @@ async def _record_enrichment(  # noqa: PLR0913
                 enrich_source,
                 jd_lang,
                 _utc_text(posted_at) if posted_at is not None else None,
+                classify_role_type(str(row["title"]), jd_text),
                 numeric_id,
             ),
         )

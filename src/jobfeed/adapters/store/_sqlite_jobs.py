@@ -14,14 +14,15 @@ from jobfeed.adapters.store._sqlite_values import (
     _utc_text,
 )
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.domain.ml_features import classify_role_type
 from jobfeed.domain.models import JobPosting, MLGateResult, SaveJobResult
 from jobfeed.domain.quality import quality_rank
 
 _INSERT_JOB_SQL = """INSERT INTO jobs (
     platform, canonical_id, url, title, company, location,
     jd_text, jd_quality, posted_at, discovered_at, enriched_at, enrich_source,
-    company_norm, title_norm, location_norm, closed_at, enrich_error
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id"""
+    company_norm, title_norm, location_norm, closed_at, enrich_error, role_type
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id"""
 
 
 async def _save_job(lifecycle: SqliteLifecycle, job: JobPosting) -> SaveJobResult:
@@ -152,6 +153,7 @@ def _job_values(job: JobPosting) -> tuple[object, ...]:
         normalize(job.location),
         _utc_text(job.closed_at) if job.closed_at else None,
         job.enrich_error,
+        classify_role_type(job.title, job.jd_text or ""),
     )
 
 
@@ -190,6 +192,7 @@ async def _update_job(
         else existing["enrich_source"]
     )
     gate_changed = job.title != existing["title"] or jd_text != existing["jd_text"]
+    role_type = classify_role_type(job.title, jd_text or "")
     closed_at = (
         None
         if job.jd_text is not None
@@ -214,7 +217,7 @@ async def _update_job(
         """UPDATE jobs SET url=?, title=?, company=?, location=?, jd_text=?,
             jd_quality=?, posted_at=?, discovered_at=?, enriched_at=?, enrich_source=?,
             company_norm=?, title_norm=?, location_norm=?, closed_at=?,
-            enrich_error=?"""
+            enrich_error=?, role_type=?"""
         + gate_sql
         + " WHERE id=?",
         (
@@ -233,6 +236,7 @@ async def _update_job(
             normalize(job.location),
             closed_at,
             enrich_error,
+            role_type,
             existing["id"],
         ),
     )

@@ -16,6 +16,7 @@ from jobfeed.adapters.store._sqlite_schema_metadata import (
     schema_v1_ddl_statements,
     schema_v2_migration_statements,
 )
+from jobfeed.domain.ml_features import classify_role_type
 
 _SEED_LEASE_SQL: Final = (
     "INSERT INTO run_leases(kind, generation) VALUES('scan', 0),('evaluate', 0)"
@@ -64,6 +65,7 @@ async def _migrate_zero_to_current(connection: aiosqlite.Connection) -> None:
         for statement in schema_ddl_statements():
             await _execute_schema_statement(connection, statement)
         await connection.execute(_SEED_LEASE_SQL)
+        await _backfill_missing_role_types(connection)
         await connection.execute(f"PRAGMA user_version={SQLITE_SCHEMA_VERSION}")
         await _validate_v2(connection)
         await connection.commit()
@@ -177,6 +179,7 @@ async def _apply_data_repairs(connection: aiosqlite.Connection) -> None:
                  WHERE r.job_id=job_status.job_id AND r.status='completed'
                )""",
     )
+    await _backfill_missing_role_types(connection)
 
 
 async def _schema_version(connection: aiosqlite.Connection) -> int:
@@ -194,6 +197,24 @@ async def _execute_data_migration_statement(
     connection: aiosqlite.Connection, sql: str
 ) -> None:
     await connection.execute(sql)
+
+
+async def _backfill_missing_role_types(connection: aiosqlite.Connection) -> None:
+    """Repair legacy NULL classifications that depended on the old ML gate."""
+    cursor = await connection.execute(
+        "SELECT id,title,COALESCE(jd_text,'') FROM jobs WHERE role_type IS NULL"
+    )
+    rows = await cursor.fetchall()
+    await cursor.close()
+    if not rows:
+        return
+    await connection.executemany(
+        "UPDATE jobs SET role_type=? WHERE id=?",
+        [
+            (classify_role_type(str(title), str(jd_text)), int(job_id))
+            for job_id, title, jd_text in rows
+        ],
+    )
 
 
 async def _validate_v1(connection: aiosqlite.Connection) -> None:

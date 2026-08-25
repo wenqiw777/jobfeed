@@ -20,6 +20,7 @@ from jobfeed.domain.ml_features import (
     STRUCTURED_DIM,
     TECH_NAMES,
     MLGateFeatures,
+    classify_role_type,
     extract_features,
     hard_fail_reason,
 )
@@ -53,6 +54,57 @@ def _feat(**over: object) -> dict[str, object]:
     }
     base.update(over)
     return base
+
+
+def test_role_type_requires_explicit_jd_role_language() -> None:
+    """Experience and legal boilerplate must not turn an FTE into intern/contract."""
+    assert (
+        classify_role_type(
+            "Software Engineer",
+            "Mentor an intern and manage a vendor contract for the platform.",
+        )
+        == "fte"
+    )
+    assert (
+        classify_role_type(
+            "Software Engineer",
+            "This summer internship builds production backend services.",
+        )
+        == "intern"
+    )
+
+
+def test_role_type_recognizes_new_grad_recruiting_labels() -> None:
+    """Common campus-hiring titles must use the new-grad review track."""
+    new_grad_titles = (
+        "Software Engineer - University Hire 2027",
+        "Software Engineer - University Graduate - US",
+        "2027 Early Career Software Engineer",
+        "Software Engineer - 2027 Graduate Program - August Start",
+        "AI/ML Software Engineer - 2026 New College Graduate",
+        "Software Engineer (NCG)",
+        "Software Engineer - Campus Hire",
+    )
+
+    for title in new_grad_titles:
+        assert classify_role_type(title, "Build production software.") == "new_grad"
+
+    assert classify_role_type("Junior Software Engineer", "") == "fte"
+    assert classify_role_type("Entry Level Software Engineer", "") == "fte"
+    assert (
+        classify_role_type(
+            "Head of Early Career Recruiting",
+            "Lead our internship program and hire new graduates.",
+        )
+        == "fte"
+    )
+    assert (
+        classify_role_type(
+            "Software Engineer",
+            "Mentor early-career engineers and support campus hiring events.",
+        )
+        == "fte"
+    )
 
 
 # (title, jd, expected_features, expected_hard_fail)

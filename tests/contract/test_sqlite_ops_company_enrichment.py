@@ -177,6 +177,48 @@ async def test_enrichment_write_queue_and_source_lookup_contract(
         await lifecycle.close()
 
 
+async def test_role_type_is_classified_on_save_and_enrichment(tmp_path: Path) -> None:
+    """Every stored row has a role type even when the ML gate never runs."""
+    lifecycle, ops, jobs = await open_sqlite_ops(tmp_path / "role-type.db")
+    try:
+        intern = await jobs.save_job(
+            make_job("intern", title="Backend Software Engineer Intern")
+        )
+        generic = await jobs.save_job(
+            make_job(
+                "generic",
+                title="Software Engineer",
+                jd_text=None,
+                jd_quality=QualityBand.MISSING,
+            )
+        )
+        async with lifecycle.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT id,role_type FROM jobs ORDER BY id"
+            )
+            assert await cursor.fetchall() == [
+                (int(intern.job_id), "intern"),
+                (int(generic.job_id), "fte"),
+            ]
+            await cursor.close()
+
+        await ops.record_enrichment(
+            job_id=generic.job_id,
+            jd_text="This summer internship builds production software.",
+            jd_quality="full",
+            enriched_at=_NOW,
+            enrich_source="linkedin",
+        )
+        async with lifecycle.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT role_type FROM jobs WHERE id=?", (int(generic.job_id),)
+            )
+            assert await cursor.fetchone() == ("intern",)
+            await cursor.close()
+    finally:
+        await lifecycle.close()
+
+
 async def test_manual_paste_and_stale_closure_lookup(tmp_path: Path) -> None:
     """Paste wraps canonical enrichment and stale backfill remains refetchable."""
     lifecycle, ops, jobs = await open_sqlite_ops(tmp_path / "paste.db")
