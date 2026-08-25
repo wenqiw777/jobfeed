@@ -91,6 +91,7 @@ const CONFIG = {
     company_blocklist: [],
     location_allowlist: [],
     location_blocklist: [],
+    posted_within_hours: 36,
     posted_within_days: null,
     big_company_list: [],
     big_company_days: 90,
@@ -659,6 +660,7 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
   expect(screen.queryByLabelText("Expected job descriptions")).toBeNull();
   expect(screen.getByLabelText("Maximum unique jobs to evaluate per run"))
     .toHaveValue(150);
+  expect(screen.getByLabelText("Maximum job age in hours")).toHaveValue(36);
   expect(screen.getByText("150 Quick evaluations")).toBeVisible();
   expect(screen.getByText("About 45 Detailed reviews (30% pass rate)")).toBeVisible();
   expect(await screen.findByText("Pro plan")).toBeVisible();
@@ -709,6 +711,8 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
       hard_filters: expect.objectContaining({
         location_allowlist: ["New York, NY"],
         title_blocklist: [],
+        posted_within_hours: 36,
+        posted_within_days: null,
       }),
     }),
   }));
