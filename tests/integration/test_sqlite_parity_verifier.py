@@ -23,6 +23,7 @@ from jobfeed.adapters.migration.sqlite_parity import (
     SqliteParityVerificationError,
     verify_sqlite_parity,
 )
+from jobfeed.adapters.store._sqlite_schema_metadata import SQLITE_SCHEMA_VERSION
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
 
@@ -39,7 +40,7 @@ async def test_exact_fourteen_table_and_aggregate_parity_returns_typed_report(
     report = await verify_sqlite_parity(lifecycle, manifest, chunk_size=1)
 
     assert report.is_match
-    assert report.sqlite_schema_version == 1
+    assert report.sqlite_schema_version == SQLITE_SCHEMA_VERSION
     assert report.manifest_sha256 == artifact_sha256(manifest)
     assert tuple(item.table_name for item in report.tables) == tuple(
         table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables

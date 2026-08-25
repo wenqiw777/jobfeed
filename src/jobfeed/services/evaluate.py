@@ -57,6 +57,22 @@ class EvaluateService:
 
         The legacy stage selector remains accepted at API boundaries during the
         client migration, but every value routes to this one evaluator.
+
+        Args:
+            stage: Compatibility selector; every accepted value runs unified.
+            corpus: Pending-work selection mode.
+            limit: Optional job cap.
+            max_days: Optional discovery freshness window.
+            dry_run: Preview without claims or LLM calls.
+            on_progress: Optional callback receiving the mutable run.
+            run: Optional unpersisted run used only by dry-run callers.
+            lease_session: Optional already-acquired evaluation fence.
+
+        Returns:
+            The completed or preview pipeline run.
+
+        Raises:
+            ValueError: If stage is invalid or run/lease inputs conflict.
         """
         validate_evaluate_stage(stage)
         cap = self._config.default_eval_limit if limit is None else limit

@@ -31,8 +31,18 @@ class _Store(SuccessfulRunLeaseMixin):
         self.job = job
         self.saved: list[tuple[str, UnifiedEvaluationResult]] = []
         self.errors: list[tuple[str, str, str]] = []
+        self.claims = 0
+        self.previews = 0
+        self.auto_decay_calls: list[dict[str, object]] = []
 
     async def claim_pending_evaluations(self, **_kwargs: object) -> list[JobPosting]:
+        self.claims += 1
+        return [self.job]
+
+    async def preview_pending_evaluations(
+        self, **_kwargs: object
+    ) -> list[JobPosting]:
+        self.previews += 1
         return [self.job]
 
     async def save_evaluation(
@@ -56,7 +66,8 @@ class _Store(SuccessfulRunLeaseMixin):
     async def save_stage_b(self, *_args: object) -> None:
         raise AssertionError("legacy Stage B must not run")
 
-    async def auto_decay(self, **_kwargs: object) -> AutoDecayResult:
+    async def auto_decay(self, **kwargs: object) -> AutoDecayResult:
+        self.auto_decay_calls.append(kwargs)
         return AutoDecayResult(ghosted=0, archived=0)
 
     async def record_step_timing(self, _timing: object) -> None:
@@ -151,11 +162,14 @@ def _job() -> JobPosting:
     )
 
 
-async def test_run_uses_one_llm_call_and_one_canonical_save() -> None:
-    store = _Store(_job())
-    ops = _Ops()
-    llm = _LLM()
-    service = EvaluateService(
+def _service(
+    store: _Store,
+    ops: _Ops,
+    llm: _LLM,
+    *,
+    logger: _Logger | None = None,
+) -> EvaluateService:
+    return EvaluateService(
         deps=EvaluateDependencies(
             store=store,  # type: ignore[arg-type]
             store_ops=ops,  # type: ignore[arg-type]
@@ -177,8 +191,15 @@ async def test_run_uses_one_llm_call_and_one_canonical_save() -> None:
             stage_a_threshold=60,
             resume_text="Built Python services at work.",
         ),
-        logger=_Logger(),  # type: ignore[arg-type]
+        logger=logger or _Logger(),  # type: ignore[arg-type]
     )
+
+
+async def test_run_uses_one_llm_call_and_one_canonical_save() -> None:
+    store = _Store(_job())
+    ops = _Ops()
+    llm = _LLM()
+    service = _service(store, ops, llm)
 
     run = await service.run(corpus="unrated", limit=1)
 
@@ -193,6 +214,41 @@ async def test_run_uses_one_llm_call_and_one_canonical_save() -> None:
     assert run.stage_a_scored == 0
     assert run.stage_b_scored == 0
     assert store.errors == []
+    assert store.auto_decay_calls == [
+        {"ghost_days": 30, "archive_ignored_days": 14}
+    ]
+
+
+async def test_dry_run_previews_without_claim_or_llm_call() -> None:
+    store = _Store(_job())
+    ops = _Ops()
+    llm = _LLM()
+
+    run = await _service(store, ops, llm).run(
+        corpus="unrated", limit=1, dry_run=True
+    )
+
+    assert [item.stage for item in run.dry_run_preview] == ["evaluation"]
+    assert store.previews == 1
+    assert store.claims == 0
+    assert llm.calls == 0
+    assert store.saved == []
+    assert store.auto_decay_calls == []
+
+
+async def test_short_jd_records_unified_error_without_llm_call() -> None:
+    job = _job()
+    job.jd_text = "Too short"
+    store = _Store(job)
+    ops = _Ops()
+    llm = _LLM()
+
+    run = await _service(store, ops, llm).run(limit=1)
+
+    assert llm.calls == 0
+    assert run.errors == 1
+    assert store.saved == []
+    assert store.errors[0][0] == "1"
 
 
 async def test_eligibility_failure_forces_tier_without_zeroing_match() -> None:

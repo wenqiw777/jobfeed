@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from jobfeed.adapters.store import _sqlite_evaluation_results
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
-from jobfeed.domain.models import JobPosting
-
-if TYPE_CHECKING:
-    from jobfeed.domain.models import UnifiedEvaluationResult  # type: ignore[attr-defined]  # noqa: I001
+from jobfeed.domain.models import JobPosting, UnifiedEvaluationResult
 
 
 class SqliteUnifiedEvaluations:
@@ -54,7 +51,17 @@ class SqliteUnifiedEvaluations:
         limit: int = 100,
         max_days: int | None = None,
     ) -> list[JobPosting]:
-        """Read pending work using the claim filter without mutating it."""
+        """Read pending work using the claim filter without mutating it.
+
+        Args:
+            evaluator_version: Exact evaluator contract identity.
+            corpus: Pending-work selection mode.
+            limit: Maximum jobs to preview.
+            max_days: Optional discovery freshness window.
+
+        Returns:
+            Matching jobs in stable discovery order.
+        """
         return await _sqlite_evaluation_results._preview_pending_evaluations(
             self._lifecycle,
             evaluator_version=evaluator_version,

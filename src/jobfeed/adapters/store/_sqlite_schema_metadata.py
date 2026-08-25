@@ -407,12 +407,20 @@ def schema_ddl_statements() -> tuple[str, ...]:
 
 
 def schema_v1_ddl_statements() -> tuple[str, ...]:
-    """Return the frozen v1 DDL used to validate and migrate existing stores."""
+    """Return the frozen v1 DDL used to validate and migrate existing stores.
+
+    Returns:
+        Ordered v1 schema statements.
+    """
     return _ddl_statements(_SQLITE_METADATA_V1)
 
 
 def schema_v2_migration_statements() -> tuple[str, ...]:
-    """Return only additive DDL needed to migrate an exact v1 store to v2."""
+    """Return only additive DDL needed to migrate an exact v1 store to v2.
+
+    Returns:
+        Ordered additive v2 statements.
+    """
     dialect = sqlite.dialect()
     table = SQLITE_METADATA.tables["evaluation_results"]
     indexes = tuple(
@@ -423,7 +431,11 @@ def schema_v2_migration_statements() -> tuple[str, ...]:
 
 
 def llm_usage_v2_rebuild_statements() -> tuple[str, ...]:
-    """Return the transactional table rebuild that admits evaluation usage rows."""
+    """Return the table rebuild that admits unified evaluation usage rows.
+
+    Returns:
+        Ordered transactional rebuild statements.
+    """
     dialect = sqlite.dialect()
     table = SQLITE_METADATA.tables["llm_usage"]
     columns = ", ".join(column.name for column in table.columns)

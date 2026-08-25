@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from jobfeed.domain.errors import RunLeaseLostError, ScoringParseError
 from jobfeed.domain.models import JobPosting, LLMRequest, PipelineRun
 from jobfeed.domain.unified_evaluation_parse import (
     parse_unified_evaluation_response,
 )
+from jobfeed.ports.store_unified import StoreUnifiedEvaluationMixin
 from jobfeed.services._evaluate_helpers import (
     SHORT_JD_THRESHOLD,
     UsageRecordContext,
@@ -34,13 +35,23 @@ async def run_unified_evaluation(  # noqa: PLR0913 - explicit run filters
     max_days: int | None,
     lease_session: RunLeaseSession,
 ) -> None:
-    """Claim and evaluate jobs once using the canonical evidence contract."""
+    """Claim and evaluate jobs once using the canonical evidence contract.
+
+    Args:
+        service: Owning service with ports, budget, config, and progress hooks.
+        run: Mutable run counters and status.
+        corpus: Pending-work selection mode.
+        limit: Maximum jobs to claim.
+        max_days: Optional discovery freshness window.
+        lease_session: Active run fence checked around external work.
+    """
     if limit <= 0:
         return
     lease_session.ensure_active()
     if not await service._budget.has_budget():
         return
-    jobs = await service._deps.store.claim_pending_evaluations(
+    store = cast(StoreUnifiedEvaluationMixin, service._deps.store)
+    jobs = await store.claim_pending_evaluations(
         evaluator_version=EVALUATOR_VERSION,
         corpus=corpus,
         limit=limit,
@@ -71,8 +82,9 @@ async def _score_job(
     lease_session: RunLeaseSession,
 ) -> bool:
     job_id = require_job_id(job)
+    store = cast(StoreUnifiedEvaluationMixin, service._deps.store)
     if len(job.jd_text or "") < SHORT_JD_THRESHOLD:
-        await service._deps.store.save_evaluation_error(
+        await store.save_evaluation_error(
             job_id,
             f"jd_text_too_short: {len(job.jd_text or '')} chars",
             EVALUATOR_VERSION,
@@ -89,9 +101,7 @@ async def _score_job(
         lease_session.ensure_active()
         ledger_day = await service._budget.reserve()
         if ledger_day is None:
-            await service._deps.store.release_evaluation_claim(
-                job_id, EVALUATOR_VERSION
-            )
+            await store.release_evaluation_claim(job_id, EVALUATOR_VERSION)
             return False
         try:
             response = await client.complete(request)
@@ -130,7 +140,7 @@ async def _score_job(
             await _save_error(service, job_id, str(exc), run)
             return False
         lease_session.ensure_active()
-        await service._deps.store.save_evaluation(job_id, result)
+        await store.save_evaluation(job_id, result)
         service._logger.info(
             "evaluation_scored",
             job_id=job_id,
@@ -147,7 +157,8 @@ async def _save_error(
     error: str,
     run: PipelineRun,
 ) -> None:
-    await service._deps.store.save_evaluation_error(
+    store = cast(StoreUnifiedEvaluationMixin, service._deps.store)
+    await store.save_evaluation_error(
         job_id, error, EVALUATOR_VERSION
     )
     run.errors += 1

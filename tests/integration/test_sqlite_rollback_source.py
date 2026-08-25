@@ -17,6 +17,7 @@ from jobfeed.adapters.migration.sqlite_rollback_source import (
     SqliteRollbackSourceError,
     open_sqlite_rollback_snapshot,
 )
+from jobfeed.adapters.store._sqlite_schema_metadata import SQLITE_SCHEMA_VERSION
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
 
@@ -24,12 +25,12 @@ _AS_OF = datetime(2026, 8, 12, tzinfo=UTC)
 _INITIAL_STATE_ROWS = 2
 
 
-async def test_snapshot_gates_and_streams_exact_v1_source(tmp_path: Path) -> None:
+async def test_snapshot_gates_and_streams_current_source(tmp_path: Path) -> None:
     """One read snapshot exposes exact typed identity, metrics, and rows."""
     path = await _source_database(tmp_path)
 
     async with open_sqlite_rollback_snapshot(path, as_of_utc=_AS_OF) as snapshot:
-        assert snapshot.schema_version == 1
+        assert snapshot.schema_version == SQLITE_SCHEMA_VERSION
         assert snapshot.source.file_size_bytes == path.stat().st_size
         assert snapshot.source.file_sha256 == _sha256(path)
         assert snapshot.source.journal_mode == "delete"
