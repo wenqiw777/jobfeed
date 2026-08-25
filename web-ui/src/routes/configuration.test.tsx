@@ -663,6 +663,7 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
   expect(screen.getByLabelText("Maximum unique jobs to evaluate per run"))
     .toHaveValue(150);
   expect(screen.getByLabelText("Maximum job age in hours")).toHaveValue(36);
+  expect(screen.getByText(/Indeed keeps the full 2-day window/)).toBeVisible();
   expect(screen.getByText("150 Quick evaluations")).toBeVisible();
   expect(screen.getByText("About 45 Detailed reviews (30% pass rate)")).toBeVisible();
   expect(await screen.findByText("Pro plan")).toBeVisible();

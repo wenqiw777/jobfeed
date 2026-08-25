@@ -167,7 +167,7 @@ title_blocklist = []             # accepted for back-compat but NOT applied here
 company_blocklist = []           # e.g. ["staffing agency", "recruiting firm"]
 location_allowlist = []          # e.g. ["remote", "san francisco"] — empty = any location
 location_blocklist = []          # e.g. ["new york", "london"]
-# posted_within_hours = 36       # exact cutoff using posted_at; missing posted_at falls back to discovered_at
+# posted_within_hours = 36       # exact cutoff except Indeed keeps 48h; posted_at preferred, then discovered_at
 # posted_within_days =           # legacy whole-day setting; ignored when posted_within_hours is set
 big_company_list = []            # e.g. ["google", "meta", "apple"] — get big_company_days leniency
 big_company_days = 90            # stale cutoff for big-company postings (default 90 days)

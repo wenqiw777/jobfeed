@@ -213,6 +213,35 @@ def test_freshness_enforces_exact_36_hour_cutoff() -> None:
     assert apply_hard_filters(fresh, f, now=_NOW) is None
 
 
+def test_indeed_keeps_full_two_day_candidate_window() -> None:
+    """A 40-hour Indeed post passes while non-Indeed sources stay at 36 hours."""
+    f = _empty_filters()
+    f.posted_within_hours = _HOURS_LIMIT
+    posted_at = _NOW - timedelta(hours=40)
+
+    indeed = make_job(platform="indeed", posted_at=posted_at)
+    linkedin = make_job(platform="linkedin_guest", posted_at=posted_at)
+    ats = make_job(platform="greenhouse", posted_at=posted_at)
+
+    assert apply_hard_filters(indeed, f, now=_NOW) is None
+    assert apply_hard_filters(linkedin, f, now=_NOW) == "older than 36 hours"
+    assert apply_hard_filters(ats, f, now=_NOW) == "older than 36 hours"
+
+
+def test_indeed_blocks_postings_older_than_two_days() -> None:
+    """The Indeed exception ends at 48 hours rather than disabling freshness."""
+    f = _empty_filters()
+    f.posted_within_hours = _HOURS_LIMIT
+    job = make_job(
+        platform="indeed",
+        posted_at=_NOW - timedelta(hours=49),
+    )
+
+    reason = apply_hard_filters(job, f, now=_NOW)
+
+    assert reason == "older than 48 hours"
+
+
 def test_freshness_falls_back_to_discovery_when_posted_time_is_missing() -> None:
     """Missing posted_at retains the documented discovery-time fallback."""
     f = _empty_filters()

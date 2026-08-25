@@ -195,7 +195,7 @@ function ReviewSettings({
             <SpaceBetween size="m">
               <NumberField
                 label="Maximum job age in hours"
-                description="36 hours is enforced against posted time. Indeed may fetch two days of candidates before this exact local cutoff."
+                description="LinkedIn and other sources use 36 hours. Indeed keeps the full 2-day window."
                 value={values.maximumJobAgeHours}
                 min={1}
                 onChange={(value) => update("maximumJobAgeHours", value)}

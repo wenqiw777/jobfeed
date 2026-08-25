@@ -185,7 +185,7 @@ function ProfileEditor({
         </FormField>
         <FormField
           label="Maximum posting age (hours)"
-          description="LinkedIn uses this exact window. Indeed fetches two days of candidates, then Jobfeed keeps only posts inside this cutoff."
+          description="LinkedIn and other sources use this exact window. Indeed keeps the full 2-day window returned by its search."
         >
           <Input
             type="number"
