@@ -56,7 +56,7 @@ export function JobList({
       id: "score",
       header: "Fit score",
       sortingField: "score",
-      cell: (job) => job.stage_b_fit_score ?? job.stage_a_score ?? "—",
+      cell: (job) => job.evaluation_score ?? "—",
       width: 70,
     },
     {
@@ -116,17 +116,20 @@ export function JobList({
 }
 
 function VerdictBadge({ job }: { job: JobSummary }) {
-  if (job.stage_b_status === "error") {
+  if (job.evaluation_status === "error") {
     return <Badge color="red">Evaluation error</Badge>;
   }
-  if (job.verdict === "apply") {
-    return <Badge color="green">Apply</Badge>;
+  if (job.evaluation_verdict === "strong_match") {
+    return <Badge color="green">Strong match</Badge>;
   }
-  if (job.verdict === "consider") {
-    return <Badge color="blue">Consider</Badge>;
+  if (job.evaluation_verdict === "possible_match") {
+    return <Badge color="blue">Possible match</Badge>;
   }
-  if (job.verdict === "skip") {
-    return <Badge color="grey">Skip</Badge>;
+  if (job.evaluation_verdict === "weak_match") {
+    return <Badge color="grey">Weak match</Badge>;
+  }
+  if (job.evaluation_verdict === "ineligible") {
+    return <Badge color="red">Ineligible</Badge>;
   }
   return <Badge color="grey">Not evaluated</Badge>;
 }

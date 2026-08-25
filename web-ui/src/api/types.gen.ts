@@ -2079,6 +2079,14 @@ export interface components {
              * Format: date-time
              */
             discovered_at: string;
+            /** Evaluation Score */
+            evaluation_score: number | null;
+            /** Evaluation Status */
+            evaluation_status: string | null;
+            /** Evaluation Verdict */
+            evaluation_verdict: string | null;
+            /** Evaluator Version */
+            evaluator_version: string | null;
             /** Id */
             id: string;
             /** Jd Quality */
@@ -2087,12 +2095,6 @@ export interface components {
             platform: string;
             /** Posted At */
             posted_at: string | null;
-            /** Stage A Score */
-            stage_a_score: number | null;
-            /** Stage B Fit Score */
-            stage_b_fit_score: number | null;
-            /** Stage B Status */
-            stage_b_status: string | null;
             /** Status */
             status: string;
             /** Title */
@@ -2101,8 +2103,6 @@ export interface components {
             title_norm: string | null;
             /** Url */
             url: string;
-            /** Verdict */
-            verdict: string | null;
         };
         /**
          * JobsListResponse

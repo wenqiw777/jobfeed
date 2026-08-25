@@ -1644,6 +1644,50 @@
             "title": "Discovered At",
             "type": "string"
           },
+          "evaluation_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Score"
+          },
+          "evaluation_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Status"
+          },
+          "evaluation_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Verdict"
+          },
+          "evaluator_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluator Version"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1675,39 +1719,6 @@
             ],
             "title": "Posted At"
           },
-          "stage_a_score": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Stage A Score"
-          },
-          "stage_b_fit_score": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Stage B Fit Score"
-          },
-          "stage_b_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Stage B Status"
-          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -1730,17 +1741,6 @@
           "url": {
             "title": "Url",
             "type": "string"
-          },
-          "verdict": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Verdict"
           }
         },
         "required": [
@@ -1751,10 +1751,10 @@
           "url",
           "status",
           "decision",
-          "verdict",
-          "stage_a_score",
-          "stage_b_fit_score",
-          "stage_b_status",
+          "evaluation_score",
+          "evaluation_verdict",
+          "evaluation_status",
+          "evaluator_version",
           "posted_at",
           "discovered_at",
           "closed_at",

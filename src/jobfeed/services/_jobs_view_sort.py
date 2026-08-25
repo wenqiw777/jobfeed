@@ -8,26 +8,33 @@ Split out of ``services/jobs_view.py`` to keep both modules under the
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
+from math import exp2
 
 # Sort vocabulary is canonical in the domain (JobsViewQuery validates it);
 # re-exported here so service-layer callers keep one import site.
 from jobfeed.domain.models_views import DEFAULT_SORT, VALID_SORTS, JobsViewRow
 
-# Verdict-group ranks: apply -> consider -> skip -> derived below-threshold
-# ("below threshold" is NOT a Verdict value; it is derived from
-# stage_b_status = 'skipped_below_threshold') -> unscored.
-_VERDICT_GROUP_RANK = {"apply": 0, "consider": 1, "skip": 2}
-_BELOW_THRESHOLD_GROUP = 3
+# Unified match tiers are hard ranking boundaries. Legacy Stage A/B verdicts
+# are deliberately absent: only canonical evaluation results can rank.
+_VERDICT_GROUP_RANK = {
+    "strong_match": 0,
+    "possible_match": 1,
+    "weak_match": 2,
+    "ineligible": 3,
+}
 _UNSCORED_GROUP = 4
-_BELOW_THRESHOLD_STATUS = "skipped_below_threshold"
+
+_FIT_WEIGHT = 0.85
+_FRESHNESS_WEIGHT = 0.15
+_FRESHNESS_HALF_LIFE_DAYS = 7.0
 
 
-def verdict_group_sort_key(row: JobsViewRow) -> tuple[int, int, int, float, int]:
+def verdict_group_sort_key(row: JobsViewRow) -> tuple[int, int, float, float, int]:
     """Build the fixed triage sort key for one row.
 
-    Order: verdict group (apply, consider, skip, derived below-threshold,
-    unscored), then score descending inside the group (Stage B fit score
-    with Stage A fallback, unscored last), then the deterministic tiebreak.
+    Order: unified match tier, then 85% canonical match score plus 15%
+    freshness inside the tier, then the deterministic tiebreak.
 
     Args:
         row: View row to key.
@@ -35,26 +42,39 @@ def verdict_group_sort_key(row: JobsViewRow) -> tuple[int, int, int, float, int]
     Returns:
         Sort key tuple (smaller sorts earlier).
     """
-    return (_verdict_group(row), *_score_rank(row), *_tiebreak(row))
+    return (_verdict_group(row), *_triage_rank(row), *_tiebreak(row))
 
 
 def _verdict_group(row: JobsViewRow) -> int:
     """Rank a row into its verdict group (lower = earlier on screen)."""
-    if row.verdict is not None:
-        return _VERDICT_GROUP_RANK.get(row.verdict, _UNSCORED_GROUP)
-    if row.stage_b_status == _BELOW_THRESHOLD_STATUS:
-        return _BELOW_THRESHOLD_GROUP
-    return _UNSCORED_GROUP
+    return _VERDICT_GROUP_RANK.get(row.evaluation_verdict or "", _UNSCORED_GROUP)
 
 
 def _score_rank(row: JobsViewRow) -> tuple[int, int]:
-    """Stage B fit score desc with Stage A fallback; unscored rows last."""
-    score = row.stage_b_fit_score
-    if score is None:
-        score = row.stage_a_score
+    """Canonical unified score descending; unevaluated rows last."""
+    score = row.evaluation_score
     if score is None:
         return (1, 0)
     return (0, -score)
+
+
+def _triage_rank(row: JobsViewRow) -> tuple[int, float]:
+    """Rank one unified tier by canonical score and posting freshness."""
+    score = row.evaluation_score
+    if score is None:
+        return (1, 0.0)
+    ranking_day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    rank_signal = _FIT_WEIGHT * score + _FRESHNESS_WEIGHT * _freshness_score(
+        row, now=ranking_day
+    )
+    return (0, -rank_signal)
+
+
+def _freshness_score(row: JobsViewRow, *, now: datetime) -> float:
+    """Return 0..100 freshness with a seven-day exponential half-life."""
+    posted = row.job.posted_at or row.job.discovered_at
+    age_days = max(0.0, (now - posted).total_seconds() / 86_400.0)
+    return 100.0 * exp2(-age_days / _FRESHNESS_HALF_LIFE_DAYS)
 
 
 def _tiebreak(row: JobsViewRow) -> tuple[float, int]:
@@ -86,15 +106,13 @@ def _key_posted_asc(row: JobsViewRow) -> tuple[int, float, float, int]:
 
 
 def _key_score_desc(row: JobsViewRow) -> tuple[int, int, float, int]:
-    """Library order: best score first (fit score, Stage A fallback)."""
+    """Library order: best canonical unified score first."""
     return (*_score_rank(row), *_tiebreak(row))
 
 
 def _key_score_asc(row: JobsViewRow) -> tuple[int, int, float, int]:
-    """Lowest score first (fit score, Stage A fallback), unscored last."""
-    score = row.stage_b_fit_score
-    if score is None:
-        score = row.stage_a_score
+    """Lowest canonical unified score first, unevaluated rows last."""
+    score = row.evaluation_score
     if score is None:
         return (1, 0, *_tiebreak(row))
     return (0, score, *_tiebreak(row))

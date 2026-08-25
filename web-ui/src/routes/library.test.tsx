@@ -10,8 +10,9 @@ const calls: string[] = [];
 function row(status: string, postedAt: string | null = "2026-06-16T00:00:00Z"): JobSummary {
   return {
     id: "1", company: "Acme", title: "Engineer", platform: "lever",
-    url: "https://example.com", status, decision: "results", verdict: "apply", stage_a_score: 80,
-    stage_b_fit_score: 90, stage_b_status: "completed", jd_quality: "full",
+    url: "https://example.com", status, decision: "results",
+    evaluation_score: 90, evaluation_verdict: "strong_match",
+    evaluation_status: "completed", evaluator_version: "unified-v1", jd_quality: "full",
     company_norm: "acme", title_norm: "engineer", posted_at: postedAt,
     discovered_at: "2026-06-16T12:00:00Z", closed_at: null,
   };
@@ -53,6 +54,8 @@ test("offers only the simplified decision filters", async () => {
   expect(screen.queryByRole("columnheader", { name: "Added" })).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /Shortlisted|Archived|Scored/ })).not.toBeInTheDocument();
   expect(await screen.findByText("~Jun 16, 2026")).toBeInTheDocument();
+  expect(screen.getByText("Strong match")).toBeInTheDocument();
+  expect(screen.getByText("90")).toBeInTheDocument();
 });
 
 test("Applied filter groups historical application statuses", async () => {

@@ -52,7 +52,7 @@ class JobsViewQuery:
         posted_within_days: Freshness window in days. Cuts on
             ``discovered_at`` (not ``posted_at``) per rewrite-spec §15 — a job
             posted long ago but newly scraped is fresh to the user's workflow.
-        require_verdict: Keep only rows with a Stage B verdict.
+        require_verdict: Keep only rows with a completed unified match tier.
         sort: One of ``VALID_SORTS``. Orders the SQL rows so plain Library
             requests paginate correctly in SQL beyond any corpus cap.
         limit: Maximum rows returned. With ``offset``, windows the SQL
@@ -96,10 +96,10 @@ class JobsViewRow:
     company_norm: str | None
     title_norm: str | None
     status: str
-    verdict: str | None
-    stage_a_score: int | None
-    stage_b_fit_score: int | None
-    stage_b_status: str | None
+    evaluation_score: int | None
+    evaluation_verdict: str | None
+    evaluation_status: str | None
+    evaluator_version: str | None
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -32,7 +32,7 @@ _TAB_PREDICATES: dict[str, str] = {
     ),
     "pending_jd": (
         "((j.jd_quality IS NULL OR j.jd_quality IN ('missing','abandoned'))"
-        " AND e.stage_a_score IS NULL"
+        " AND r.match_score IS NULL"
         " AND s.status NOT IN ('archived','ignored')"
         " AND j.closed_at IS NULL)"
     ),
@@ -44,14 +44,13 @@ _TAB_PREDICATES: dict[str, str] = {
 
 _FROM = (
     " FROM jobs AS j"
-    " LEFT JOIN evaluations AS e ON e.job_id=j.id"
+    " LEFT JOIN evaluation_results AS r ON r.job_id=j.id"
     " LEFT JOIN job_status AS s ON s.job_id=j.id"
 )
 _COLUMNS = (
-    "j.*, s.status AS status, e.stage_a_score, e.stage_b_verdict,"
-    " e.stage_b_status,"
-    " CAST(json_extract(e.stage_b_fit_json, '$.score_0_100') AS INTEGER)"
-    " AS stage_b_fit_score"
+    "j.*, s.status AS status, r.match_score AS evaluation_score,"
+    " r.match_tier AS evaluation_verdict, r.status AS evaluation_status,"
+    " r.evaluator_version"
 )
 _SORTS = {
     "discovered_desc": "j.discovered_at DESC, j.id DESC",
@@ -62,16 +61,10 @@ _SORTS = {
         "COALESCE(j.posted_at, j.discovered_at) ASC, j.discovered_at DESC, j.id DESC"
     ),
     "score_desc": (
-        "COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
-        " AS INTEGER), e.stage_a_score) IS NULL,"
-        " COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
-        " AS INTEGER), e.stage_a_score) DESC, j.discovered_at DESC, j.id DESC"
+        "r.match_score IS NULL, r.match_score DESC, j.discovered_at DESC, j.id DESC"
     ),
     "score_asc": (
-        "COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
-        " AS INTEGER), e.stage_a_score) IS NULL,"
-        " COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
-        " AS INTEGER), e.stage_a_score) ASC, j.discovered_at DESC, j.id DESC"
+        "r.match_score IS NULL, r.match_score ASC, j.discovered_at DESC, j.id DESC"
     ),
     "company_asc": (
         "j.company_norm IS NULL, j.company_norm ASC, j.discovered_at DESC, j.id DESC"
@@ -110,7 +103,7 @@ def _shared_filters(
         fragments.append("j.discovered_at >= ?")
         params.append(_require_utc_timestamp(cutoff, "freshness cutoff"))
     if query.require_verdict:
-        fragments.append("e.stage_b_verdict IS NOT NULL")
+        fragments.append("r.status='completed' AND r.match_tier IS NOT NULL")
     return fragments, params
 
 
@@ -119,16 +112,16 @@ def _where(predicate: str, shared: Sequence[str]) -> str:
 
 
 def _view_row(row: aiosqlite.Row) -> JobsViewRow:
-    fit_score = row["stage_b_fit_score"]
+    score = row["evaluation_score"]
     return JobsViewRow(
         job=_job_from_row(row),
         company_norm=row["company_norm"],
         title_norm=row["title_norm"],
         status=str(row["status"]),
-        verdict=row["stage_b_verdict"],
-        stage_a_score=row["stage_a_score"],
-        stage_b_fit_score=int(fit_score) if fit_score is not None else None,
-        stage_b_status=row["stage_b_status"],
+        evaluation_score=int(score) if score is not None else None,
+        evaluation_verdict=row["evaluation_verdict"],
+        evaluation_status=row["evaluation_status"],
+        evaluator_version=row["evaluator_version"],
     )
 
 

@@ -20,10 +20,10 @@ function job(
     url: "https://example.com/1",
     status,
     decision: status === "ignored" ? "ignored" : "results",
-    verdict: "apply",
-    stage_a_score: 84,
-    stage_b_fit_score: 92,
-    stage_b_status: "completed",
+    evaluation_score: 92,
+    evaluation_verdict: "strong_match",
+    evaluation_status: "completed",
+    evaluator_version: "unified-v1",
     jd_quality: "full",
     company_norm: "readable co",
     title_norm: "software engineer",
@@ -124,6 +124,9 @@ test("shows Results plus the three decision filters", async () => {
   expect(screen.queryByRole("columnheader", { name: "Added" })).not.toBeInTheDocument();
   expect(await screen.findByText("~Jun 16, 2026")).toBeInTheDocument();
   expect(await screen.findByText("Estimated from date added")).toBeInTheDocument();
+  expect(screen.getByText("Strong match")).toBeInTheDocument();
+  expect(within(screen.getByRole("table", { name: "Jobs" })).getByText("92"))
+    .toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /Pending JD/ })).not.toBeInTheDocument();
 });
 

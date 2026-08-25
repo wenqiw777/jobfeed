@@ -62,10 +62,10 @@ def _row(
         company_norm=company.lower(),
         title_norm=_TITLE.lower(),
         status=status,
-        verdict=None,
-        stage_a_score=None,
-        stage_b_fit_score=None,
-        stage_b_status=None,
+        evaluation_score=None,
+        evaluation_verdict=None,
+        evaluation_status=None,
+        evaluator_version=None,
     )
 
 
@@ -77,7 +77,7 @@ def _posted_row(id: str, posted_at: datetime | None) -> JobsViewRow:
 
 def _fit_row(id: str, fit_score: int) -> JobsViewRow:
     row = _row(id)
-    row.stage_b_fit_score = fit_score
+    row.evaluation_score = fit_score
     return row
 
 

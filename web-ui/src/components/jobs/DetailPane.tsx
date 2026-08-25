@@ -73,7 +73,7 @@ export function DetailPane({
       <SpaceBetween direction="horizontal" size="xs">
         <VerdictPill
           verdict={stageB?.verdict ?? null}
-          stageBStatus={evaluation.stage_b_status}
+          status={evaluation.stage_b_status}
         />
         <Link href={job.url} external externalIconAriaLabel="Opens in a new tab">
           Open posting
