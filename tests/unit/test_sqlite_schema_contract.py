@@ -1,4 +1,4 @@
-"""SQLite v1 DDL constraints, indexes, foreign keys, and trigger tests."""
+"""SQLite v2 DDL constraints, indexes, foreign keys, and trigger tests."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ _EXPLICIT_INDEXES = {
     "idx_eval_stage_a_score",
     "idx_eval_stage_b_completed",
     "idx_eval_stage_b_queue",
+    "idx_evaluation_results_queue",
     "idx_interview_rounds_job",
     "idx_interview_rounds_upcoming",
     "idx_jobs_dedup_softkey",

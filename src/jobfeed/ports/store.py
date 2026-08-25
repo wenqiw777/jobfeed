@@ -13,10 +13,11 @@ from jobfeed.domain.models import (
     StageAResult,
     StageBResult,
 )
+from jobfeed.ports.store_unified import StoreUnifiedEvaluationMixin
 
 
 @runtime_checkable
-class JobStore(Protocol):
+class JobStore(StoreUnifiedEvaluationMixin, Protocol):
     """Core persistence capability for the Jobfeed pipeline.
 
     Jobs, staged evaluation, ML-gate results, and pipeline runs. Optional

@@ -1,4 +1,4 @@
-"""SQLAlchemy Core metadata for the version-one SQLite store schema."""
+"""SQLAlchemy Core metadata for the version-two SQLite store schema."""
 
 from __future__ import annotations
 
@@ -13,10 +13,11 @@ from jobfeed.adapters.migration.canonical_schema_manifest import (
     CANONICAL_SCHEMA_MANIFEST_V1,
 )
 
-SQLITE_SCHEMA_VERSION: Final = 1
+SQLITE_SCHEMA_VERSION: Final = 2
 SQLITE_TABLE_NAMES: Final = (
     *(table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables),
     "run_leases",
+    "evaluation_results",
 )
 _UTC_TIMESTAMP_SQL: Final = "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
 
@@ -25,6 +26,8 @@ _DEFAULTS: Final[dict[tuple[str, str], str]] = {
     ("evaluations", "updated_at"): _UTC_TIMESTAMP_SQL,
     ("evaluations", "stage_a_error_count"): "0",
     ("evaluations", "stage_b_error_count"): "0",
+    ("evaluation_results", "updated_at"): _UTC_TIMESTAMP_SQL,
+    ("evaluation_results", "error_count"): "0",
     ("pipeline_runs", "jobs_discovered"): "0",
     ("pipeline_runs", "jobs_inserted"): "0",
     ("pipeline_runs", "jobs_updated"): "0",
@@ -58,6 +61,7 @@ _DEFAULTS: Final[dict[tuple[str, str], str]] = {
 }
 _FOREIGN_KEYS: Final = {
     "evaluations": (("job_id", "jobs", "id", None),),
+    "evaluation_results": (("job_id", "jobs", "id", "CASCADE"),),
     "job_status": (
         ("job_id", "jobs", "id", "CASCADE"),
         ("resume_variant", "resume_variants", "name", None),
@@ -86,7 +90,7 @@ def _column_type(name: str) -> sa.types.TypeEngine[Any]:
     raise ValueError(f"unsupported SQLite manifest type: {name}")
 
 
-def _base_metadata() -> sa.MetaData:
+def _base_metadata(*, include_evaluation_results: bool) -> sa.MetaData:
     """Build all manifest tables. Time complexity: O(T * C)."""
     metadata = sa.MetaData()
     for manifest_table in CANONICAL_SCHEMA_MANIFEST_V1.tables:
@@ -113,14 +117,49 @@ def _base_metadata() -> sa.MetaData:
         sa.Column("heartbeat_at", sa.Text()),
         sa.Column("expires_at", sa.Text()),
     )
+    if include_evaluation_results:
+        sa.Table(
+            "evaluation_results",
+            metadata,
+            sa.Column("job_id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("status", sa.Text(), nullable=False),
+            sa.Column("eligibility_status", sa.Text()),
+            sa.Column("match_tier", sa.Text()),
+            sa.Column("match_score", sa.Integer()),
+            sa.Column("ats_visibility_score", sa.Integer()),
+            sa.Column("result_json", sa.Text()),
+            sa.Column("evaluator_version", sa.Text(), nullable=False),
+            sa.Column("model", sa.Text()),
+            sa.Column("prompt_hash", sa.Text()),
+            sa.Column("resume_hash", sa.Text()),
+            sa.Column("cost_usd", sa.REAL()),
+            sa.Column("evaluated_at", sa.Text()),
+            sa.Column(
+                "updated_at",
+                sa.Text(),
+                nullable=False,
+                server_default=sa.text(_UTC_TIMESTAMP_SQL),
+            ),
+            sa.Column("error", sa.Text()),
+            sa.Column(
+                "error_count",
+                sa.Integer(),
+                nullable=False,
+                server_default=sa.text("0"),
+            ),
+        )
     return metadata
 
 
 def _add_relational_constraints(metadata: sa.MetaData) -> None:
     """Attach fixed unique and foreign keys. Time complexity: O(C)."""
     for table_name, columns in _UNIQUE_COLUMNS.items():
+        if table_name not in metadata.tables:
+            continue
         metadata.tables[table_name].append_constraint(sa.UniqueConstraint(*columns))
     for table_name, references in _FOREIGN_KEYS.items():
+        if table_name not in metadata.tables:
+            continue
         table = metadata.tables[table_name]
         for column, target_table, target_column, on_delete in references:
             table.append_constraint(
@@ -132,7 +171,7 @@ def _add_relational_constraints(metadata: sa.MetaData) -> None:
             )
 
 
-def _checks() -> dict[str, tuple[str, ...]]:
+def _checks(*, include_evaluation_stage: bool) -> dict[str, tuple[str, ...]]:
     return {
         "jobs": (
             "jd_quality IS NULL OR jd_quality IN "
@@ -157,6 +196,18 @@ def _checks() -> dict[str, tuple[str, ...]]:
             "stage_b_fit_json IS NULL OR json_valid(stage_b_fit_json)",
             "stage_b_hooks_json IS NULL OR json_valid(stage_b_hooks_json)",
         ),
+        "evaluation_results": (
+            "status IN ('in_progress','completed','error')",
+            "eligibility_status IS NULL OR eligibility_status IN "
+            "('pass','fail','unclear')",
+            "match_tier IS NULL OR match_tier IN "
+            "('strong_match','possible_match','weak_match','ineligible')",
+            "match_score IS NULL OR match_score BETWEEN 0 AND 100",
+            "ats_visibility_score IS NULL OR ats_visibility_score BETWEEN 0 AND 100",
+            "result_json IS NULL OR json_valid(result_json)",
+            "cost_usd IS NULL OR cost_usd >= 0",
+            "error_count >= 0",
+        ),
         "job_status": (
             "status IN ('new','scored','shortlisted','awaiting_referral',"
             "'applied','interviewing','rejected','offer','ghosted','archived','ignored')",
@@ -168,7 +219,8 @@ def _checks() -> dict[str, tuple[str, ...]]:
             "cost_usd >= 0",
             "cached IN (0,1)",
             "latency_ms >= 0",
-            "stage IS NULL OR stage IN ('a','b')",
+            "stage IS NULL OR stage IN "
+            + ("('a','b','evaluation')" if include_evaluation_stage else "('a','b')"),
         ),
         "step_timings": ("is_error IN (0,1)",),
         "run_leases": (
@@ -181,9 +233,13 @@ def _checks() -> dict[str, tuple[str, ...]]:
     }
 
 
-def _add_checks(metadata: sa.MetaData) -> None:
+def _add_checks(metadata: sa.MetaData, *, include_evaluation_stage: bool) -> None:
     """Attach every fixed check constraint. Time complexity: O(C)."""
-    for table_name, expressions in _checks().items():
+    for table_name, expressions in _checks(
+        include_evaluation_stage=include_evaluation_stage
+    ).items():
+        if table_name not in metadata.tables:
+            continue
         for position, expression in enumerate(expressions, start=1):
             metadata.tables[table_name].append_constraint(
                 sa.CheckConstraint(
@@ -239,6 +295,15 @@ def _add_indexes(metadata: sa.MetaData) -> None:
         (tables["evaluations"].c.stage_a_score,),
         where="stage_b_status = 'completed'",
     )
+    if "evaluation_results" in tables:
+        _index(
+            "idx_evaluation_results_queue",
+            (
+                tables["evaluation_results"].c.status,
+                tables["evaluation_results"].c.evaluator_version,
+                tables["evaluation_results"].c.updated_at,
+            ),
+        )
     _index(
         "idx_job_status_status",
         (tables["job_status"].c.status,),
@@ -289,9 +354,14 @@ def _add_indexes(metadata: sa.MetaData) -> None:
     )
 
 
-SQLITE_METADATA: Final = _base_metadata()
+_SQLITE_METADATA_V1: Final = _base_metadata(include_evaluation_results=False)
+_add_relational_constraints(_SQLITE_METADATA_V1)
+_add_checks(_SQLITE_METADATA_V1, include_evaluation_stage=False)
+_add_indexes(_SQLITE_METADATA_V1)
+
+SQLITE_METADATA: Final = _base_metadata(include_evaluation_results=True)
 _add_relational_constraints(SQLITE_METADATA)
-_add_checks(SQLITE_METADATA)
+_add_checks(SQLITE_METADATA, include_evaluation_stage=True)
 _add_indexes(SQLITE_METADATA)
 
 SQLITE_TRIGGER_SQL: Final = """
@@ -312,20 +382,59 @@ END
 """.strip()
 
 
+def _ddl_statements(metadata: sa.MetaData) -> tuple[str, ...]:
+    """Compile ordered transactional DDL for one metadata snapshot."""
+    dialect = sqlite.dialect()
+    tables = tuple(
+        str(CreateTable(table).compile(dialect=dialect))
+        for table in metadata.sorted_tables
+    )
+    indexes = tuple(
+        str(CreateIndex(index).compile(dialect=dialect))
+        for table in metadata.sorted_tables
+        for index in sorted(table.indexes, key=lambda item: item.name or "")
+    )
+    return (*tables, *indexes, SQLITE_TRIGGER_SQL)
+
+
 def schema_ddl_statements() -> tuple[str, ...]:
-    """Return ordered transactional v1 DDL statements.
+    """Return ordered transactional v2 DDL statements.
 
     Returns:
         Table, index, and trigger DDL with no implicit transaction commands.
     """
+    return _ddl_statements(SQLITE_METADATA)
+
+
+def schema_v1_ddl_statements() -> tuple[str, ...]:
+    """Return the frozen v1 DDL used to validate and migrate existing stores."""
+    return _ddl_statements(_SQLITE_METADATA_V1)
+
+
+def schema_v2_migration_statements() -> tuple[str, ...]:
+    """Return only additive DDL needed to migrate an exact v1 store to v2."""
     dialect = sqlite.dialect()
-    tables = tuple(
-        str(CreateTable(table).compile(dialect=dialect))
-        for table in SQLITE_METADATA.sorted_tables
-    )
+    table = SQLITE_METADATA.tables["evaluation_results"]
     indexes = tuple(
         str(CreateIndex(index).compile(dialect=dialect))
-        for table in SQLITE_METADATA.sorted_tables
         for index in sorted(table.indexes, key=lambda item: item.name or "")
     )
-    return (*tables, *indexes, SQLITE_TRIGGER_SQL)
+    return (str(CreateTable(table).compile(dialect=dialect)), *indexes)
+
+
+def llm_usage_v2_rebuild_statements() -> tuple[str, ...]:
+    """Return the transactional table rebuild that admits evaluation usage rows."""
+    dialect = sqlite.dialect()
+    table = SQLITE_METADATA.tables["llm_usage"]
+    columns = ", ".join(column.name for column in table.columns)
+    indexes = tuple(
+        str(CreateIndex(index).compile(dialect=dialect))
+        for index in sorted(table.indexes, key=lambda item: item.name or "")
+    )
+    return (
+        "ALTER TABLE llm_usage RENAME TO llm_usage_v1",
+        str(CreateTable(table).compile(dialect=dialect)),
+        f"INSERT INTO llm_usage ({columns}) SELECT {columns} FROM llm_usage_v1",
+        "DROP TABLE llm_usage_v1",
+        *indexes,
+    )
