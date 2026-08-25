@@ -56,7 +56,7 @@ export function LibraryTable({ jobs, onOpen, sort, onSort }: LibraryTableProps) 
     },
     {
       id: "verdict",
-      header: "Recommendation",
+      header: "Match",
       cell: (job) => (
         <VerdictPill
           verdict={job.evaluation_verdict}

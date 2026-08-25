@@ -329,6 +329,7 @@ async def test_job_detail_reads_only_canonical_unified_evaluation() -> None:
     response = job_detail_response(detail).model_dump()
     assert response["evaluation"]["match_score"] == _UNIFIED_SCORE
     assert response["evaluation"]["match_tier"] == "weak_match"
+    assert response["evaluation"]["evaluation_status"] == "completed"
     assert response["evaluation"]["summary"] == "Canonical summary."
     assert response["evaluation"]["eligibility_status"] == "pass"
     assert response["evaluation"]["eligibility_checks"][0]["status"] == "met"

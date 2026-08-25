@@ -79,13 +79,13 @@ export function TriggerEvaluateButton() {
           <SpaceBetween size="l">
             <FormField
               label="Maximum jobs (optional)"
-              description="Leave empty to evaluate every eligible job."
+              description="Leave empty to use the configured default of 150 jobs."
               errorText={isLimitInvalid ? "Maximum jobs must be a number of at least 1." : undefined}
             >
               <Input
                 type="number"
                 value={limitText}
-                placeholder="All eligible jobs"
+                placeholder="Configured default: 150"
                 ariaLabel="Maximum jobs"
                 invalid={isLimitInvalid}
                 nativeInputAttributes={{ min: 1 }}

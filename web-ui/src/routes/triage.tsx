@@ -20,12 +20,12 @@ import {
 } from "@/api/queries";
 import { BulkBar } from "@/components/jobs/BulkBar";
 import { DetailPane, type UserDecision } from "@/components/jobs/DetailPane";
-import { JobList } from "@/components/jobs/JobList";
+import { JobList, type JobListSort } from "@/components/jobs/JobList";
 import { toast } from "@/components/ui/use-toast";
 import { useSelection } from "@/lib/use-selection";
 
 type TriageFilter = "results" | "wait" | "applied" | "ignored";
-type TriageSort = "posted_asc" | "posted_desc" | "score_asc" | "score_desc";
+type TriageSort = JobListSort;
 
 const PAGE_LIMIT = 50;
 
@@ -55,7 +55,7 @@ function triageQuery(filter: TriageFilter, page: number, sort: TriageSort): Jobs
 export default function TriagePage() {
   const [filter, setFilter] = useState<TriageFilter>("results");
   const [page, setPage] = useState(0);
-  const [sort, setSort] = useState<TriageSort>("posted_desc");
+  const [sort, setSort] = useState<TriageSort>("discovered_desc");
   const [isSelectingAll, setIsSelectingAll] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selection = useSelection();

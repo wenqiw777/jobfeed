@@ -16,7 +16,12 @@ interface JobListProps {
   onSort: (sort: JobListSort) => void;
 }
 
-export type JobListSort = "posted_asc" | "posted_desc" | "score_asc" | "score_desc";
+export type JobListSort =
+  | "discovered_desc"
+  | "posted_asc"
+  | "posted_desc"
+  | "score_asc"
+  | "score_desc";
 
 /** Cloudscape table for one paginated Triage result page. */
 export function JobList({
@@ -48,7 +53,7 @@ export function JobList({
     },
     {
       id: "verdict",
-      header: "Recommendation",
+      header: "Match",
       cell: (job) => <VerdictBadge job={job} />,
       width: 120,
     },
@@ -74,9 +79,9 @@ export function JobList({
     },
   ];
   const sortingField = sort.startsWith("score") ? "score" : "posted";
-  const sortingColumn = columnDefinitions.find(
-    (column) => column.sortingField === sortingField,
-  );
+  const sortingColumn = sort === "discovered_desc"
+    ? undefined
+    : columnDefinitions.find((column) => column.sortingField === sortingField);
 
   return (
     <Table

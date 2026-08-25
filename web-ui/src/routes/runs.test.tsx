@@ -299,6 +299,9 @@ test("trigger evaluate dialog opens and submits with defaults", async () => {
   expect(within(dialog).getByRole("heading", { name: "Start evaluation" })).toBeInTheDocument();
   expect(screen.queryByRole("radio")).toBeNull();
   expect(screen.getByLabelText("Maximum jobs")).toBeInTheDocument();
+  expect(screen.getByText("Leave empty to use the configured default of 150 jobs."))
+    .toBeInTheDocument();
+  expect(screen.queryByText(/evaluate every eligible job/i)).toBeNull();
   expect(within(dialog).getByRole("button", { name: "Start evaluation" })).toBeInTheDocument();
 
   fireEvent.click(within(dialog).getByRole("button", { name: "Start evaluation" }));

@@ -51,6 +51,8 @@ test("offers only the simplified decision filters", async () => {
   }
   expect(screen.queryByText("viewing", { exact: true })).not.toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "Posted" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Match" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Recommendation" })).toBeNull();
   expect(screen.queryByRole("columnheader", { name: "Added" })).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /Shortlisted|Archived|Scored/ })).not.toBeInTheDocument();
   expect(await screen.findByText("~Jun 16, 2026")).toBeInTheDocument();

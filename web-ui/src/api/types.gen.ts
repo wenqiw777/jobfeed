@@ -1787,6 +1787,8 @@ export interface components {
             eligibility_checks: components["schemas"]["EligibilityCheckDetail"][];
             /** Eligibility Status */
             eligibility_status: string | null;
+            /** Evaluation Status */
+            evaluation_status: string | null;
             /** Evaluator Version */
             evaluator_version: string | null;
             /** Match Score */

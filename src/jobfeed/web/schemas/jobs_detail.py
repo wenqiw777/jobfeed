@@ -58,6 +58,7 @@ class EvaluationDetail(BaseModel):
     requirements: list[RequirementDetail]
     match_score: int | None
     match_tier: str | None
+    evaluation_status: str | None
     one_line: str | None
     ats_visibility_score: int | None
     evaluator_version: str | None
@@ -205,6 +206,7 @@ def _evaluation_detail(detail: JobDetail) -> EvaluationDetail:
         ],
         match_score=_integer(evaluation.get("match_score")),
         match_tier=_text(evaluation.get("match_tier")),
+        evaluation_status=_text(evaluation.get("status")),
         one_line=_text(result.get("one_line")),
         ats_visibility_score=_integer(result.get("ats_visibility_score")),
         evaluator_version=_text(evaluation.get("evaluator_version")),

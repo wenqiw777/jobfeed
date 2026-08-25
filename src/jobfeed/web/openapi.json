@@ -930,6 +930,17 @@
             ],
             "title": "Eligibility Status"
           },
+          "evaluation_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Status"
+          },
           "evaluator_version": {
             "anyOf": [
               {
@@ -1011,6 +1022,7 @@
           "requirements",
           "match_score",
           "match_tier",
+          "evaluation_status",
           "one_line",
           "ats_visibility_score",
           "evaluator_version",

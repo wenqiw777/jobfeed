@@ -26,6 +26,7 @@ function evaluation(over: Partial<Evaluation> = {}): Evaluation {
     }],
     match_score: 20,
     match_tier: "weak_match",
+    evaluation_status: "completed",
     one_line: "Canonical weak match.",
     ats_visibility_score: 40,
     evaluator_version: "unified-v2",
