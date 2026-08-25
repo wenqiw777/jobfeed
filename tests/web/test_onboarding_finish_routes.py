@@ -175,6 +175,7 @@ async def test_finish_applies_models_resume_and_selected_searches(
     async with _open_client(app) as client:
         configuration = (await client.get("/api/config")).json()
         configuration.pop("configured")
+        configuration.pop("ml_gate_performance")
         configuration["llm"]["max_daily_score_calls"] = SAVED_DAILY_CALLS
         configuration["scoring"]["ml_gate_enabled"] = True
         response = await client.post(
@@ -211,6 +212,7 @@ async def test_finish_rejects_incomplete_draft_without_creating_config(
     async with _open_client(app) as client:
         configuration = (await client.get("/api/config")).json()
         configuration.pop("configured")
+        configuration.pop("ml_gate_performance")
         response = await client.post(
             "/api/onboarding/finish",
             json={

@@ -74,6 +74,7 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
   const [form, setForm] = useState<EditableConfiguration>(() => {
     const editable: Partial<typeof current> = structuredClone(current);
     delete editable.configured;
+    delete editable.ml_gate_performance;
     return structuredClone(editable);
   });
   const [validation, setValidation] = useState<string | null>(null);
@@ -103,6 +104,7 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
   const scoring = form.scoring!;
   const sources = form.sources!;
   const filters = form.hard_filters!;
+  const performance = current.ml_gate_performance;
   const error = validation ?? save.error?.message;
 
   return (
@@ -225,6 +227,11 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                         ? "Active. Jobs predicted irrelevant skip Quick evaluation and remain recoverable in the Job library."
                         : "Uses the existing trained model immediately. Readiness checks remain advisory; recent recall can still pause filtering automatically."}
                     </Box>
+                    {performance && (
+                      <Box variant="small" color="text-body-secondary">
+                        Model evaluation at threshold {performance.threshold}: {formatPercent(performance.recall)} recall · {formatPercent(performance.irrelevant_rejection)} irrelevant jobs rejected · {formatPercent(performance.precision)} precision · {formatPercent(performance.f1)} F1 · {performance.training_jobs.toLocaleString("en-US")} labeled jobs
+                      </Box>
+                    )}
                   </SpaceBetween>
                 </Alert>
               </SettingsSection>
@@ -252,6 +259,10 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
       </ContentLayout>
     </div>
   );
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 function modelOption(value: string) {

@@ -1720,6 +1720,7 @@ export interface components {
             hard_filters?: components["schemas"]["HardFiltersSettings"];
             llm?: components["schemas"]["LLMSettings"];
             ml_gate?: components["schemas"]["MLGateSettings"];
+            ml_gate_performance?: components["schemas"]["MLGatePerformance"] | null;
             scoring?: components["schemas"]["ScoringSettings"];
             sources?: components["schemas"]["SourcesConfig"];
         };
@@ -2209,6 +2210,24 @@ export interface components {
         LLMStatsResponse: {
             /** Stats */
             stats: components["schemas"]["LLMDailyStatsRow"][];
+        };
+        /**
+         * MLGatePerformance
+         * @description Headline evaluation metrics for the selected local model.
+         */
+        MLGatePerformance: {
+            /** F1 */
+            f1: number;
+            /** Irrelevant Rejection */
+            irrelevant_rejection: number;
+            /** Precision */
+            precision: number;
+            /** Recall */
+            recall: number;
+            /** Threshold */
+            threshold: number;
+            /** Training Jobs */
+            training_jobs: number;
         };
         /**
          * MLGateSettings

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tomllib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -47,6 +48,44 @@ async def test_fresh_runtime_exposes_defaults_without_creating_config(
     assert not (tmp_path / "config.toml").exists()
 
 
+async def test_configuration_exposes_selected_model_performance(
+    tmp_path, monkeypatch
+) -> None:
+    """GET pairs the selected model version with its committed metrics."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    model_dir = tmp_path / "models" / "ml_gate"
+    model_dir.mkdir(parents=True)
+    (model_dir / "v20260601T170453Z.meta.json").write_text(
+        json.dumps(
+            {
+                "version": "v20260601T170453Z",
+                "threshold": 0.19,
+                "recall_pos": 0.9730377471539844,
+                "precision_pos": 0.5438713998660415,
+                "f1": 0.6977443609022557,
+                "neg_blocked_pct": 0.7446090380648791,
+                "train_size": 7002,
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = create_web_app()
+
+    async with _open_client(app) as client:
+        response = await client.get("/api/config")
+
+    assert response.status_code == HTTP_OK
+    assert response.json()["ml_gate_performance"] == {
+        "threshold": 0.19,
+        "recall": 0.9730377471539844,
+        "precision": 0.5438713998660415,
+        "f1": 0.6977443609022557,
+        "irrelevant_rejection": 0.7446090380648791,
+        "training_jobs": 7002,
+    }
+
+
 async def test_save_configuration_is_persisted_and_applied_without_restart(
     tmp_path, monkeypatch
 ) -> None:
@@ -58,6 +97,7 @@ async def test_save_configuration_is_persisted_and_applied_without_restart(
     async with _open_client(app) as client:
         current = (await client.get("/api/config")).json()
         current.pop("configured")
+        current.pop("ml_gate_performance")
         current["llm"].update(
             {
                 "master_resume_path": "data/my-resume.md",
@@ -102,6 +142,7 @@ async def test_invalid_enabled_source_is_rejected_without_overwriting_config(
     async with _open_client(app) as client:
         current = (await client.get("/api/config")).json()
         current.pop("configured")
+        current.pop("ml_gate_performance")
         current["sources"]["indeed"].update({"enabled": True, "search_urls": []})
         response = await client.put("/api/config", json=current)
 

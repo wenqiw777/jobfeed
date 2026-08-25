@@ -127,6 +127,7 @@ async def test_general_settings_can_manually_enable_packaged_model(
     async with _open_client(app) as client:
         configuration = (await client.get("/api/config")).json()
         configuration.pop("configured")
+        configuration.pop("ml_gate_performance")
         configuration["scoring"]["ml_gate_enabled"] = True
         response = await client.put("/api/config", json=configuration)
 

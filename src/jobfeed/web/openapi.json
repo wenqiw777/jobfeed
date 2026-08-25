@@ -727,6 +727,16 @@
           "ml_gate": {
             "$ref": "#/components/schemas/MLGateSettings"
           },
+          "ml_gate_performance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MLGatePerformance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "scoring": {
             "$ref": "#/components/schemas/ScoringSettings"
           },
@@ -1932,6 +1942,57 @@
           "stats"
         ],
         "title": "LLMStatsResponse",
+        "type": "object"
+      },
+      "MLGatePerformance": {
+        "additionalProperties": false,
+        "description": "Headline evaluation metrics for the selected local model.",
+        "properties": {
+          "f1": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "F1",
+            "type": "number"
+          },
+          "irrelevant_rejection": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Irrelevant Rejection",
+            "type": "number"
+          },
+          "precision": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Precision",
+            "type": "number"
+          },
+          "recall": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Recall",
+            "type": "number"
+          },
+          "threshold": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Threshold",
+            "type": "number"
+          },
+          "training_jobs": {
+            "minimum": 1.0,
+            "title": "Training Jobs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "threshold",
+          "recall",
+          "precision",
+          "f1",
+          "irrelevant_rejection",
+          "training_jobs"
+        ],
+        "title": "MLGatePerformance",
         "type": "object"
       },
       "MLGateSettings": {
