@@ -211,7 +211,7 @@ export default function TriagePage() {
       <section aria-label="Job detail">
         <Container
           header={
-            <Header variant="h2" description="Review the recommendation, evidence, and your decision.">
+            <Header variant="h2" description="Review the match, evidence, and your decision.">
               {selectedJob ? `${selectedJob.company} · ${selectedJob.title}` : "Job evidence"}
             </Header>
           }

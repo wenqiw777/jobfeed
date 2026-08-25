@@ -139,6 +139,8 @@ test("shows Results plus the three decision filters", async () => {
 test("detail displays only the canonical unified evaluation", async () => {
   renderPage();
   await screen.findByTestId("job-row-1");
+  expect(screen.getByText("Review the match, evidence, and your decision."))
+    .toBeInTheDocument();
   expect(await screen.findByText("Canonical weak match.")).toBeInTheDocument();
   expect(screen.getByText("Weak match")).toBeInTheDocument();
   expect(screen.getByText("20")).toBeInTheDocument();
