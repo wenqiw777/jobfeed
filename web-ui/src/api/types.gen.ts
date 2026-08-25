@@ -1301,7 +1301,7 @@ export interface paths {
          * @description Trigger a background evaluate run.
          *
          *     Args:
-         *         body: Request body with stage, corpus, limit.
+         *         body: Request body with evaluator mode, corpus, and limit.
          *         run_manager: Shared run manager.
          *
          *     Returns:
@@ -3035,10 +3035,10 @@ export interface components {
             limit?: number | null;
             /**
              * Stage
-             * @default both
+             * @default unified
              * @enum {string}
              */
-            stage: "a" | "b" | "both";
+            stage: "unified" | "a" | "b" | "both";
         };
         /**
          * TriggerScanRequest

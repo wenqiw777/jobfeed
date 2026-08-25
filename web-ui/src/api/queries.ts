@@ -423,14 +423,12 @@ export function useTriggerEvaluate() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
-      stage,
       limit,
     }: {
-      stage: "a" | "b" | "both";
       limit: number | null;
     }) =>
       apiPost<TriggerResponse>("/api/runs/evaluate", {
-        stage,
+        stage: "unified",
         limit: limit ?? undefined,
       }),
     onSuccess: () => {

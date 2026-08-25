@@ -92,7 +92,7 @@ function runCounters(overrides: Partial<RunSummary> = {}): RunSummary {
     errors: 0,
     total_llm_cost_usd: 0,
     progress_stage: "preparing",
-    evaluate_stage: "both",
+    evaluate_stage: "unified",
     stage_a_total: null,
     stage_a_processed: 0,
     stage_b_total: null,
@@ -173,26 +173,22 @@ test("renders non-zero live counters as chips", () => {
   expect(row).not.toHaveTextContent("errors");
 });
 
-test("renders the real evaluate phase, denominators, cost, and errors", () => {
+test("renders one unified evaluation count, cost, and errors", () => {
   renderRow(vi.fn(), {
     ...EVALUATE_RUN,
     counters: runCounters({
-      progress_stage: "stage_b",
-      stage_a_total: 150,
-      stage_a_processed: 150,
-      stage_a_scored: 150,
-      stage_b_total: 62,
-      stage_b_processed: 20,
-      stage_b_scored: 19,
+      progress_stage: "evaluation",
+      jobs_scored: 19,
       errors: 1,
       total_llm_cost_usd: 4.25,
     } as Partial<RunSummary>),
   });
 
   const row = screen.getByTestId("live-run-r-live-1");
-  expect(row).toHaveTextContent("Running detailed review");
-  expect(row).toHaveTextContent("150 / 150");
-  expect(row).toHaveTextContent("20 / 62");
+  expect(row).toHaveTextContent("Evaluating resume fit");
+  expect(row).toHaveTextContent("19 evaluated");
+  expect(row).not.toHaveTextContent("Quick evaluation");
+  expect(row).not.toHaveTextContent("Detailed review");
   expect(row).not.toHaveTextContent("0 processed");
   expect(row).toHaveTextContent("$4.25");
   expect(row).toHaveTextContent("1 error");
@@ -202,12 +198,8 @@ test("merges a newer SSE update with polled active-run counters", () => {
   renderRow(vi.fn(), {
     ...EVALUATE_RUN,
     counters: runCounters({
-      progress_stage: "stage_b",
-      stage_a_total: 150,
-      stage_a_processed: 150,
-      stage_b_total: 62,
-      stage_b_processed: 20,
-      stage_b_scored: 19,
+      progress_stage: "evaluation",
+      jobs_scored: 19,
       total_llm_cost_usd: 4.25,
     } as Partial<RunSummary>),
   });
@@ -216,16 +208,12 @@ test("merges a newer SSE update with polled active-run counters", () => {
   act(() => es._open());
   act(() => es._message(JSON.stringify({
     ...runCounters(),
-    progress_stage: "stage_b",
-    stage_a_total: 150,
-    stage_a_processed: 150,
-    stage_b_total: 62,
-    stage_b_processed: 25,
-    stage_b_scored: 24,
+    progress_stage: "evaluation",
+    jobs_scored: 24,
     total_llm_cost_usd: 5.5,
   })));
 
   const row = screen.getByTestId("live-run-r-live-1");
-  expect(row).toHaveTextContent("25 / 62");
+  expect(row).toHaveTextContent("24 evaluated");
   expect(row).toHaveTextContent("$5.50");
 });

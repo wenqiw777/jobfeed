@@ -117,7 +117,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
         evaluate_service_factory=lambda **kw: build_evaluate_service(
             context,
             EvalBuildParams(
-                stage=kw.get("stage", "both"),
+                stage=kw.get("stage", "unified"),
                 corpus=kw.get("corpus", "unrated"),
                 limit=kw.get("limit"),
                 max_days=kw.get("max_days"),

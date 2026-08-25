@@ -53,7 +53,7 @@ class TriggerScanRequest(BaseModel):
 class TriggerEvaluateRequest(BaseModel):
     """POST /api/runs/evaluate body."""
 
-    stage: Literal["a", "b", "both"] = "both"
+    stage: Literal["unified", "a", "b", "both"] = "unified"
     corpus: str = "unrated"
     limit: int | None = None
 
@@ -191,7 +191,7 @@ async def trigger_evaluate(
     """Trigger a background evaluate run.
 
     Args:
-        body: Request body with stage, corpus, limit.
+        body: Request body with evaluator mode, corpus, and limit.
         run_manager: Shared run manager.
 
     Returns:

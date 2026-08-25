@@ -3776,8 +3776,9 @@
             "title": "Limit"
           },
           "stage": {
-            "default": "both",
+            "default": "unified",
             "enum": [
+              "unified",
               "a",
               "b",
               "both"
@@ -5904,7 +5905,7 @@
     },
     "/api/runs/evaluate": {
       "post": {
-        "description": "Trigger a background evaluate run.\n\nArgs:\n    body: Request body with stage, corpus, limit.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when an evaluate is already running, 400 when the\n        master resume file is not configured.",
+        "description": "Trigger a background evaluate run.\n\nArgs:\n    body: Request body with evaluator mode, corpus, and limit.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when an evaluate is already running, 400 when the\n        master resume file is not configured.",
         "operationId": "trigger_evaluate_api_runs_evaluate_post",
         "requestBody": {
           "content": {

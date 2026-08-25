@@ -98,6 +98,22 @@ def _build_app(
     return app, mgr
 
 
+def test_web_app_evaluate_factory_defaults_to_unified(monkeypatch: Any) -> None:
+    """The app composition root should build the unified evaluator by default."""
+    captured: list[Any] = []
+
+    def _capture(_context: object, params: object) -> object:
+        captured.append(params)
+        return object()
+
+    monkeypatch.setattr("jobfeed.web.app.build_evaluate_service", _capture)
+    app = build_web_app(fake_context())
+
+    app.state.run_manager._eval_factory()
+
+    assert captured[0].stage == "unified"
+
+
 # ---------------------------------------------------------------------------
 # POST /api/runs/scan
 # ---------------------------------------------------------------------------
@@ -176,9 +192,19 @@ async def test_trigger_evaluate_defaults() -> None:
         resp = await client.post("/api/runs/evaluate", json={})
 
     assert resp.status_code == HTTP_OK
-    assert mgr.eval_calls[0]["stage"] == "both"
+    assert mgr.eval_calls[0]["stage"] == "unified"
     assert mgr.eval_calls[0]["corpus"] == "unrated"
     assert mgr.eval_calls[0]["limit"] is None
+
+
+async def test_trigger_evaluate_accepts_legacy_stage_for_compatibility() -> None:
+    """Legacy clients may still request a Stage A run during the transition."""
+    app, mgr = _build_app()
+    async with open_client(app) as client:
+        resp = await client.post("/api/runs/evaluate", json={"stage": "a"})
+
+    assert resp.status_code == HTTP_OK
+    assert mgr.eval_calls[0]["stage"] == "a"
 
 
 async def test_trigger_evaluate_missing_resume_returns_400() -> None:

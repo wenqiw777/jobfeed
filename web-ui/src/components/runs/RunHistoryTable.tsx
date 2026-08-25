@@ -22,8 +22,6 @@ type CounterKey = Extract<
   | "jobs_filtered"
   | "jobs_ml_gated"
   | "jobs_scored"
-  | "stage_a_scored"
-  | "stage_b_scored"
   | "errors"
 >;
 
@@ -46,20 +44,10 @@ const FULL_COUNTERS: {
     color: "severity-neutral",
   },
   { key: "jobs_scored", label: "evaluated", color: "severity-low" },
-  {
-    key: "stage_a_scored",
-    label: "quick evaluations",
-    color: "severity-low",
-  },
-  {
-    key: "stage_b_scored",
-    label: "detailed reviews",
-    color: "severity-medium",
-  },
   { key: "errors", label: "errors", color: "red" },
 ];
 
-const SUMMARY_COUNTERS = FULL_COUNTERS.filter(({ key }) => key !== "jobs_scored");
+const SUMMARY_COUNTERS = FULL_COUNTERS;
 
 interface RunHistoryTableProps {
   runs: RunSummary[];
