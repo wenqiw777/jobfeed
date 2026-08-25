@@ -66,9 +66,14 @@ class _GuestRun:
         Returns:
             Postings in first-seen order, trimmed to ``max_jobs``.
         """
-        for url in self._settings.search_urls:
-            if len(self._unique) >= self._settings.max_jobs:
-                break
+        search_urls = self._settings.search_urls
+        if not search_urls:
+            return []
+        base, remainder = divmod(self._settings.max_jobs, len(search_urls))
+        for index, url in enumerate(search_urls):
+            quota = base + int(index < remainder)
+            if quota == 0:
+                continue
             params = parse_search_params(url)
             if not params.keywords:
                 self._log.warning("guest_search_url_missing_keywords", url=url)
@@ -79,17 +84,17 @@ class _GuestRun:
                     location=params.location,
                     f_tpr=f"r{self._settings.posted_within_hours * 60 * 60}",
                 )
-            await self._paginate_url(params)
+            await self._paginate_url(params, quota)
         return list(self._unique.values())[: self._settings.max_jobs]
 
-    async def _paginate_url(self, params: SearchParams) -> None:
+    async def _paginate_url(self, params: SearchParams, quota: int) -> None:
         """Walk one URL's guest list pages, absorbing cards into the run.
 
         ``start`` begins at 0 and advances by the page's RAW card count
         (duplicates and parse-skipped cards included — the offset is
         positional over the endpoint's result set, not over what we kept),
-        looping while pages stay non-empty, ``start < 1000``, and the unique
-        total is below ``max_jobs``. A non-200 or truly card-less page ends
+        looping while pages stay non-empty, ``start < 1000``, and this search's
+        fair-share quota is not full. A non-200 or truly card-less page ends
         this URL only; everything collected so far stays.
 
         Time complexity: O(pages) fetches per URL — the ``start < 1000``
@@ -97,11 +102,12 @@ class _GuestRun:
         plus O(cards) parsing/absorbing work overall.
         """
         start = 0
-        while start < _MAX_START and len(self._unique) < self._settings.max_jobs:
+        added = 0
+        while start < _MAX_START and added < quota:
             raw, cards = await self._fetch_page(params, start)
             if raw == 0:
                 return
-            self._absorb(cards)
+            added += self._absorb(cards, quota - added)
             start += raw
 
     async def _fetch_page(
@@ -143,10 +149,17 @@ class _GuestRun:
             await self._sleep(self._settings.pacing_s)
         self._has_fetched = True
 
-    def _absorb(self, cards: list[ParsedCard]) -> None:
-        """Union parsed cards into the dedupe map by bare job id; first wins."""
+    def _absorb(self, cards: list[ParsedCard], limit: int) -> int:
+        """Add at most one search's remaining quota; return newly added count."""
+        added = 0
         for card in cards:
-            self._unique.setdefault(card.job_id, _to_posting(card, now=self._now))
+            if added >= limit:
+                break
+            if card.job_id in self._unique:
+                continue
+            self._unique[card.job_id] = _to_posting(card, now=self._now)
+            added += 1
+        return added
 
 
 def _to_posting(card: ParsedCard, *, now: datetime) -> JobPosting:

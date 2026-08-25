@@ -33,6 +33,7 @@ _PAGE_SIZE = 10
 _START_CAP = 1000
 _BIG_PAGE = 250
 _HTTP_TOO_MANY = 429
+_FAIR_SHARE_SEARCH_COUNT = 2
 
 
 def _card(job_id: str, *, location: str | None = "SF, CA") -> str:
@@ -402,16 +403,22 @@ async def test_union_and_pacing_span_multiple_urls() -> None:
     assert len(sleeper.delays) == len(fetcher.urls) - 1
 
 
-async def test_max_jobs_on_first_url_skips_later_urls_entirely() -> None:
-    """URL 1's first page hits max_jobs=10 exactly; URL 2 is never fetched."""
+async def test_max_jobs_is_split_evenly_across_search_urls() -> None:
+    """One broad first search cannot consume the later search's allocation."""
     second_url = "https://www.linkedin.com/jobs/search/?keywords=rust"
-    fetcher = ScriptedFetcher([GuestResponse(status=200, text=_page(_ids(0, 10)))])
+    fetcher = ScriptedFetcher(
+        [
+            GuestResponse(status=200, text=_page(_ids(0, 10))),
+            GuestResponse(status=200, text=_page(_ids(10, 10))),
+        ]
+    )
     settings = GuestSourceSettings(search_urls=(_SEARCH_URL, second_url), max_jobs=10)
     postings = await _source(fetcher, settings=settings).fetch_jobs({})
 
     assert len(postings) == settings.max_jobs
-    assert len(fetcher.urls) == 1
-    assert "keywords=rust" not in fetcher.urls[0]
+    assert [posting.canonical_id for posting in postings] == _ids(0, 5) + _ids(10, 5)
+    assert len(fetcher.urls) == _FAIR_SHARE_SEARCH_COUNT
+    assert "keywords=rust" in fetcher.urls[1]
 
 
 async def test_without_fetcher_runs_real_client_over_mock_transport(
