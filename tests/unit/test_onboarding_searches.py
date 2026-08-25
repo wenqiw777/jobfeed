@@ -30,7 +30,7 @@ def _profile() -> JobProfile:
         excluded_companies=[],
         excluded_locations=[],
         excluded_keywords=[],
-        maximum_posting_age_days=14,
+        maximum_posting_age_hours=36,
         resume_evidence=["Built Python systems"],
     )
 
@@ -45,11 +45,23 @@ def test_confirmed_profile_generates_deterministic_search_urls() -> None:
     ]
     assert suggestions[0].url == (
         "https://www.linkedin.com/jobs/search/?keywords=Platform+Engineer"
-        "&location=United+States&f_TPR=r1209600"
+        "&location=United+States&f_TPR=r129600"
     )
     assert suggestions[1].url == (
-        "https://www.indeed.com/jobs?q=Platform+Engineer&l=United+States&fromage=14"
+        "https://www.indeed.com/jobs?q=Platform+Engineer&l=United+States&fromage=2"
     )
+
+
+def test_legacy_day_profile_still_generates_searches() -> None:
+    """Existing saved profiles using day precision remain readable."""
+    legacy = _profile().model_dump(exclude={"maximum_posting_age_hours"})
+    legacy["maximum_posting_age_days"] = 14
+
+    profile = JobProfile.model_validate(legacy)
+    suggestions = generate_search_suggestions(profile)
+
+    assert suggestions[0].url.endswith("f_TPR=r1209600")
+    assert suggestions[1].url.endswith("fromage=14")
 
 
 def test_search_suggestions_show_six_unranked_titles_and_ignore_cities() -> None:
