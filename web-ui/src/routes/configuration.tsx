@@ -220,7 +220,7 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                         posted_within_days: null,
                       })}
                     />
-                    <Box variant="small" color="text-body-secondary">Uses posted time; falls back to discovery time only when posted time is unavailable.</Box>
+                    <Box variant="small" color="text-body-secondary">LinkedIn and other sources use this exact limit. Indeed keeps the full 2-day window. Posted time is preferred; discovery time is used only when it is unavailable.</Box>
                   </Field>
                   {filters.posted_within_hours == null && (
                     <>

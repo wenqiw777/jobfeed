@@ -10,6 +10,7 @@ from jobfeed.domain.models import JobPosting
 
 _UNITED_STATES_ALLOWLIST_VALUE = "united states"
 _US_NAMES = ("united states", "u.s.", "usa")
+_INDEED_MINIMUM_HOURS = 48
 _US_STATE_CODES = frozenset(
     [
         "AL",
@@ -187,6 +188,8 @@ def _freshness_reason(
     timestamp = job.posted_at or job.discovered_at
     if filters.posted_within_hours is not None:
         hours_limit = filters.posted_within_hours
+        if job.platform.casefold() == "indeed":
+            hours_limit = max(hours_limit, _INDEED_MINIMUM_HOURS)
         if _is_stale(timestamp, timedelta(hours=hours_limit), now):
             return f"older than {hours_limit} hours"
         return None
