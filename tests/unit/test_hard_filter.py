@@ -167,6 +167,8 @@ _FRESH_DAYS = 3
 _BIG_COMPANY_DAYS = 90
 _BORDERLINE_DAYS = 60
 _VERY_STALE_DAYS = 100
+_HOURS_LIMIT = 36
+_LEGACY_DAYS = 14
 
 
 def test_freshness_blocks_stale_job() -> None:
@@ -195,7 +197,7 @@ def test_freshness_prefers_real_posted_time_over_recent_discovery() -> None:
 def test_freshness_enforces_exact_36_hour_cutoff() -> None:
     """The 36-hour setting must not expand to a two-day local window."""
     f = _empty_filters()
-    f.posted_within_hours = 36
+    f.posted_within_hours = _HOURS_LIMIT
     stale = make_job(
         canonical_id="stale-36h",
         discovered_at=_NOW - timedelta(hours=1),
@@ -214,7 +216,7 @@ def test_freshness_enforces_exact_36_hour_cutoff() -> None:
 def test_freshness_falls_back_to_discovery_when_posted_time_is_missing() -> None:
     """Missing posted_at retains the documented discovery-time fallback."""
     f = _empty_filters()
-    f.posted_within_hours = 36
+    f.posted_within_hours = _HOURS_LIMIT
     job = make_job(
         canonical_id="missing-posted-time",
         discovered_at=_NOW - timedelta(hours=37),
@@ -433,11 +435,11 @@ def test_posted_within_days_rejects_negative() -> None:
 def test_posted_within_hours_round_trips_to_domain() -> None:
     """Hour precision is accepted without removing the legacy day setting."""
     settings = HardFiltersSettings(
-        posted_within_hours=36,
-        posted_within_days=14,
+        posted_within_hours=_HOURS_LIMIT,
+        posted_within_days=_LEGACY_DAYS,
     )
 
     filters = settings.to_domain()
 
-    assert filters.posted_within_hours == 36
-    assert filters.posted_within_days == 14
+    assert filters.posted_within_hours == _HOURS_LIMIT
+    assert filters.posted_within_days == _LEGACY_DAYS
