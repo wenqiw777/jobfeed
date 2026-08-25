@@ -139,8 +139,8 @@ class InsightsDay:
     Attributes:
         day: UTC calendar day of the bucket.
         discovered: Jobs first discovered that day (``jobs.discovered_at``).
-        evaluated: Jobs whose Stage A completed that day
-            (``evaluations.stage_a_at``).
+        evaluated: Jobs whose unified evaluation completed that day
+            (``evaluation_results.evaluated_at``).
         applied: Cohort jobs currently in the Applied decision, bucketed by
             their latest transition to applied.
     """
@@ -162,14 +162,13 @@ class InsightsOverview:
         ml_gate_passed_jobs: Cohort gate survivors
             (``ml_gate_result = 'pass'``) — the funnel-stage semantic, not
             gate failures. Jobs never gated count toward neither.
-        evaluated_jobs: Cohort jobs with completed Stage A status.
-        detailed_reviewed_jobs: Cohort jobs with completed Stage B status.
+        evaluated_jobs: Cohort jobs with a completed unified evaluation.
+        detailed_reviewed_jobs: Compatibility alias for ``evaluated_jobs``;
+            unified evaluation has no separate detailed-review stage.
         applied_jobs: Cohort jobs whose current workflow state belongs to the
             user-facing Applied decision.
-        verdict_distribution: Cohort ``stage_b_verdict`` counts plus the
-            derived ``below_threshold`` bucket (verdict-less rows with
-            ``stage_b_status = 'skipped_below_threshold'`` — the same
-            grouping the triage view uses). Only nonzero buckets appear.
+        verdict_distribution: Cohort unified ``match_tier`` counts for
+            completed evaluations. Only nonzero buckets appear.
         decision_distribution: Cohort current user-decision counts. Historical
             ``archived`` rows are included in the single ``ignored`` bucket.
         daily: Ascending per-day event counts for cohort jobs; only days having

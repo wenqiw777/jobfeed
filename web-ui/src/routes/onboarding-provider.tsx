@@ -1,7 +1,6 @@
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
-import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import FormField from "@cloudscape-design/components/form-field";
@@ -62,8 +61,7 @@ export default function OnboardingProviderPage() {
   const [testError, setTestError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ProviderName | null>(null);
   const [apiKey, setApiKey] = useState("");
-  const [quickModel, setQuickModel] = useState<string | null>(null);
-  const [detailedModel, setDetailedModel] = useState<string | null>(null);
+  const [evaluationModel, setEvaluationModel] = useState<string | null>(null);
 
   if (onboarding.isPending) {
     return <Box padding="xxl" textAlign="center"><Spinner size="large" /></Box>;
@@ -76,14 +74,16 @@ export default function OnboardingProviderPage() {
   const provider = selected ?? state.provider ?? null;
   const definition = PROVIDERS.find((item) => item.id === provider);
   const models = state.provider === provider && state.connected ? state.models : [];
-  const quick = quickModel ?? state.quick_model ?? models[0]?.id ?? null;
-  const detailed = detailedModel ?? state.detailed_model ?? models[0]?.id ?? null;
+  const evaluation = evaluationModel
+    ?? state.detailed_model
+    ?? state.quick_model
+    ?? models[0]?.id
+    ?? null;
 
   function choose(next: ProviderName) {
     setSelected(next);
     setApiKey("");
-    setQuickModel(null);
-    setDetailedModel(null);
+    setEvaluationModel(null);
     setTestError(null);
     saveModels.reset();
   }
@@ -96,8 +96,7 @@ export default function OnboardingProviderPage() {
       const next = await testProviderConnection(provider, apiKey);
       queryClient.setQueryData(providerOnboardingKey, next);
       if (next.connected) setApiKey("");
-      setQuickModel(next.models[0]?.id ?? null);
-      setDetailedModel(next.models[0]?.id ?? null);
+      setEvaluationModel(next.models[0]?.id ?? null);
     } catch (error) {
       setTestError(error instanceof Error ? error.message : "Connection test failed. Try again.");
     } finally {
@@ -106,9 +105,9 @@ export default function OnboardingProviderPage() {
   }
 
   function save() {
-    if (provider === null || quick === null || detailed === null) return;
+    if (provider === null || evaluation === null) return;
     saveModels.mutate(
-      { provider, quick_model: quick, detailed_model: detailed },
+      { provider, quick_model: evaluation, detailed_model: evaluation },
       { onSuccess: () => navigate("/setup/resume") },
     );
   }
@@ -181,26 +180,15 @@ export default function OnboardingProviderPage() {
         {models.length > 0 && (
           <Container header={<Header variant="h2">Choose models</Header>}>
             <SpaceBetween size="m">
-              <ColumnLayout columns={2} minColumnWidth={280}>
-                <FormField label="Quick evaluation model">
-                  <Select
-                    selectedOption={modelOption(models, quick)}
-                    options={models.map((model) => ({ label: model.label, value: model.id }))}
-                    onChange={({ detail }) => {
-                      setQuickModel(detail.selectedOption.value ?? null);
-                    }}
-                  />
-                </FormField>
-                <FormField label="Detailed review model">
-                  <Select
-                    selectedOption={modelOption(models, detailed)}
-                    options={models.map((model) => ({ label: model.label, value: model.id }))}
-                    onChange={({ detail }) => {
-                      setDetailedModel(detail.selectedOption.value ?? null);
-                    }}
-                  />
-                </FormField>
-              </ColumnLayout>
+              <FormField label="Evaluation model">
+                <Select
+                  selectedOption={modelOption(models, evaluation)}
+                  options={models.map((model) => ({ label: model.label, value: model.id }))}
+                  onChange={({ detail }) => {
+                    setEvaluationModel(detail.selectedOption.value ?? null);
+                  }}
+                />
+              </FormField>
               {saveModels.isError && <Alert type="error">{saveModels.error.message}</Alert>}
               <Button variant="primary" loading={saveModels.isPending} onClick={save}>Save and continue</Button>
             </SpaceBetween>

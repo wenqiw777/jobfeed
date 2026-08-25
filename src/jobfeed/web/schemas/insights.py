@@ -40,9 +40,8 @@ class InsightsOverviewResponse(BaseModel):
 
     The requested window selects the discovery-date cohort for totals,
     distributions, and ``daily``.
-    ``verdict_distribution`` includes the derived
-    ``below_threshold`` bucket (triage grouping); both distributions carry
-    only nonzero buckets.
+    ``verdict_distribution`` contains unified ``match_tier`` counts for
+    completed evaluations; both distributions carry only nonzero buckets.
     """
 
     window_days: int | None

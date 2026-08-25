@@ -19,7 +19,7 @@ class ProviderConnectionBody(BaseModel):
 
 
 class ProviderModelsBody(BaseModel):
-    """Quick and Detailed model selections from a verified catalog."""
+    """Evaluation model mirrored in legacy-compatible provider fields."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -61,7 +61,7 @@ class PlanUsageResponse(BaseModel):
 
 
 class EvaluationCalibrationBody(BaseModel):
-    """One representative JD used for a real two-stage calibration."""
+    """One representative JD used for a real unified calibration."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -89,10 +89,9 @@ class MeasuredEvaluationCallResponse(BaseModel):
 
 
 class EvaluationCalibrationResponse(BaseModel):
-    """Measured Quick + Detailed usage and subscription-meter delta."""
+    """Measured unified-evaluation usage and subscription-meter delta."""
 
-    quick: MeasuredEvaluationCallResponse
-    detailed: MeasuredEvaluationCallResponse
+    evaluation: MeasuredEvaluationCallResponse
     allowance_before_percent: int | None
     allowance_after_percent: int | None
     allowance_resolution_percent: int = 1

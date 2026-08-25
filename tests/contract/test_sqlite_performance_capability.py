@@ -178,6 +178,7 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
                 jobs_gate_passed=4,
                 stage_a_scored=5,
                 stage_b_scored=6,
+                jobs_scored=7,
                 status="succeeded",
             ),
             PipelineRun(
@@ -237,6 +238,7 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
                     ("gpt-mini", "a", 30, 40, 30, utc_text(NOW)),
                     ("gpt-large", "b", 40, 50, 40, utc_text(NOW)),
                     ("gpt-large", "b", 50, 60, 50, utc_text(NOW)),
+                    ("gpt-unified", "evaluation", 60, 70, 60, utc_text(NOW)),
                     ("gpt-old", None, 999, 999, 999, utc_text(NOW - timedelta(days=3))),
                 ],
             )
@@ -253,22 +255,24 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
             (NOW - timedelta(days=2)).date().isoformat(),
             NOW.date().isoformat(),
             NOW.date().isoformat(),
+            NOW.date().isoformat(),
         ]
         assert [(item.model, item.stage) for item in daily] == [
             ("gpt-mini", "a"),
             ("gpt-large", "b"),
             ("gpt-mini", "a"),
+            ("gpt-unified", "evaluation"),
         ]
         assert daily[0].p50_latency_ms == daily[0].p95_latency_ms == 10
         assert daily[1].p50_latency_ms == 45
         assert daily[1].p95_latency_ms == pytest.approx(49.5)
         assert daily[0].call_count == 1
-        assert [item.call_count for item in daily] == [1, 2, 2]
+        assert [item.call_count for item in daily] == [1, 2, 2, 1]
         assert daily[1].avg_input_tokens == 45
         assert [item.run_id for item in funnel] == ["eval-new", "eval-boundary"]
-        assert funnel[0].total_candidates == 11
-        assert funnel[0].after_gate == 6
-        assert funnel[0].scored == 6
-        assert funnel[0].after_filter == 8
+        assert funnel[0].total_candidates == 12
+        assert funnel[0].after_gate == 7
+        assert funnel[0].scored == 7
+        assert funnel[0].after_filter == 9
     finally:
         await lifecycle.close()

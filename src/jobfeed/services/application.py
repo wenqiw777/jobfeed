@@ -10,16 +10,16 @@ from typing import Protocol, runtime_checkable
 from jobfeed.domain.models import (
     ApplicationRecord,
     ApplicationStats,
-    JobEvaluation,
     ResumeSnapshot,
     ResumeSnapshotSummary,
 )
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store_application import StoreApplicationMixin
+from jobfeed.ports.store_unified import StoreUnifiedEvaluationMixin
 from jobfeed.services._application_snapshots import (
     build_snapshots,
     content_hash,
-    stage_b_dumps,
+    unified_evaluation_dumps,
 )
 
 
@@ -40,7 +40,7 @@ class ApplyRequest:
 
 
 @runtime_checkable
-class ApplicationStore(StoreApplicationMixin, Protocol):
+class ApplicationStore(StoreApplicationMixin, StoreUnifiedEvaluationMixin, Protocol):
     """Combined store capability required by ApplicationService."""
 
     async def compute_reapply_notice(
@@ -57,17 +57,6 @@ class ApplicationStore(StoreApplicationMixin, Protocol):
 
         Returns:
             Notice string if detected, else None.
-        """
-        ...
-
-    async def get_evaluation(self, job_id: str) -> JobEvaluation | None:
-        """Load a job's evaluation (Stage A/B optional).
-
-        Args:
-            job_id: Store-assigned identity.
-
-        Returns:
-            Evaluation if the job exists, else None.
         """
         ...
 
@@ -143,10 +132,10 @@ class ApplicationService:
         )
         return is_new
 
-    async def stage_b_snapshots(
+    async def evaluation_snapshots(
         self, job_id: str
     ) -> tuple[str | None, str | None, str | None]:
-        """Capture Stage B verdict/fit/hooks JSON snapshots when available.
+        """Capture the completed canonical unified evaluation when available.
 
         Shared by the CLI apply command and the web apply route so the
         evaluation-derived snapshot fields stay identical across boundaries.
@@ -157,10 +146,13 @@ class ApplicationService:
         Returns:
             (verdict, fit_analysis, resume_hooks) JSON strings or Nones.
         """
-        evaluation = await self._store.get_evaluation(job_id)
-        if evaluation is None or evaluation.stage_b is None:
+        evaluation = await self._store.get_current_evaluation(job_id)
+        if not isinstance(evaluation, dict) or evaluation.get("status") != "completed":
             return (None, None, None)
-        return stage_b_dumps(evaluation.stage_b.raw_blocks or {})
+        result = evaluation.get("result_json")
+        if not isinstance(result, dict):
+            return (None, None, None)
+        return unified_evaluation_dumps(result)
 
     async def get_application(self, job_id: str) -> ApplicationRecord | None:
         """Load a single application record by job_id.

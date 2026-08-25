@@ -837,7 +837,7 @@
       },
       "EvaluationCalibrationBody": {
         "additionalProperties": false,
-        "description": "One representative JD used for a real two-stage calibration.",
+        "description": "One representative JD used for a real unified calibration.",
         "properties": {
           "job_description": {
             "maxLength": 30000,
@@ -853,7 +853,7 @@
         "type": "object"
       },
       "EvaluationCalibrationResponse": {
-        "description": "Measured Quick + Detailed usage and subscription-meter delta.",
+        "description": "Measured unified-evaluation usage and subscription-meter delta.",
         "properties": {
           "allowance_after_percent": {
             "anyOf": [
@@ -882,16 +882,12 @@
             "title": "Allowance Resolution Percent",
             "type": "integer"
           },
-          "detailed": {
-            "$ref": "#/components/schemas/MeasuredEvaluationCallResponse"
-          },
-          "quick": {
+          "evaluation": {
             "$ref": "#/components/schemas/MeasuredEvaluationCallResponse"
           }
         },
         "required": [
-          "quick",
-          "detailed",
+          "evaluation",
           "allowance_before_percent",
           "allowance_after_percent"
         ],
@@ -1203,7 +1199,7 @@
         "type": "object"
       },
       "InsightsOverviewResponse": {
-        "description": "``GET /api/insights/overview`` response.\n\nThe requested window selects the discovery-date cohort for totals,\ndistributions, and ``daily``.\n``verdict_distribution`` includes the derived\n``below_threshold`` bucket (triage grouping); both distributions carry\nonly nonzero buckets.",
+        "description": "``GET /api/insights/overview`` response.\n\nThe requested window selects the discovery-date cohort for totals,\ndistributions, and ``daily``.\n``verdict_distribution`` contains unified ``match_tier`` counts for\ncompleted evaluations; both distributions carry only nonzero buckets.",
         "properties": {
           "daily": {
             "items": {
@@ -2734,7 +2730,7 @@
       },
       "ProviderModelsBody": {
         "additionalProperties": false,
-        "description": "Quick and Detailed model selections from a verified catalog.",
+        "description": "Evaluation model mirrored in legacy-compatible provider fields.",
         "properties": {
           "detailed_model": {
             "title": "Detailed Model",
@@ -4731,7 +4727,7 @@
     },
     "/api/jobs/{job_id}/apply": {
       "post": {
-        "description": "Record an application with resume snapshots and audit fields.\n\nMirrors the CLI apply command: master resume read from settings,\nStage B snapshot fields captured via the shared service helper, and the\nno-op parity result when the job was already applied.\n\nArgs:\n    job_id: Store-assigned job identity.\n    request: Current request (carries the app settings).\n    form: Parsed multipart upload + form fields.\n    service: Shared application service from the app state.\n    store: Shared job store (existence check only).\n\nReturns:\n    ``applied`` flag plus the reapply notice when one applies.\n\nRaises:\n    ApiError: 404 unknown job; 422 non-UTF-8 upload; 409 with code\n        ``illegal_transition`` when the job is in a terminal status.",
+        "description": "Record an application with resume snapshots and audit fields.\n\nMirrors the CLI apply command: master resume read from settings,\nCanonical evaluation snapshot captured via the shared service helper, and the\nno-op parity result when the job was already applied.\n\nArgs:\n    job_id: Store-assigned job identity.\n    request: Current request (carries the app settings).\n    form: Parsed multipart upload + form fields.\n    service: Shared application service from the app state.\n    store: Shared job store (existence check only).\n\nReturns:\n    ``applied`` flag plus the reapply notice when one applies.\n\nRaises:\n    ApiError: 404 unknown job; 422 non-UTF-8 upload; 409 with code\n        ``illegal_transition`` when the job is in a terminal status.",
         "operationId": "apply_to_job_api_jobs__job_id__apply_post",
         "parameters": [
           {
@@ -5276,7 +5272,7 @@
     },
     "/api/onboarding/evaluation-calibration": {
       "post": {
-        "description": "Run one real Quick + Detailed pair and return measured usage.\n\nArgs:\n    body: Representative job description to evaluate.\n    calibrator: Shared real evaluation calibration workflow.\n\nReturns:\n    Actual tokens, equivalent cost, latency, and plan-window delta.\n\nRaises:\n    ApiError: If provider or profile setup cannot support calibration.",
+        "description": "Run one real unified evaluation and return measured usage.\n\nArgs:\n    body: Representative job description to evaluate.\n    calibrator: Shared real evaluation calibration workflow.\n\nReturns:\n    Actual tokens, equivalent cost, latency, and plan-window delta.\n\nRaises:\n    ApiError: If provider or profile setup cannot support calibration.",
         "operationId": "calibrate_evaluation_api_onboarding_evaluation_calibration_post",
         "requestBody": {
           "content": {
@@ -5431,7 +5427,7 @@
     },
     "/api/onboarding/provider/models": {
       "put": {
-        "description": "Persist provider-specific Quick and Detailed model choices.\n\nArgs:\n    body: Provider and selected model ids.\n    service: Shared provider-onboarding workflow.\n\nReturns:\n    Updated provider draft.\n\nRaises:\n    ApiError: If the provider or models do not match verified state.",
+        "description": "Persist the provider evaluation model in compatibility fields.\n\nArgs:\n    body: Provider and selected model ids.\n    service: Shared provider-onboarding workflow.\n\nReturns:\n    Updated provider draft.\n\nRaises:\n    ApiError: If the provider or models do not match verified state.",
         "operationId": "save_provider_models_api_onboarding_provider_models_put",
         "requestBody": {
           "content": {

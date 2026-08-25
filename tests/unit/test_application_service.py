@@ -6,6 +6,7 @@ import ast
 import asyncio
 import hashlib
 import importlib
+import json
 import pathlib
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -176,6 +177,52 @@ class TestApply:
         assert record.verdict_snapshot == "strong yes"
         assert record.fit_snapshot == "good fit for ML role"
         assert record.hooks_snapshot == "Python expertise"
+
+
+class TestEvaluationSnapshots:
+    """Canonical unified evaluation is the only source for apply snapshots."""
+
+    def test_uses_unified_result_and_never_reads_legacy_stage_b(self) -> None:
+        store = _make_store()
+        store.get_current_evaluation.return_value = {
+            "status": "completed",
+            "result_json": {
+                "match_score": 88,
+                "match_tier": "strong_match",
+                "summary": "Direct evidence across required qualifications.",
+            },
+        }
+        store.get_evaluation.return_value = MagicMock(stage_b=MagicMock())
+
+        snapshots = asyncio.run(_svc(store).evaluation_snapshots("42"))
+
+        assert snapshots == (
+            json.dumps(
+                {
+                    "match_score": 88,
+                    "match_tier": "strong_match",
+                    "summary": "Direct evidence across required qualifications.",
+                },
+                sort_keys=True,
+            ),
+            None,
+            None,
+        )
+        store.get_current_evaluation.assert_awaited_once_with("42")
+        store.get_evaluation.assert_not_awaited()
+
+    def test_incomplete_unified_result_produces_no_snapshot(self) -> None:
+        store = _make_store()
+        store.get_current_evaluation.return_value = {
+            "status": "error",
+            "result_json": {"match_score": 88},
+        }
+
+        assert asyncio.run(_svc(store).evaluation_snapshots("42")) == (
+            None,
+            None,
+            None,
+        )
 
 
 # ---------------------------------------------------------------------------

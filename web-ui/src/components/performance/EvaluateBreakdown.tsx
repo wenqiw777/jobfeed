@@ -5,14 +5,13 @@ import Table from "@cloudscape-design/components/table";
 import type { StepTimingRow } from "@/api/queries";
 import { ChartCard, ChartEmpty } from "@/components/insights/ChartCard";
 
-const STAGES = ["funnel", "stage_a", "stage_b"] as const;
+const STAGES = ["funnel", "evaluation"] as const;
 type Stage = (typeof STAGES)[number];
 
 function aggregate(timings: StepTimingRow[]) {
   const totals: Record<Stage, { seconds: number; count: number }> = {
     funnel: { seconds: 0, count: 0 },
-    stage_a: { seconds: 0, count: 0 },
-    stage_b: { seconds: 0, count: 0 },
+    evaluation: { seconds: 0, count: 0 },
   };
   for (const row of timings) {
     if (row.step_type !== "stage" || !STAGES.includes(row.step_name as Stage)) continue;
@@ -22,8 +21,7 @@ function aggregate(timings: StepTimingRow[]) {
   }
   const labels: Record<Stage, string> = {
     funnel: "Filter",
-    stage_a: "Quick evaluation",
-    stage_b: "Detailed review",
+    evaluation: "Evaluation",
   };
   return STAGES.filter((stage) => totals[stage].count > 0).map((stage) => ({
     stage: labels[stage],

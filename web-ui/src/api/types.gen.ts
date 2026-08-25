@@ -400,7 +400,7 @@ export interface paths {
          * @description Record an application with resume snapshots and audit fields.
          *
          *     Mirrors the CLI apply command: master resume read from settings,
-         *     Stage B snapshot fields captured via the shared service helper, and the
+         *     Canonical evaluation snapshot captured via the shared service helper, and the
          *     no-op parity result when the job was already applied.
          *
          *     Args:
@@ -762,7 +762,7 @@ export interface paths {
         put?: never;
         /**
          * Calibrate Evaluation
-         * @description Run one real Quick + Detailed pair and return measured usage.
+         * @description Run one real unified evaluation and return measured usage.
          *
          *     Args:
          *         body: Representative job description to evaluate.
@@ -907,7 +907,7 @@ export interface paths {
         get?: never;
         /**
          * Save Provider Models
-         * @description Persist provider-specific Quick and Detailed model choices.
+         * @description Persist the provider evaluation model in compatibility fields.
          *
          *     Args:
          *         body: Provider and selected model ids.
@@ -1753,7 +1753,7 @@ export interface components {
         };
         /**
          * EvaluationCalibrationBody
-         * @description One representative JD used for a real two-stage calibration.
+         * @description One representative JD used for a real unified calibration.
          */
         EvaluationCalibrationBody: {
             /** Job Description */
@@ -1761,7 +1761,7 @@ export interface components {
         };
         /**
          * EvaluationCalibrationResponse
-         * @description Measured Quick + Detailed usage and subscription-meter delta.
+         * @description Measured unified-evaluation usage and subscription-meter delta.
          */
         EvaluationCalibrationResponse: {
             /** Allowance After Percent */
@@ -1773,8 +1773,7 @@ export interface components {
              * @default 1
              */
             allowance_resolution_percent: number;
-            detailed: components["schemas"]["MeasuredEvaluationCallResponse"];
-            quick: components["schemas"]["MeasuredEvaluationCallResponse"];
+            evaluation: components["schemas"]["MeasuredEvaluationCallResponse"];
         };
         /**
          * EvaluationDetail
@@ -1894,9 +1893,8 @@ export interface components {
          *
          *     The requested window selects the discovery-date cohort for totals,
          *     distributions, and ``daily``.
-         *     ``verdict_distribution`` includes the derived
-         *     ``below_threshold`` bucket (triage grouping); both distributions carry
-         *     only nonzero buckets.
+         *     ``verdict_distribution`` contains unified ``match_tier`` counts for
+         *     completed evaluations; both distributions carry only nonzero buckets.
          */
         InsightsOverviewResponse: {
             /** Daily */
@@ -2478,7 +2476,7 @@ export interface components {
         };
         /**
          * ProviderModelsBody
-         * @description Quick and Detailed model selections from a verified catalog.
+         * @description Evaluation model mirrored in legacy-compatible provider fields.
          */
         ProviderModelsBody: {
             /** Detailed Model */

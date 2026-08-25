@@ -30,7 +30,7 @@ export function LlmLatency({ stats }: { stats: LLMDailyStatsRow[] }) {
     .map((row) => ({ ...row, median: row.median / row.weight / 1000, p95: row.p95 / row.weight / 1000 }))
     .sort((a, b) => b.calls - a.calls);
   const hasMissingCallCounts = data.some((row) => !row.hasCallCount);
-  const stageLabel = (stage: string | null) => stage === "a" ? "Quick evaluation" : stage === "b" ? "Detailed review" : "Unspecified stage";
+  const stageLabel = (stage: string | null) => stage === "evaluation" ? "Evaluation" : stage === "a" ? "Legacy Quick evaluation" : stage === "b" ? "Legacy Detailed review" : "Unspecified stage";
   return (
     <ChartCard title="Model response time">
       <SpaceBetween size="xs">

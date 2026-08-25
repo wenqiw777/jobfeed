@@ -105,7 +105,7 @@ async def _run_apply(app: AppContext, opts: dict[str, object]) -> None:
         tailored = _read_file(tailored_path) if tailored_path else None
         cover_letter = _read_file(cover_letter_path) if cover_letter_path else None
         svc = _build_application_svc(app)
-        verdict_snap, fit_snap, hooks_snap = await svc.stage_b_snapshots(job_id)
+        verdict_snap, fit_snap, hooks_snap = await svc.evaluation_snapshots(job_id)
 
         req = ApplyRequest(
             job_id=job_id,

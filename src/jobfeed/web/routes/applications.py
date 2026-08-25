@@ -88,7 +88,7 @@ async def apply_to_job(
     """Record an application with resume snapshots and audit fields.
 
     Mirrors the CLI apply command: master resume read from settings,
-    Stage B snapshot fields captured via the shared service helper, and the
+    Canonical evaluation snapshot captured via the shared service helper, and the
     no-op parity result when the job was already applied.
 
     Args:
@@ -108,7 +108,7 @@ async def apply_to_job(
     if await store.get_job(str(job_id)) is None:
         raise ApiError(_HTTP_NOT_FOUND, "not_found", f"job {job_id} not found")
     settings: Settings = get_context(request)["settings"]
-    snapshots = await service.stage_b_snapshots(str(job_id))
+    snapshots = await service.evaluation_snapshots(str(job_id))
     req = ApplyRequest(
         job_id=str(job_id),
         master_resume=_read_master_resume(settings),

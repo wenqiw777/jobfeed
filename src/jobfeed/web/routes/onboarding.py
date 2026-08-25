@@ -112,7 +112,7 @@ async def calibrate_evaluation(
     body: EvaluationCalibrationBody,
     calibrator: _Calibrator,
 ) -> EvaluationCalibrationResponse:
-    """Run one real Quick + Detailed pair and return measured usage.
+    """Run one real unified evaluation and return measured usage.
 
     Args:
         body: Representative job description to evaluate.
@@ -129,19 +129,12 @@ async def calibrate_evaluation(
     except ValueError as exc:
         raise ApiError(422, "calibration_unavailable", str(exc)) from exc
     return EvaluationCalibrationResponse(
-        quick=MeasuredEvaluationCallResponse(
-            model=result.quick.model,
-            input_tokens=result.quick.input_tokens,
-            output_tokens=result.quick.output_tokens,
-            cost_usd=result.quick.cost_usd,
-            latency_ms=result.quick.latency_ms,
-        ),
-        detailed=MeasuredEvaluationCallResponse(
-            model=result.detailed.model,
-            input_tokens=result.detailed.input_tokens,
-            output_tokens=result.detailed.output_tokens,
-            cost_usd=result.detailed.cost_usd,
-            latency_ms=result.detailed.latency_ms,
+        evaluation=MeasuredEvaluationCallResponse(
+            model=result.evaluation.model,
+            input_tokens=result.evaluation.input_tokens,
+            output_tokens=result.evaluation.output_tokens,
+            cost_usd=result.evaluation.cost_usd,
+            latency_ms=result.evaluation.latency_ms,
         ),
         allowance_before_percent=result.allowance_before_percent,
         allowance_after_percent=result.allowance_after_percent,
@@ -217,7 +210,7 @@ async def save_provider_models(
     body: ProviderModelsBody,
     service: _Service,
 ) -> ProviderStateResponse:
-    """Persist provider-specific Quick and Detailed model choices.
+    """Persist the provider evaluation model in compatibility fields.
 
     Args:
         body: Provider and selected model ids.

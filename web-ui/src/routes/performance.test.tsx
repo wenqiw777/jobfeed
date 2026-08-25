@@ -18,8 +18,8 @@ import PerformancePage from "@/routes/performance";
 // ---------------------------------------------------------------------------
 // Fixtures — step timings follow the real backend contract: exactly two
 // step_type values exist, `source_fetch` (step_name = source name, one
-// row per source per scan) and `stage` (step_name in funnel / stage_a /
-// stage_b, the evaluate phases). Nothing else is ever emitted.
+// row per source per scan) and `stage` (step_name in funnel / evaluation,
+// the evaluate phases). Nothing else is ever emitted.
 // ---------------------------------------------------------------------------
 
 function overviewFixture(
@@ -57,7 +57,7 @@ function llmRow(over: Partial<LLMDailyStatsRow> = {}): LLMDailyStatsRow {
   return {
     day: "2026-06-10",
     model: "gpt-mini",
-    stage: "a",
+    stage: "evaluation",
     p50_latency_ms: 1200,
     p95_latency_ms: 3400,
     call_count: 1,
@@ -180,10 +180,9 @@ beforeEach(() => {
         timingRow(),
         timingRow({ step_name: "indeed", elapsed_ms: 800 }),
         timingRow({ step_name: "indeed", elapsed_ms: 120, is_error: true }),
-        // One evaluate run: the three stage phases.
+        // One evaluate run: filtering plus the unified evaluation phase.
         timingRow({ run_id: "run-eval-1", step_type: "stage", step_name: "funnel", elapsed_ms: 400 }),
-        timingRow({ run_id: "run-eval-1", step_type: "stage", step_name: "stage_a", elapsed_ms: 2000 }),
-        timingRow({ run_id: "run-eval-1", step_type: "stage", step_name: "stage_b", elapsed_ms: 5000 }),
+        timingRow({ run_id: "run-eval-1", step_type: "stage", step_name: "evaluation", elapsed_ms: 5000 }),
       ],
     },
     llmStats: { stats: [llmRow()] },
@@ -314,12 +313,12 @@ test("performance uses the visualization matching each metric", async () => {
   const timingCard = screen.getByRole("region", { name: "Evaluation time by step" });
   expect(within(timingCard).getByRole("table", { name: "Evaluation time by step" })).toBeInTheDocument();
   expect(within(timingCard).getByText("Average per run that recorded this step.")).toBeInTheDocument();
-  expect(within(timingCard).getAllByText("Quick evaluation").length).toBeGreaterThan(0);
+  expect(within(timingCard).getAllByText("Evaluation").length).toBeGreaterThan(0);
 
   const modelCard = screen.getByRole("region", { name: "Model response time" });
   expect(within(modelCard).getByRole("table", { name: "Model response time" })).toBeInTheDocument();
   expect(within(modelCard).getByText("gpt-mini")).toBeInTheDocument();
-  expect(within(modelCard).getByText("Quick evaluation")).toBeInTheDocument();
+  expect(within(modelCard).getByText("Evaluation")).toBeInTheDocument();
 
   const mixCard = screen.getByRole("region", { name: "Overall average token mix per model call" });
   expect(within(mixCard).getByRole("application", { name: "Overall average token mix per model call" })).toBeInTheDocument();
