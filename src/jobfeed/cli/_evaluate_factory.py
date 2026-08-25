@@ -71,11 +71,7 @@ def build_evaluate_service(
     from jobfeed.adapters.llm._pricing import load_price_table  # noqa: PLC0415
     from jobfeed.adapters.llm._prompts import JinjaPromptRenderer  # noqa: PLC0415
     from jobfeed.adapters.llm.mock import MockLLM  # noqa: PLC0415
-    from jobfeed.cli.ml_gate import (  # noqa: PLC0415
-        build_hard_filters,
-        build_ml_gate,
-        needs_ml_gate,
-    )
+    from jobfeed.cli.ml_gate import build_hard_filters  # noqa: PLC0415
     from jobfeed.ports.store_ops import StoreOpsMixin  # noqa: PLC0415
     from jobfeed.ports.store_status import StoreStatusMixin  # noqa: PLC0415
     from jobfeed.services.evaluate import EvaluateService  # noqa: PLC0415
@@ -96,21 +92,9 @@ def build_evaluate_service(
     logger = app["logger"]
     price_table = load_price_table()
     unused_llm = MockLLM()
-    needs_a = not params.dry_run and params.stage != "b"
-    needs_b = not params.dry_run and params.stage != "a"
+    needs_evaluator = not params.dry_run
     primary_options = LLMClientBuildOptions(max_retries=0)
-    llm_a = (
-        build_llm_client(
-            llm_settings.stage_a,
-            settings=llm_settings,
-            price_table=price_table,
-            logger=logger,
-            options=primary_options,
-        )
-        if needs_a
-        else unused_llm
-    )
-    llm_b = (
+    llm_evaluator = (
         build_llm_client(
             llm_settings.stage_b,
             settings=llm_settings,
@@ -118,19 +102,9 @@ def build_evaluate_service(
             logger=logger,
             options=primary_options,
         )
-        if needs_b
+        if needs_evaluator
         else unused_llm
     )
-
-    llm_b_sweep = None
-    if needs_b:
-        llm_b_sweep = build_llm_client(
-            llm_settings.stage_b,
-            settings=llm_settings,
-            price_table=price_table,
-            logger=logger,
-            options=LLMClientBuildOptions(timeout_s=None, max_retries=0),
-        )
 
     preamble = (
         Path(llm_settings.preamble_personal_path)
@@ -149,19 +123,18 @@ def build_evaluate_service(
         else settings.scoring.stage_a_threshold
     )
     ml_gate_enabled = settings.scoring.ml_gate_enabled
-    needs_gate = needs_ml_gate(params.stage, params.limit, ml_gate_enabled=True)
     return EvaluateService(
         deps=EvaluateDependencies(
             store=store,
             store_ops=cast(StoreOpsMixin, store),
             store_status=cast(StoreStatusMixin, store),
             prompt_renderer=prompt_renderer,
-            llm_stage_a=llm_a,
-            llm_stage_b=llm_b,
-            llm_stage_b_sweep=llm_b_sweep,
-            ml_gate=(
-                build_ml_gate(settings, allow_disabled=True) if needs_gate else None
-            ),
+            llm_stage_a=unused_llm,
+            llm_stage_b=unused_llm,
+            llm_evaluator=llm_evaluator,
+            # The legacy gate was trained from Stage A labels and cannot decide
+            # which jobs the new objective evaluator is allowed to see.
+            ml_gate=None,
             hard_filters=build_hard_filters(settings),
             personal_ml=PersonalMLLearningService(
                 cast(PersonalMLObservationStore, store)
@@ -175,6 +148,7 @@ def build_evaluate_service(
                 max_concurrent=llm_settings.max_concurrent,
                 max_daily_score_calls=llm_settings.max_daily_score_calls,
                 max_daily_cost_usd=llm_settings.max_daily_cost_usd,
+                evaluator=llm_settings.stage_b,
             ),
             stage_a_threshold=threshold,
             resume_text=resume_text,

@@ -32,7 +32,7 @@ class UsageRecordContext:
     """Persistence context for one successful LLM usage row."""
 
     job_id: str
-    stage: Literal["a", "b"]
+    stage: Literal["a", "b", "evaluation"]
     run_id: str
     ledger_day: str
 

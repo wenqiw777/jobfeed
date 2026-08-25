@@ -25,6 +25,10 @@ class EvaluateDependencies:
     prompt_renderer: PromptRenderer
     llm_stage_a: LLMClient
     llm_stage_b: LLMClient
+    # Canonical one-call evaluator. Stage clients remain only so older callers
+    # can construct this dataclass while they migrate; production wiring sets
+    # this field and EvaluateService never invokes the stage clients.
+    llm_evaluator: LLMClient | None = None
     llm_stage_b_sweep: LLMClient | None = None
     ml_gate: MLGate | None = None
     hard_filters: HardFilters | None = None
@@ -41,6 +45,7 @@ class EvaluateLLMConfig:
     max_concurrent: int
     max_daily_score_calls: int
     max_daily_cost_usd: float
+    evaluator: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

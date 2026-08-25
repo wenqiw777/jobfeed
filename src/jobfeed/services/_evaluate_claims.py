@@ -12,7 +12,7 @@ from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_claims import GateCandidate, StoreEvaluationClaimMixin
 from jobfeed.ports.store_ext import StageBThresholdSync
 
-VALID_EVALUATE_STAGES = frozenset({"a", "b", "both"})
+VALID_EVALUATE_STAGES = frozenset({"unified", "a", "b", "both"})
 STAGE_A_QUALITY_BANDS = frozenset({"full", "good"})
 STAGE_B_LEASE_HEARTBEAT_SECONDS = 1800.0
 
