@@ -1379,6 +1379,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/new-job-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run New Job Sources
+         * @description Return configured-source attribution for a scan's new jobs.
+         *
+         *     Args:
+         *         run_id: Historical or active pipeline run identity.
+         *         store: Shared job store.
+         *
+         *     Returns:
+         *         Exact first-insert counts by configured source and their total.
+         *
+         *     Raises:
+         *         ApiError: 404 when the run is unknown.
+         */
+        get: operations["get_run_new_job_sources_api_runs__run_id__new_job_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/progress": {
         parameters: {
             query?: never;
@@ -2559,6 +2589,20 @@ export interface components {
             /** Original Name */
             original_name?: string | null;
             profile?: components["schemas"]["JobProfile"] | null;
+        };
+        /**
+         * RunNewJobSourcesResponse
+         * @description Exact first-insert counts by user-configured scan source.
+         */
+        RunNewJobSourcesResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Source Counts */
+            source_counts: {
+                [key: string]: number;
+            };
+            /** Total */
+            total: number;
         };
         /**
          * RunSummary
@@ -4596,6 +4640,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_new_job_sources_api_runs__run_id__new_job_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunNewJobSourcesResponse"];
                 };
             };
             /** @description Validation Error */

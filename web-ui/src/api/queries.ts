@@ -28,6 +28,8 @@ export type TransitionStatus = components["schemas"]["TransitionBody"]["to"];
 export type InsightsOverviewResponse = components["schemas"]["InsightsOverviewResponse"];
 export type RunsListResponse = components["schemas"]["RunsListResponse"];
 export type RunSummary = components["schemas"]["RunSummary"];
+export type RunNewJobSourcesResponse =
+  components["schemas"]["RunNewJobSourcesResponse"];
 export type CompaniesListResponse = components["schemas"]["CompaniesListResponse"];
 export type CompanyOut = components["schemas"]["CompanyOut"];
 export type CompanyVendor = components["schemas"]["CompanyAddBody"]["vendor"];
@@ -242,6 +244,17 @@ export function useRuns(query: RunsQuery) {
     queryKey: runsKeys.list(query),
     queryFn: () => apiFetch<RunsListResponse>(`/api/runs?${buildParams(query)}`),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Exact first-insert attribution for one expanded historical scan. */
+export function useRunNewJobSources(runId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["runs", runId, "new-job-sources"] as const,
+    queryFn: () =>
+      apiFetch<RunNewJobSourcesResponse>(`/api/runs/${runId}/new-job-sources`),
+    enabled,
+    staleTime: Number.POSITIVE_INFINITY,
   });
 }
 

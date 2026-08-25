@@ -39,6 +39,37 @@ async def test_jobs_view_default_query_uses_bounded_discovery_index(
         await lifecycle.close()
 
 
+async def test_scan_run_reports_exact_new_jobs_by_configured_source(
+    tmp_path: Path,
+) -> None:
+    """First-insert history reconstructs source counts for old scan runs."""
+    lifecycle, store = await open_views_performance(tmp_path / "run-sources.db")
+    try:
+        run = PipelineRun(
+            run_id="run-source-breakdown",
+            started_at=NOW - timedelta(minutes=10),
+            finished_at=NOW + timedelta(minutes=10),
+            source="all",
+            status="succeeded",
+            jobs_discovered=4,
+            jobs_inserted=4,
+        )
+        await insert_run(lifecycle, run)
+        for platform in ("greenhouse", "lever", "indeed", "linkedin_guest"):
+            await insert_job(
+                lifecycle,
+                platform,
+                platform=platform,
+                discovered_at=utc_text(NOW),
+            )
+
+        counts = await store.get_new_job_source_counts(run.run_id)
+
+        assert counts == {"ats": 2, "indeed": 1, "linkedin_guest": 1}
+    finally:
+        await lifecycle.close()
+
+
 async def test_jobs_view_unicode_literal_search_and_shared_counts(
     tmp_path: Path,
 ) -> None:

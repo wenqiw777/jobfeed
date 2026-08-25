@@ -81,6 +81,7 @@ from jobfeed.domain.models_views import (
 )
 from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.domain.scoring import MAX_STAGE_RETRIES
+from jobfeed.domain.source_attribution import configured_source_counts
 from jobfeed.domain.status import (
     ACTIVE_APPLICATION_STATUSES,
     DECAY_SOURCES,
@@ -3502,6 +3503,35 @@ class PostgresStore:
                 offset,
             )
         return [_pipeline_run_from_record(r) for r in rows], total
+
+    async def get_new_job_source_counts(self, run_id: str) -> dict[str, int]:
+        """Count first inserts during a scan, grouped by configured source.
+
+        Args:
+            run_id: Historical or active pipeline run identity.
+
+        Returns:
+            Exact first-insert counts grouped by configured source.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT j.platform, COUNT(*) AS n
+                   FROM pipeline_runs AS r
+                   JOIN job_status_history AS h
+                     ON h.changed_at >= r.started_at
+                    AND h.changed_at <= COALESCE(r.finished_at, now())
+                   JOIN jobs AS j ON j.id = h.job_id
+                   WHERE r.run_id = $1
+                     AND r.source <> 'evaluate'
+                     AND h.from_status IS NULL
+                     AND h.to_status = 'new'
+                   GROUP BY j.platform""",
+                run_id,
+            )
+        return configured_source_counts(
+            (str(row["platform"]), int(row["n"])) for row in rows
+        )
 
     async def update_pipeline_run_status(
         self,

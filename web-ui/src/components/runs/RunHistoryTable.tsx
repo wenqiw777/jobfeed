@@ -10,7 +10,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 
-import type { RunSummary } from "@/api/queries";
+import { type RunSummary, useRunNewJobSources } from "@/api/queries";
 import { formatLocalDateTime } from "@/lib/dates";
 import { useDensity } from "@/lib/density";
 
@@ -170,9 +170,46 @@ function RunDetail({ run }: { run: RunSummary }) {
           ))}
           <div><Box variant="awsui-key-label">finished</Box><Box>{formatLocalDateTime(run.finished_at)}</Box></div>
         </ColumnLayout>
+        {run.source !== "evaluate" && run.jobs_inserted > 0 && (
+          <NewJobsBySource run={run} />
+        )}
         <Box variant="code">{run.run_id}</Box>
       </SpaceBetween>
     </Box>
+  );
+}
+
+function NewJobsBySource({ run }: { run: RunSummary }) {
+  const sources = useRunNewJobSources(run.run_id, true);
+  const entries = Object.entries(sources.data?.source_counts ?? {}).sort(
+    ([sourceA, countA], [sourceB, countB]) =>
+      countB - countA || sourceA.localeCompare(sourceB),
+  );
+  return (
+    <SpaceBetween size="xs">
+      <Box variant="h3">New jobs by source</Box>
+      {sources.isPending && <Box color="text-body-secondary">Loading source breakdown</Box>}
+      {sources.error && <Box color="text-status-error">Source breakdown unavailable</Box>}
+      {sources.data && entries.length === 0 && (
+        <Box color="text-body-secondary">No source attribution recorded</Box>
+      )}
+      {entries.length > 0 && (
+        <SpaceBetween direction="horizontal" size="xxs">
+          {entries.map(([source, count]) => (
+            <span key={source} data-testid={`run-source-${source}`}>
+              <Badge color="green">{sourceLabel(source)} {count}</Badge>
+            </span>
+          ))}
+        </SpaceBetween>
+      )}
+      {sources.data && (
+        <Box color="text-body-secondary">
+          {sources.data.total === run.jobs_inserted
+            ? `${sources.data.total} total new jobs`
+            : `${sources.data.total} of ${run.jobs_inserted} new jobs attributed`}
+        </Box>
+      )}
+    </SpaceBetween>
   );
 }
 
@@ -225,4 +262,15 @@ function runLabel(source: string): string {
   if (source === "evaluate") return "Evaluation";
   if (source === "all") return "Scan · all sources";
   return `Scan · ${source}`;
+}
+
+function sourceLabel(source: string): string {
+  const labels: Record<string, string> = {
+    ats: "Company career pages",
+    indeed: "Indeed",
+    linkedin: "LinkedIn",
+    linkedin_guest: "LinkedIn guest",
+    speedyapply: "SpeedyApply",
+  };
+  return labels[source] ?? source.replaceAll("_", " ");
 }

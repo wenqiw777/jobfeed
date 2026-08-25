@@ -17,7 +17,7 @@ from jobfeed.domain.errors import (
 from jobfeed.domain.models import PipelineRun
 from jobfeed.services.run_manager import ActiveRun
 from jobfeed.web.app import build_web_app
-from tests.web.test_app_skeleton import fake_context, open_client
+from tests.web.test_app_skeleton import FakeStore, fake_context, open_client
 
 HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
@@ -87,6 +87,22 @@ class FakeRunManager:
         return 0
 
 
+class RunSourcesFakeStore(FakeStore):
+    """Store fake exposing one historical scan and its source counts."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.run = _make_run("scan-1", source="all")
+
+    async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
+        """Return the configured run by ID."""
+        return self.run if run_id == self.run.run_id else None
+
+    async def get_new_job_source_counts(self, run_id: str) -> dict[str, int]:
+        """Return exact configured-source counts for the known run."""
+        return {"ats": 124, "indeed": 320} if run_id == self.run.run_id else {}
+
+
 def _build_app(
     run_manager: FakeRunManager | None = None,
 ) -> tuple[Any, FakeRunManager]:
@@ -112,6 +128,23 @@ def test_web_app_evaluate_factory_defaults_to_unified(monkeypatch: Any) -> None:
     app.state.run_manager._eval_factory()
 
     assert captured[0].stage == "unified"
+
+
+async def test_run_new_job_sources_returns_exact_breakdown() -> None:
+    """GET run sources returns counts whose total matches the new counter."""
+    store = RunSourcesFakeStore()
+    app = build_web_app(fake_context(store))
+    app.state.run_manager = FakeRunManager()
+
+    async with open_client(app) as client:
+        response = await client.get("/api/runs/scan-1/new-job-sources")
+
+    assert response.status_code == HTTP_OK
+    assert response.json() == {
+        "run_id": "scan-1",
+        "source_counts": {"ats": 124, "indeed": 320},
+        "total": 444,
+    }
 
 
 # ---------------------------------------------------------------------------

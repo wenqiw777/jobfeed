@@ -101,6 +101,18 @@ class StoreViewsMixin(Protocol):
         """
         ...
 
+    async def get_new_job_source_counts(self, run_id: str) -> dict[str, int]:
+        """Count first-time job inserts by configured source for one scan.
+
+        Args:
+            run_id: Historical or active pipeline run identity.
+
+        Returns:
+            Configured source name to exact first-insert count. Evaluation
+            runs and runs without attributable inserts return an empty map.
+        """
+        ...
+
     async def insights_overview(self, *, window_days: int | None) -> InsightsOverview:
         """Aggregate the insights overview.
 

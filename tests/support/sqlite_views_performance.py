@@ -51,6 +51,7 @@ async def insert_job(  # noqa: PLR0913
     canonical_id: str,
     *,
     discovered_at: str,
+    platform: str = "test",
     company: str = "Example",
     company_norm: str | None = "example",
     title: str = "Engineer",
@@ -84,8 +85,9 @@ async def insert_job(  # noqa: PLR0913
                    platform, canonical_id, url, title, company, location,
                    jd_quality, posted_at, discovered_at, company_norm,
                    title_norm, location_norm, closed_at
-               ) VALUES ('test',?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id""",
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id""",
             (
+                platform,
                 canonical_id,
                 f"https://example.test/{canonical_id}",
                 title,

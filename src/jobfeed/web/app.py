@@ -41,6 +41,7 @@ from jobfeed.web.routes.health import router as health_router
 from jobfeed.web.routes.insights import router as insights_router
 from jobfeed.web.routes.jobs import router as jobs_router
 from jobfeed.web.routes.performance import router as performance_router
+from jobfeed.web.routes.run_sources import router as run_sources_router
 from jobfeed.web.routes.runs import router as runs_router
 from jobfeed.web.routes.workflow import router as workflow_router
 
@@ -160,6 +161,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.include_router(applications_router, prefix="/api")
     app.include_router(insights_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
+    app.include_router(run_sources_router, prefix="/api")
     app.include_router(companies_router, prefix="/api")
     app.include_router(performance_router, prefix="/api")
     dist_dir = static_dir if static_dir is not None else _DEFAULT_DIST_DIR

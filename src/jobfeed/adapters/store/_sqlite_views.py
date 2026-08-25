@@ -24,6 +24,7 @@ from jobfeed.domain.models_views import (
     JobsViewRow,
     TwinStatusRow,
 )
+from jobfeed.domain.source_attribution import configured_source_counts
 
 _TAB_PREDICATES: dict[str, str] = {
     "queue": (
@@ -264,3 +265,35 @@ class _SqliteViews:
             )
         assert total is not None
         return [_pipeline_run_from_row(row) for row in records], int(total["n"])
+
+    async def get_new_job_source_counts(self, run_id: str) -> dict[str, int]:
+        """Count first inserts during a scan, grouped by configured source.
+
+        Args:
+            run_id: Historical or active pipeline run identity.
+
+        Returns:
+            Exact first-insert counts grouped by configured source.
+        """
+        async with self._lifecycle.connection() as connection:
+            records = await _fetch_rows(
+                connection,
+                """SELECT j.platform, COUNT(*) AS n
+                   FROM pipeline_runs AS r
+                   JOIN job_status_history AS h
+                     ON h.changed_at >= r.started_at
+                    AND h.changed_at <= COALESCE(
+                        r.finished_at,
+                        strftime('%Y-%m-%dT%H:%M:%f000Z','now')
+                    )
+                   JOIN jobs AS j ON j.id = h.job_id
+                   WHERE r.run_id=?
+                     AND r.source <> 'evaluate'
+                     AND h.from_status IS NULL
+                     AND h.to_status = 'new'
+                   GROUP BY j.platform""",
+                (run_id,),
+            )
+        return configured_source_counts(
+            (str(row["platform"]), int(row["n"])) for row in records
+        )

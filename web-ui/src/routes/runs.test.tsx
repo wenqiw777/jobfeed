@@ -88,6 +88,17 @@ function mockApi(state: ServerState): void {
       if (method === "GET" && url === "/api/runs/active") {
         return json({ runs: state.activeRuns });
       }
+      if (method === "GET" && url === "/api/runs/r2/new-job-sources") {
+        return json({
+          run_id: "r2",
+          source_counts: {
+            ats: 2,
+            indeed: 1,
+            linkedin_guest: 1,
+          },
+          total: 4,
+        });
+      }
       if (method === "POST" && url === "/api/runs/scan") {
         const { source } = body as { source: string };
         if (source === "conflict") {
@@ -244,6 +255,12 @@ test("expanding a row reveals the full counter grid, run id, and finished time",
   expect(within(row).getByText("evaluated")).toBeInTheDocument();
   expect(within(row).getByText("finished")).toBeInTheDocument();
   expect(within(row).getByText("r2")).toBeInTheDocument();
+  expect(await within(row).findByText("New jobs by source")).toBeVisible();
+  expect(await within(row).findByTestId("run-source-ats")).toHaveTextContent("Company career pages 2");
+  expect(within(row).getByTestId("run-source-indeed")).toHaveTextContent("Indeed 1");
+  expect(within(row).getByTestId("run-source-linkedin_guest")).toHaveTextContent("LinkedIn guest 1");
+  expect(within(row).getByText("4 total new jobs")).toBeVisible();
+  expect(calls.some((call) => call.url === "/api/runs/r2/new-job-sources")).toBe(true);
 
   fireEvent.click(toggle);
   expect(within(row).queryByText("updated")).toBeNull();
