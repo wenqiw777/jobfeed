@@ -367,6 +367,7 @@ def test_models_module_imports_only_allowed_stdlib_dependencies() -> None:
         "jobfeed.domain.models_run",
         "jobfeed.domain.models_status",
         "jobfeed.domain.types",
+        "jobfeed.domain.unified_evaluation",
         "typing",
     }
     assert imported_modules <= allowed
