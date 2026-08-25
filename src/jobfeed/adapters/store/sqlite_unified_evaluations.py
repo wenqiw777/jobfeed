@@ -15,7 +15,7 @@ class SqliteUnifiedEvaluations:
 
     _lifecycle: SqliteLifecycle
 
-    async def claim_pending_evaluations(
+    async def claim_pending_evaluations(  # noqa: PLR0913 - explicit claim filters
         self,
         *,
         evaluator_version: str,

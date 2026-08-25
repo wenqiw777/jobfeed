@@ -350,6 +350,7 @@ async def test_claim_can_be_restricted_to_prefiltered_candidate_ids(
 
         claimed = await store.claim_pending_evaluations(
             evaluator_version=_VERSION,
+            claim_token=_CLAIM_ONE,
             corpus="unrated",
             limit=10,
             max_days=None,
