@@ -19,6 +19,7 @@ class SqliteUnifiedEvaluations:
         self,
         *,
         evaluator_version: str,
+        claim_token: str,
         corpus: str = "unrated",
         limit: int = 100,
         max_days: int | None = None,
@@ -37,6 +38,7 @@ class SqliteUnifiedEvaluations:
         return await _sqlite_evaluation_results._claim_pending_evaluations(
             self._lifecycle,
             evaluator_version=evaluator_version,
+            claim_token=claim_token,
             corpus=corpus,
             limit=limit,
             max_days=max_days,
@@ -75,6 +77,7 @@ class SqliteUnifiedEvaluations:
         self,
         job_id: str,
         result: UnifiedEvaluationResult,
+        claim_token: str,
     ) -> None:
         """Atomically upsert one completed unified evaluation.
 
@@ -86,6 +89,7 @@ class SqliteUnifiedEvaluations:
             self._lifecycle,
             job_id,
             result,
+            claim_token,
             now=self._unified_evaluation_now(),
         )
 
@@ -94,6 +98,7 @@ class SqliteUnifiedEvaluations:
         job_id: str,
         error: str,
         evaluator_version: str,
+        claim_token: str,
     ) -> None:
         """Persist one failed unified-evaluation attempt atomically.
 
@@ -107,6 +112,7 @@ class SqliteUnifiedEvaluations:
             job_id,
             error,
             evaluator_version,
+            claim_token,
             now=self._unified_evaluation_now(),
         )
 
@@ -114,6 +120,7 @@ class SqliteUnifiedEvaluations:
         self,
         job_id: str,
         evaluator_version: str,
+        claim_token: str,
     ) -> None:
         """Idempotently release a claim owned by one evaluator version.
 
@@ -125,6 +132,7 @@ class SqliteUnifiedEvaluations:
             self._lifecycle,
             job_id,
             evaluator_version,
+            claim_token,
             now=self._unified_evaluation_now(),
         )
 

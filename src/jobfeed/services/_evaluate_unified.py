@@ -51,8 +51,10 @@ async def run_unified_evaluation(  # noqa: PLR0913 - explicit run filters
     if not await service._budget.has_budget():
         return
     store = cast(StoreUnifiedEvaluationMixin, service._deps.store)
+    claim_token = f"{run.run_id}:{lease_session.generation}"
     jobs = await store.claim_pending_evaluations(
         evaluator_version=EVALUATOR_VERSION,
+        claim_token=claim_token,
         corpus=corpus,
         limit=limit,
         max_days=max_days,
@@ -67,19 +69,20 @@ async def run_unified_evaluation(  # noqa: PLR0913 - explicit run filters
     async def _worker(job: JobPosting) -> None:
         async with semaphore:
             lease_session.ensure_active()
-            if await _score_job(service, job, run, client, lease_session):
+            if await _score_job(service, job, run, client, lease_session, claim_token):
                 run.jobs_scored += 1
             service._emit_progress(run)
 
     await asyncio.gather(*(_worker(job) for job in jobs))
 
 
-async def _score_job(
+async def _score_job(  # noqa: PLR0913 - explicit worker dependencies
     service: EvaluateService,
     job: JobPosting,
     run: PipelineRun,
     client: LLMClient,
     lease_session: RunLeaseSession,
+    claim_token: str,
 ) -> bool:
     job_id = require_job_id(job)
     store = cast(StoreUnifiedEvaluationMixin, service._deps.store)
@@ -88,6 +91,7 @@ async def _score_job(
             job_id,
             f"jd_text_too_short: {len(job.jd_text or '')} chars",
             EVALUATOR_VERSION,
+            claim_token,
         )
         run.errors += 1
         return False
@@ -101,7 +105,7 @@ async def _score_job(
         lease_session.ensure_active()
         ledger_day = await service._budget.reserve()
         if ledger_day is None:
-            await store.release_evaluation_claim(job_id, EVALUATOR_VERSION)
+            await store.release_evaluation_claim(job_id, EVALUATOR_VERSION, claim_token)
             return False
         try:
             response = await client.complete(request)
@@ -114,7 +118,7 @@ async def _score_job(
                     "evaluation_runtime_retry", job_id=job_id, error=str(exc)
                 )
                 continue
-            await _save_error(service, job_id, str(exc), run)
+            await _save_error(service, job_id, str(exc), run, claim_token)
             return False
         await record_usage(
             service._deps.store_ops,
@@ -137,10 +141,10 @@ async def _score_job(
                     "evaluation_parse_retry", job_id=job_id, error=str(exc)
                 )
                 continue
-            await _save_error(service, job_id, str(exc), run)
+            await _save_error(service, job_id, str(exc), run, claim_token)
             return False
         lease_session.ensure_active()
-        await store.save_evaluation(job_id, result)
+        await store.save_evaluation(job_id, result, claim_token)
         service._logger.info(
             "evaluation_scored",
             job_id=job_id,
@@ -156,11 +160,10 @@ async def _save_error(
     job_id: str,
     error: str,
     run: PipelineRun,
+    claim_token: str,
 ) -> None:
     store = cast(StoreUnifiedEvaluationMixin, service._deps.store)
-    await store.save_evaluation_error(
-        job_id, error, EVALUATOR_VERSION
-    )
+    await store.save_evaluation_error(job_id, error, EVALUATOR_VERSION, claim_token)
     run.errors += 1
     service._logger.error("evaluation_failed", job_id=job_id, error=error)
 

@@ -16,12 +16,14 @@ from jobfeed.adapters.store._sqlite_capability_support import (
 )
 from jobfeed.adapters.store._sqlite_evaluations import _insert_scored_history
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.domain.errors import RunLeaseLostError
 from jobfeed.domain.models import JobPosting
 
 _RESULT_COLUMNS = (
     "job_id, status, eligibility_status, match_tier, match_score, "
     "ats_visibility_score, result_json, evaluator_version, model, prompt_hash, "
-    "resume_hash, cost_usd, evaluated_at, updated_at, error, error_count"
+    "resume_hash, cost_usd, evaluated_at, updated_at, error, error_count, "
+    "claim_token, claim_started_at"
 )
 _VALID_CORPORA = frozenset({"unrated", "all", "failed"})
 _STALE_CLAIM_AFTER = timedelta(hours=1)
@@ -31,11 +33,13 @@ async def _claim_pending_evaluations(  # noqa: PLR0913 - mirrors public store AP
     lifecycle: SqliteLifecycle,
     *,
     evaluator_version: str,
+    claim_token: str,
     corpus: str,
     limit: int,
     max_days: int | None,
     now: datetime,
 ) -> list[JobPosting]:
+    _validate_claim_token(claim_token)
     sql, params = _pending_evaluation_query(
         evaluator_version=evaluator_version,
         corpus=corpus,
@@ -52,23 +56,40 @@ async def _claim_pending_evaluations(  # noqa: PLR0913 - mirrors public store AP
         for row in rows:
             await connection.execute(
                 """INSERT INTO evaluation_results(
-                       job_id,status,evaluator_version,updated_at
-                   ) VALUES(?,'in_progress',?,?)
+                       job_id,status,evaluator_version,updated_at,
+                       claim_token,claim_started_at
+                   ) VALUES(?,'in_progress',?,?,?,?)
                    ON CONFLICT(job_id) DO UPDATE SET
-                       status='in_progress', eligibility_status=NULL,
-                       match_tier=NULL, match_score=NULL,
-                       ats_visibility_score=NULL, result_json=NULL,
-                       evaluator_version=excluded.evaluator_version,
-                       model=NULL, prompt_hash=NULL, resume_hash=NULL,
-                       cost_usd=NULL, evaluated_at=NULL,
-                       updated_at=excluded.updated_at,
-                       error=CASE WHEN evaluation_results.status='error'
-                                  THEN evaluation_results.error ELSE NULL END,
+                       status=CASE WHEN evaluation_results.result_json IS NULL
+                                   THEN 'in_progress'
+                                   ELSE evaluation_results.status END,
+                       evaluator_version=CASE
+                           WHEN evaluation_results.result_json IS NULL
+                           THEN excluded.evaluator_version
+                           ELSE evaluation_results.evaluator_version END,
+                       updated_at=CASE
+                           WHEN evaluation_results.result_json IS NULL
+                           THEN excluded.updated_at
+                           ELSE evaluation_results.updated_at END,
+                       error=CASE
+                           WHEN evaluation_results.result_json IS NULL
+                                AND evaluation_results.status<>'error'
+                           THEN NULL ELSE evaluation_results.error END,
                        error_count=CASE
+                           WHEN evaluation_results.result_json IS NOT NULL
+                           THEN evaluation_results.error_count
                            WHEN evaluation_results.evaluator_version=
                                 excluded.evaluator_version
-                           THEN evaluation_results.error_count ELSE 0 END""",
-                (int(row["id"]), evaluator_version, timestamp),
+                           THEN evaluation_results.error_count ELSE 0 END,
+                       claim_token=excluded.claim_token,
+                       claim_started_at=excluded.claim_started_at""",
+                (
+                    int(row["id"]),
+                    evaluator_version,
+                    timestamp,
+                    claim_token,
+                    timestamp,
+                ),
             )
     return [_hydrate_job(row) for row in rows]
 
@@ -107,24 +128,29 @@ def _pending_evaluation_query(
     params: list[object] = []
     stale_before = _require_utc_timestamp(now - _STALE_CLAIM_AFTER)
     if corpus == "failed":
-        conditions.append("evaluation_results.status='error'")
+        conditions.append(
+            "evaluation_results.error IS NOT NULL AND "
+            "(evaluation_results.claim_token IS NULL "
+            "OR evaluation_results.claim_started_at<?)"
+        )
+        params.append(stale_before)
     elif corpus == "unrated":
         conditions.append(
             "(evaluation_results.job_id IS NULL "
-            "OR evaluation_results.evaluator_version<>? "
+            "OR ((evaluation_results.claim_token IS NULL "
+            "OR evaluation_results.claim_started_at<?) AND "
+            "(evaluation_results.evaluator_version<>? "
             "OR evaluation_results.status='error' "
-            "OR (evaluation_results.status='in_progress' "
-            "AND evaluation_results.updated_at<?))"
+            "OR evaluation_results.result_json IS NULL)))"
         )
-        params.extend((evaluator_version, stale_before))
+        params.extend((stale_before, evaluator_version))
     else:
         conditions.append(
             "(evaluation_results.job_id IS NULL "
-            "OR evaluation_results.evaluator_version<>? "
-            "OR evaluation_results.status<>'in_progress' "
-            "OR evaluation_results.updated_at<?)"
+            "OR evaluation_results.claim_token IS NULL "
+            "OR evaluation_results.claim_started_at<?)"
         )
-        params.extend((evaluator_version, stale_before))
+        params.append(stale_before)
     if max_days is not None:
         conditions.append("jobs.discovered_at>=?")
         params.append(_require_utc_timestamp(now - timedelta(days=max_days)))
@@ -142,15 +168,16 @@ async def _save_evaluation(
     lifecycle: SqliteLifecycle,
     job_id: str,
     result: object,
+    claim_token: str,
     *,
     now: datetime,
 ) -> None:
+    _validate_claim_token(claim_token)
     numeric_id = int(job_id)
     evaluator_version = _required_text(result, "evaluator_version")
     timestamp = _require_utc_timestamp(now)
     result_json = _encode_json(_required_value(result, "result_json"))
     values = (
-        numeric_id,
         _required_text(result, "eligibility_status"),
         _required_text(result, "match_tier"),
         _required_value(result, "match_score"),
@@ -163,32 +190,29 @@ async def _save_evaluation(
         getattr(result, "cost_usd", None),
         timestamp,
         timestamp,
+        numeric_id,
+        claim_token,
     )
     async with (
         lifecycle.connection() as connection,
         _immediate_transaction(connection),
     ):
-        await connection.execute(
-            """INSERT INTO evaluation_results(
-                   job_id,status,eligibility_status,match_tier,match_score,
-                   ats_visibility_score,result_json,evaluator_version,model,
-                   prompt_hash,resume_hash,cost_usd,evaluated_at,updated_at,
-                   error,error_count
-               ) VALUES(?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)
-               ON CONFLICT(job_id) DO UPDATE SET
+        cursor = await connection.execute(
+            """UPDATE evaluation_results SET
                    status='completed',
-                   eligibility_status=excluded.eligibility_status,
-                   match_tier=excluded.match_tier,
-                   match_score=excluded.match_score,
-                   ats_visibility_score=excluded.ats_visibility_score,
-                   result_json=excluded.result_json,
-                   evaluator_version=excluded.evaluator_version,
-                   model=excluded.model, prompt_hash=excluded.prompt_hash,
-                   resume_hash=excluded.resume_hash, cost_usd=excluded.cost_usd,
-                   evaluated_at=excluded.evaluated_at,
-                   updated_at=excluded.updated_at, error=NULL""",
+                   eligibility_status=?,
+                   match_tier=?, match_score=?, ats_visibility_score=?,
+                   result_json=?, evaluator_version=?, model=?, prompt_hash=?,
+                   resume_hash=?, cost_usd=?, evaluated_at=?, updated_at=?,
+                   error=NULL, error_count=0,
+                   claim_token=NULL, claim_started_at=NULL
+               WHERE job_id=? AND claim_token=?""",
             values,
         )
+        if cursor.rowcount != 1:
+            await cursor.close()
+            raise RunLeaseLostError(f"evaluation claim lost for job {job_id}")
+        await cursor.close()
         cursor = await connection.execute(
             "UPDATE job_status SET status='scored', last_status_change_at=? "
             "WHERE job_id=? AND status='new' RETURNING job_id",
@@ -200,64 +224,74 @@ async def _save_evaluation(
             await _insert_scored_history(connection, numeric_id, timestamp)
 
 
-async def _save_evaluation_error(
+async def _save_evaluation_error(  # noqa: PLR0913 - explicit fenced write
     lifecycle: SqliteLifecycle,
     job_id: str,
     error: str,
     evaluator_version: str,
+    claim_token: str,
     *,
     now: datetime,
 ) -> None:
     if not evaluator_version:
         raise ValueError("evaluator_version must not be empty")
+    _validate_claim_token(claim_token)
     timestamp = _require_utc_timestamp(now)
     async with (
         lifecycle.connection() as connection,
         _immediate_transaction(connection),
     ):
-        await connection.execute(
-            """INSERT INTO evaluation_results(
-                   job_id,status,evaluator_version,updated_at,error,error_count
-               ) VALUES(?,'error',?,?,?,1)
-               ON CONFLICT(job_id) DO UPDATE SET
-                   status='error', eligibility_status=NULL, match_tier=NULL,
-                   match_score=NULL, ats_visibility_score=NULL, result_json=NULL,
-                   evaluator_version=excluded.evaluator_version,
-                   model=NULL, prompt_hash=NULL, resume_hash=NULL, cost_usd=NULL,
-                   evaluated_at=NULL, updated_at=excluded.updated_at,
-                   error=excluded.error,
-                   error_count=CASE
-                       WHEN evaluation_results.evaluator_version=
-                            excluded.evaluator_version
-                       THEN evaluation_results.error_count+1 ELSE 1 END""",
-            (int(job_id), evaluator_version, timestamp, error),
+        cursor = await connection.execute(
+            """UPDATE evaluation_results SET
+                   status=CASE WHEN result_json IS NULL
+                               THEN 'error' ELSE 'completed' END,
+                   evaluator_version=CASE WHEN result_json IS NULL
+                                          THEN ? ELSE evaluator_version END,
+                   updated_at=CASE WHEN result_json IS NULL
+                                   THEN ? ELSE updated_at END,
+                   error=?, error_count=error_count+1,
+                   claim_token=NULL, claim_started_at=NULL
+               WHERE job_id=? AND claim_token=?""",
+            (evaluator_version, timestamp, error, int(job_id), claim_token),
         )
+        if cursor.rowcount != 1:
+            await cursor.close()
+            raise RunLeaseLostError(f"evaluation claim lost for job {job_id}")
+        await cursor.close()
 
 
 async def _release_evaluation_claim(
     lifecycle: SqliteLifecycle,
     job_id: str,
     evaluator_version: str,
+    claim_token: str,
     *,
     now: datetime,
 ) -> None:
+    if not evaluator_version:
+        raise ValueError("evaluator_version must not be empty")
+    _validate_claim_token(claim_token)
     timestamp = _require_utc_timestamp(now)
-    params = (timestamp, int(job_id), evaluator_version)
+    params = (timestamp, int(job_id), claim_token)
     async with (
         lifecycle.connection() as connection,
         _immediate_transaction(connection),
     ):
         await connection.execute(
-            """UPDATE evaluation_results SET status='error', updated_at=?
-               WHERE job_id=? AND evaluator_version=? AND status='in_progress'
-                 AND error IS NOT NULL""",
+            """UPDATE evaluation_results SET
+                   status=CASE WHEN result_json IS NULL
+                               THEN 'error' ELSE 'completed' END,
+                   updated_at=CASE WHEN result_json IS NULL THEN ? ELSE updated_at END,
+                   claim_token=NULL, claim_started_at=NULL
+               WHERE job_id=? AND claim_token=?
+                 AND (result_json IS NOT NULL OR error IS NOT NULL)""",
             params,
         )
         await connection.execute(
             """DELETE FROM evaluation_results
-               WHERE job_id=? AND evaluator_version=? AND status='in_progress'
+               WHERE job_id=? AND claim_token=? AND result_json IS NULL
                  AND error IS NULL""",
-            (int(job_id), evaluator_version),
+            (int(job_id), claim_token),
         )
 
 
@@ -297,6 +331,11 @@ def _validate_request(
     _validate_limit(limit)
     if max_days is not None and (isinstance(max_days, bool) or max_days < 0):
         raise ValueError("max_days must be a non-negative integer")
+
+
+def _validate_claim_token(claim_token: str) -> None:
+    if not claim_token:
+        raise ValueError("claim_token must not be empty")
 
 
 def _required_text(result: object, name: str) -> str:

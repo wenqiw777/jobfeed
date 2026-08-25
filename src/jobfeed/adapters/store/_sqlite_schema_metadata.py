@@ -147,6 +147,8 @@ def _base_metadata(*, include_evaluation_results: bool) -> sa.MetaData:
                 nullable=False,
                 server_default=sa.text("0"),
             ),
+            sa.Column("claim_token", sa.Text()),
+            sa.Column("claim_started_at", sa.Text()),
         )
     return metadata
 
@@ -207,6 +209,8 @@ def _checks(*, include_evaluation_stage: bool) -> dict[str, tuple[str, ...]]:
             "result_json IS NULL OR json_valid(result_json)",
             "cost_usd IS NULL OR cost_usd >= 0",
             "error_count >= 0",
+            "((claim_token IS NULL AND claim_started_at IS NULL) OR "
+            "(claim_token IS NOT NULL AND claim_started_at IS NOT NULL))",
         ),
         "job_status": (
             "status IN ('new','scored','shortlisted','awaiting_referral',"
@@ -301,7 +305,7 @@ def _add_indexes(metadata: sa.MetaData) -> None:
             (
                 tables["evaluation_results"].c.status,
                 tables["evaluation_results"].c.evaluator_version,
-                tables["evaluation_results"].c.updated_at,
+                tables["evaluation_results"].c.claim_started_at,
             ),
         )
     _index(

@@ -46,17 +46,21 @@ class _Store(SuccessfulRunLeaseMixin):
         return [self.job]
 
     async def save_evaluation(
-        self, job_id: str, result: UnifiedEvaluationResult
+        self, job_id: str, result: UnifiedEvaluationResult, _claim_token: str
     ) -> None:
         self.saved.append((job_id, result))
 
     async def save_evaluation_error(
-        self, job_id: str, error: str, evaluator_version: str
+        self,
+        job_id: str,
+        error: str,
+        evaluator_version: str,
+        _claim_token: str,
     ) -> None:
         self.errors.append((job_id, error, evaluator_version))
 
     async def release_evaluation_claim(
-        self, _job_id: str, _evaluator_version: str
+        self, _job_id: str, _evaluator_version: str, _claim_token: str
     ) -> None:
         return None
 

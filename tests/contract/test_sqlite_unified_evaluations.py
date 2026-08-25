@@ -17,6 +17,7 @@ from jobfeed.adapters.store._sqlite_schema_metadata import (
 )
 from jobfeed.adapters.store.sqlite import SQLiteStore
 from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
+from jobfeed.domain.errors import RunLeaseLostError
 from tests.support.sqlite_jobs_evaluations import make_job
 
 _NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
@@ -25,6 +26,8 @@ _V1_VERSION = 1
 _LEGACY_SCORE = 77
 _UPDATED_SCORE = 92
 _CONCURRENT_JOB_COUNT = 6
+_CLAIM_ONE = "run-one:1"
+_CLAIM_TWO = "run-two:2"
 _EXPECTED_COLUMNS = (
     "job_id",
     "status",
@@ -42,6 +45,8 @@ _EXPECTED_COLUMNS = (
     "updated_at",
     "error",
     "error_count",
+    "claim_token",
+    "claim_started_at",
 )
 
 
@@ -165,8 +170,20 @@ async def test_save_upserts_and_reads_one_current_result(tmp_path: Path) -> None
     try:
         job_id = (await store.save_job(make_job("save"))).job_id
 
-        await store.save_evaluation(job_id, _result())
-        await store.save_evaluation(job_id, _result(score=_UPDATED_SCORE))
+        await store.claim_pending_evaluations(
+            evaluator_version=_VERSION,
+            claim_token=_CLAIM_ONE,
+            corpus="unrated",
+            limit=1,
+        )
+        await store.save_evaluation(job_id, _result(), _CLAIM_ONE)
+        await store.claim_pending_evaluations(
+            evaluator_version=_VERSION,
+            claim_token=_CLAIM_TWO,
+            corpus="all",
+            limit=1,
+        )
+        await store.save_evaluation(job_id, _result(score=_UPDATED_SCORE), _CLAIM_TWO)
         row = await store.get_current_evaluation(job_id)
 
         assert row is not None
@@ -241,9 +258,19 @@ async def test_claim_uses_independent_versioned_state_and_corpus(
                 cost_usd=0.0,
             ),
         )
-        await store.save_evaluation(ids["old-version"], _result(version="old-v0"))
-        await store.save_evaluation(ids["current"], _result())
-        await store.save_evaluation_error(ids["failed"], "boom", _VERSION)
+        await store.claim_pending_evaluations(
+            evaluator_version=_VERSION,
+            claim_token=_CLAIM_ONE,
+            corpus="all",
+            limit=10,
+        )
+        await store.save_evaluation(
+            ids["old-version"], _result(version="old-v0"), _CLAIM_ONE
+        )
+        await store.save_evaluation(ids["current"], _result(), _CLAIM_ONE)
+        await store.save_evaluation_error(ids["failed"], "boom", _VERSION, _CLAIM_ONE)
+        await store.release_evaluation_claim(ids["legacy-only"], _VERSION, _CLAIM_ONE)
+        await store.release_evaluation_claim(ids["empty"], _VERSION, _CLAIM_ONE)
 
         preview = await store.preview_pending_evaluations(
             evaluator_version=_VERSION,
@@ -263,6 +290,7 @@ async def test_claim_uses_independent_versioned_state_and_corpus(
 
         unrated = await store.claim_pending_evaluations(
             evaluator_version=_VERSION,
+            claim_token=_CLAIM_TWO,
             corpus="unrated",
             limit=10,
             max_days=30,
@@ -276,10 +304,11 @@ async def test_claim_uses_independent_versioned_state_and_corpus(
         assert "current" not in {job.canonical_id for job in unrated}
         for job in unrated:
             assert job.id is not None
-            await store.release_evaluation_claim(job.id, _VERSION)
+            await store.release_evaluation_claim(job.id, _VERSION, _CLAIM_TWO)
 
         claimed = await store.claim_pending_evaluations(
             evaluator_version=_VERSION,
+            claim_token="run-all:3",
             corpus="all",
             limit=10,
             max_days=30,
@@ -291,9 +320,12 @@ async def test_claim_uses_independent_versioned_state_and_corpus(
             "current",
             "failed",
         ]
-        await store.release_evaluation_claim(ids["failed"], _VERSION)
+        for job in claimed:
+            assert job.id is not None
+            await store.release_evaluation_claim(job.id, _VERSION, "run-all:3")
         failed = await store.claim_pending_evaluations(
             evaluator_version=_VERSION,
+            claim_token="run-failed:4",
             corpus="failed",
             limit=10,
             max_days=None,
@@ -314,6 +346,7 @@ async def test_unrated_reclaims_only_stale_in_progress_rows(tmp_path: Path) -> N
             await store.save_job(make_job(name))
         initial = await store.claim_pending_evaluations(
             evaluator_version=_VERSION,
+            claim_token=_CLAIM_ONE,
             corpus="unrated",
             limit=10,
             max_days=None,
@@ -321,7 +354,7 @@ async def test_unrated_reclaims_only_stale_in_progress_rows(tmp_path: Path) -> N
         assert {job.canonical_id for job in initial} == {"stale", "fresh"}
         async with aiosqlite.connect(path) as connection:
             await connection.execute(
-                "UPDATE evaluation_results SET updated_at=? WHERE job_id=("
+                "UPDATE evaluation_results SET claim_started_at=? WHERE job_id=("
                 "SELECT id FROM jobs WHERE canonical_id='stale')",
                 ((_NOW - timedelta(hours=2)).isoformat(),),
             )
@@ -336,6 +369,7 @@ async def test_unrated_reclaims_only_stale_in_progress_rows(tmp_path: Path) -> N
         assert [job.canonical_id for job in preview] == ["stale"]
         reclaimed = await store.claim_pending_evaluations(
             evaluator_version=_VERSION,
+            claim_token=_CLAIM_TWO,
             corpus="unrated",
             limit=10,
             max_days=None,
@@ -360,12 +394,14 @@ async def test_concurrent_claims_are_disjoint(tmp_path: Path) -> None:
         left, right = await asyncio.gather(
             first.claim_pending_evaluations(
                 evaluator_version=_VERSION,
+                claim_token=_CLAIM_ONE,
                 corpus="all",
                 limit=3,
                 max_days=None,
             ),
             second.claim_pending_evaluations(
                 evaluator_version=_VERSION,
+                claim_token=_CLAIM_TWO,
                 corpus="all",
                 limit=3,
                 max_days=None,
@@ -376,6 +412,119 @@ async def test_concurrent_claims_are_disjoint(tmp_path: Path) -> None:
         right_ids = {job.id for job in right}
         assert left_ids.isdisjoint(right_ids)
         assert len(left_ids | right_ids) == _CONCURRENT_JOB_COUNT
+    finally:
+        await first.close()
+        await second.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_or_released_re_evaluation_preserves_completed_result(
+    tmp_path: Path,
+) -> None:
+    """A failed replacement attempt must not erase the last good evaluation."""
+    store = SQLiteStore(tmp_path / "jobfeed.db", clock=lambda: _NOW)
+    await store.connect()
+    try:
+        job_id = (await store.save_job(make_job("preserve"))).job_id
+        await store.claim_pending_evaluations(
+            evaluator_version="old-v0",
+            claim_token=_CLAIM_ONE,
+            corpus="unrated",
+            limit=1,
+        )
+        await store.save_evaluation(
+            job_id, _result(score=84, version="old-v0"), _CLAIM_ONE
+        )
+
+        await store.claim_pending_evaluations(
+            evaluator_version=_VERSION,
+            claim_token=_CLAIM_TWO,
+            corpus="unrated",
+            limit=1,
+        )
+        during = await store.get_current_evaluation(job_id)
+        assert during is not None
+        assert (
+            during["status"],
+            during["match_score"],
+            during["evaluator_version"],
+        ) == (
+            "completed",
+            84,
+            "old-v0",
+        )
+
+        await store.save_evaluation_error(
+            job_id,
+            "replacement failed",
+            _VERSION,
+            _CLAIM_TWO,
+        )
+        after_error = await store.get_current_evaluation(job_id)
+        assert after_error is not None
+        assert (
+            after_error["status"],
+            after_error["match_score"],
+            after_error["evaluator_version"],
+        ) == ("completed", 84, "old-v0")
+
+        await store.claim_pending_evaluations(
+            evaluator_version=_VERSION,
+            claim_token="run-three:3",
+            corpus="unrated",
+            limit=1,
+        )
+        await store.release_evaluation_claim(job_id, _VERSION, "run-three:3")
+        after_release = await store.get_current_evaluation(job_id)
+        assert after_release is not None
+        assert (after_release["match_score"], after_release["evaluator_version"]) == (
+            84,
+            "old-v0",
+        )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_worker_cannot_overwrite_or_error_newer_result(
+    tmp_path: Path,
+) -> None:
+    """Every terminal write is fenced by the exact claim token."""
+    path = tmp_path / "jobfeed.db"
+    first = SQLiteStore(path, clock=lambda: _NOW)
+    second = SQLiteStore(path, clock=lambda: _NOW + timedelta(hours=2))
+    await first.connect()
+    await second.connect()
+    try:
+        job_id = (await first.save_job(make_job("fenced"))).job_id
+        await first.claim_pending_evaluations(
+            evaluator_version=_VERSION,
+            claim_token=_CLAIM_ONE,
+            corpus="unrated",
+            limit=1,
+        )
+        reclaimed = await second.claim_pending_evaluations(
+            evaluator_version=_VERSION,
+            claim_token=_CLAIM_TWO,
+            corpus="unrated",
+            limit=1,
+        )
+        assert [job.id for job in reclaimed] == [job_id]
+        await second.save_evaluation(job_id, _result(score=_UPDATED_SCORE), _CLAIM_TWO)
+
+        with pytest.raises(RunLeaseLostError):
+            await first.save_evaluation(job_id, _result(score=10), _CLAIM_ONE)
+        with pytest.raises(RunLeaseLostError):
+            await first.save_evaluation_error(
+                job_id,
+                "late old worker",
+                _VERSION,
+                _CLAIM_ONE,
+            )
+
+        row = await first.get_current_evaluation(job_id)
+        assert row is not None
+        assert (row["status"], row["match_score"]) == ("completed", _UPDATED_SCORE)
     finally:
         await first.close()
         await second.close()

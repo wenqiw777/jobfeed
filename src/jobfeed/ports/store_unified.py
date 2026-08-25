@@ -14,6 +14,7 @@ class StoreUnifiedEvaluationMixin(Protocol):
         self,
         *,
         evaluator_version: str,
+        claim_token: str,
         corpus: str = "unrated",
         limit: int = 100,
         max_days: int | None = None,
@@ -56,6 +57,7 @@ class StoreUnifiedEvaluationMixin(Protocol):
         self,
         job_id: str,
         result: UnifiedEvaluationResult,
+        claim_token: str,
     ) -> None:
         """Atomically upsert one completed current evaluation.
 
@@ -70,6 +72,7 @@ class StoreUnifiedEvaluationMixin(Protocol):
         job_id: str,
         error: str,
         evaluator_version: str,
+        claim_token: str,
     ) -> None:
         """Persist one failed current evaluation attempt.
 
@@ -84,6 +87,7 @@ class StoreUnifiedEvaluationMixin(Protocol):
         self,
         job_id: str,
         evaluator_version: str,
+        claim_token: str,
     ) -> None:
         """Release an active claim owned by the supplied evaluator version.
 
