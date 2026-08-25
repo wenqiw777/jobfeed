@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 WorkMode = Literal["remote", "hybrid", "on-site"]
 
@@ -29,8 +29,20 @@ class JobProfile(BaseModel):
     excluded_companies: list[str]
     excluded_locations: list[str]
     excluded_keywords: list[str]
-    maximum_posting_age_days: int = Field(ge=1, le=365)
+    maximum_posting_age_hours: int = Field(default=36, ge=1, le=8760)
+    maximum_posting_age_days: int | None = Field(default=None, ge=1, le=365)
     resume_evidence: list[str]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_age(cls, value: object) -> object:
+        """Convert saved day-only profiles to the equivalent hour window."""
+        if not isinstance(value, dict) or "maximum_posting_age_hours" in value:
+            return value
+        days = value.get("maximum_posting_age_days")
+        if not isinstance(days, int):
+            return value
+        return {**value, "maximum_posting_age_hours": days * 24}
 
     @field_validator(
         "desired_titles",

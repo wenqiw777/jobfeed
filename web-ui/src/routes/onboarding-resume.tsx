@@ -183,12 +183,19 @@ function ProfileEditor({
             ))}
           </SpaceBetween>
         </FormField>
-        <FormField label="Maximum posting age (days)">
+        <FormField
+          label="Maximum posting age (hours)"
+          description="LinkedIn uses this exact window. Indeed fetches two days of candidates, then Jobfeed keeps only posts inside this cutoff."
+        >
           <Input
             type="number"
-            value={String(profile.maximum_posting_age_days)}
-            nativeInputAttributes={{ min: 1, max: 365 }}
-            onChange={({ detail }) => update("maximum_posting_age_days", Number(detail.value))}
+            value={String(profile.maximum_posting_age_hours)}
+            nativeInputAttributes={{ min: 1, max: 8760 }}
+            onChange={({ detail }) => onChange({
+              ...profile,
+              maximum_posting_age_hours: Number(detail.value),
+              maximum_posting_age_days: null,
+            })}
           />
         </FormField>
         <Container header={<Header variant="h3">Résumé-derived evidence</Header>}>

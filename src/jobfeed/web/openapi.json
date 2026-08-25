@@ -1033,6 +1033,18 @@
             ],
             "title": "Posted Within Days"
           },
+          "posted_within_hours": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted Within Hours"
+          },
           "title_blocklist": {
             "items": {
               "type": "string"
@@ -1522,9 +1534,23 @@
             "type": "array"
           },
           "maximum_posting_age_days": {
-            "maximum": 365.0,
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum Posting Age Days"
+          },
+          "maximum_posting_age_hours": {
+            "default": 36,
+            "maximum": 8760.0,
             "minimum": 1.0,
-            "title": "Maximum Posting Age Days",
+            "title": "Maximum Posting Age Hours",
             "type": "integer"
           },
           "resume_evidence": {
@@ -1586,7 +1612,6 @@
           "excluded_companies",
           "excluded_locations",
           "excluded_keywords",
-          "maximum_posting_age_days",
           "resume_evidence"
         ],
         "title": "JobProfile",

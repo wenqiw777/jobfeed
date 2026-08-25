@@ -170,6 +170,19 @@ def test_source_satisfies_simple_source_protocol() -> None:
     assert isinstance(_source(ScriptedFetcher([])), SimpleSource)
 
 
+async def test_hour_window_overrides_pasted_linkedin_time_range() -> None:
+    """Runtime freshness keeps LinkedIn discovery at the exact hour window."""
+    fetcher = ScriptedFetcher([GuestResponse(status=200, text="")])
+    settings = GuestSourceSettings(
+        search_urls=(_SEARCH_URL,),
+        posted_within_hours=36,
+    )
+
+    await _source(fetcher, settings=settings).fetch_jobs({})
+
+    assert parse_qs(urlsplit(fetcher.urls[0]).query)["f_TPR"] == ["r129600"]
+
+
 async def test_three_pages_then_empty_yields_all_unique_postings() -> None:
     """3 pages of 10 distinct cards + empty page -> 30 guest postings."""
     fetcher = _three_pages_then_empty()

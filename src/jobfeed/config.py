@@ -119,6 +119,7 @@ class HardFiltersSettings(BaseModel):
     company_blocklist: list[str] = Field(default_factory=list)
     location_allowlist: list[str] = Field(default_factory=list)
     location_blocklist: list[str] = Field(default_factory=list)
+    posted_within_hours: int | None = Field(default=None, ge=1)
     posted_within_days: int | None = Field(default=None, ge=1)
     big_company_list: list[str] = Field(default_factory=list)
     big_company_days: int = Field(default=90, ge=1)
@@ -134,6 +135,7 @@ class HardFiltersSettings(BaseModel):
             company_blocklist=list(self.company_blocklist),
             location_allowlist=list(self.location_allowlist),
             location_blocklist=list(self.location_blocklist),
+            posted_within_hours=self.posted_within_hours,
             posted_within_days=self.posted_within_days,
             big_company_list=list(self.big_company_list),
             big_company_days=self.big_company_days,

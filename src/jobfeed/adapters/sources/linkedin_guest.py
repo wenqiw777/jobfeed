@@ -71,6 +71,7 @@ class GuestSourceSettings:
 
     search_urls: Sequence[str]
     max_jobs: int = 1000
+    posted_within_hours: int | None = None
     pacing_s: float = 1.0
     proxies: str | None = None
     timeout_s: float = 15.0

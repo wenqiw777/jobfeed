@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -16,7 +17,7 @@ from jobfeed.onboarding_resume_types import JobProfile, ResumeDraftState
 SearchSource = Literal["linkedin_guest", "indeed"]
 _MAX_SUGGESTED_SEARCH_PAIRS = 6
 _SEARCH_COUNTRY = "United States"
-_SEARCH_GENERATOR_VERSION = "v6-six-us-title-pairs-user-selected"
+_SEARCH_GENERATOR_VERSION = "v7-six-us-title-pairs-36-hours"
 
 
 class SearchSuggestion(BaseModel):
@@ -178,7 +179,7 @@ def generate_search_suggestions(profile: JobProfile) -> list[SearchSuggestion]:
             _source_suggestions(
                 title,
                 _SEARCH_COUNTRY,
-                profile.maximum_posting_age_days,
+                profile.maximum_posting_age_hours,
                 enabled=False,
             )
         )
@@ -188,16 +189,17 @@ def generate_search_suggestions(profile: JobProfile) -> list[SearchSuggestion]:
 def _source_suggestions(
     query: str,
     location: str,
-    age_days: int,
+    age_hours: int,
     *,
     enabled: bool,
 ) -> list[SearchSuggestion]:
-    seconds = age_days * 24 * 60 * 60
+    seconds = age_hours * 60 * 60
+    indeed_days = math.ceil(age_hours / 24)
     linkedin = "https://www.linkedin.com/jobs/search/?" + urlencode(
         {"keywords": query, "location": location, "f_TPR": f"r{seconds}"}
     )
     indeed = "https://www.indeed.com/jobs?" + urlencode(
-        {"q": query, "l": location, "fromage": age_days}
+        {"q": query, "l": location, "fromage": indeed_days}
     )
     return [
         SearchSuggestion(

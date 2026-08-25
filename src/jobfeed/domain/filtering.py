@@ -80,6 +80,7 @@ class HardFilters:
     company_blocklist: list[str] = field(default_factory=list)
     location_allowlist: list[str] = field(default_factory=list)
     location_blocklist: list[str] = field(default_factory=list)
+    posted_within_hours: int | None = None
     posted_within_days: int | None = None
     big_company_list: list[str] = field(default_factory=list)
     big_company_days: int = 90
@@ -115,7 +116,7 @@ def apply_hard_filters(
     if reason is not None:
         return reason
 
-    reason = _freshness_reason(job.company, job.discovered_at, filters, now)
+    reason = _freshness_reason(job, filters, now)
     if reason is not None:
         return reason
 
@@ -173,37 +174,45 @@ def _matches_location_allowlist(location: str, allowlist: list[str]) -> bool:
 
 
 def _freshness_reason(
-    company: str,
-    discovered_at: datetime,
+    job: JobPosting,
     filters: HardFilters,
     now: datetime | None,
 ) -> str | None:
     """Return a staleness reason, or None.
 
-    Uses big_company_days for companies in big_company_list; otherwise uses
-    posted_within_days. Returns None when no day limit is configured.
+    Hour precision is a strict global cutoff. Legacy day precision retains the
+    big-company extension. Both prefer the source's posting time and fall back
+    to discovery time only when the source did not provide one.
     """
+    timestamp = job.posted_at or job.discovered_at
+    if filters.posted_within_hours is not None:
+        hours_limit = filters.posted_within_hours
+        if _is_stale(timestamp, timedelta(hours=hours_limit), now):
+            return f"older than {hours_limit} hours"
+        return None
+
     if filters.posted_within_days is None:
         return None
 
     is_big = bool(
-        filters.big_company_list and _any_match(company, filters.big_company_list)
+        filters.big_company_list and _any_match(job.company, filters.big_company_list)
     )
     days_limit = filters.big_company_days if is_big else filters.posted_within_days
 
-    if _is_stale(discovered_at, days_limit, now):
+    if _is_stale(timestamp, timedelta(days=days_limit), now):
         return f"older than {days_limit} days"
 
     return None
 
 
-def _is_stale(discovered_at: datetime, days_limit: int, now: datetime | None) -> bool:
-    """Return True if discovered_at is older than days_limit."""
+def _is_stale(
+    timestamp: datetime, maximum_age: timedelta, now: datetime | None
+) -> bool:
+    """Return whether a posting timestamp exceeds the configured age."""
     reference = now or datetime.now(UTC)
-    if discovered_at.tzinfo is None:
-        discovered_at = discovered_at.replace(tzinfo=UTC)
-    cutoff = reference - timedelta(days=days_limit)
-    return discovered_at < cutoff
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp < reference - maximum_age
 
 
 # ---------------------------------------------------------------------------

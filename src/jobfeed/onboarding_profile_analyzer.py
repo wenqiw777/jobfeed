@@ -51,8 +51,8 @@ Field rules:
 - hiring_timeline: derive a concise window when graduation, availability, or
   relevant dates are present; otherwise use an empty string.
 - excluded fields: include only explicit exclusions; otherwise use empty arrays.
-- maximum_posting_age_days: use 14 unless the résumé explicitly supports a
-  different preference.
+- maximum_posting_age_hours: use 36 unless the résumé explicitly supports a
+  different preference. Leave the legacy maximum_posting_age_days field null.
 - resume_evidence: provide 5-10 short factual snippets covering the strongest
   evidence behind the suggestions. Keep evidence separate from inferred
   preferences and verbatim enough for the user to recognize.
