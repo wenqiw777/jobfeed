@@ -1867,6 +1867,8 @@ export interface components {
             location_blocklist?: string[];
             /** Posted Within Days */
             posted_within_days?: number | null;
+            /** Posted Within Hours */
+            posted_within_hours?: number | null;
             /** Title Blocklist */
             title_blocklist?: string[];
         };
@@ -2063,7 +2065,12 @@ export interface components {
             /** Industries */
             industries: string[];
             /** Maximum Posting Age Days */
-            maximum_posting_age_days: number;
+            maximum_posting_age_days?: number | null;
+            /**
+             * Maximum Posting Age Hours
+             * @default 36
+             */
+            maximum_posting_age_hours: number;
             /** Resume Evidence */
             resume_evidence: string[];
             /** Seniority Levels */

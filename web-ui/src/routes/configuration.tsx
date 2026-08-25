@@ -204,11 +204,26 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                   <ListField label="Allowed locations" value={filters.location_allowlist} onChange={(value) => updateSection("hard_filters", { ...filters, location_allowlist: value })} />
                   <ListField label="Blocked locations" value={filters.location_blocklist} onChange={(value) => updateSection("hard_filters", { ...filters, location_blocklist: value })} />
                   <ListField label="Blocked companies" value={filters.company_blocklist} onChange={(value) => updateSection("hard_filters", { ...filters, company_blocklist: value })} />
-                  <ListField label="Large companies" value={filters.big_company_list} onChange={(value) => updateSection("hard_filters", { ...filters, big_company_list: value })} />
-                  <Field label="Maximum job age (days)">
-                    <Input type="number" placeholder="Any age" value={filters.posted_within_days?.toString() ?? ""} nativeInputAttributes={{ min: 1 }} onChange={({ detail }) => updateSection("hard_filters", { ...filters, posted_within_days: detail.value === "" ? null : Number(detail.value) })} />
+                  <Field label="Maximum job age (hours)">
+                    <Input
+                      type="number"
+                      placeholder="Any age"
+                      value={(filters.posted_within_hours ?? (filters.posted_within_days == null ? null : filters.posted_within_days * 24))?.toString() ?? ""}
+                      nativeInputAttributes={{ min: 1 }}
+                      onChange={({ detail }) => updateSection("hard_filters", {
+                        ...filters,
+                        posted_within_hours: detail.value === "" ? null : Number(detail.value),
+                        posted_within_days: null,
+                      })}
+                    />
+                    <Box variant="small" color="text-body-secondary">LinkedIn and other sources use this exact limit. Indeed keeps the full 2-day window. Posted time is preferred; discovery time is used only when it is unavailable.</Box>
                   </Field>
-                  <NumberField label="Large-company maximum age (days)" value={filters.big_company_days} min={1} onChange={(value) => updateSection("hard_filters", { ...filters, big_company_days: value })} />
+                  {filters.posted_within_hours == null && (
+                    <>
+                      <ListField label="Large companies" value={filters.big_company_list} onChange={(value) => updateSection("hard_filters", { ...filters, big_company_list: value })} />
+                      <NumberField label="Large-company maximum age (days)" value={filters.big_company_days} min={1} onChange={(value) => updateSection("hard_filters", { ...filters, big_company_days: value })} />
+                    </>
+                  )}
                 </ColumnLayout>
                 <Alert type={scoring.ml_gate_enabled ? "success" : "info"} header={`Personal job filter · ${form.ml_gate!.model_version}`}>
                   <SpaceBetween size="xs">

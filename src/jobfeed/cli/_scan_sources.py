@@ -192,6 +192,9 @@ async def _build_linkedin_guest(
                 settings=GuestSourceSettings(
                     search_urls=config.search_urls,
                     max_jobs=config.max_jobs,
+                    posted_within_hours=(
+                        app["settings"].hard_filters.posted_within_hours
+                    ),
                     pacing_s=config.pacing_s,
                     proxies=config.proxies,
                     timeout_s=config.timeout_s,

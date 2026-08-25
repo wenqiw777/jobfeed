@@ -137,7 +137,9 @@ scan automatically**.
 3. **Choose job searches.** Jobfeed turns the confirmed profile into paired
    LinkedIn Guest and Indeed searches across the United States. Each selected
    role direction creates two source queries, and custom titles can be added
-   without manually building either URL.
+   without manually building either URL. The default freshness window is an
+   exact 36 hours for LinkedIn and other sources. Indeed keeps its full two-day
+   candidate window. Both rules use real posted time when the source provides it.
 4. **Choose company boards.** Review profile recommendations whose Greenhouse,
    Ashby, or Lever boards were verified, import the deduplicated broad catalog
    from public new-grad and internship lists, or add a company name, slug, or

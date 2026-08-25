@@ -73,6 +73,12 @@ class _GuestRun:
             if not params.keywords:
                 self._log.warning("guest_search_url_missing_keywords", url=url)
                 continue
+            if self._settings.posted_within_hours is not None:
+                params = SearchParams(
+                    keywords=params.keywords,
+                    location=params.location,
+                    f_tpr=f"r{self._settings.posted_within_hours * 60 * 60}",
+                )
             await self._paginate_url(params)
         return list(self._unique.values())[: self._settings.max_jobs]
 

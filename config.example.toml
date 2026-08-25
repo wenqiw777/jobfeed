@@ -159,14 +159,16 @@ enabled = false
 # lock_path = "~/.cache/jobfeed/enrich.lock"
 
 # Phase 5 hard filters — cheap rule-based pre-LLM filtering.
-# All lists default to empty (no filtering). posted_within_days=null means no
-# date filter. title_blocklist is NOT applied here; it moved to the ML gate.
+# All lists default to empty (no filtering). posted_within_hours takes priority;
+# posted_within_days remains readable for old configs. title_blocklist is NOT
+# applied here; it moved to the ML gate.
 [hard_filters]
 title_blocklist = []             # accepted for back-compat but NOT applied here — the ML gate handles seniority/title
 company_blocklist = []           # e.g. ["staffing agency", "recruiting firm"]
 location_allowlist = []          # e.g. ["remote", "san francisco"] — empty = any location
 location_blocklist = []          # e.g. ["new york", "london"]
-# posted_within_days =           # unset = no date filter; set to e.g. 30 to skip stale postings
+# posted_within_hours = 36       # exact cutoff except Indeed keeps 48h; posted_at preferred, then discovered_at
+# posted_within_days =           # legacy whole-day setting; ignored when posted_within_hours is set
 big_company_list = []            # e.g. ["google", "meta", "apple"] — get big_company_days leniency
 big_company_days = 90            # stale cutoff for big-company postings (default 90 days)
 

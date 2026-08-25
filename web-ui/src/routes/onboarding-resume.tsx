@@ -183,12 +183,19 @@ function ProfileEditor({
             ))}
           </SpaceBetween>
         </FormField>
-        <FormField label="Maximum posting age (days)">
+        <FormField
+          label="Maximum posting age (hours)"
+          description="LinkedIn and other sources use this exact window. Indeed keeps the full 2-day window returned by its search."
+        >
           <Input
             type="number"
-            value={String(profile.maximum_posting_age_days)}
-            nativeInputAttributes={{ min: 1, max: 365 }}
-            onChange={({ detail }) => update("maximum_posting_age_days", Number(detail.value))}
+            value={String(profile.maximum_posting_age_hours)}
+            nativeInputAttributes={{ min: 1, max: 8760 }}
+            onChange={({ detail }) => onChange({
+              ...profile,
+              maximum_posting_age_hours: Number(detail.value),
+              maximum_posting_age_days: null,
+            })}
           />
         </FormField>
         <Container header={<Header variant="h3">Résumé-derived evidence</Header>}>

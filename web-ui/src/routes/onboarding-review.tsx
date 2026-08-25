@@ -33,7 +33,7 @@ interface ReviewValues {
   blockedLocations: string;
   blockedTitles: string;
   blockedCompanies: string;
-  maximumJobAge: number;
+  maximumJobAgeHours: number;
   defaultJobs: number;
   dailyCalls: number;
   dailyCost: number;
@@ -189,7 +189,13 @@ function ReviewSettings({
         <Container header={<Header variant="h2">Evaluation limits</Header>}>
           <ColumnLayout columns={3} borders="vertical">
             <SpaceBetween size="m">
-              <NumberField label="Maximum job age in days" value={values.maximumJobAge} min={1} onChange={(value) => update("maximumJobAge", value)} />
+              <NumberField
+                label="Maximum job age in hours"
+                description="LinkedIn and other sources use 36 hours. Indeed keeps the full 2-day window."
+                value={values.maximumJobAgeHours}
+                min={1}
+                onChange={(value) => update("maximumJobAgeHours", value)}
+              />
               <Alert type="info" header="Personal filter learning starts after setup">
                 Unified evaluations remain the teacher. Jobfeed will notify you after the filter passes future shadow validation; it never turns on automatically.
               </Alert>
@@ -621,7 +627,11 @@ function initialValues(current: ConfigurationResponse, profile: JobProfile | nul
     blockedLocations: toLines(blockedLocations.length > 0 ? blockedLocations : profile?.excluded_locations ?? []),
     blockedTitles: toLines(blockedTitles.length > 0 ? blockedTitles : profile?.excluded_titles ?? []),
     blockedCompanies: toLines(blockedCompanies.length > 0 ? blockedCompanies : profile?.excluded_companies ?? []),
-    maximumJobAge: filters.posted_within_days ?? profile?.maximum_posting_age_days ?? 30,
+    maximumJobAgeHours: filters.posted_within_hours
+      ?? (filters.posted_within_days == null ? null : filters.posted_within_days * 24)
+      ?? profile?.maximum_posting_age_hours
+      ?? (profile?.maximum_posting_age_days == null ? null : profile.maximum_posting_age_days * 24)
+      ?? 36,
     defaultJobs: current.scoring!.default_eval_limit!,
     dailyCalls: current.llm!.max_daily_score_calls!,
     dailyCost: current.llm!.max_daily_cost_usd!,
@@ -646,7 +656,8 @@ function buildConfiguration(current: ConfigurationResponse, values: ReviewValues
   editable.hard_filters!.location_blocklist = fromLines(values.blockedLocations);
   editable.hard_filters!.title_blocklist = fromLines(values.blockedTitles);
   editable.hard_filters!.company_blocklist = fromLines(values.blockedCompanies);
-  editable.hard_filters!.posted_within_days = values.maximumJobAge;
+  editable.hard_filters!.posted_within_hours = values.maximumJobAgeHours;
+  editable.hard_filters!.posted_within_days = null;
   editable.sources!.ats!.max_jobs = values.atsMaxJobs;
   editable.sources!.linkedin_guest!.max_jobs = values.linkedInGuestMaxJobs;
   editable.sources!.indeed!.max_jobs = values.indeedMaxJobs;

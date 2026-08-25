@@ -91,6 +91,7 @@ const CONFIG = {
     company_blocklist: [],
     location_allowlist: [],
     location_blocklist: [],
+    posted_within_hours: 36,
     posted_within_days: null,
     big_company_list: [],
     big_company_days: 90,
@@ -119,7 +120,8 @@ const PROFILE: JobProfile = {
   excluded_companies: [],
   excluded_locations: [],
   excluded_keywords: [],
-  maximum_posting_age_days: 14,
+  maximum_posting_age_hours: 36,
+  maximum_posting_age_days: null,
   resume_evidence: ["Built Python systems"],
 };
 
@@ -166,7 +168,7 @@ function searchPair(id: string, query: string, enabled: boolean) {
       source: "linkedin_guest" as const,
       query,
       location,
-      url: `https://www.linkedin.com/jobs/search/?keywords=${id}&location=New+York&f_TPR=r1209600`,
+      url: `https://www.linkedin.com/jobs/search/?keywords=${id}&location=New+York&f_TPR=r129600`,
       enabled,
     },
     {
@@ -174,7 +176,7 @@ function searchPair(id: string, query: string, enabled: boolean) {
       source: "indeed" as const,
       query,
       location,
-      url: `https://www.indeed.com/jobs?q=${id}&l=New+York&fromage=14`,
+      url: `https://www.indeed.com/jobs?q=${id}&l=New+York&fromage=2`,
       enabled,
     },
   ];
@@ -571,6 +573,7 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
 
   fireEvent.click(screen.getByRole("button", { name: "Analyze résumé" }));
   expect(await screen.findByRole("heading", { name: "Review job profile" })).toBeVisible();
+  expect(screen.getByLabelText("Maximum posting age (hours)")).toHaveValue(36);
   fireEvent.change(screen.getByLabelText("Desired job titles"), {
     target: { value: "Staff Platform Engineer" },
   });
@@ -653,6 +656,8 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
   expect(screen.queryByLabelText("Expected job descriptions")).toBeNull();
   expect(screen.getByLabelText("Maximum unique jobs to evaluate per run"))
     .toHaveValue(150);
+  expect(screen.getByLabelText("Maximum job age in hours")).toHaveValue(36);
+  expect(screen.getByText(/Indeed keeps the full 2-day window/)).toBeVisible();
   expect(screen.getByText("150 evaluations")).toBeVisible();
   expect(screen.getByText("150 planned calls")).toBeVisible();
   expect(screen.queryByLabelText("Quick-to-detailed threshold")).toBeNull();
@@ -703,6 +708,8 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
       hard_filters: expect.objectContaining({
         location_allowlist: ["New York, NY"],
         title_blocklist: [],
+        posted_within_hours: 36,
+        posted_within_days: null,
       }),
     }),
   }));
@@ -742,11 +749,11 @@ test("custom search pairs generate both source URLs from the role", async () => 
     expect(added).toEqual(expect.arrayContaining([
       expect.objectContaining({
         source: "linkedin_guest",
-        url: "https://www.linkedin.com/jobs/search/?keywords=Site+Reliability+Engineer&location=New+York&f_TPR=r1209600",
+        url: "https://www.linkedin.com/jobs/search/?keywords=Site+Reliability+Engineer&location=New+York&f_TPR=r129600",
       }),
       expect.objectContaining({
         source: "indeed",
-        url: "https://www.indeed.com/jobs?q=Site+Reliability+Engineer&l=New+York&fromage=14",
+        url: "https://www.indeed.com/jobs?q=Site+Reliability+Engineer&l=New+York&fromage=2",
       }),
     ]));
   });
@@ -914,6 +921,9 @@ test("configured workspace settings still save and return to triage", async () =
   } as unknown as typeof currentConfig;
   renderApp("/setup");
   await screen.findByRole("heading", { name: "Workspace settings" });
+  expect(screen.getByLabelText("Maximum job age (hours)")).toHaveValue(36);
+  expect(screen.queryByLabelText("Large-company maximum age (days)"))
+    .not.toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Resume file"), {
     target: { value: "data/candidate-resume.md" },

@@ -167,6 +167,8 @@ _FRESH_DAYS = 3
 _BIG_COMPANY_DAYS = 90
 _BORDERLINE_DAYS = 60
 _VERY_STALE_DAYS = 100
+_HOURS_LIMIT = 36
+_LEGACY_DAYS = 14
 
 
 def test_freshness_blocks_stale_job() -> None:
@@ -176,6 +178,83 @@ def test_freshness_blocks_stale_job() -> None:
     reason = apply_hard_filters(job, f, now=_NOW)
     assert reason is not None
     assert str(_DAYS_LIMIT) in reason
+
+
+def test_freshness_prefers_real_posted_time_over_recent_discovery() -> None:
+    """A rediscovered stale posting must not look fresh."""
+    f = _empty_filters()
+    f.posted_within_days = _DAYS_LIMIT
+    job = make_job(
+        discovered_at=_NOW - timedelta(hours=1),
+        posted_at=_stale(_STALE_DAYS),
+    )
+
+    reason = apply_hard_filters(job, f, now=_NOW)
+
+    assert reason == f"older than {_DAYS_LIMIT} days"
+
+
+def test_freshness_enforces_exact_36_hour_cutoff() -> None:
+    """The 36-hour setting must not expand to a two-day local window."""
+    f = _empty_filters()
+    f.posted_within_hours = _HOURS_LIMIT
+    stale = make_job(
+        canonical_id="stale-36h",
+        discovered_at=_NOW - timedelta(hours=1),
+        posted_at=_NOW - timedelta(hours=37),
+    )
+    fresh = make_job(
+        canonical_id="fresh-36h",
+        discovered_at=_NOW - timedelta(hours=1),
+        posted_at=_NOW - timedelta(hours=35),
+    )
+
+    assert apply_hard_filters(stale, f, now=_NOW) == "older than 36 hours"
+    assert apply_hard_filters(fresh, f, now=_NOW) is None
+
+
+def test_indeed_keeps_full_two_day_candidate_window() -> None:
+    """A 40-hour Indeed post passes while non-Indeed sources stay at 36 hours."""
+    f = _empty_filters()
+    f.posted_within_hours = _HOURS_LIMIT
+    posted_at = _NOW - timedelta(hours=40)
+
+    indeed = make_job(platform="indeed", posted_at=posted_at)
+    linkedin = make_job(platform="linkedin_guest", posted_at=posted_at)
+    ats = make_job(platform="greenhouse", posted_at=posted_at)
+
+    assert apply_hard_filters(indeed, f, now=_NOW) is None
+    assert apply_hard_filters(linkedin, f, now=_NOW) == "older than 36 hours"
+    assert apply_hard_filters(ats, f, now=_NOW) == "older than 36 hours"
+
+
+def test_indeed_blocks_postings_older_than_two_days() -> None:
+    """The Indeed exception ends at 48 hours rather than disabling freshness."""
+    f = _empty_filters()
+    f.posted_within_hours = _HOURS_LIMIT
+    job = make_job(
+        platform="indeed",
+        posted_at=_NOW - timedelta(hours=49),
+    )
+
+    reason = apply_hard_filters(job, f, now=_NOW)
+
+    assert reason == "older than 48 hours"
+
+
+def test_freshness_falls_back_to_discovery_when_posted_time_is_missing() -> None:
+    """Missing posted_at retains the documented discovery-time fallback."""
+    f = _empty_filters()
+    f.posted_within_hours = _HOURS_LIMIT
+    job = make_job(
+        canonical_id="missing-posted-time",
+        discovered_at=_NOW - timedelta(hours=37),
+        posted_at=None,
+    )
+
+    reason = apply_hard_filters(job, f, now=_NOW)
+
+    assert reason == "older than 36 hours"
 
 
 def test_freshness_passes_fresh_job() -> None:
@@ -380,3 +459,16 @@ def test_posted_within_days_rejects_negative() -> None:
     """posted_within_days must be >= 1; a negative value must raise ValidationError."""
     with pytest.raises(ValidationError):
         HardFiltersSettings(posted_within_days=-5)
+
+
+def test_posted_within_hours_round_trips_to_domain() -> None:
+    """Hour precision is accepted without removing the legacy day setting."""
+    settings = HardFiltersSettings(
+        posted_within_hours=_HOURS_LIMIT,
+        posted_within_days=_LEGACY_DAYS,
+    )
+
+    filters = settings.to_domain()
+
+    assert filters.posted_within_hours == _HOURS_LIMIT
+    assert filters.posted_within_days == _LEGACY_DAYS
