@@ -43,6 +43,11 @@ def test_render_unified_prompt_returns_stable_messages_and_hashes() -> None:
     assert "Do not output match_score" in system
     assert "ATS visibility is a separate diagnostic" in system
     assert "company growth" not in system.lower()
+    user = messages[1].content
+    assert '"actual_experience_level": "entry"' in user
+    assert '"non_intern_professional_months": 0' in user
+    assert '"internship_months": 0' in user
+    assert '"degree_status": "none"' in user
     assert len(prompt_hash) == SHA256_HEX_LENGTH
     assert len(resume_hash) == SHA256_HEX_LENGTH
 

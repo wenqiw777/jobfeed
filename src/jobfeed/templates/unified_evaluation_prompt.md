@@ -67,8 +67,11 @@ All top-level and nested keys shown below are required. Do not add keys.
   `adjacent` means specific evidence transfers but is not the same qualification.
   `missing` means the resume clearly lacks it. `unclear` means the supplied
   documents cannot decide.
-- Cite concrete resume evidence. Use null plus evidence_type `none` for missing
-  or unclear evidence. A skills-list mention is not professional experience.
+- Copy `requirement` as a verbatim excerpt from the job title, location, or JD.
+- For every non-null `resume_evidence` or `candidate_evidence`, copy a verbatim
+  excerpt from the resume. Do not paraphrase, summarize, or invent evidence.
+  Use null plus evidence_type `none` for missing or unclear evidence. A
+  skills-list mention is not professional experience.
 - Domain experience counts only when the JD explicitly requires or prefers that
   domain. Distinguish professional, internship, project, and coursework evidence.
 - Never infer years of experience from employer age, product age, or unrelated

@@ -134,6 +134,10 @@ async def _score_job(  # noqa: PLR0913 - explicit worker dependencies
                 resume_hash=bundle.resume_hash,
                 evaluator_version=EVALUATOR_VERSION,
                 cost_usd=response.cost_usd,
+                resume_text=service._config.resume_text,
+                job_text="\n".join(
+                    part for part in (job.title, job.location, job.jd_text) if part
+                ),
             )
         except ScoringParseError as exc:
             if attempt == 0:

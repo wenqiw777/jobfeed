@@ -61,13 +61,20 @@ def _payload() -> dict[str, object]:
     }
 
 
-def _parse(payload: dict[str, object]) -> UnifiedEvaluationResult:
+def _parse(
+    payload: dict[str, object],
+    *,
+    resume_text: str | None = None,
+    job_text: str | None = None,
+) -> UnifiedEvaluationResult:
     return parse_unified_evaluation_response(
         json.dumps(payload),
         model="mock-model",
         prompt_hash="prompt-hash",
         resume_hash="resume-hash",
         cost_usd=0.012,
+        resume_text=resume_text,
+        job_text=job_text,
     )
 
 
@@ -256,3 +263,54 @@ def test_parser_discards_explanatory_evidence_for_unmatched_requirement(
 
     assert result.requirements[0].resume_evidence is None
     assert result.requirements[0].evidence_type == "none"
+
+
+def test_parser_rejects_matched_evidence_not_present_in_resume() -> None:
+    """A fluent model claim cannot substitute for auditable resume evidence."""
+    payload = _payload()
+    requirements = payload["requirements"]
+    assert isinstance(requirements, list)
+    requirement = requirements[0]
+    assert isinstance(requirement, dict)
+    requirement["resume_evidence"] = "Ten years of Rust at Imaginary Corp."
+
+    with pytest.raises(ScoringParseError, match="evidence not found in resume"):
+        _parse(
+            payload,
+            resume_text=(
+                "Built and operated Python services at Acme.\n"
+                "Owned a production service during an internship.\n"
+                "Built a checkout project."
+            ),
+        )
+
+
+def test_parser_accepts_normalized_exact_resume_and_jd_excerpts() -> None:
+    """Whitespace-normalized excerpts remain auditable without brittle formatting."""
+    payload = _payload()
+    requirements = payload["requirements"]
+    assert isinstance(requirements, list)
+    resume_text = (
+        "Built and operated Python services at Acme.\n"
+        "Owned a production service during an internship.\n"
+        "Built a checkout project."
+    )
+    job_text = (
+        "Production Python experience. Two years of production ownership. "
+        "Payments domain experience."
+    )
+
+    result = _parse(payload, resume_text=resume_text, job_text=job_text)
+
+    assert result.match_score == EXPECTED_MATCH_SCORE
+
+
+def test_parser_rejects_requirement_not_present_in_job_posting() -> None:
+    """Invented requirements must never affect the deterministic score."""
+    payload = _payload()
+
+    with pytest.raises(ScoringParseError, match="requirement not found in job"):
+        _parse(
+            payload,
+            job_text="Production Python experience only.",
+        )

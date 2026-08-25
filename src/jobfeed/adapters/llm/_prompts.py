@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
+from jobfeed.domain.candidate_facts import CandidateScoringProfile
 from jobfeed.domain.models import JobPosting, Message
 from jobfeed.domain.scoring import (
     compute_prompt_hash,
@@ -139,9 +141,28 @@ def render_unified_prompt(
         "unified_evaluation_prompt.md",
         templates_dir,
     )
+    profile = CandidateScoringProfile.from_resume(resume_text)
+    candidate_facts = json.dumps(
+        {
+            "actual_experience_level": profile.actual_level,
+            "non_intern_professional_months": profile.professional_months,
+            "internship_months": profile.internship_months,
+            "degree_level": profile.degree_level,
+            "degree_status": profile.degree_status,
+            "graduation_month": profile.graduation_month,
+        },
+        sort_keys=True,
+    )
+    user_message = (
+        "The following timeline and education facts were computed by code from "
+        "the resume. Use them for level, duration, degree, and graduation checks; "
+        "cite the original resume text in output evidence.\n"
+        f"<BEGIN_CANDIDATE_FACTS>\n{candidate_facts}\n<END_CANDIDATE_FACTS>\n\n"
+        f"{render_user_message(resume_text, job)}"
+    )
     messages = [
         Message(role="system", content=system_prompt),
-        Message(role="user", content=render_user_message(resume_text, job)),
+        Message(role="user", content=user_message),
     ]
     return (
         messages,

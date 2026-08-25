@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import TypeVar, cast
 
@@ -58,6 +59,8 @@ def parse_unified_evaluation_response(  # noqa: PLR0913 - provenance is explicit
     resume_hash: str,
     cost_usd: float | None = None,
     evaluator_version: str = UNIFIED_EVALUATOR_VERSION,
+    resume_text: str | None = None,
+    job_text: str | None = None,
 ) -> UnifiedEvaluationResult:
     """Parse one exact-schema response and compute its qualification score.
 
@@ -81,6 +84,12 @@ def parse_unified_evaluation_response(  # noqa: PLR0913 - provenance is explicit
         _detect_refusal_fields(parsed)
         checks = _parse_checks(parsed)
         requirements = _parse_requirements(parsed)
+        _validate_source_excerpts(
+            checks,
+            requirements,
+            resume_text=resume_text,
+            job_text=job_text,
+        )
         eligibility = _enum_value(
             EligibilityStatus,
             _require_string(parsed, "eligibility_status"),
@@ -205,6 +214,45 @@ def _aggregate_eligibility(
     if EligibilityStatus.UNCLEAR in statuses:
         return EligibilityStatus.UNCLEAR
     return EligibilityStatus.PASS
+
+
+def _validate_source_excerpts(
+    checks: tuple[EligibilityCheck, ...],
+    requirements: tuple[RequirementAssessment, ...],
+    *,
+    resume_text: str | None,
+    job_text: str | None,
+) -> None:
+    """Require model citations to be token-normalized source excerpts."""
+    if job_text is not None:
+        for check in checks:
+            _require_excerpt(
+                job_text, check.requirement, "requirement not found in job"
+            )
+        for item in requirements:
+            _require_excerpt(job_text, item.requirement, "requirement not found in job")
+    if resume_text is not None:
+        for check in checks:
+            if check.candidate_evidence is not None:
+                _require_excerpt(
+                    resume_text,
+                    check.candidate_evidence,
+                    "evidence not found in resume",
+                )
+        for item in requirements:
+            if item.resume_evidence is not None:
+                _require_excerpt(
+                    resume_text,
+                    item.resume_evidence,
+                    "evidence not found in resume",
+                )
+
+
+def _require_excerpt(source: str, excerpt: str, message: str) -> None:
+    source_tokens = " ".join(re.findall(r"\w+", source.casefold()))
+    excerpt_tokens = " ".join(re.findall(r"\w+", excerpt.casefold()))
+    if not excerpt_tokens or excerpt_tokens not in source_tokens:
+        raise ScoringParseError(message)
 
 
 def _validate_requirement_evidence(
