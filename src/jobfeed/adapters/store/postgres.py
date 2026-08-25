@@ -3140,6 +3140,35 @@ class PostgresStore:
             return None
         return _evaluation_from_record(row)
 
+    async def get_current_evaluation(self, job_id: str) -> dict[str, object] | None:
+        """Fetch one canonical unified evaluation row.
+
+        Args:
+            job_id: Store-assigned identity.
+
+        Returns:
+            Unified evaluation row with decoded ``result_json``, or None.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT job_id, status, eligibility_status, match_tier,
+                          match_score, ats_visibility_score, result_json,
+                          evaluator_version, model, prompt_hash, resume_hash,
+                          cost_usd, evaluated_at, updated_at, error, error_count
+                   FROM evaluation_results
+                   WHERE job_id = $1""",
+                int(job_id),
+            )
+        if row is None:
+            return None
+        result: dict[str, object] = dict(row)
+        result["job_id"] = str(result["job_id"])
+        raw_json = result.get("result_json")
+        if isinstance(raw_json, str):
+            result["result_json"] = json.loads(raw_json)
+        return result
+
     async def get_stage_a_scores(
         self,
         job_ids: list[str],

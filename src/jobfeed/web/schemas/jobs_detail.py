@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.user_decisions import UserDecision, decision_for_status
 from jobfeed.services.jobs_view import JobDetail
-from jobfeed.web.schemas._jobs_detail_stage_b import StageBDetail, stage_b_section
 
 
 class JobDetailJob(BaseModel):
@@ -29,24 +28,40 @@ class JobDetailJob(BaseModel):
     jd_text: str | None
 
 
-class StageADetail(BaseModel):
-    """Stage A summary: fast score plus its one-line rationale."""
+class EligibilityCheckDetail(BaseModel):
+    """One evidence-backed hard eligibility check."""
 
-    score: int
-    one_line: str
+    kind: str | None = None
+    requirement: str | None = None
+    status: str | None = None
+    candidate_evidence: str | None = None
+    reason: str | None = None
+
+
+class RequirementDetail(BaseModel):
+    """One unified requirement-to-resume evidence assessment."""
+
+    requirement: str | None = None
+    priority: str | None = None
+    category: str | None = None
+    match: str | None = None
+    resume_evidence: str | None = None
+    evidence_type: str | None = None
 
 
 class EvaluationDetail(BaseModel):
-    """Evaluation section of the detail response (stages optional).
+    """Canonical unified evaluation; legacy Stage A/B never participate."""
 
-    ``stage_b_status`` is the raw pipeline status (the same store column the
-    list rows carry), set even when ``stage_b`` is None — below-threshold
-    rows have no Stage B blocks but still need their derived display state.
-    """
-
-    stage_a: StageADetail | None
-    stage_b: StageBDetail | None
-    stage_b_status: str | None
+    summary: str | None
+    eligibility_status: str | None
+    eligibility_checks: list[EligibilityCheckDetail]
+    requirements: list[RequirementDetail]
+    match_score: int | None
+    match_tier: str | None
+    one_line: str | None
+    ats_visibility_score: int | None
+    evaluator_version: str | None
+    model: str | None
 
 
 class StatusDetail(BaseModel):
@@ -161,18 +176,64 @@ def job_detail_response(detail: JobDetail) -> JobDetailResponse:
 
 
 def _evaluation_detail(detail: JobDetail) -> EvaluationDetail:
-    """Map the optional Stage A / Stage B results to the evaluation section."""
-    evaluation = detail.evaluation
-    stage_a = evaluation.stage_a if evaluation is not None else None
+    """Map only the canonical unified row to the evaluation section."""
+    evaluation = detail.evaluation or {}
+    result = _mapping(evaluation.get("result_json"))
     return EvaluationDetail(
-        stage_a=(
-            StageADetail(score=stage_a.score, one_line=stage_a.one_line)
-            if stage_a is not None
-            else None
-        ),
-        stage_b=stage_b_section(evaluation),
-        stage_b_status=evaluation.stage_b_status if evaluation is not None else None,
+        summary=_text(result.get("summary")),
+        eligibility_status=_text(evaluation.get("eligibility_status")),
+        eligibility_checks=[
+            EligibilityCheckDetail(
+                kind=_text(item.get("kind")),
+                requirement=_text(item.get("requirement")),
+                status=_text(item.get("status")),
+                candidate_evidence=_text(item.get("candidate_evidence")),
+                reason=_text(item.get("reason")),
+            )
+            for item in _mapping_list(result.get("eligibility_checks"))
+        ],
+        requirements=[
+            RequirementDetail(
+                requirement=_text(item.get("requirement")),
+                priority=_text(item.get("priority")),
+                category=_text(item.get("category")),
+                match=_text(item.get("match")),
+                resume_evidence=_text(item.get("resume_evidence")),
+                evidence_type=_text(item.get("evidence_type")),
+            )
+            for item in _mapping_list(result.get("requirements"))
+        ],
+        match_score=_integer(evaluation.get("match_score")),
+        match_tier=_text(evaluation.get("match_tier")),
+        one_line=_text(result.get("one_line")),
+        ats_visibility_score=_integer(result.get("ats_visibility_score")),
+        evaluator_version=_text(evaluation.get("evaluator_version")),
+        model=_text(evaluation.get("model")),
     )
+
+
+def _mapping(value: object) -> dict[str, object]:
+    """Return a string-keyed mapping for decoded JSON objects."""
+    if not isinstance(value, dict):
+        return {}
+    return {key: item for key, item in value.items() if isinstance(key, str)}
+
+
+def _mapping_list(value: object) -> list[dict[str, object]]:
+    """Keep only mapping entries from a decoded JSON array."""
+    if not isinstance(value, list):
+        return []
+    return [_mapping(item) for item in value if isinstance(item, dict)]
+
+
+def _text(value: object) -> str | None:
+    """Return canonical text values without coercing malformed data."""
+    return value if isinstance(value, str) else None
+
+
+def _integer(value: object) -> int | None:
+    """Return canonical integer values without treating booleans as scores."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _status_detail(detail: JobDetail) -> StatusDetail:

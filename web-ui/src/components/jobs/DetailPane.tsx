@@ -43,8 +43,6 @@ export function DetailPane({
   if (detail.isError) return <Alert type="error">{detail.error.message}</Alert>;
 
   const { job, evaluation, status, twins } = detail.data;
-  const stageA = evaluation.stage_a;
-  const stageB = evaluation.stage_b;
 
   return (
     <SpaceBetween size="m">
@@ -66,14 +64,19 @@ export function DetailPane({
             ) : formatRelativeAge(job.posted_at),
           },
           { label: "Decision", value: visibleDecision(status.decision) },
-          { label: "Quick score", value: stageA?.score ?? "—" },
-          { label: "Detailed fit score", value: stageB?.fit_score ?? "—" },
+          { label: "Match score", value: evaluation.match_score ?? "—" },
+          { label: "ATS visibility", value: evaluation.ats_visibility_score ?? "—" },
+          { label: "Eligibility", value: evaluation.eligibility_status ?? "—" },
+          {
+            label: "Evaluator",
+            value: evaluation.evaluator_version ?? evaluation.model ?? "—",
+          },
         ]}
       />
       <SpaceBetween direction="horizontal" size="xs">
         <VerdictPill
-          verdict={stageB?.verdict ?? null}
-          status={evaluation.stage_b_status}
+          verdict={evaluation.match_tier}
+          status={null}
         />
         <Link href={job.url} external externalIconAriaLabel="Opens in a new tab">
           Open posting

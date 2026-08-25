@@ -1736,6 +1736,22 @@ export interface components {
             sources?: components["schemas"]["SourcesConfig"];
         };
         /**
+         * EligibilityCheckDetail
+         * @description One evidence-backed hard eligibility check.
+         */
+        EligibilityCheckDetail: {
+            /** Candidate Evidence */
+            candidate_evidence?: string | null;
+            /** Kind */
+            kind?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Requirement */
+            requirement?: string | null;
+            /** Status */
+            status?: string | null;
+        };
+        /**
          * EvaluationCalibrationBody
          * @description One representative JD used for a real two-stage calibration.
          */
@@ -1762,17 +1778,29 @@ export interface components {
         };
         /**
          * EvaluationDetail
-         * @description Evaluation section of the detail response (stages optional).
-         *
-         *     ``stage_b_status`` is the raw pipeline status (the same store column the
-         *     list rows carry), set even when ``stage_b`` is None — below-threshold
-         *     rows have no Stage B blocks but still need their derived display state.
+         * @description Canonical unified evaluation; legacy Stage A/B never participate.
          */
         EvaluationDetail: {
-            stage_a: components["schemas"]["StageADetail"] | null;
-            stage_b: components["schemas"]["StageBDetail"] | null;
-            /** Stage B Status */
-            stage_b_status: string | null;
+            /** Ats Visibility Score */
+            ats_visibility_score: number | null;
+            /** Eligibility Checks */
+            eligibility_checks: components["schemas"]["EligibilityCheckDetail"][];
+            /** Eligibility Status */
+            eligibility_status: string | null;
+            /** Evaluator Version */
+            evaluator_version: string | null;
+            /** Match Score */
+            match_score: number | null;
+            /** Match Tier */
+            match_tier: string | null;
+            /** Model */
+            model: string | null;
+            /** One Line */
+            one_line: string | null;
+            /** Requirements */
+            requirements: components["schemas"]["RequirementDetail"][];
+            /** Summary */
+            summary: string | null;
         };
         /**
          * FollowupBody
@@ -1809,18 +1837,6 @@ export interface components {
             scored: number;
             /** Total Candidates */
             total_candidates: number;
-        };
-        /**
-         * GapDetail
-         * @description One missing/weak requirement with severity and mitigation.
-         */
-        GapDetail: {
-            /** Mitigation */
-            mitigation: string;
-            /** Requirement */
-            requirement: string;
-            /** Severity */
-            severity: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2494,6 +2510,24 @@ export interface components {
             quick_model?: string | null;
         };
         /**
+         * RequirementDetail
+         * @description One unified requirement-to-resume evidence assessment.
+         */
+        RequirementDetail: {
+            /** Category */
+            category?: string | null;
+            /** Evidence Type */
+            evidence_type?: string | null;
+            /** Match */
+            match?: string | null;
+            /** Priority */
+            priority?: string | null;
+            /** Requirement */
+            requirement?: string | null;
+            /** Resume Evidence */
+            resume_evidence?: string | null;
+        };
+        /**
          * RestoreResponse
          * @description ``POST /api/jobs/{id}/restore`` response: where the job landed.
          */
@@ -2502,18 +2536,6 @@ export interface components {
             job_id: string;
             /** Status */
             status: string;
-        };
-        /**
-         * ResumeHooksDetail
-         * @description The three resume-hook blocks of the Stage B output.
-         */
-        ResumeHooksDetail: {
-            /** Avoid Mentioning */
-            avoid_mentioning: string[];
-            /** Lead With */
-            lead_with: string;
-            /** Supporting */
-            supporting: string[];
         };
         /**
          * ResumeStateResponse
@@ -2902,41 +2924,6 @@ export interface components {
             search_urls?: string[];
         };
         /**
-         * StageADetail
-         * @description Stage A summary: fast score plus its one-line rationale.
-         */
-        StageADetail: {
-            /** One Line */
-            one_line: string;
-            /** Score */
-            score: number;
-        };
-        /**
-         * StageBDetail
-         * @description Stage B blocks: verdict, JD summary, fit analysis, resume hooks.
-         *
-         *     Display DTO — it must never 500 on real-data nulls. Stage B rows in the
-         *     live corpus can carry a NULL/absent JD summary or fit score (the verdict-
-         *     independent fallback also fills here), so ``jd_summary`` and ``fit_score``
-         *     are nullable and the list fields default to empty. ``verdict`` stays a
-         *     plain string ("" when unscored, which the pill reads). ``hooks`` keeps a
-         *     non-optional empty default so both mapper paths and the frontend never
-         *     have to special-case its absence.
-         */
-        StageBDetail: {
-            /** Fit Score */
-            fit_score?: number | null;
-            /** Gaps */
-            gaps?: components["schemas"]["GapDetail"][];
-            hooks?: components["schemas"]["ResumeHooksDetail"];
-            /** Jd Summary */
-            jd_summary?: string | null;
-            /** Strengths */
-            strengths?: components["schemas"]["StrengthDetail"][];
-            /** Verdict */
-            verdict: string;
-        };
-        /**
          * StatusDetail
          * @description Workflow section: current status, notes, follow-up, history.
          */
@@ -2982,16 +2969,6 @@ export interface components {
         StepTimingsResponse: {
             /** Timings */
             timings: components["schemas"]["StepTimingRow"][];
-        };
-        /**
-         * StrengthDetail
-         * @description One matched requirement with its resume evidence.
-         */
-        StrengthDetail: {
-            /** Evidence */
-            evidence: string;
-            /** Requirement */
-            requirement: string;
         };
         /**
          * TransitionBody

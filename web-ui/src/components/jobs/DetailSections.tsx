@@ -38,73 +38,75 @@ export function TwinsLine({ twins }: { twins: Twins }) {
   );
 }
 
-/** Stage A and Stage B evidence rendered with Cloudscape containers. */
+/** Evidence from the canonical unified evaluator. */
 export function EvaluationSections({ evaluation }: { evaluation: Evaluation }) {
-  const stageA = evaluation.stage_a;
-  const stageB = evaluation.stage_b;
-  if (stageA === null && stageB === null) return null;
-  return (
-    <SpaceBetween size="m">
-      {stageA !== null && (
-        <Container header={<Header variant="h3">Quick evaluation</Header>}>
-          <Box>{stageA.one_line}</Box>
-        </Container>
-      )}
-      {stageB !== null && <StageBBlocks stageB={stageB} />}
-    </SpaceBetween>
-  );
-}
+  const hasSummary = evaluation.one_line !== null || evaluation.summary !== null;
+  if (
+    !hasSummary
+    && evaluation.eligibility_checks.length === 0
+    && evaluation.requirements.length === 0
+  ) return null;
 
-function StageBBlocks({ stageB }: { stageB: NonNullable<Evaluation["stage_b"]> }) {
-  const strengths = stageB.strengths ?? [];
-  const gaps = stageB.gaps ?? [];
-  const summary = stageB.jd_summary ?? "";
   return (
     <SpaceBetween size="m">
-      {summary !== "" && (
-        <Container header={<SectionLabel>Job description summary</SectionLabel>}>
-          <Box>{summary}</Box>
+      {hasSummary && (
+        <Container header={<SectionLabel>Evaluation summary</SectionLabel>}>
+          <SpaceBetween size="xs">
+            {evaluation.one_line !== null && <Box variant="strong">{evaluation.one_line}</Box>}
+            {evaluation.summary !== null && <Box>{evaluation.summary}</Box>}
+          </SpaceBetween>
         </Container>
       )}
-      {strengths.length > 0 && (
-        <Container header={<SectionLabel>Strengths</SectionLabel>}>
+      {evaluation.eligibility_checks.length > 0 && (
+        <Container header={<SectionLabel>Eligibility checks</SectionLabel>}>
           <KeyValuePairs
             columns={1}
-            items={strengths.map((item) => ({
-              label: item.requirement,
-              value: item.evidence,
+            items={evaluation.eligibility_checks.map((check, index) => ({
+              label: check.requirement ?? check.kind ?? `Check ${index + 1}`,
+              value: evidenceValue(
+                check.status ?? null,
+                check.candidate_evidence ?? null,
+                check.reason ?? null,
+              ),
             }))}
           />
         </Container>
       )}
-      {gaps.length > 0 && (
-        <Container header={<SectionLabel>Gaps</SectionLabel>}>
+      {evaluation.requirements.length > 0 && (
+        <Container header={<SectionLabel>Requirement evidence</SectionLabel>}>
           <KeyValuePairs
             columns={1}
-            items={gaps.map((item) => ({
-              label: `${item.requirement} · ${item.severity}`,
-              value: item.mitigation,
+            items={evaluation.requirements.map((requirement, index) => ({
+              label: requirementLabel(requirement, index),
+              value: evidenceValue(
+                requirement.match ?? null,
+                requirement.resume_evidence ?? null,
+                requirement.evidence_type ?? null,
+              ),
             }))}
           />
         </Container>
       )}
-      <HooksBlock hooks={stageB.hooks} />
     </SpaceBetween>
   );
 }
 
-function HooksBlock({ hooks }: { hooks: NonNullable<Evaluation["stage_b"]>["hooks"] }) {
-  if (hooks === undefined || hooks.lead_with === "") return null;
-  const items = [{ label: "Lead with", value: hooks.lead_with }];
-  if (hooks.supporting.length > 0) {
-    items.push({ label: "Supporting", value: hooks.supporting.join(" · ") });
-  }
-  if (hooks.avoid_mentioning.length > 0) {
-    items.push({ label: "Avoid mentioning", value: hooks.avoid_mentioning.join(" · ") });
-  }
-  return (
-    <Container header={<SectionLabel>Resume guidance</SectionLabel>}>
-      <KeyValuePairs columns={1} items={items} />
-    </Container>
-  );
+function requirementLabel(
+  requirement: Evaluation["requirements"][number],
+  index: number,
+): string {
+  return [
+    requirement.requirement ?? `Requirement ${index + 1}`,
+    requirement.priority,
+    requirement.category,
+  ].filter((item): item is string => item != null).join(" · ");
+}
+
+function evidenceValue(
+  status: string | null,
+  evidence: string | null,
+  reason: string | null,
+): ReactNode {
+  const parts = [status, evidence, reason].filter((item): item is string => item !== null);
+  return parts.length > 0 ? parts.join(" · ") : "—";
 }

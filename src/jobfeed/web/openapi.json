@@ -773,6 +773,68 @@
         "title": "EditableConfiguration",
         "type": "object"
       },
+      "EligibilityCheckDetail": {
+        "description": "One evidence-backed hard eligibility check.",
+        "properties": {
+          "candidate_evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Evidence"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "requirement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "EligibilityCheckDetail",
+        "type": "object"
+      },
       "EvaluationCalibrationBody": {
         "additionalProperties": false,
         "description": "One representative JD used for a real two-stage calibration.",
@@ -837,29 +899,27 @@
         "type": "object"
       },
       "EvaluationDetail": {
-        "description": "Evaluation section of the detail response (stages optional).\n\n``stage_b_status`` is the raw pipeline status (the same store column the\nlist rows carry), set even when ``stage_b`` is None \u2014 below-threshold\nrows have no Stage B blocks but still need their derived display state.",
+        "description": "Canonical unified evaluation; legacy Stage A/B never participate.",
         "properties": {
-          "stage_a": {
+          "ats_visibility_score": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/StageADetail"
+                "type": "integer"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Ats Visibility Score"
           },
-          "stage_b": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/StageBDetail"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "eligibility_checks": {
+            "items": {
+              "$ref": "#/components/schemas/EligibilityCheckDetail"
+            },
+            "title": "Eligibility Checks",
+            "type": "array"
           },
-          "stage_b_status": {
+          "eligibility_status": {
             "anyOf": [
               {
                 "type": "string"
@@ -868,13 +928,93 @@
                 "type": "null"
               }
             ],
-            "title": "Stage B Status"
+            "title": "Eligibility Status"
+          },
+          "evaluator_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluator Version"
+          },
+          "match_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Score"
+          },
+          "match_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Tier"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "one_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "One Line"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementDetail"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
           }
         },
         "required": [
-          "stage_a",
-          "stage_b",
-          "stage_b_status"
+          "summary",
+          "eligibility_status",
+          "eligibility_checks",
+          "requirements",
+          "match_score",
+          "match_tier",
+          "one_line",
+          "ats_visibility_score",
+          "evaluator_version",
+          "model"
         ],
         "title": "EvaluationDetail",
         "type": "object"
@@ -944,30 +1084,6 @@
           "scored"
         ],
         "title": "FunnelRow",
-        "type": "object"
-      },
-      "GapDetail": {
-        "description": "One missing/weak requirement with severity and mitigation.",
-        "properties": {
-          "mitigation": {
-            "title": "Mitigation",
-            "type": "string"
-          },
-          "requirement": {
-            "title": "Requirement",
-            "type": "string"
-          },
-          "severity": {
-            "title": "Severity",
-            "type": "string"
-          }
-        },
-        "required": [
-          "requirement",
-          "severity",
-          "mitigation"
-        ],
-        "title": "GapDetail",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2712,6 +2828,79 @@
         "title": "ProviderStateResponse",
         "type": "object"
       },
+      "RequirementDetail": {
+        "description": "One unified requirement-to-resume evidence assessment.",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "evidence_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Type"
+          },
+          "match": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "requirement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement"
+          },
+          "resume_evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Evidence"
+          }
+        },
+        "title": "RequirementDetail",
+        "type": "object"
+      },
       "RestoreResponse": {
         "description": "``POST /api/jobs/{id}/restore`` response: where the job landed.",
         "properties": {
@@ -2729,36 +2918,6 @@
           "status"
         ],
         "title": "RestoreResponse",
-        "type": "object"
-      },
-      "ResumeHooksDetail": {
-        "description": "The three resume-hook blocks of the Stage B output.",
-        "properties": {
-          "avoid_mentioning": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Avoid Mentioning",
-            "type": "array"
-          },
-          "lead_with": {
-            "title": "Lead With",
-            "type": "string"
-          },
-          "supporting": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Supporting",
-            "type": "array"
-          }
-        },
-        "required": [
-          "lead_with",
-          "supporting",
-          "avoid_mentioning"
-        ],
-        "title": "ResumeHooksDetail",
         "type": "object"
       },
       "ResumeStateResponse": {
@@ -3462,78 +3621,6 @@
         "title": "SourcesSpeedyApplyConfig",
         "type": "object"
       },
-      "StageADetail": {
-        "description": "Stage A summary: fast score plus its one-line rationale.",
-        "properties": {
-          "one_line": {
-            "title": "One Line",
-            "type": "string"
-          },
-          "score": {
-            "title": "Score",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "score",
-          "one_line"
-        ],
-        "title": "StageADetail",
-        "type": "object"
-      },
-      "StageBDetail": {
-        "description": "Stage B blocks: verdict, JD summary, fit analysis, resume hooks.\n\nDisplay DTO \u2014 it must never 500 on real-data nulls. Stage B rows in the\nlive corpus can carry a NULL/absent JD summary or fit score (the verdict-\nindependent fallback also fills here), so ``jd_summary`` and ``fit_score``\nare nullable and the list fields default to empty. ``verdict`` stays a\nplain string (\"\" when unscored, which the pill reads). ``hooks`` keeps a\nnon-optional empty default so both mapper paths and the frontend never\nhave to special-case its absence.",
-        "properties": {
-          "fit_score": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fit Score"
-          },
-          "gaps": {
-            "items": {
-              "$ref": "#/components/schemas/GapDetail"
-            },
-            "title": "Gaps",
-            "type": "array"
-          },
-          "hooks": {
-            "$ref": "#/components/schemas/ResumeHooksDetail"
-          },
-          "jd_summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Jd Summary"
-          },
-          "strengths": {
-            "items": {
-              "$ref": "#/components/schemas/StrengthDetail"
-            },
-            "title": "Strengths",
-            "type": "array"
-          },
-          "verdict": {
-            "title": "Verdict",
-            "type": "string"
-          }
-        },
-        "required": [
-          "verdict"
-        ],
-        "title": "StageBDetail",
-        "type": "object"
-      },
       "StatusDetail": {
         "description": "Workflow section: current status, notes, follow-up, history.",
         "properties": {
@@ -3673,25 +3760,6 @@
           "timings"
         ],
         "title": "StepTimingsResponse",
-        "type": "object"
-      },
-      "StrengthDetail": {
-        "description": "One matched requirement with its resume evidence.",
-        "properties": {
-          "evidence": {
-            "title": "Evidence",
-            "type": "string"
-          },
-          "requirement": {
-            "title": "Requirement",
-            "type": "string"
-          }
-        },
-        "required": [
-          "requirement",
-          "evidence"
-        ],
-        "title": "StrengthDetail",
         "type": "object"
       },
       "TransitionBody": {

@@ -50,16 +50,16 @@ function detail(): JobDetailResponse {
       jd_text: "Build clear software.",
     },
     evaluation: {
-      stage_a: { score: 84, one_line: "Strong match." },
-      stage_b_status: "completed",
-      stage_b: {
-        fit_score: 92,
-        verdict: "apply",
-        jd_summary: "A readable role summary.",
-        strengths: [],
-        gaps: [],
-        hooks: { lead_with: "Systems work", supporting: [], avoid_mentioning: [] },
-      },
+      summary: "A readable role summary.",
+      eligibility_status: "pass",
+      eligibility_checks: [],
+      requirements: [],
+      match_score: 20,
+      match_tier: "weak_match",
+      one_line: "Canonical weak match.",
+      ats_visibility_score: 40,
+      evaluator_version: "unified-v2",
+      model: "mock-unified",
     },
     status: { status: "scored", decision: "results", history: [], notes: null, next_followup_at: null, resume_variant: null },
     twins: [],
@@ -128,6 +128,16 @@ test("shows Results plus the three decision filters", async () => {
   expect(within(screen.getByRole("table", { name: "Jobs" })).getByText("92"))
     .toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /Pending JD/ })).not.toBeInTheDocument();
+});
+
+test("detail displays only the canonical unified evaluation", async () => {
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  expect(await screen.findByText("Canonical weak match.")).toBeInTheDocument();
+  expect(screen.getByText("Weak match")).toBeInTheDocument();
+  expect(screen.getByText("20")).toBeInTheDocument();
+  expect(screen.queryByText("99")).toBeNull();
+  expect(screen.queryByText("Apply")).toBeNull();
 });
 
 test("Ignored requests one decision that includes archived workflow rows", async () => {

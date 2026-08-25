@@ -27,7 +27,6 @@ from jobfeed.domain import filtering
 from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models import (
     ApplicationRecord,
-    JobEvaluation,
     JobPosting,
     StatusInfo,
 )
@@ -69,14 +68,14 @@ class JobsViewStore(StoreViewsMixin, Protocol):
         """
         ...
 
-    async def get_evaluation(self, job_id: str) -> JobEvaluation | None:
-        """Load a job's evaluation (Stage A/B optional).
+    async def get_current_evaluation(self, job_id: str) -> dict[str, object] | None:
+        """Load a job's current unified evaluation row.
 
         Args:
             job_id: Store-assigned identity.
 
         Returns:
-            Evaluation if the job exists, else None.
+            Canonical evaluation row if present, else None.
         """
         ...
 
@@ -130,7 +129,7 @@ class JobDetail:
     """Aggregated detail for one job: evaluation, workflow, twins, audit."""
 
     job: JobPosting
-    evaluation: JobEvaluation | None
+    evaluation: dict[str, object] | None
     status: StatusInfo | None
     history: list[str]
     twins: list[TwinStatusRow]
@@ -230,7 +229,7 @@ class JobsViewService:
             return None
         return JobDetail(
             job=job,
-            evaluation=await self._store.get_evaluation(job_id),
+            evaluation=await self._store.get_current_evaluation(job_id),
             status=await self._store.get_status(job_id),
             history=await self._store.get_status_history(job_id),
             twins=await self._store.list_twin_statuses(job_id),
