@@ -336,6 +336,42 @@ async def test_claim_uses_independent_versioned_state_and_corpus(
 
 
 @pytest.mark.asyncio
+async def test_claim_can_be_restricted_to_prefiltered_candidate_ids(
+    tmp_path: Path,
+) -> None:
+    """Service-side hard-filter/dedupe survivors are the only claimed rows."""
+    store = SQLiteStore(tmp_path / "jobfeed.db", clock=lambda: _NOW)
+    await store.connect()
+    try:
+        ids = {
+            name: (await store.save_job(make_job(name))).job_id
+            for name in ("blocked", "representative", "duplicate")
+        }
+
+        claimed = await store.claim_pending_evaluations(
+            evaluator_version=_VERSION,
+            corpus="unrated",
+            limit=10,
+            max_days=None,
+            job_ids=[ids["representative"]],
+        )
+
+        assert [job.id for job in claimed] == [ids["representative"]]
+        pending = await store.preview_pending_evaluations(
+            evaluator_version=_VERSION,
+            corpus="unrated",
+            limit=10,
+            max_days=None,
+        )
+        assert {job.id for job in pending} == {
+            ids["blocked"],
+            ids["duplicate"],
+        }
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_unrated_reclaims_only_stale_in_progress_rows(tmp_path: Path) -> None:
     """Fresh claims stay protected while interrupted claims become pending."""
     path = tmp_path / "jobfeed.db"

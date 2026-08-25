@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, cast
 
+from jobfeed.domain.dedupe import pick_representatives
 from jobfeed.domain.errors import RunLeaseLostError, ScoringParseError
+from jobfeed.domain.filtering import apply_hard_filters
 from jobfeed.domain.models import JobPosting, LLMRequest, PipelineRun
 from jobfeed.domain.unified_evaluation_parse import (
     parse_unified_evaluation_response,
@@ -21,6 +23,10 @@ from jobfeed.services._evaluate_helpers import (
 if TYPE_CHECKING:
     from jobfeed.ports.llm import LLMClient
     from jobfeed.services.evaluate import EvaluateService
+    from jobfeed.services.evaluate_types import (
+        EvaluateDependencies,
+        EvaluateRuntimeConfig,
+    )
     from jobfeed.services.run_orchestration import RunLeaseSession
 
 EVALUATOR_VERSION = "unified-v1"
@@ -52,12 +58,23 @@ async def run_unified_evaluation(  # noqa: PLR0913 - explicit run filters
         return
     store = cast(StoreUnifiedEvaluationMixin, service._deps.store)
     claim_token = f"{run.run_id}:{lease_session.generation}"
+    candidates = await select_unified_candidates(
+        service._deps,
+        service._config,
+        run,
+        corpus=corpus,
+        limit=limit,
+        max_days=max_days,
+    )
+    if not candidates:
+        return
     jobs = await store.claim_pending_evaluations(
         evaluator_version=EVALUATOR_VERSION,
         claim_token=claim_token,
         corpus=corpus,
         limit=limit,
         max_days=max_days,
+        job_ids=[require_job_id(job) for job in candidates],
     )
     lease_session.ensure_active()
     run.progress_stage = "evaluation"
@@ -74,6 +91,43 @@ async def run_unified_evaluation(  # noqa: PLR0913 - explicit run filters
             service._emit_progress(run)
 
     await asyncio.gather(*(_worker(job) for job in jobs))
+
+
+async def select_unified_candidates(  # noqa: PLR0913 - explicit run filters
+    deps: EvaluateDependencies,
+    config: EvaluateRuntimeConfig,
+    run: PipelineRun,
+    *,
+    corpus: str,
+    limit: int,
+    max_days: int | None,
+) -> list[JobPosting]:
+    """Preview, hard-filter, and twin-fold the exact unified candidate set.
+
+    Args:
+        deps: Store and optional hard-filter dependencies.
+        config: Runtime candidate-pool limit.
+        run: Mutable run counters.
+        corpus: Pending-work selection mode.
+        limit: Maximum survivor count.
+        max_days: Optional discovery freshness window.
+
+    Returns:
+        Filtered, deduplicated jobs in pending-work order.
+    """
+    store = cast(StoreUnifiedEvaluationMixin, deps.store)
+    jobs = await store.preview_pending_evaluations(
+        evaluator_version=EVALUATOR_VERSION,
+        corpus=corpus,
+        limit=max(limit, config.ml_gate_max_candidates),
+        max_days=max_days,
+    )
+    filters = deps.hard_filters
+    if filters is not None:
+        kept = [job for job in jobs if apply_hard_filters(job, filters) is None]
+        run.jobs_filtered += len(jobs) - len(kept)
+        jobs = kept
+    return pick_representatives(jobs)[:limit]
 
 
 async def _score_job(  # noqa: PLR0913 - explicit worker dependencies
@@ -172,4 +226,8 @@ async def _save_error(
     service._logger.error("evaluation_failed", job_id=job_id, error=error)
 
 
-__all__ = ["EVALUATOR_VERSION", "run_unified_evaluation"]
+__all__ = [
+    "EVALUATOR_VERSION",
+    "run_unified_evaluation",
+    "select_unified_candidates",
+]

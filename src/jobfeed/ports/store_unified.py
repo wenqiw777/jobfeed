@@ -18,6 +18,7 @@ class StoreUnifiedEvaluationMixin(Protocol):
         corpus: str = "unrated",
         limit: int = 100,
         max_days: int | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[JobPosting]:
         """Claim pending jobs without redoing current-version completions.
 
@@ -26,6 +27,7 @@ class StoreUnifiedEvaluationMixin(Protocol):
             corpus: Pending-work selection mode.
             limit: Maximum jobs to claim.
             max_days: Optional discovery freshness window.
+            job_ids: Optional prefiltered identities eligible for claiming.
 
         Returns:
             Atomically claimed jobs.

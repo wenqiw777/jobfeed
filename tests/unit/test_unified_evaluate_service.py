@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.models import (
     AutoDecayResult,
     JobPosting,
     LLMResponse,
+    QualityBand,
     UnifiedEvaluationResult,
 )
 from jobfeed.domain.unified_evaluation_parse import (
@@ -27,23 +29,28 @@ _FULL_MATCH = 100
 
 
 class _Store(SuccessfulRunLeaseMixin):
-    def __init__(self, job: JobPosting) -> None:
-        self.job = job
+    def __init__(self, job: JobPosting | list[JobPosting]) -> None:
+        self.jobs = job if isinstance(job, list) else [job]
         self.saved: list[tuple[str, UnifiedEvaluationResult]] = []
         self.errors: list[tuple[str, str, str]] = []
         self.claims = 0
         self.previews = 0
+        self.claim_job_ids: list[list[str] | None] = []
         self.auto_decay_calls: list[dict[str, object]] = []
 
-    async def claim_pending_evaluations(self, **_kwargs: object) -> list[JobPosting]:
+    async def claim_pending_evaluations(self, **kwargs: object) -> list[JobPosting]:
         self.claims += 1
-        return [self.job]
+        raw_ids = kwargs.get("job_ids")
+        job_ids = list(raw_ids) if isinstance(raw_ids, list) else None
+        self.claim_job_ids.append(job_ids)
+        if job_ids is None:
+            return list(self.jobs)
+        wanted = set(job_ids)
+        return [job for job in self.jobs if job.id in wanted]
 
-    async def preview_pending_evaluations(
-        self, **_kwargs: object
-    ) -> list[JobPosting]:
+    async def preview_pending_evaluations(self, **_kwargs: object) -> list[JobPosting]:
         self.previews += 1
-        return [self.job]
+        return list(self.jobs)
 
     async def save_evaluation(
         self, job_id: str, result: UnifiedEvaluationResult, _claim_token: str
@@ -151,18 +158,27 @@ class _Logger:
         return None
 
 
-def _job() -> JobPosting:
+def _job(  # noqa: PLR0913 - compact fixture builder
+    id: str = "1",
+    *,
+    platform: str = "greenhouse",
+    canonical_id: str | None = None,
+    location: str = "Remote",
+    jd_quality: QualityBand = QualityBand.FULL,
+    title: str = "Software Engineer",
+) -> JobPosting:
     body = "Build Python backend services. " * 12
     return JobPosting(
-        id="1",
-        platform="greenhouse",
-        canonical_id="job-1",
-        url="https://example.com/job-1",
-        title="Software Engineer",
+        id=id,
+        platform=platform,
+        canonical_id=canonical_id or f"job-{id}",
+        url=f"https://example.com/job-{id}",
+        title=title,
         company="Acme",
-        location="Remote",
+        location=location,
         discovered_at=datetime(2026, 8, 25, tzinfo=UTC),
         jd_text=body,
+        jd_quality=jd_quality,
     )
 
 
@@ -172,6 +188,7 @@ def _service(
     llm: _LLM,
     *,
     logger: _Logger | None = None,
+    hard_filters: HardFilters | None = None,
 ) -> EvaluateService:
     return EvaluateService(
         deps=EvaluateDependencies(
@@ -182,6 +199,7 @@ def _service(
             llm_stage_a=llm,  # type: ignore[arg-type]
             llm_stage_b=llm,  # type: ignore[arg-type]
             llm_evaluator=llm,  # type: ignore[arg-type]
+            hard_filters=hard_filters,
         ),
         config=EvaluateRuntimeConfig(
             llm=EvaluateLLMConfig(
@@ -218,9 +236,7 @@ async def test_run_uses_one_llm_call_and_one_canonical_save() -> None:
     assert run.stage_a_scored == 0
     assert run.stage_b_scored == 0
     assert store.errors == []
-    assert store.auto_decay_calls == [
-        {"ghost_days": 30, "archive_ignored_days": 14}
-    ]
+    assert store.auto_decay_calls == [{"ghost_days": 30, "archive_ignored_days": 14}]
 
 
 async def test_dry_run_previews_without_claim_or_llm_call() -> None:
@@ -228,9 +244,7 @@ async def test_dry_run_previews_without_claim_or_llm_call() -> None:
     ops = _Ops()
     llm = _LLM()
 
-    run = await _service(store, ops, llm).run(
-        corpus="unrated", limit=1, dry_run=True
-    )
+    run = await _service(store, ops, llm).run(corpus="unrated", limit=1, dry_run=True)
 
     assert [item.stage for item in run.dry_run_preview] == ["evaluation"]
     assert store.previews == 1
@@ -238,6 +252,60 @@ async def test_dry_run_previews_without_claim_or_llm_call() -> None:
     assert llm.calls == 0
     assert store.saved == []
     assert store.auto_decay_calls == []
+
+
+def _filtered_twin_jobs() -> list[JobPosting]:
+    return [
+        _job("1", location="Blocked Country"),
+        _job("2", platform="greenhouse", canonical_id="allowed-primary"),
+        _job(
+            "3",
+            platform="indeed",
+            canonical_id="allowed-duplicate",
+            jd_quality=QualityBand.GOOD,
+        ),
+        _job(
+            "4",
+            canonical_id="unique",
+            location="Detroit, MI",
+            title="Data Engineer",
+        ),
+    ]
+
+
+async def test_dry_run_filters_blocked_jobs_and_dedupes_twins() -> None:
+    store = _Store(_filtered_twin_jobs())
+    ops = _Ops()
+    llm = _LLM()
+
+    run = await _service(
+        store,
+        ops,
+        llm,
+        hard_filters=HardFilters(location_blocklist=["Blocked Country"]),
+    ).run(corpus="unrated", limit=10, dry_run=True)
+
+    assert [item.job_id for item in run.dry_run_preview] == ["2", "4"]
+    assert run.jobs_filtered == 1
+    assert store.claims == 0
+
+
+async def test_real_run_claims_only_filtered_deduped_candidate_ids() -> None:
+    store = _Store(_filtered_twin_jobs())
+    ops = _Ops()
+    llm = _LLM()
+
+    await _service(
+        store,
+        ops,
+        llm,
+        hard_filters=HardFilters(location_blocklist=["Blocked Country"]),
+    ).run(corpus="unrated", limit=10)
+
+    assert store.claim_job_ids == [["2", "4"]]
+    assert [job_id for job_id, _result in store.saved] == ["2", "4"]
+    assert "1" not in store.claim_job_ids[0]
+    assert "3" not in store.claim_job_ids[0]
 
 
 async def test_short_jd_records_unified_error_without_llm_call() -> None:

@@ -37,6 +37,7 @@ async def _claim_pending_evaluations(  # noqa: PLR0913 - mirrors public store AP
     corpus: str,
     limit: int,
     max_days: int | None,
+    job_ids: list[str] | None,
     now: datetime,
 ) -> list[JobPosting]:
     _validate_claim_token(claim_token)
@@ -45,6 +46,7 @@ async def _claim_pending_evaluations(  # noqa: PLR0913 - mirrors public store AP
         corpus=corpus,
         limit=limit,
         max_days=max_days,
+        job_ids=job_ids,
         now=now,
     )
     timestamp = _require_utc_timestamp(now)
@@ -115,13 +117,14 @@ async def _preview_pending_evaluations(  # noqa: PLR0913 - mirrors public store 
     return [_hydrate_job(row) for row in rows]
 
 
-def _pending_evaluation_query(
+def _pending_evaluation_query(  # noqa: PLR0913 - explicit claim filters
     *,
     evaluator_version: str,
     corpus: str,
     limit: int,
     max_days: int | None,
     now: datetime,
+    job_ids: list[str] | None = None,
 ) -> tuple[str, list[object]]:
     _validate_request(evaluator_version, corpus, limit, max_days)
     conditions = ["jobs.closed_at IS NULL", "jobs.jd_text IS NOT NULL"]
@@ -154,6 +157,13 @@ def _pending_evaluation_query(
     if max_days is not None:
         conditions.append("jobs.discovered_at>=?")
         params.append(_require_utc_timestamp(now - timedelta(days=max_days)))
+    if job_ids is not None:
+        if not job_ids:
+            conditions.append("FALSE")
+        else:
+            placeholders = ",".join("?" for _job_id in job_ids)
+            conditions.append(f"jobs.id IN ({placeholders})")
+            params.extend(int(job_id) for job_id in job_ids)
     params.append(limit)
     sql = (
         "SELECT jobs.* FROM jobs LEFT JOIN evaluation_results "

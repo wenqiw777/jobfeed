@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
 
 from jobfeed.domain.models import DryRunPreviewItem, PipelineRun
 from jobfeed.observability import JobfeedLogger
-from jobfeed.ports.store_unified import StoreUnifiedEvaluationMixin
-from jobfeed.services._evaluate_unified import EVALUATOR_VERSION
+from jobfeed.services._evaluate_unified import select_unified_candidates
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 
 
@@ -40,12 +38,12 @@ async def build_dry_run_preview(
     Returns:
         Stable preview rows without claims, usage, or evaluation writes.
     """
-    del config
     if request.limit <= 0:
         return run.dry_run_preview
-    store = cast(StoreUnifiedEvaluationMixin, deps.store)
-    jobs = await store.preview_pending_evaluations(
-        evaluator_version=EVALUATOR_VERSION,
+    jobs = await select_unified_candidates(
+        deps,
+        config,
+        run,
         corpus=request.corpus,
         limit=request.limit,
         max_days=request.max_days,

@@ -23,6 +23,7 @@ class SqliteUnifiedEvaluations:
         corpus: str = "unrated",
         limit: int = 100,
         max_days: int | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[JobPosting]:
         """Atomically claim work not completed by the requested version.
 
@@ -31,6 +32,7 @@ class SqliteUnifiedEvaluations:
             corpus: ``all`` pending work or only ``failed`` rows.
             limit: Maximum jobs to claim.
             max_days: Optional discovery freshness window.
+            job_ids: Optional prefiltered identities eligible for claiming.
 
         Returns:
             Claimed jobs in stable discovery order.
@@ -42,6 +44,7 @@ class SqliteUnifiedEvaluations:
             corpus=corpus,
             limit=limit,
             max_days=max_days,
+            job_ids=job_ids,
             now=self._unified_evaluation_now(),
         )
 
