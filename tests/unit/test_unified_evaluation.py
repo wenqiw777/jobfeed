@@ -236,3 +236,23 @@ def test_parser_requires_match_and_evidence_consistency() -> None:
         match="matched requirement requires evidence",
     ):
         _parse(payload)
+
+
+@pytest.mark.parametrize("match", ["missing", "unclear"])
+def test_parser_discards_explanatory_evidence_for_unmatched_requirement(
+    match: str,
+) -> None:
+    """Model commentary on a gap must not fail or count as matching evidence."""
+    payload = _payload()
+    requirements = payload["requirements"]
+    assert isinstance(requirements, list)
+    requirement = requirements[0]
+    assert isinstance(requirement, dict)
+    requirement["match"] = match
+    requirement["resume_evidence"] = "Resume mentions Python, but not production use."
+    requirement["evidence_type"] = "skills"
+
+    result = _parse(payload)
+
+    assert result.requirements[0].resume_evidence is None
+    assert result.requirements[0].evidence_type == "none"

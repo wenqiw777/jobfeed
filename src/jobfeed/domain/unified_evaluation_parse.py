@@ -171,6 +171,9 @@ def _parse_requirements(data: JsonObject) -> tuple[RequirementAssessment, ...]:
             _require_string(obj, "evidence_type"),
             "evidence_type",
         )
+        if match in {RequirementMatch.MISSING, RequirementMatch.UNCLEAR}:
+            evidence = None
+            evidence_type = EvidenceType.NONE
         _validate_requirement_evidence(match, evidence, evidence_type)
         assessments.append(
             RequirementAssessment(
@@ -212,8 +215,6 @@ def _validate_requirement_evidence(
     matched = match in {RequirementMatch.DIRECT, RequirementMatch.ADJACENT}
     if matched and (evidence is None or evidence_type is EvidenceType.NONE):
         raise ScoringParseError("matched requirement requires evidence")
-    if not matched and (evidence is not None or evidence_type is not EvidenceType.NONE):
-        raise ScoringParseError("unmatched requirement must use null evidence")
 
 
 def _object_item(value: object, label: str) -> JsonObject:
