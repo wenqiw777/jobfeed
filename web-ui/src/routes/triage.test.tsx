@@ -198,7 +198,7 @@ test("shows 50 results per page and paginates through the complete result set", 
   )).toBe(true);
 });
 
-test("sorts the full result set from the Fit score and Posted headers", async () => {
+test("sorts the full result set from the Match score and Posted headers", async () => {
   renderPage();
   await screen.findByTestId("job-row-1");
   await waitFor(() => {
@@ -206,11 +206,11 @@ test("sorts the full result set from the Fit score and Posted headers", async ()
   });
 
   const table = screen.getByRole("table", { name: "Jobs" });
-  fireEvent.click(within(table).getByRole("button", { name: /Fit score/ }));
+  fireEvent.click(within(table).getByRole("button", { name: /Match score/ }));
   await waitFor(() => {
     expect(calls.some((call) => call.url.includes("sort=score_asc"))).toBe(true);
   });
-  fireEvent.click(within(table).getByRole("button", { name: /Fit score/ }));
+  fireEvent.click(within(table).getByRole("button", { name: /Match score/ }));
   await waitFor(() => {
     expect(calls.some((call) => call.url.includes("sort=score_desc"))).toBe(true);
   });

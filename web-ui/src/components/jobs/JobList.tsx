@@ -59,7 +59,7 @@ export function JobList({
     },
     {
       id: "score",
-      header: "Fit score",
+      header: "Match score",
       sortingField: "score",
       cell: (job) => job.evaluation_score ?? "—",
       width: 70,

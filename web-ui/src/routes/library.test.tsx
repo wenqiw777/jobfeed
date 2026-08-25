@@ -77,12 +77,12 @@ test("uses 50 rows for every library page", async () => {
   expect(calls.some((url) => url.includes("limit=50"))).toBe(true);
 });
 
-test("sorts all postings from the Fit score and Posted headers", async () => {
+test("sorts all postings from the Match score and Posted headers", async () => {
   renderPage();
   await screen.findByTestId("job-row-1");
 
   const table = screen.getByRole("table", { name: "Library jobs" });
-  const scoreSort = within(table).getByText("Fit score").closest("[role=button]");
+  const scoreSort = within(table).getByText("Match score").closest("[role=button]");
   expect(scoreSort).not.toBeNull();
   fireEvent.click(scoreSort!);
   await waitFor(() => expect(calls.some((url) => url.includes("sort=score_asc"))).toBe(true));

@@ -66,7 +66,7 @@ export function LibraryTable({ jobs, onOpen, sort, onSort }: LibraryTableProps) 
     },
     {
       id: "score",
-      header: "Fit score",
+      header: "Match score",
       sortingField: "score",
       cell: (job) => job.evaluation_score ?? "—",
     },
