@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.support.code_hygiene import (
     PROJECT_ROOT,
     assert_no_hygiene_violations,
@@ -246,8 +248,8 @@ def test_hygiene_check_fails_on_empty_except_pass(tmp_path: Path) -> None:
     assert_hygiene_error(root, "empty except block containing only pass")
 
 
-def test_length_violation_blocks_non_exempt_file(tmp_path: Path) -> None:
-    """Files over 300 lines outside the adapter layer fail the gate.
+def test_length_warning_does_not_block_non_exempt_file(tmp_path: Path) -> None:
+    """Files over 300 lines emit a warning without failing the quality gate.
 
     Args:
         tmp_path: Temporary package root for the synthetic fixture.
@@ -256,13 +258,14 @@ def test_length_violation_blocks_non_exempt_file(tmp_path: Path) -> None:
     padding = "\n".join(f"# padding {index}" for index in range(310))
     write_source(root, "too_long.py", f"{CLEAN_CODE}\n{padding}\n")
 
-    assert_hygiene_error(root, "exceeds 300 lines")
+    with pytest.warns(UserWarning, match="exceeds 300 lines"):
+        assert_no_hygiene_violations(root)
     warnings = collect_length_warnings(root)
     assert len(warnings) == 1
 
 
-def test_length_gate_exempts_store_adapter(tmp_path: Path) -> None:
-    """The store/migration adapter layer is exempt from the file-length gate.
+def test_length_warning_also_reports_store_adapter(tmp_path: Path) -> None:
+    """The soft file-length review signal includes store adapters.
 
     Args:
         tmp_path: Temporary package root for the synthetic fixture.
@@ -271,11 +274,13 @@ def test_length_gate_exempts_store_adapter(tmp_path: Path) -> None:
     padding = "\n".join(f"# padding {index}" for index in range(310))
     write_source(root, "adapters/store/big_store.py", f"{CLEAN_CODE}\n{padding}\n")
 
-    assert_no_hygiene_violations(root)
+    with pytest.warns(UserWarning, match="exceeds 300 lines"):
+        assert_no_hygiene_violations(root)
+    assert len(collect_length_warnings(root)) == 1
 
 
-def test_length_gate_exempts_ml_features(tmp_path: Path) -> None:
-    """domain/ml_features.py is exempt from the file-length gate.
+def test_length_warning_also_reports_ml_features(tmp_path: Path) -> None:
+    """The soft file-length review signal includes vocabulary modules.
 
     Args:
         tmp_path: Temporary package root for the synthetic fixture.
@@ -284,4 +289,6 @@ def test_length_gate_exempts_ml_features(tmp_path: Path) -> None:
     padding = "\n".join(f"# padding {index}" for index in range(310))
     write_source(root, "domain/ml_features.py", f"{CLEAN_CODE}\n{padding}\n")
 
-    assert_no_hygiene_violations(root)
+    with pytest.warns(UserWarning, match="exceeds 300 lines"):
+        assert_no_hygiene_violations(root)
+    assert len(collect_length_warnings(root)) == 1

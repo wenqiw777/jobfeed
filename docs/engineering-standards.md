@@ -19,11 +19,8 @@ automated are enforced by `make quality` and CI.
 - Positional/keyword arguments max: 5. Use a dataclass or config object beyond that.
 - Line length: <= 88 characters (`line-length = 88` in `pyproject.toml`, Ruff-enforced via format check + `E501`).
 - Statements target: <= 40.
-- File length: <= 300 lines, enforced as a blocking hygiene gate. Exempt: the
-  `adapters/store/` layer and `domain/ml_features.py`. Store modules contain
-  large SQL surfaces; `ml_features.py` keeps the
-  vocabulary and compiled regex tables that must stay in lockstep. The gate
-  stays blocking everywhere else.
+- File length: files over 300 lines emit a non-blocking hygiene warning. Treat
+  the threshold as a review prompt, not a reason to split cohesive code.
 - Functions should have a single clear responsibility.
 - Avoid nested loops in application/service code.
 - If nested loops are necessary in algorithmic or data-processing code, extract them into a named helper and document time complexity.
@@ -38,7 +35,8 @@ The thresholds above are global defaults. A small set of scoped relaxations live
 - **Global `ignore`:** `PLR0911`/`PLR0912`/`PLR0915` (too-many-returns/branches/statements) are disabled project-wide — these overlap the cyclomatic-complexity and statements-target review rules above rather than adding a separate hard gate.
 - **`per-file-ignores`:**
   - `ports/*.py` — `ARG002` (Protocol methods legitimately have unused args), `PLR0913` (capability signatures can exceed 5 args).
-  - `adapters/store/postgres.py` — `ARG002`, `E501`, `PLR0913`, `SIM117` (the 300-line-exempt store surface; large SQL-bearing methods).
+  - `adapters/store/postgres.py` — `ARG002`, `E501`, `PLR0913`, `SIM117`
+    (large SQL-bearing methods).
   - `tests/**/test_ports.py` — `ARG002`, `PLR0913`. `tests/conftest.py` — `PLC0415`. `tests/fixtures/generate_legacy_fixture.py` — `PLR2004`, `E501`, `C901`, `PLC0415`.
   - `tests/unit/test_speedyapply_markdown.py` / `tests/unit/test_speedyapply_routing.py` — `E501` (inline SpeedyApply markdown-table fixtures embed HTML anchors that cannot wrap). `tests/unit/test_dedupe.py` / `tests/contract/test_dedupe_contract.py` — `PLR0913` (keyword-only `_job` fixture builders intentionally expose every dedup-relevant field).
 - **Targeted `# noqa`:** for a one-off legitimate exceedance outside the scoped paths, a per-line `# noqa: <rule>` is the escape hatch rather than a new per-file ignore (e.g. `adapters/sources/_http.py` `fetch_json` / `probe_url` carry `# noqa: PLR0913` — low-level HTTP helpers with `client`/`url`/`slug`/`vendor`/`timeout`/`retries`).
@@ -54,7 +52,8 @@ The thresholds above are global defaults. A small set of scoped relaxations live
 - Do not write comments that only repeat the code's surface action, such as "increment i", "check if user is None", or "loop through orders".
 - Prefer better names or smaller functions when a comment is only needed to explain what the code is doing.
 - Comments must stay concise, accurate, local to the relevant code, and updated in the same change as the code they describe.
-- Do not satisfy file-length or function-shape gates by deleting useful docstrings or comments. Split the module or extract named helpers instead.
+- Do not shorten files by deleting useful docstrings or comments. Split a
+  module only when the resulting boundary improves ownership or readability.
 
 ## Layer Boundaries
 
