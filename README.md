@@ -22,7 +22,9 @@
     ·
     <a href="#quick-start">Install</a>
     ·
-    <a href="#configure-your-workspace">Configure</a>
+    <a href="#first-run-onboarding">First setup</a>
+    ·
+    <a href="#workspace-settings">Settings</a>
     ·
     <a href="#everyday-use">Use</a>
     ·
@@ -36,8 +38,15 @@
 
 Jobfeed turns a scattered job search into one local workflow:
 
-- Scan company career pages, LinkedIn guest search, Indeed, and curated lists.
-- Exclude irrelevant roles before model calls with deterministic filters and an optional local ML gate.
+- Complete guided setup before the first scan: connect a model, confirm a
+  résumé-derived profile, choose searches, verify company boards, and review
+  limits and estimated model usage.
+- Scan company career pages, LinkedIn Guest, Indeed, and curated lists. LinkedIn
+  Guest fetches complete job descriptions in a paced pass after discovery.
+- Cap each source independently and deduplicate the resulting jobs before
+  choosing how many unique jobs to evaluate.
+- Exclude irrelevant roles before model calls with deterministic filters and an
+  optional local ML gate.
 - Run quick evaluation followed by detailed résumé-to-job evidence.
 - Review the result and record one decision: **Wait**, **Applied**, or **Ignored**.
 - Watch scan and evaluation counters update live.
@@ -49,12 +58,13 @@ The normal user path does not require Docker, PostgreSQL, or a frontend build.
 
 ## See it in action
 
-### One-command setup
+### Guided one-command setup
 
 Run `./setup.sh` in Terminal. It installs the local runtime, starts Jobfeed,
-and opens the real GUI automatically.
+and opens the real GUI automatically. A fresh workspace opens the guided
+provider step; an existing workspace opens Jobfeed directly.
 
-![Run Jobfeed setup in Terminal and open the GUI](docs/assets/setup-demo.gif)
+![Jobfeed first-run provider setup](docs/assets/onboarding-provider.jpg)
 
 ### Review résumé fit against each job description
 
@@ -113,20 +123,70 @@ jobfeed
 With no arguments, `jobfeed` starts or reuses the local server and opens the
 GUI. Running `./setup.sh` again is also safe.
 
-## Configure your workspace
+## First-run onboarding
 
-Open **Settings** in the GUI to manage:
+A fresh checkout opens `/setup`. Setup is resumable, and **nothing starts a
+scan automatically**.
+
+1. **Connect an AI provider.** Choose OpenAI API, Anthropic API, a signed-in
+   Codex CLI, or a signed-in Claude Code CLI. Test the connection, then choose
+   separate Quick and Detailed models.
+2. **Confirm your job profile.** Upload a PDF, DOCX, Markdown, or text résumé.
+   Preview the locally extracted text, explicitly send it for analysis, and
+   edit every suggested preference before confirming it.
+3. **Choose job searches.** Jobfeed turns the confirmed profile into paired
+   LinkedIn Guest and Indeed searches across the United States. Each selected
+   role direction creates two source queries, and custom titles can be added
+   without manually building either URL.
+4. **Choose company boards.** Review profile recommendations whose Greenhouse,
+   Ashby, or Lever boards were verified, import the deduplicated broad catalog
+   from public new-grad and internship lists, or add a company name, slug, or
+   board URL manually. The page reports exactly how many companies were added.
+5. **Review the run plan.** Set the unique-job evaluation limit, per-source
+   scan totals, hard filters, call limits, concurrency, and the
+   Quick-to-Detailed threshold. The usage estimate assumes every selected job
+   gets a Quick evaluation and about 30% continue to Detailed review. With a
+   Codex or Claude CLI provider, the optional calibration selects a real Indeed
+   JD from up to 30 results near the sample's average length and measures one
+   Quick plus one Detailed call.
+
+Select **Finish setup** to save the active configuration. Then open **Runs** to
+start the first scan or evaluation when you are ready.
+
+## Workspace settings
+
+After onboarding, open **Settings** in the GUI to manage:
 
 - **Résumé** — select the Markdown or text file used as evaluation evidence.
-- **Models** — use a signed-in Codex or Claude app, or an OpenAI-compatible API endpoint.
-- **Sources** — enable only the feeds you want Jobfeed to scan.
+- **Models** — use a signed-in Codex or Claude app, or an OpenAI-compatible API
+  endpoint.
+- **Sources** — enable feeds, edit search URLs and tracked ATS companies, and
+  set one total job cap per source rather than per search URL.
 - **Filters** — limit locations, companies, and posting age before evaluation.
-- **Budgets** — set daily model-call, cost, and concurrency limits.
+- **Evaluation** — set unique-job, daily model-call, API cost, and concurrency
+  limits. ATS scans keep only titles derived from your confirmed searches
+  before they consume the company-career-page cap.
+
+Saved settings apply without restarting Jobfeed.
 
 The repository includes [`resume.example.md`](resume.example.md) and
 [`preamble_personal.example.md`](preamble_personal.example.md) as optional
 starting points. Your real résumé, local configuration, and SQLite data are
 gitignored.
+
+### Personal job filter
+
+Quick evaluations teach the optional local relevance filter. The first 100
+labels establish the baseline, the next 200 score jobs without filtering, and
+the next 200 validate the candidate threshold on future jobs. Jobfeed keeps all
+jobs visible during this learning and shadow period.
+
+When the filter passes its recall and rejection checks, Jobfeed shows **Your
+personal job filter is ready** with measured evidence. It never turns the
+filter on automatically. After you review and enable it, rejected jobs remain
+recoverable in the Library, a small exploration sample still reaches Quick
+evaluation, and filtering pauses automatically if recent recall drops below
+90%.
 
 ## Everyday use
 
@@ -137,6 +197,7 @@ The GUI is the primary interface. The same runtime also exposes a compact CLI:
 | `jobfeed` | Open the local GUI |
 | `jobfeed scan --source mock` | Run an offline smoke scan |
 | `jobfeed scan` | Scan the enabled sources |
+| `jobfeed enrich-linkedin-guest` | Resume a paced LinkedIn Guest JD-enrichment pass |
 | `jobfeed evaluate` | Evaluate eligible jobs against the configured résumé |
 | `jobfeed digest` | Render the current digest |
 | `jobfeed --help` | List all commands and options |
@@ -144,13 +205,23 @@ The GUI is the primary interface. The same runtime also exposes a compact CLI:
 Use `./bin/jobfeed ...` when you want an explicit repo-local command. Both
 entrypoints use the same configuration and SQLite database.
 
+By default, a scan that includes LinkedIn Guest automatically runs one bounded,
+paced JD-enrichment pass after discovery. The standalone enrichment command is
+for resuming additional or interrupted work.
+
 ## Data and privacy
 
 - Runtime data defaults to `data/jobfeed.sqlite`.
 - GUI settings are written to `config.toml`.
+- Onboarding drafts stay in local `data/onboarding*.json` files, uploaded
+  résumés stay in `data/resumes/`, and provider secrets stay in
+  `data/secrets.toml` with private file permissions and write-only fields in
+  the GUI.
 - Jobfeed binds the GUI to loopback (`127.0.0.1`) by default.
 - Your résumé, config, database, logs, and generated digests are not committed.
-- Network access occurs only for the sources and model backends you enable.
+- Résumé text is sent to the selected provider only after you choose
+  **Analyze résumé**. Network access otherwise occurs only for the sources and
+  model backends you enable.
 
 Back up the SQLite file when you want a portable copy of the workspace.
 
