@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from click.testing import CliRunner
+
+from jobfeed.cli import cli
+from jobfeed.cli.serve import serve
+
 _ROOT = Path(__file__).resolve().parents[2]
 _WRAPPER = _ROOT / "bin" / "jobfeed"
 _POWERSHELL_WRAPPER = _ROOT / "bin" / "jobfeed.ps1"
@@ -21,6 +26,22 @@ def test_normal_wrapper_executes_repo_host_runtime() -> None:
     assert 'setup.sh" --launch-only' not in wrapper
     assert 'exec "$HOST_JOBFEED" "$@"' in wrapper
     assert "docker" not in wrapper.lower()
+
+
+def test_bare_python_cli_runs_foreground_server(monkeypatch) -> None:
+    """The venv console entrypoint behaves like the shell wrapper."""
+    calls: list[tuple[str, int]] = []
+    monkeypatch.setenv("JOBFEED_PORT", "17656")
+    monkeypatch.setattr(
+        serve,
+        "callback",
+        lambda host, port: calls.append((host, port)),
+    )
+
+    result = CliRunner().invoke(cli, [])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("127.0.0.1", 17656)]
 
 
 def test_powershell_wrapper_executes_repo_host_runtime() -> None:

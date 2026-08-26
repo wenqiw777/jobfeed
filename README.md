@@ -197,6 +197,7 @@ The GUI is the primary interface. The same runtime also exposes a compact CLI:
 | Command | Action |
 | --- | --- |
 | `jobfeed` | Run the local GUI in the foreground; `Ctrl+C` stops it |
+| `jobfeed dev` | Run the API and Vite with hot reload; `Ctrl+C` stops both |
 | `jobfeed scan --source mock` | Run an offline smoke scan |
 | `jobfeed scan` | Scan the enabled sources |
 | `jobfeed enrich-linkedin-guest` | Resume a paced LinkedIn Guest JD-enrichment pass |
@@ -249,7 +250,7 @@ For frontend development with hot reload:
 
 ```sh
 pnpm --dir web-ui install --frozen-lockfile
-make dev
+jobfeed dev
 ```
 
 This keeps the API and Vite dev server in one foreground session. Press

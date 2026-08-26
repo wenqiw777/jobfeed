@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import NotRequired, TypedDict, TypeVar, cast
@@ -161,7 +162,12 @@ async def run_with_store(
         raise click.ClickException(str(exc)) from exc
 
 
-@click.group(name="jobfeed", help="Run Jobfeed command-line workflows.")
+@click.group(
+    name="jobfeed",
+    help="Run Jobfeed command-line workflows.",
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
 @click.option(
     "--config",
     "config_path",
@@ -194,6 +200,30 @@ def cli(ctx: click.Context, config_path: Path | None, verbose: bool) -> None:
         _enable_verbose_logging(app)
     app["verbose"] = verbose
     ctx.obj = app
+    if ctx.invoked_subcommand is None:
+        # Keep the installed Python entrypoint consistent with bin/jobfeed.
+        ctx.invoke(serve, port=_default_serve_port(DEFAULT_PORT))
+
+
+def _default_serve_port(default: int) -> int:
+    """Read the wrapper-compatible port override for a bare invocation.
+
+    Args:
+        default: Port used when ``JOBFEED_PORT`` is unset.
+
+    Returns:
+        The selected foreground server port.
+
+    Raises:
+        click.ClickException: If ``JOBFEED_PORT`` is not an integer.
+    """
+    raw_port = os.environ.get("JOBFEED_PORT")
+    if raw_port is None:
+        return default
+    try:
+        return int(raw_port)
+    except ValueError as exc:
+        raise click.ClickException("JOBFEED_PORT must be an integer") from exc
 
 
 def _enable_verbose_logging(app: AppContext) -> None:
@@ -235,6 +265,7 @@ def _create_store(settings: Settings) -> SQLiteStore:
 from jobfeed.cli.apply import apply_cmd, apply_history  # noqa: E402
 from jobfeed.cli.bootstrap import bootstrap_companies  # noqa: E402
 from jobfeed.cli.companies import companies  # noqa: E402
+from jobfeed.cli.dev import dev  # noqa: E402
 from jobfeed.cli.digest import digest  # noqa: E402
 from jobfeed.cli.enrich import enrich_linkedin_guest, enrich_paste  # noqa: E402
 from jobfeed.cli.evaluate import evaluate  # noqa: E402
@@ -243,12 +274,13 @@ from jobfeed.cli.login import login  # noqa: E402
 from jobfeed.cli.maintenance import mark_stale_closed  # noqa: E402
 from jobfeed.cli.ml_gate import ml_gate  # noqa: E402
 from jobfeed.cli.scan import scan  # noqa: E402
-from jobfeed.cli.serve import serve  # noqa: E402
+from jobfeed.cli.serve import DEFAULT_PORT, serve  # noqa: E402
 from jobfeed.cli.snapshots import snapshots  # noqa: E402
 from jobfeed.cli.status import archive, followup, mark, note  # noqa: E402
 from jobfeed.cli.status_query import list_cmd, stats  # noqa: E402
 
 cli.add_command(scan)
+cli.add_command(dev)
 cli.add_command(evaluate)
 cli.add_command(digest)
 cli.add_command(login)

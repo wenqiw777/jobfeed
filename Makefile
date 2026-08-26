@@ -2,7 +2,7 @@
 
 # Run the API and Vite in one foreground session. Ctrl-C stops both.
 dev:
-	PATH="$(CURDIR)/.venv/bin:$$PATH" python3 scripts/dev.py
+	PATH="$(CURDIR)/.venv/bin:$$PATH" jobfeed dev
 
 test:
 	pytest

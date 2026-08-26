@@ -11,7 +11,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // The FastAPI shell (jobfeed serve) owns /api; loopback only per D2.
-      "/api": "http://127.0.0.1:7654",
+      "/api": `http://127.0.0.1:${process.env.JOBFEED_DEV_API_PORT ?? "7654"}`,
     },
   },
   build: {
