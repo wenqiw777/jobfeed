@@ -17,12 +17,9 @@ Run it with ``pytest -m mlmodel``. It is excluded from the default ``addopts``
 download from Hugging Face.
 
 The expected decisions below were obtained by RUNNING this exact gate over
-these jobs; they are deterministic for the committed model. fastembed's ONNX
-embeddings are byte-identical (float32) to the previous sentence-transformers
-backend, so the decisions are unchanged. Hard-fail rows short-circuit to
-``score == 0.0`` with the rule reason; model-pass rows score well above the
-0.19 threshold (~0.88 to 0.98), so they are confident passes rather than
-borderline calls.
+these jobs. Clear non-SDE rows short-circuit to ``score == 0.0`` with a rule
+reason. Experience and clearance postings receive normal model scores; the
+evaluation service makes those scores nonblocking for admission.
 """
 
 from __future__ import annotations
@@ -48,38 +45,8 @@ _SWE_JD = (
 )
 
 
-# Each case: (job, expected_result, expected_fail_reason). A reason of ``None``
-# marks a model-driven decision (assert the verdict + a valid [0, 1] score);
-# a non-``None`` reason marks a deterministic hard-fail (assert exact reason +
-# score == 0.0). All decisions were confirmed against the committed model.
+# Each case is a clear non-SDE role that must short-circuit before embedding.
 _HARD_FAIL_CASES: list[tuple[GateInput, str]] = [
-    # 5+ years experience => yoe_min >= 3 hard-fail rule (fires before model).
-    (
-        GateInput(
-            job_id="hardfail-yoe",
-            title="Software Engineer",
-            jd_text=(
-                "We need a Software Engineer with 5+ years of experience "
-                "building backend systems in Python, Java, SQL, Docker, "
-                "Kubernetes, REST APIs, microservices, git and CI/CD."
-            ),
-        ),
-        "yoe_min >= 5",
-    ),
-    # Active TS/SCI clearance => active-clearance hard-fail rule.
-    (
-        GateInput(
-            job_id="hardfail-clearance",
-            title="Software Engineer",
-            jd_text=(
-                "Backend Software Engineer role. Must hold an active TS/SCI "
-                "security clearance. You will write code in Python and Java, "
-                "build REST APIs, use Docker, Kubernetes, SQL, git, "
-                "microservices and CI/CD."
-            ),
-        ),
-        "active clearance required",
-    ),
     # Clearly non-SWE role (marketing) => not-software-engineering hard-fail.
     (
         GateInput(
@@ -105,6 +72,27 @@ _HARD_FAIL_CASES: list[tuple[GateInput, str]] = [
             ),
         ),
         "not software engineering role",
+    ),
+]
+
+_NONBLOCKING_POLICY_CASES: list[GateInput] = [
+    GateInput(
+        job_id="policy-yoe",
+        title="Software Engineer",
+        jd_text=(
+            "We need a Software Engineer with 5+ years of experience building "
+            "backend systems in Python, Java, SQL, Docker, Kubernetes, REST "
+            "APIs, microservices, git and CI/CD."
+        ),
+    ),
+    GateInput(
+        job_id="policy-clearance",
+        title="Backend Software Engineer",
+        jd_text=(
+            "Must hold an active TS/SCI security clearance. You will write code "
+            "in Python and Java, build REST APIs, use Docker, Kubernetes, SQL, "
+            "git, microservices and CI/CD."
+        ),
     ),
 ]
 
@@ -160,19 +148,20 @@ def gate() -> XGBoostGate:
 
 @pytest.mark.asyncio
 async def test_ml_gate_e2e_decisions(gate: XGBoostGate) -> None:
-    """Run the full real gate over should-pass / should-block jobs in one batch.
+    """Run the full gate over clear blocks and nonblocking SDE metadata.
 
-    Validates the whole chain end-to-end on the committed artifact: every
-    deterministic hard-fail returns its exact rule reason with ``score == 0.0``,
-    and every clear SWE role passes the model with an in-range probability.
+    Validates the whole chain end-to-end: every deterministic hard-fail returns
+    its exact rule reason with ``score == 0.0``; YoE/clearance roles are model
+    scored rather than short-circuited; clear SWE roles pass the model.
     """
     hard_fail_jobs = [job for job, _ in _HARD_FAIL_CASES]
     expected_reasons = {job.job_id: reason for job, reason in _HARD_FAIL_CASES}
+    policy_ids = {job.job_id for job in _NONBLOCKING_POLICY_CASES}
     pass_ids = {job.job_id for job in _MODEL_PASS_CASES}
 
     # One mixed batch exercises the hard-fail short-circuit + model survivors
     # together and proves results stay aligned to input order.
-    jobs = hard_fail_jobs + _MODEL_PASS_CASES
+    jobs = hard_fail_jobs + _NONBLOCKING_POLICY_CASES + _MODEL_PASS_CASES
     results = await gate.predict_batch(jobs)
 
     assert len(results) == len(jobs)
@@ -183,6 +172,13 @@ async def test_ml_gate_e2e_decisions(gate: XGBoostGate) -> None:
         assert result.result == "fail", f"{job_id} should hard-fail"
         assert result.fail_reason == expected_reason, job_id
         assert result.score == pytest.approx(0.0), job_id
+        assert result.version == "v20260601T170453Z"
+
+    for job_id in policy_ids:
+        result = by_id[job_id]
+        assert result.fail_reason is None, job_id
+        assert result.is_swe_role is True, job_id
+        assert 0.0 <= result.score <= 1.0, job_id
         assert result.version == "v20260601T170453Z"
 
     for job_id in pass_ids:

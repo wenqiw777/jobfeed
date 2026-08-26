@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Literal
 
 from jobfeed.domain.models import JobPosting, MLGateResult, PipelineRun
@@ -18,6 +19,7 @@ from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntim
 
 GateMode = Literal["off", "shadow", "filter"]
 _EXPLORATION_BUCKETS = 10
+_EXPLICIT_NON_SDE_REASON = "not software engineering role"
 
 
 async def gate_representatives(  # noqa: PLR0913 - live progress is an optional observer
@@ -162,6 +164,7 @@ async def _score_in_shadow(  # noqa: PLR0913 - persistence uses shared gate cont
             for job in to_score
         ]
     )
+    results = [_as_local_filter_result(result) for result in results]
 
     def _persisted() -> None:
         run.ml_gate_processed += 1
@@ -188,10 +191,12 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
     max_concurrent: int = 4,
     on_persisted: Callable[[], None] | None = None,
 ) -> list[JobPosting]:
-    """Score NULL-gate reps, persist results, and return the 'pass' subset.
+    """Score NULL-gate reps and return every role except explicit non-SDE jobs.
 
-    Increments ``run.jobs_ml_gated`` by the non-pass count; persists every fresh
-    result (no-op in dry-run).
+    Model scores, years of experience, and clearance are retained on the stored
+    result but cannot block Quick evaluation. Only a deterministic
+    ``not software engineering role`` failure remains a local-filter exclusion.
+    Ten percent of those clear non-SDE failures are explored for recall labels.
 
     Args:
         deps: Evaluate dependencies holding the store.
@@ -203,7 +208,7 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
         on_persisted: Optional callback after each successful result write.
 
     Returns:
-        Job postings that passed the gate.
+        Job postings that can proceed to Quick evaluation.
     """
     if not to_gate:
         return []
@@ -214,7 +219,8 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
     # The port is honored as-is: keeping the main loop responsive during
     # CPU-bound inference is the adapter's job (XGBoostGate offloads to a
     # worker thread internally), so an async gate implementation stays legal.
-    results = await gate.predict_batch(inputs)
+    raw_results = await gate.predict_batch(inputs)
+    results = [_as_local_filter_result(result) for result in raw_results]
     await _persist_gate_results(
         deps,
         to_gate,
@@ -226,10 +232,10 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
     explored = {
         _job_id(job)
         for job, result in zip(to_gate, results, strict=True)
-        if result.result != "pass" and _is_exploration(job)
+        if _is_explicit_non_sde_failure(result) and _is_exploration(job)
     }
     run.jobs_ml_gated += sum(
-        result.result != "pass" and _job_id(job) not in explored
+        _is_explicit_non_sde_failure(result) and _job_id(job) not in explored
         for job, result in zip(to_gate, results, strict=True)
     )
     return [
@@ -240,9 +246,27 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
 
 
 def _is_exploration(job: JobPosting) -> bool:
-    """Select a stable 10% of model failures for continued Quick labels."""
+    """Select a stable 10% of explicit non-SDE failures for Quick labels."""
     job_id = _job_id(job)
     return job_id.isdigit() and int(job_id) % _EXPLORATION_BUCKETS == 0
+
+
+def _as_local_filter_result(result: MLGateResult) -> MLGateResult:
+    """Keep score/features but turn non-SDE-irrelevant failures into passes.
+
+    The adapter continues to report its raw model verdict for observability.
+    At the evaluation boundary, however, a low model score is a nonblocking
+    signal. This prevents a model threshold, clearance-like legacy verdict, or
+    other non-SDE reason from creating a persisted exclusion on future runs.
+    """
+    if result.result == "pass" or _is_explicit_non_sde_failure(result):
+        return result
+    return replace(result, result="pass", fail_reason=None)
+
+
+def _is_explicit_non_sde_failure(result: MLGateResult) -> bool:
+    """Return whether a gate result is the sole local-filter exclusion type."""
+    return result.result == "fail" and result.fail_reason == _EXPLICIT_NON_SDE_REASON
 
 
 async def _persist_gate_results(  # noqa: PLR0913 - bounded persistence needs its observer

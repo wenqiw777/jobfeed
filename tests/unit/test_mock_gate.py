@@ -13,7 +13,7 @@ from jobfeed.ports.ml_gate import GateInput, MLGate
 CLEAN_TITLE = "Software Engineer"
 CLEAN_JD = "Entry-level role. Write code in Python. Join us."
 
-# A senior posting whose JD demands 5+ YoE -> hard fail regardless of config.
+# A senior posting whose JD demands 5+ YoE -> metadata, not a hard failure.
 SENIOR_TITLE = "Software Engineer"
 SENIOR_JD = "We require 5+ years of experience writing code."
 
@@ -21,7 +21,7 @@ SENIOR_JD = "We require 5+ years of experience writing code."
 NON_SWE_TITLE = "Sales Manager"
 NON_SWE_JD = "Sell products to clients."
 
-# An active-clearance posting -> hard fail regardless of config.
+# An active-clearance posting -> metadata, not a hard failure.
 CLEARANCE_TITLE = "Software Engineer"
 CLEARANCE_JD = "Must hold an active TS/SCI clearance. Write code."
 
@@ -97,16 +97,16 @@ async def test_default_result_override_to_fail_is_honored() -> None:
     assert result.score == FAIL_SCORE
 
 
-async def test_hard_fail_yoe_overrides_default_pass() -> None:
-    """A yoe>=2 posting always hard-fails with the exact reason."""
+async def test_yoe_does_not_override_default_pass() -> None:
+    """A software role with high YoE stays eligible for Quick evaluation."""
     results = await MockGate(default_result="pass").predict_batch(
         [GateInput(job_id="s", title=SENIOR_TITLE, jd_text=SENIOR_JD)],
     )
 
     result = results[0]
-    assert result.result == "fail"
-    assert result.fail_reason == "yoe_min >= 5"
-    assert result.score == FAIL_SCORE
+    assert result.result == "pass"
+    assert result.fail_reason is None
+    assert result.score == PASS_SCORE
     assert result.yoe_min == SENIOR_YOE_MIN
 
 
@@ -122,15 +122,15 @@ async def test_hard_fail_non_swe_overrides_default_pass() -> None:
     assert result.is_swe_role is False
 
 
-async def test_hard_fail_active_clearance_overrides_default_pass() -> None:
-    """An active-clearance posting always hard-fails regardless of config."""
+async def test_clearance_does_not_override_default_pass() -> None:
+    """Clearance is recorded but does not block a software role from Quick."""
     results = await MockGate(default_result="pass").predict_batch(
         [GateInput(job_id="cl", title=CLEARANCE_TITLE, jd_text=CLEARANCE_JD)],
     )
 
     result = results[0]
-    assert result.result == "fail"
-    assert result.fail_reason == "active clearance required"
+    assert result.result == "pass"
+    assert result.fail_reason is None
 
 
 async def test_fail_if_predicate_is_honored_when_no_hard_fail() -> None:

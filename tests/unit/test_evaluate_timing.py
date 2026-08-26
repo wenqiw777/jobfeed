@@ -37,6 +37,7 @@ CLEAN_JD = (
     "contributing to reliable, well-tested services in production from day one."
 )
 RUN_AT = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+SPLIT_GATE_FAIL_SCORE = 0.1
 
 
 # ---------------------------------------------------------------------------
@@ -409,8 +410,8 @@ async def test_gate_result_persistence_is_bounded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gate_representatives_counts_gate_survivors() -> None:
-    """jobs_gate_passed counts already-pass reps plus newly passed ones.
+async def test_gate_representatives_keeps_model_failures_nonblocking() -> None:
+    """Low model scores are persisted for learning but still reach Quick.
 
     The scored counters cannot stand in for this: Stage A limit/budget cap
     them below the survivor count, which is exactly what the funnel's
@@ -419,8 +420,8 @@ async def test_gate_representatives_counts_gate_survivors() -> None:
     jobs = [_job("a"), _job("b"), _job("c")]
     reps = [
         GateCandidate(job=jobs[0], ml_gate_result="pass"),  # prior-run pass
-        GateCandidate(job=jobs[1], ml_gate_result=None),  # will pass
-        GateCandidate(job=jobs[2], ml_gate_result=None),  # will fail
+        GateCandidate(job=jobs[1], ml_gate_result=None),  # model pass
+        GateCandidate(job=jobs[2], ml_gate_result=None),  # model fail
     ]
     gate = _SplitGate(pass_ids={jobs[1].id or ""})
     store = FakeStore(jobs)
@@ -431,9 +432,12 @@ async def test_gate_representatives_counts_gate_survivors() -> None:
         deps, _config(ml_gate_enabled=True), run, reps, dry_run=False
     )
 
-    assert {j.id for j in survivors} == {jobs[0].id, jobs[1].id}
-    assert run.jobs_gate_passed == 2  # noqa: PLR2004 - already-pass + newly-passed
-    assert run.jobs_ml_gated == 1  # the gate-failed rep
+    assert {j.id for j in survivors} == {jobs[0].id, jobs[1].id, jobs[2].id}
+    assert run.jobs_gate_passed == 3  # noqa: PLR2004 - all candidates reach Quick
+    assert run.jobs_ml_gated == 0
+    persisted = dict(store.gate_results)
+    assert persisted[jobs[2].id or ""].result == "pass"
+    assert persisted[jobs[2].id or ""].score == SPLIT_GATE_FAIL_SCORE
 
 
 @pytest.mark.asyncio

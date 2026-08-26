@@ -1,11 +1,14 @@
-"""Pure rule-based ML-gate feature extraction + deterministic hard-fail rules.
+"""Pure rule-based ML-gate feature extraction + local-filter admission rules.
 
-A numpy-free port of the legacy ``jobfeed.ml_gate`` extractor / rules / vocab.
-``extract_features`` mirrors the legacy ``extractor.extract`` field-for-field;
-``hard_fail_reason`` mirrors ``rules.hard_fail_from_extracted`` (exact reason
-strings, legacy order, keyed on ``clearance_status``). The ordered vocab /
-layout constants here are the single source of truth for the later numpy
-vectorizer and the gate boundary; ``clearance_required`` /
+The structured extractor and ordered vector layout remain compatible with the
+legacy model. The local-filter policy is deliberately higher recall:
+``hard_fail_reason`` rejects only a title/JD combination that is clearly
+non-software. Years of experience and clearance remain extracted signals, not
+eligibility requirements. ``is_swe_role`` therefore means "plausibly software
+engineering" rather than a strict occupational taxonomy.
+
+The ordered vocab / layout constants here are the single source of truth for the
+later numpy vectorizer and gate boundary; ``clearance_required`` /
 ``school_restricted`` stay ``int`` 0/1 to match legacy, while ``is_swe_role``
 is surfaced as ``bool`` (int->bool happens here, at the dataclass boundary).
 
@@ -31,7 +34,6 @@ _VB = re.IGNORECASE | re.VERBOSE
 _MAX_CANDIDATE_YOE = 20
 _SENIOR_YOE = 5
 _MID_YOE = 2
-_HARD_FAIL_YOE = 3
 _SWE_JD_SAMPLE_CHARS = 3000
 _SWE_JD_MIN_SIGNALS = 3
 
@@ -501,12 +503,18 @@ def _yoe_min(jd_text: str) -> int | None:
 
 
 def _is_swe_role(title: str, jd_text: str) -> bool:
+    """Return a high-recall answer to whether a posting is plausibly SDE.
+
+    Only an explicit non-SDE title with no meaningful software evidence returns
+    False. Ambiguous, adjacent, and unfamiliar engineering titles must continue
+    to Quick evaluation, where their fit is assessed by the paid evaluator.
+    """
     title_lower = title.lower()
     if _SWE_TITLE_STRONG.search(title_lower):
         return True
-    if _SWE_TITLE_NEG.search(title_lower):
-        return False
     if _SWE_TITLE_POS.search(title_lower):
+        return True
+    if not _SWE_TITLE_NEG.search(title_lower):
         return True
     sample = jd_text[:_SWE_JD_SAMPLE_CHARS]
     return len(_SWE_JD_SIGNALS.findall(sample)) >= _SWE_JD_MIN_SIGNALS
@@ -520,9 +528,9 @@ def _is_swe_role(title: str, jd_text: str) -> bool:
 def extract_features(title: str, jd_text: str) -> MLGateFeatures:
     """Extract structured rule-based features from a title and JD body.
 
-    Faithful port of the legacy ``extractor.extract``: seniority falls back
-    from title to YoE-derived JD signal to ``"unknown"``; ``is_swe_role`` is
-    the boolean form of the legacy 0/1 verdict.
+    Seniority falls back from title to YoE-derived JD signal to ``"unknown"``.
+    ``is_swe_role`` is intentionally high recall because it controls whether a
+    posting can reach paid Quick evaluation.
 
     Args:
         title: Job title (e.g. "Senior Software Engineer").
@@ -548,10 +556,9 @@ def extract_features(title: str, jd_text: str) -> MLGateFeatures:
 def hard_fail_reason(features: MLGateFeatures) -> str | None:
     """Return a deterministic hard-fail reason, or ``None`` when the role passes.
 
-    Faithful port of legacy ``rules.hard_fail_from_extracted`` with the exact
-    reason strings and order: a ``yoe_min`` at/above 3 fails first, then an
-    active/ambiguous clearance (keyed on ``clearance_status``), then a
-    non-software role. Hard requirements deliberately bypass any model score.
+    The local filter exists solely to avoid spending Quick evaluations on roles
+    that are clearly not software engineering. Experience and clearance are
+    useful signals for later review, but are not grounds to suppress a job.
 
     Args:
         features: Extracted structured features for the posting.
@@ -559,11 +566,6 @@ def hard_fail_reason(features: MLGateFeatures) -> str | None:
     Returns:
         The first violated rule's reason string, or ``None`` when none fire.
     """
-    yoe = features.yoe_min
-    if yoe is not None and int(yoe) >= _HARD_FAIL_YOE:
-        return f"yoe_min >= {int(yoe)}"
-    if features.clearance_status in ("active_required", "ambiguous"):
-        return "active clearance required"
     if not features.is_swe_role:
         return "not software engineering role"
     return None

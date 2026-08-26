@@ -526,6 +526,32 @@ async def test_gate_failed_reps_persisted_and_excluded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_failure_is_persisted_as_pass_and_reaches_quick() -> None:
+    """A low model score remains visible but cannot exclude a software role."""
+    candidate = _job("low-score", title="Software Engineer", company="ModelCo")
+    store = FakeStore([candidate])
+    deps = _deps(store, gate=MockGate(default_result="fail"), filters=None)
+    run = _run()
+
+    survivors = await run_funnel(
+        deps,
+        _config(ml_gate_enabled=True),
+        run,
+        "unrated",
+        None,
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+        dry_run=False,
+    )
+
+    assert survivors == ["low-score"]
+    persisted = store.gate_results[0][1]
+    assert persisted.result == "pass"
+    assert persisted.fail_reason is None
+    assert persisted.score == 0.0
+    assert run.jobs_ml_gated == 0
+
+
+@pytest.mark.asyncio
 async def test_active_gate_explores_ten_percent_of_failures_for_future_recall() -> None:
     """A deterministic 10% failure sample still receives its Quick teacher label."""
     exploration = _job(
@@ -691,6 +717,40 @@ async def test_ranking_phase_scores_in_shadow_without_filtering() -> None:
     assert set(survivors) == {"pass", "fail"}
     assert {job_id for job_id, _result in store.gate_results} == {"pass", "fail"}
     assert run.jobs_ml_gated == 0
+
+
+@pytest.mark.asyncio
+async def test_shadow_mode_persists_model_failures_as_nonblocking_passes() -> None:
+    """Shadow learning stores the score without creating a future exclusion."""
+    passing = _job("pass", company="PassCo")
+    model_failed = _job(
+        "model-fail",
+        title="Software Engineer Intern",
+        company="ModelCo",
+    )
+    store = FakeStore([passing, model_failed])
+    deps = _deps(
+        store,
+        gate=MockGate(fail_if=lambda features: features.role_type == "intern"),
+        filters=None,
+        personal_ml=StubPersonalML("ranking"),
+    )
+    run = _run()
+
+    survivors = await run_funnel(
+        deps,
+        _config(ml_gate_enabled=False),
+        run,
+        "unrated",
+        None,
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+        dry_run=False,
+    )
+
+    assert set(survivors) == {"pass", "model-fail"}
+    persisted = dict(store.gate_results)
+    assert persisted["model-fail"].result == "pass"
+    assert persisted["model-fail"].score == 0.0
 
 
 @pytest.mark.asyncio

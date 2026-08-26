@@ -1,11 +1,9 @@
-"""Parity battery for the pure ML-gate feature extractor + hard-fail rules.
+"""Regression battery for ML-gate feature extraction and local-filter policy.
 
-Each case pins the EXACT field-for-field output of the legacy
-``jobfeed.ml_gate.extractor.extract`` / ``rules.hard_fail_from_extracted``
-(captured by running the legacy code), so this module is a faithful,
-numpy-free port. ``is_swe_role`` is exposed as ``bool`` here while the
-legacy returns ``int`` 0/1; ``clearance_required``/``school_restricted``
-stay ``int`` 0/1 to match legacy.
+The structured extractor remains compatible with the legacy feature layout.
+The admission policy intentionally differs: the local filter has high recall
+and only hard-rejects clear non-software roles. Experience, clearance, and
+model score remain recorded signals rather than eligibility decisions.
 """
 
 from __future__ import annotations
@@ -107,7 +105,7 @@ def test_role_type_recognizes_new_grad_recruiting_labels() -> None:
     )
 
 
-# (title, jd, expected_features, expected_hard_fail)
+# (title, jd, expected_features, expected_local_filter_rejection)
 PARITY_CASES: list[tuple[str, str, dict[str, object], str | None]] = [
     # --- seniority from title ---
     (
@@ -145,13 +143,13 @@ PARITY_CASES: list[tuple[str, str, dict[str, object], str | None]] = [
         "Software Engineer",
         "We require 5+ years of experience writing code.",
         _feat(seniority_level="senior", yoe_min=5),
-        "yoe_min >= 5",
+        None,
     ),
     (
         "Software Engineer",
         "Minimum 3 years of professional experience.",
         _feat(seniority_level="mid", yoe_min=3),
-        "yoe_min >= 3",
+        None,
     ),
     (
         "Software Engineer",
@@ -189,7 +187,7 @@ PARITY_CASES: list[tuple[str, str, dict[str, object], str | None]] = [
         "Software Engineer",
         "Must hold an active TS/SCI clearance. Write code.",
         _feat(clearance_required=1, clearance_status="active_required"),
-        "active clearance required",
+        None,
     ),
     (
         "Software Engineer",
@@ -209,7 +207,7 @@ PARITY_CASES: list[tuple[str, str, dict[str, object], str | None]] = [
             clearance_status="ambiguous",
             domain_tags=["security"],
         ),
-        "active clearance required",
+        None,
     ),
     # --- school restricted ---
     (
@@ -223,19 +221,19 @@ PARITY_CASES: list[tuple[str, str, dict[str, object], str | None]] = [
         "Software Engineer",
         "3+ years of experience required. Write code.",
         _feat(seniority_level="mid", yoe_min=3),
-        "yoe_min >= 3",
+        None,
     ),
     (
         "Software Engineer",
         "3-5 years experience. Write code.",
         _feat(seniority_level="mid", yoe_min=3),
-        "yoe_min >= 3",
+        None,
     ),
     (
         "Software Engineer",
         "At least 7 years writing code.",
         _feat(seniority_level="senior", yoe_min=7),
-        "yoe_min >= 7",
+        None,
     ),
     (
         "Software Engineer",
@@ -306,14 +304,14 @@ PARITY_CASES: list[tuple[str, str, dict[str, object], str | None]] = [
     (
         "Specialist",
         "We write code using Python.",
-        _feat(is_swe_role=False, tech_required=["python"]),
-        "not software engineering role",
+        _feat(is_swe_role=True, tech_required=["python"]),
+        None,
     ),
     (
         "Tech Lead",
         "Lead the backend team writing code.",
-        _feat(seniority_level="lead", is_swe_role=False),
-        "not software engineering role",
+        _feat(seniority_level="lead", is_swe_role=True),
+        None,
     ),
     # --- clean entry-level SWE: no hard fail ---
     (
@@ -411,15 +409,15 @@ def _as_dict(features: MLGateFeatures) -> dict[str, object]:
     }
 
 
-def test_extract_features_matches_legacy_battery() -> None:
-    """Extraction reproduces legacy output field-for-field across the battery."""
+def test_extract_features_matches_policy_battery() -> None:
+    """Extraction preserves the tested feature fields for the current policy."""
     for title, jd, expected, _ in PARITY_CASES:
         got = _as_dict(extract_features(title, jd))
         assert got == expected, f"mismatch for {title!r} / {jd!r}: {got}"
 
 
-def test_hard_fail_reason_matches_legacy_battery() -> None:
-    """Hard-fail reasons match legacy exact strings and ordering."""
+def test_hard_fail_reason_matches_local_filter_policy() -> None:
+    """Only clear non-SDE postings receive a hard local-filter rejection."""
     for title, jd, _, expected_fail in PARITY_CASES:
         features = extract_features(title, jd)
         assert hard_fail_reason(features) == expected_fail, (
@@ -453,19 +451,25 @@ def test_clean_entry_level_swe_has_no_hard_fail() -> None:
     assert hard_fail_reason(features) is None
 
 
-def test_hard_fail_keys_on_clearance_status_not_required() -> None:
-    """An obtainable clearance sets clearance_required=1 but does not fail."""
-    features = extract_features(
-        "Software Engineer",
-        "Clearance required; must be able to obtain a security clearance. Write code.",
-    )
-    assert features.clearance_required == 1
-    assert features.clearance_status == "obtainable"
-    assert hard_fail_reason(features) is None
+def test_hard_fail_ignores_clearance_status() -> None:
+    """Clearance stays recorded but never blocks a software role from Quick."""
+    for jd, expected_status in (
+        ("Must hold an active TS/SCI clearance. Write code.", "active_required"),
+        ("Security clearance required. Write code.", "ambiguous"),
+        (
+            "Clearance required; must be able to obtain a security clearance. "
+            "Write code.",
+            "obtainable",
+        ),
+    ):
+        features = extract_features("Software Engineer", jd)
+        assert features.clearance_required == 1
+        assert features.clearance_status == expected_status
+        assert hard_fail_reason(features) is None
 
 
-def test_hard_fail_yoe_threshold_is_three() -> None:
-    """yoe_min == 3 trips the hard fail; yoe_min == 2 does not."""
+def test_hard_fail_ignores_years_of_experience() -> None:
+    """Experience requirements remain metadata, not a local-filter rejection."""
     three = MLGateFeatures(
         seniority_level="mid",
         degree_required="none",
@@ -490,8 +494,46 @@ def test_hard_fail_yoe_threshold_is_three() -> None:
         yoe_min=2,
         is_swe_role=True,
     )
-    assert hard_fail_reason(three) == "yoe_min >= 3"
+    assert hard_fail_reason(three) is None
     assert hard_fail_reason(two) is None
+
+
+def test_sde_adjacent_and_ambiguous_titles_reach_quick() -> None:
+    """Known false negatives and ambiguous engineering titles must not be blocked."""
+    cases = (
+        ("Junior Developer - AI Operations", "Support an AI platform."),
+        ("Applied AI Intern", "Help the applied research team."),
+        ("Software Engineer, New Grad", "New graduate position."),
+        ("Software Engineer, Platform", "Build a reliable platform."),
+        ("2027 Undergrad Firmware Engineering Intern/Co-op", "Summer placement."),
+        (
+            "Computer Science/Engineering Intern - Computer Vision Applications",
+            "Internship program.",
+        ),
+        ("AI-First Engineering Intern", "Internship program."),
+        ("Member of Technical Staff (New Grad)", "Early-career opportunity."),
+        ("Technology Program Intern", "Internship opportunity."),
+    )
+
+    for title, jd in cases:
+        features = extract_features(title, jd)
+        assert features.is_swe_role is True, title
+        assert hard_fail_reason(features) is None, title
+
+
+def test_clear_non_sde_titles_remain_rejected() -> None:
+    """The high-recall rule still removes postings that are plainly non-SDE."""
+    cases = (
+        ("Sales Manager", "Sell products and close enterprise deals."),
+        ("Marketing Manager", "Lead campaigns and brand strategy."),
+        ("Mechanical Design Engineer", "Design manufacturing assemblies in CAD."),
+        ("Registered Nurse", "Provide patient care in a hospital."),
+    )
+
+    for title, jd in cases:
+        features = extract_features(title, jd)
+        assert features.is_swe_role is False, title
+        assert hard_fail_reason(features) == "not software engineering role", title
 
 
 def test_vocab_counts_and_structured_dim() -> None:

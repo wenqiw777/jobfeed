@@ -8,10 +8,10 @@ and ``MockLLM``. It asserts the funnel's load-bearing behaviors:
 
 * representative-only scoring — twin non-reps are never gated or scored;
 * counters — ``jobs_filtered`` (hard-filter drops), ``jobs_ml_gated``
-  (gate non-pass), ``jobs_scored`` (Stage A + Stage B call-count);
+  (clear non-SDE exclusions), ``jobs_scored`` (Stage A + Stage B call-count);
 * gate persistence — ``save_ml_gate_result`` runs for every gated rep;
-* handoff isolation — hard-failed / gate-failed / never-gated / non-rep rows are
-  never claimed, never Stage-A-scored, and never left ``in_progress``;
+* handoff isolation — clear non-SDE / never-gated / non-rep rows are never
+  claimed, never Stage-A-scored, and never left ``in_progress``;
 * crash recovery (Decision 8) — a ``'pass'``-but-unscored row from an
   interrupted run is scored on the next run WITHOUT being re-gated (even if the
   gate would now fail it), and a row stranded ``'in_progress'`` past the claim
@@ -145,13 +145,15 @@ CORPUS = [
 ]
 
 EXPECTED_FILTERED = 1  # HARD_FILTER_JOB (company blocklist).
-EXPECTED_ML_GATED = 2  # HARD_FAIL_JOB (real rule) + GATE_FAIL_JOB (fail_if).
-EXPECTED_SCORED_REPS = 2  # TWIN_REP + PASS_JOB.
+EXPECTED_ML_GATED = 1  # HARD_FAIL_JOB is the sole local-filter exclusion.
+EXPECTED_SCORED_REPS = 3  # TWIN_REP + model-low GATE_FAIL_JOB + PASS_JOB.
 EXPECTED_JOBS_SCORED = EXPECTED_SCORED_REPS * 2  # Stage A + Stage B call-count.
+EXPECTED_SINGLETON_SCORED_REPS = 2  # PASS_JOB + nonblocking GATE_FAIL_JOB.
+EXPECTED_TWIN_AND_SINGLETON_SCORED_REPS = 2  # One twin rep + PASS_JOB.
 
 
 def _gamedev_fail(features: MLGateFeatures) -> bool:
-    """Model-style fail predicate: fail any gamedev-tagged (non-hard-fail) job."""
+    """Produce a model-style low verdict to prove it remains nonblocking."""
     return "gamedev" in features.domain_tags
 
 
@@ -390,7 +392,7 @@ async def _strand_in_progress(
 async def test_phase5_funnel_scopes_scoring_to_passing_representatives(
     store: PostgresStore,
 ) -> None:
-    """The funnel scores only passing reps; counters + isolation hold."""
+    """The funnel scores every SDE/ambiguous rep; counters + isolation hold."""
     ids = await _seed(store, CORPUS)
 
     run = await _service(store).run(stage="both")
@@ -427,10 +429,12 @@ async def test_phase5_funnel_scopes_scoring_to_passing_representatives(
     assert hard_fail["ml_gate_fail_reason"] == "not software engineering role"
     assert hard_fail["stage_a_status"] is None
 
-    # Gate-fail rep: model-style 'fail' (NULL reason); persisted; not scored.
-    assert gate_fail["ml_gate_result"] == "fail"
+    # Model-low rep: score is retained but the persisted admission verdict is
+    # 'pass', so it reaches both paid stages.
+    assert gate_fail["ml_gate_result"] == "pass"
     assert gate_fail["ml_gate_fail_reason"] is None
-    assert gate_fail["stage_a_status"] is None
+    assert gate_fail["stage_a_status"] == "completed"
+    assert gate_fail["stage_b_status"] == "completed"
 
     # Hard-filter-blocked: dropped before the gate — no decision, not scored.
     assert blocked["ml_gate_result"] is None
@@ -479,7 +483,7 @@ async def test_phase5_exhausted_budget_skips_funnel_and_gate(
 async def test_phase5_dropped_rows_are_not_left_in_progress(
     store: PostgresStore,
 ) -> None:
-    """No hard-failed / gate-failed / filtered / non-rep row ends in_progress."""
+    """No clear-non-SDE / filtered / non-rep row ends in_progress."""
     await _seed(store, CORPUS)
 
     await _service(store).run(stage="both")
@@ -504,8 +508,8 @@ async def test_phase5_gate_decisions_persisted_for_every_gated_rep(
         "SELECT canonical_id FROM jobs WHERE ml_gate_result IS NOT NULL "
         "ORDER BY canonical_id"
     )
-    # twin-gh (pass), gatefail (fail), hardfail (fail), pass (pass). The twin
-    # non-rep and the hard-filtered row are never gated.
+    # twin-gh (pass), gatefail (nonblocking pass), hardfail (fail), pass (pass).
+    # The twin non-rep and the hard-filtered row are never gated.
     assert [r["canonical_id"] for r in decided] == [
         "gatefail",
         "hardfail",
@@ -517,10 +521,10 @@ async def test_phase5_gate_decisions_persisted_for_every_gated_rep(
 async def test_phase5_second_run_regates_nothing_already_scored(
     store: PostgresStore,
 ) -> None:
-    """A second run re-gates no scored/gate-failed rep and scores nothing new.
+    """A second run re-gates no scored/non-SDE rep and scores nothing new.
 
     Uses a twin-free corpus so the claim is exact: a scored rep is excluded by
-    the not-yet-Stage-A-scored predicate, and a gate-failed rep by the
+    the not-yet-Stage-A-scored predicate, and the clear non-SDE rep by the
     ``exclude_gate_failed`` guard, leaving no candidates for the second pass.
     (A twin cluster behaves differently and intentionally: once the rep is
     scored and drops out, a previously-suppressed twin is promoted and scored —
@@ -529,13 +533,13 @@ async def test_phase5_second_run_regates_nothing_already_scored(
     singletons = [PASS_JOB, GATE_FAIL_JOB, HARD_FAIL_JOB]
     ids = await _seed(store, singletons)
     first_run = await _service(store).run(stage="both")
-    assert first_run.stage_a_scored == 1  # only PASS_JOB.
+    assert first_run.stage_a_scored == EXPECTED_SINGLETON_SCORED_REPS
     assert first_run.jobs_ml_gated == EXPECTED_ML_GATED
     first_pass_gate_at = (await _gate_state(store, ids["pass"]))["ml_gate_at"]
 
     second = await _service(store).run(stage="both")
 
-    # Nothing left to do: scored rep excluded, gate-failed reps excluded.
+    # Nothing left to do: scored reps and clear non-SDE reps are excluded.
     assert second.jobs_ml_gated == 0
     assert second.stage_a_scored == 0
     assert second.stage_b_scored == 0
@@ -848,7 +852,7 @@ async def test_phase5_corpus_all_rescores_completed_row_and_twin(
     ids = await _seed(store, [TWIN_REP, TWIN_NONREP, PASS_JOB])
     first = await _service(store, fail_if=None).run(stage="a", corpus="unrated")
     # Run 1 scored the twin rep (twin-gh) + the singleton (pass): 2 reps.
-    assert first.stage_a_scored == EXPECTED_SCORED_REPS
+    assert first.stage_a_scored == EXPECTED_TWIN_AND_SINGLETON_SCORED_REPS
     assert (await _gate_state(store, ids["twin-gh"]))["stage_a_status"] == "completed"
     assert (await _gate_state(store, ids["pass"]))["stage_a_status"] == "completed"
 
@@ -860,7 +864,7 @@ async def test_phase5_corpus_all_rescores_completed_row_and_twin(
     # corpus='all' re-admits the whole completed set: the twin cluster is
     # re-scored via one re-elected rep, and the singleton is re-scored too.
     rescored = await _service(store, fail_if=None).run(stage="a", corpus="all")
-    assert rescored.stage_a_scored == EXPECTED_SCORED_REPS  # twin rep + singleton.
+    assert rescored.stage_a_scored == EXPECTED_TWIN_AND_SINGLETON_SCORED_REPS
     assert (await _gate_state(store, ids["pass"]))["stage_a_status"] == "completed"
     # Exactly one of the twin pair is re-claimed (dedupe keeps it once-per-cluster).
     pool = store._get_pool()

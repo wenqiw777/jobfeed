@@ -1,11 +1,11 @@
 """Deterministic mock ML-gate adapter for fast unit/CI use.
 
 ``MockGate`` runs the real numpy-free feature extraction and hard-fail rules
-from ``domain.ml_features`` so hard requirements (yoe>=2, active clearance,
-non-SWE) always fail with the correct legacy reason, regardless of the
-configured ``default_result``. Only the *model* verdict is mocked: a posting
-that clears every hard rule yields ``default_result`` (or the optional
-``fail_if`` predicate's verdict) with fixed pass/fail scores. It mirrors the
+from ``domain.ml_features`` so a clearly non-SWE posting always fails with the
+correct reason, regardless of the configured ``default_result``. Experience and
+clearance remain feature metadata. Only the *model* verdict is mocked: a
+posting that clears the clear-non-SDE rule yields ``default_result`` (or the
+optional ``fail_if`` predicate's verdict) with fixed pass/fail scores. It mirrors the
 ``MockLLM`` adapter style (a first-class deterministic test double behind a
 port), but is predict-only and never makes network or subprocess calls.
 """
