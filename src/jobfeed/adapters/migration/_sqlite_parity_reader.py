@@ -1,4 +1,4 @@
-"""Read canonical migrated tables from the current SQLite schema."""
+"""Read and hash an exact SQLite-v1 migration target."""
 
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ from jobfeed.adapters.migration.canonical_schema_manifest import (
     CANONICAL_ROW_SCHEMAS_V1,
     CANONICAL_SCHEMA_MANIFEST_V1,
 )
-from jobfeed.adapters.store._sqlite_schema_metadata import SQLITE_SCHEMA_VERSION
-from jobfeed.adapters.store.sqlite_schema import _validate_v2
+from jobfeed.adapters.store.sqlite_schema import _validate_v1
 
 _GENERATED_ID_TABLES = frozenset(
     {
@@ -42,24 +41,21 @@ class SqliteTableMetric:
 
 
 async def validate_sqlite_v1(connection: aiosqlite.Connection) -> int:
-    """Validate current DDL and the two idle migration lease seeds.
+    """Validate exact v1 DDL and the two idle migration lease seeds.
 
     Args:
         connection: Open target connection inside a read transaction.
 
     Returns:
-        The validated current SQLite schema version.
+        The validated SQLite schema version, always one.
 
     Raises:
         ValueError: If version, DDL, tables, or lease seeds differ.
     """
     version = await _scalar(connection, "PRAGMA user_version")
-    if version != SQLITE_SCHEMA_VERSION:
-        raise ValueError(
-            "SQLite parity requires schema version "
-            f"{SQLITE_SCHEMA_VERSION}, got {version!r}"
-        )
-    await _validate_v2(connection)
+    if version != 1:
+        raise ValueError(f"SQLite parity requires schema version 1, got {version!r}")
+    await _validate_v1(connection)
     leases = await _rows(
         connection,
         "SELECT kind, generation, owner_id, run_id, heartbeat_at, expires_at "
@@ -67,7 +63,7 @@ async def validate_sqlite_v1(connection: aiosqlite.Connection) -> int:
     )
     if tuple(tuple(row) for row in leases) != _EXPECTED_LEASES:
         raise ValueError("SQLite parity requires exact idle run lease seed rows")
-    return SQLITE_SCHEMA_VERSION
+    return 1
 
 
 async def validate_sqlite_integrity(connection: aiosqlite.Connection) -> None:

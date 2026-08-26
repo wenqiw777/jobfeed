@@ -21,19 +21,22 @@ _TOTALS_SQL = """WITH cohort AS (
 SELECT
     (SELECT COUNT(*) FROM cohort) AS total_jobs,
     (SELECT COUNT(*) FROM cohort WHERE ml_gate_result='pass') AS gate_passed,
-    (SELECT COUNT(*) FROM evaluation_results e JOIN cohort c ON c.id=e.job_id
-        WHERE e.status='completed') AS evaluated,
-    (SELECT COUNT(*) FROM evaluation_results e JOIN cohort c ON c.id=e.job_id
-        WHERE e.status='completed') AS detailed_reviewed,
+    (SELECT COUNT(*) FROM evaluations e JOIN cohort c ON c.id=e.job_id
+        WHERE e.stage_a_status='completed') AS evaluated,
+    (SELECT COUNT(*) FROM evaluations e JOIN cohort c ON c.id=e.job_id
+        WHERE e.stage_b_status='completed') AS detailed_reviewed,
     (SELECT COUNT(*) FROM job_status s JOIN cohort c ON c.id=s.job_id
         WHERE s.status IN
           ('applied','interviewing','offer','rejected','ghosted')) AS applied"""
 _VERDICTS_SQL = """SELECT
-    match_tier AS bucket,
+    CASE WHEN stage_b_verdict IS NOT NULL THEN stage_b_verdict
+         ELSE 'below_threshold' END AS bucket,
     COUNT(*) AS n
-    FROM evaluation_results e JOIN jobs j ON j.id=e.job_id
+    FROM evaluations e JOIN jobs j ON j.id=e.job_id
     WHERE (? IS NULL OR j.discovered_at>=?) AND j.discovered_at<=?
-      AND e.status='completed' AND match_tier IS NOT NULL
+      AND (stage_b_verdict IS NOT NULL
+       OR stage_b_status='skipped_below_threshold'
+    )
     GROUP BY bucket"""
 _DECISIONS_SQL = """SELECT
     CASE
@@ -171,11 +174,7 @@ class _SqliteInsights:
                 connection, "jobs", "discovered_at", cutoff, now_text
             )
             evaluated = await _daily_counts(
-                connection,
-                "evaluation_results",
-                "evaluated_at",
-                cutoff,
-                now_text,
+                connection, "evaluations", "stage_a_at", cutoff, now_text
             )
             applied = await _daily_applied_counts(connection, cutoff, now_text)
         assert totals is not None

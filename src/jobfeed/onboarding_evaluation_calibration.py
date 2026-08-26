@@ -1,4 +1,4 @@
-"""Measure one production-shaped unified evaluation call."""
+"""Measure one production-shaped Quick and Detailed evaluation pair."""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ from jobfeed.onboarding_plan_usage import (
 from jobfeed.onboarding_resume_types import ResumeDraftState
 from jobfeed.onboarding_types import ProviderOnboardingState
 
+_REPRESENTATIVE_STAGE_A_SCORE = 70
+
 
 @dataclass(frozen=True, kw_only=True)
 class MeasuredEvaluationCall:
@@ -34,9 +36,10 @@ class MeasuredEvaluationCall:
 
 @dataclass(frozen=True, kw_only=True)
 class EvaluationCalibration:
-    """Measured unified evaluation and surrounding subscription meter."""
+    """Measured Quick + Detailed pair and surrounding subscription meter."""
 
-    evaluation: MeasuredEvaluationCall
+    quick: MeasuredEvaluationCall
+    detailed: MeasuredEvaluationCall
     allowance_before_percent: int | None
     allowance_after_percent: int | None
 
@@ -58,7 +61,7 @@ class OnboardingEvaluationCalibrator:
         self._logger = logger
 
     async def calibrate(self, job_description: str) -> EvaluationCalibration:
-        """Measure one unified evaluation call for the supplied JD.
+        """Measure one Quick call and one Detailed call for the supplied JD.
 
         Args:
             job_description: Representative real job description.
@@ -74,9 +77,10 @@ class OnboardingEvaluationCalibrator:
         if (
             provider.provider not in {"codex_cli", "claude_cli"}
             or not provider.connected
+            or provider.quick_model is None
             or provider.detailed_model is None
         ):
-            raise ValueError("Connect Codex or Claude CLI and choose a model first")
+            raise ValueError("Connect Codex or Claude CLI and choose both models first")
         if resume.extracted_text is None or resume.profile is None:
             raise ValueError("Upload a résumé and confirm the job profile first")
 
@@ -84,11 +88,21 @@ class OnboardingEvaluationCalibrator:
             templates_dir=Path(__file__).resolve().parent / "templates"
         )
         job = _representative_job(job_description, resume)
-        bundle = renderer.render_unified(
+        quick_bundle = renderer.render_stage_a(
             resume_text=resume.extracted_text,
             job=job,
         )
-        client = self._client(
+        detailed_bundle = renderer.render_stage_b(
+            resume_text=resume.extracted_text,
+            job=job,
+            stage_a_score=_REPRESENTATIVE_STAGE_A_SCORE,
+        )
+        quick_client = self._client(
+            provider=provider.provider,
+            model=provider.quick_model,
+            timeout_s=120.0,
+        )
+        detailed_client = self._client(
             provider=provider.provider,
             model=provider.detailed_model,
             timeout_s=210.0,
@@ -99,8 +113,11 @@ class OnboardingEvaluationCalibrator:
             if provider.provider == "codex_cli"
             else None
         )
-        evaluation = await client.complete(
-            LLMRequest(messages=bundle.messages, model=provider.detailed_model)
+        quick = await quick_client.complete(
+            LLMRequest(messages=quick_bundle.messages, model=provider.quick_model)
+        )
+        detailed = await detailed_client.complete(
+            LLMRequest(messages=detailed_bundle.messages, model=provider.detailed_model)
         )
         after = (
             await self._allowance_percent()
@@ -108,7 +125,8 @@ class OnboardingEvaluationCalibrator:
             else None
         )
         return EvaluationCalibration(
-            evaluation=_measured(evaluation),
+            quick=_measured(quick),
+            detailed=_measured(detailed),
             allowance_before_percent=before,
             allowance_after_percent=after,
         )

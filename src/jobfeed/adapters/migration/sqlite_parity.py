@@ -148,9 +148,7 @@ async def _verify_snapshot(
         version = await validate_sqlite_v1(connection)
         await validate_sqlite_integrity(connection)
     except (aiosqlite.Error, TypeError, ValueError) as exc:
-        _raise_failure(
-            "sqlite_schema", "current", "exact current SQLite schema", str(exc)
-        )
+        _raise_failure("sqlite_schema", "v1", "exact SQLite schema v1", str(exc))
     foreign_keys = await sqlite_foreign_key_failures(connection)
     if foreign_keys:
         _raise_failure("foreign_key", "all", (), foreign_keys)

@@ -14,7 +14,6 @@ from tests.support.sqlite_views_performance import (
     insert_job,
     open_views_performance,
     set_evaluation,
-    set_unified_evaluation,
     utc_text,
 )
 
@@ -41,10 +40,10 @@ async def test_insights_empty_database_has_explicit_zero_semantics(
         await lifecycle.close()
 
 
-async def test_insights_counts_only_completed_unified_evaluations(
+async def test_insights_counts_completed_evaluations_without_legacy_timestamps(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Canonical completion drives totals even when legacy stages disagree."""
+    """Completion status is authoritative when legacy completion time is absent."""
     monkeypatch.setattr(_sqlite_insights, "_utc_now", lambda: NOW)
     lifecycle, store = await open_views_performance(tmp_path / "legacy-evaluated.db")
     try:
@@ -61,25 +60,12 @@ async def test_insights_counts_only_completed_unified_evaluations(
             status="scored",
         )
         await set_evaluation(lifecycle, quick, stage_a_score=70)
-        await set_unified_evaluation(
-            lifecycle,
-            quick,
-            match_score=70,
-            match_tier="possible_match",
-        )
         await set_evaluation(
             lifecycle,
             detailed,
             stage_a_score=80,
             verdict="apply",
             stage_b_status="completed",
-        )
-        await set_unified_evaluation(
-            lifecycle,
-            detailed,
-            match_score=80,
-            match_tier="strong_match",
-            status="error",
         )
         async with lifecycle.connection() as connection:
             await connection.execute(
@@ -88,9 +74,8 @@ async def test_insights_counts_only_completed_unified_evaluations(
 
         result = await store.insights_overview(window_days=7)
 
-        assert result.evaluated_jobs == 1
+        assert result.evaluated_jobs == 2
         assert result.detailed_reviewed_jobs == 1
-        assert result.verdict_distribution == {"possible_match": 1}
     finally:
         await lifecycle.close()
 
@@ -138,12 +123,6 @@ async def test_insights_cohort_totals_and_inclusive_windowed_days(
             verdict=None,
             stage_b_status="skipped_below_threshold",
         )
-        await set_unified_evaluation(
-            lifecycle,
-            old,
-            match_score=55,
-            match_tier="weak_match",
-        )
         await set_evaluation(
             lifecycle,
             boundary,
@@ -151,19 +130,13 @@ async def test_insights_cohort_totals_and_inclusive_windowed_days(
             verdict="consider",
             stage_b_status="completed",
         )
-        await set_unified_evaluation(
-            lifecycle,
-            boundary,
-            match_score=75,
-            match_tier="possible_match",
-        )
         async with lifecycle.connection() as connection:
             await connection.execute(
-                "UPDATE evaluation_results SET evaluated_at = ? WHERE job_id = ?",
+                "UPDATE evaluations SET stage_a_at = ? WHERE job_id = ?",
                 (utc_text(NOW - timedelta(days=2)), boundary),
             )
             await connection.execute(
-                "UPDATE evaluation_results SET evaluated_at = ? WHERE job_id = ?",
+                "UPDATE evaluations SET stage_a_at = ? WHERE job_id = ?",
                 (utc_text(NOW - timedelta(days=30)), old),
             )
             await connection.execute(
@@ -180,8 +153,7 @@ async def test_insights_cohort_totals_and_inclusive_windowed_days(
         assert result.ml_gate_passed_jobs == 1
         assert result.evaluated_jobs == 1
         assert result.applied_jobs == 1
-        assert result.detailed_reviewed_jobs == 1
-        assert result.verdict_distribution == {"possible_match": 1}
+        assert result.verdict_distribution == {"consider": 1}
         assert result.decision_distribution == {
             "applied": 1,
             "results": 1,
@@ -205,10 +177,9 @@ async def test_insights_cohort_totals_and_inclusive_windowed_days(
         assert all_time.ml_gate_passed_jobs == 2
         assert all_time.evaluated_jobs == 2
         assert all_time.applied_jobs == 1
-        assert all_time.detailed_reviewed_jobs == 2
         assert all_time.verdict_distribution == {
-            "possible_match": 1,
-            "weak_match": 1,
+            "below_threshold": 1,
+            "consider": 1,
         }
         assert all_time.decision_distribution == {
             "applied": 1,
@@ -326,17 +297,6 @@ async def test_insights_window_filters_the_full_discovery_cohort(
                 stage_b_status="completed",
                 stage_a_at=utc_text(NOW - timedelta(days=1)),
             )
-            await set_unified_evaluation(
-                lifecycle,
-                job_id,
-                match_score=80,
-                match_tier="possible_match",
-            )
-        async with lifecycle.connection() as connection:
-            await connection.execute(
-                "UPDATE evaluation_results SET evaluated_at=?",
-                (utc_text(NOW - timedelta(days=1)),),
-            )
 
         week = await store.insights_overview(window_days=7)
         month = await store.insights_overview(window_days=30)
@@ -345,8 +305,8 @@ async def test_insights_window_filters_the_full_discovery_cohort(
         assert (week.ml_gate_passed_jobs, month.ml_gate_passed_jobs) == (0, 1)
         assert (week.evaluated_jobs, month.evaluated_jobs) == (1, 2)
         assert (week.applied_jobs, month.applied_jobs) == (1, 2)
-        assert week.verdict_distribution == {"possible_match": 1}
-        assert month.verdict_distribution == {"possible_match": 2}
+        assert week.verdict_distribution == {"consider": 1}
+        assert month.verdict_distribution == {"consider": 2}
         assert week.decision_distribution == {"applied": 1}
         assert month.decision_distribution == {"applied": 2}
         assert sum(day.applied for day in week.daily) == week.applied_jobs == 1

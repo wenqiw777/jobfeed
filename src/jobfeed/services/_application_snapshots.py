@@ -61,18 +61,22 @@ def build_snapshots(
     return snapshots
 
 
-def unified_evaluation_dumps(
-    result: dict[str, object],
+def stage_b_dumps(
+    blocks: dict[str, object],
 ) -> tuple[str | None, str | None, str | None]:
-    """Serialize one canonical evaluation into the legacy snapshot columns.
+    """Serialize the Stage B verdict/fit/hooks blocks for snapshot columns.
 
     Args:
-        result: Canonical unified evaluation payload.
+        blocks: Stage B raw blocks keyed by block name.
 
     Returns:
-        Full canonical JSON in the primary snapshot slot; deprecated slots empty.
+        (verdict, fit_analysis, resume_hooks) JSON strings or Nones.
     """
-    return (json.dumps(result, sort_keys=True), None, None)
+
+    def _dump(key: str) -> str | None:
+        return json.dumps(blocks[key], sort_keys=True) if key in blocks else None
+
+    return (_dump("verdict"), _dump("fit_analysis"), _dump("resume_hooks"))
 
 
-__all__ = ["build_snapshots", "content_hash", "unified_evaluation_dumps"]
+__all__ = ["build_snapshots", "content_hash", "stage_b_dumps"]

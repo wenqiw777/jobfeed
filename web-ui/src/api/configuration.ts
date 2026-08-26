@@ -72,7 +72,7 @@ export function useRandomCalibrationJob() {
   });
 }
 
-/** Measure one real unified evaluation for the current draft. */
+/** Measure one real Quick + Detailed evaluation pair for the current draft. */
 export function useEvaluationCalibration() {
   const queryClient = useQueryClient();
   return useMutation({

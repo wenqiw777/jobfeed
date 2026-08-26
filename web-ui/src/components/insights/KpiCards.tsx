@@ -12,13 +12,14 @@ export function KpiCards({ overview }: { overview: InsightsOverviewResponse }) {
   const items = [
     { label: "Discovered", value: totals.jobs, meta: selectedPeriod },
     { label: "Passed local filter", value: totals.ml_gate_passed, meta: selectedPeriod },
-    { label: "Evaluated", value: totals.evaluated, meta: selectedPeriod },
+    { label: "Quick evaluated", value: totals.evaluated, meta: selectedPeriod },
+    { label: "Detailed reviewed", value: totals.detailed_reviewed, meta: selectedPeriod },
     { label: "Applied", value: totals.applied, meta: selectedPeriod },
   ];
   return (
     <section aria-label="Key numbers">
       <Container header={<Header variant="h2">Key numbers</Header>}>
-        <ColumnLayout columns={4} minColumnWidth={140} borders="vertical">
+        <ColumnLayout columns={5} minColumnWidth={140} borders="vertical">
           {items.map(({ label, value, meta }) => (
             <div key={label}>
               <Box variant="awsui-key-label">{label}</Box>

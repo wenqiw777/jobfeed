@@ -26,7 +26,7 @@ export function testProviderConnection(provider: ProviderName, apiKey?: string) 
   });
 }
 
-/** Save the unified evaluation model through the compatible provider API. */
+/** Save Quick and Detailed models from the verified provider catalog. */
 export function useSaveProviderModels() {
   const queryClient = useQueryClient();
   return useMutation({

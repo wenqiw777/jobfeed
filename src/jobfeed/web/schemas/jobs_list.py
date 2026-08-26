@@ -88,10 +88,10 @@ class JobSummary(BaseModel):
     url: str
     status: str
     decision: UserDecision | None
-    evaluation_score: int | None
-    evaluation_verdict: str | None
-    evaluation_status: str | None
-    evaluator_version: str | None
+    verdict: str | None
+    stage_a_score: int | None
+    stage_b_fit_score: int | None
+    stage_b_status: str | None
     posted_at: datetime | None
     discovered_at: datetime
     closed_at: datetime | None
@@ -135,10 +135,10 @@ def _job_summary(row: JobsViewRow) -> JobSummary:
         url=job.url,
         status=row.status,
         decision=decision_for_status(row.status),
-        evaluation_score=row.evaluation_score,
-        evaluation_verdict=row.evaluation_verdict,
-        evaluation_status=row.evaluation_status,
-        evaluator_version=row.evaluator_version,
+        verdict=row.verdict,
+        stage_a_score=row.stage_a_score,
+        stage_b_fit_score=row.stage_b_fit_score,
+        stage_b_status=row.stage_b_status,
         posted_at=job.posted_at,
         discovered_at=job.discovered_at,
         closed_at=job.closed_at,

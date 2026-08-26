@@ -1,13 +1,11 @@
-"""Jinja2-dependent prompt rendering adapter for job evaluation."""
+"""Jinja2-dependent prompt rendering adapter for Stage A and Stage B."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from jobfeed.domain.candidate_facts import CandidateScoringProfile
 from jobfeed.domain.models import JobPosting, Message
 from jobfeed.domain.scoring import (
     compute_prompt_hash,
@@ -119,58 +117,6 @@ def render_stage_b_prompt(
     return messages, p_hash, r_hash
 
 
-def render_unified_prompt(
-    resume_text: str,
-    job: JobPosting,
-    templates_dir: Path,
-) -> tuple[list[Message], str, str]:
-    """Render the single-pass objective evaluation prompt.
-
-    Legacy personal preambles are deliberately excluded because they contain
-    preference and action-ranking guidance outside this evaluator's contract.
-
-    Args:
-        resume_text: Master resume text used as candidate evidence.
-        job: Job posting to evaluate.
-        templates_dir: Directory containing Jinja2 templates.
-
-    Returns:
-        Tuple of messages, objective prompt hash, and resume hash.
-    """
-    system_prompt = render_system_prompt(
-        "unified_evaluation_prompt.md",
-        templates_dir,
-    )
-    profile = CandidateScoringProfile.from_resume(resume_text)
-    candidate_facts = json.dumps(
-        {
-            "actual_experience_level": profile.actual_level,
-            "non_intern_professional_months": profile.professional_months,
-            "internship_months": profile.internship_months,
-            "degree_level": profile.degree_level,
-            "degree_status": profile.degree_status,
-            "graduation_month": profile.graduation_month,
-        },
-        sort_keys=True,
-    )
-    user_message = (
-        "The following timeline and education facts were computed by code from "
-        "the resume. Use them for level, duration, degree, and graduation checks; "
-        "cite the original resume text in output evidence.\n"
-        f"<BEGIN_CANDIDATE_FACTS>\n{candidate_facts}\n<END_CANDIDATE_FACTS>\n\n"
-        f"{render_user_message(resume_text, job)}"
-    )
-    messages = [
-        Message(role="system", content=system_prompt),
-        Message(role="user", content=user_message),
-    ]
-    return (
-        messages,
-        compute_prompt_hash(system_prompt),
-        compute_resume_hash(resume_text),
-    )
-
-
 class JinjaPromptRenderer:
     """Concrete PromptRenderer using Jinja2 templates.
 
@@ -231,32 +177,10 @@ class JinjaPromptRenderer:
             resume_hash=resume_hash,
         )
 
-    def render_unified(self, *, resume_text: str, job: JobPosting) -> PromptBundle:
-        """Render the single-pass objective evaluation bundle.
-
-        Args:
-            resume_text: Master resume text used as candidate evidence.
-            job: Job posting to evaluate.
-
-        Returns:
-            Prompt bundle with stable objective prompt and resume hashes.
-        """
-        messages, prompt_hash, resume_hash = render_unified_prompt(
-            resume_text,
-            job,
-            self._templates_dir,
-        )
-        return PromptBundle(
-            messages=messages,
-            prompt_hash=prompt_hash,
-            resume_hash=resume_hash,
-        )
-
 
 __all__ = [
     "JinjaPromptRenderer",
     "render_stage_a_prompt",
     "render_stage_b_prompt",
     "render_system_prompt",
-    "render_unified_prompt",
 ]

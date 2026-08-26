@@ -4,6 +4,7 @@ import Form from "@cloudscape-design/components/form";
 import FormField from "@cloudscape-design/components/form-field";
 import Input from "@cloudscape-design/components/input";
 import Modal from "@cloudscape-design/components/modal";
+import RadioGroup from "@cloudscape-design/components/radio-group";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useState } from "react";
 
@@ -11,9 +12,18 @@ import { ApiError } from "@/api/client";
 import { useTriggerEvaluate } from "@/api/queries";
 import { toast } from "@/components/ui/use-toast";
 
-/** Cloudscape unified evaluation form with an optional batch limit. */
+type Stage = "a" | "b" | "both";
+
+const STAGE_OPTIONS = [
+  { label: "Quick score and detailed review", value: "both", description: "Run the complete evaluation" },
+  { label: "Quick score only", value: "a", description: "Score eligible jobs without detailed evidence" },
+  { label: "Detailed review only", value: "b", description: "Review jobs that already passed the quick score" },
+];
+
+/** Cloudscape evaluation form with stage and optional batch limit. */
 export function TriggerEvaluateButton() {
   const [isOpen, setIsOpen] = useState(false);
+  const [stage, setStage] = useState<Stage>("both");
   const [limitText, setLimitText] = useState("");
   const trigger = useTriggerEvaluate();
   const limit = limitText.trim() === "" ? null : Number(limitText);
@@ -22,12 +32,13 @@ export function TriggerEvaluateButton() {
   const submit = () => {
     if (isLimitInvalid) return;
     trigger.mutate(
-      { limit },
+      { stage, limit },
       {
         onSuccess: () => {
           setIsOpen(false);
+          setStage("both");
           setLimitText("");
-          toast({ title: "Evaluation started" });
+          toast({ title: `Evaluation started (${stageLabel(stage)})` });
         },
         onError: (error) => handleError(error),
       },
@@ -77,15 +88,23 @@ export function TriggerEvaluateButton() {
       >
         <Form>
           <SpaceBetween size="l">
+            <FormField label="Evaluation depth" description="Choose how much evaluation to run.">
+              <RadioGroup
+                value={stage}
+                items={STAGE_OPTIONS}
+                ariaLabel="Evaluation depth"
+                onChange={({ detail }) => setStage(detail.value as Stage)}
+              />
+            </FormField>
             <FormField
               label="Maximum jobs (optional)"
-              description="Leave empty to use the configured default of 150 jobs."
+              description="Leave empty to evaluate every eligible job."
               errorText={isLimitInvalid ? "Maximum jobs must be a number of at least 1." : undefined}
             >
               <Input
                 type="number"
                 value={limitText}
-                placeholder="Configured default: 150"
+                placeholder="All eligible jobs"
                 ariaLabel="Maximum jobs"
                 invalid={isLimitInvalid}
                 nativeInputAttributes={{ min: 1 }}
@@ -97,4 +116,10 @@ export function TriggerEvaluateButton() {
       </Modal>
     </>
   );
+}
+
+function stageLabel(stage: Stage): string {
+  if (stage === "a") return "quick score only";
+  if (stage === "b") return "detailed review only";
+  return "quick score and detailed review";
 }

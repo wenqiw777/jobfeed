@@ -30,19 +30,6 @@ async def open_views_performance(
     """
     lifecycle = SqliteLifecycle(path, ensure_sqlite_schema)
     await lifecycle.open()
-    # The unified-read slice is developed against the additive schema owned by
-    # the store migration task. Keep this capability fixture self-contained
-    # until that schema lands in the shared branch.
-    async with lifecycle.connection() as connection:
-        await connection.execute(
-            """CREATE TABLE IF NOT EXISTS evaluation_results (
-                   job_id INTEGER PRIMARY KEY,
-                   match_score INTEGER,
-                   match_tier TEXT,
-                   status TEXT,
-                   evaluator_version TEXT
-               )"""
-        )
     return lifecycle, SqliteViewsPerformance(lifecycle)
 
 
@@ -152,34 +139,6 @@ async def set_evaluation(  # noqa: PLR0913
                 discovered_text(),
                 discovered_text(),
             ),
-        )
-
-
-async def set_unified_evaluation(  # noqa: PLR0913
-    lifecycle: SqliteLifecycle,
-    job_id: int,
-    *,
-    match_score: int,
-    match_tier: str,
-    status: str = "completed",
-    evaluator_version: str = "unified-v1",
-) -> None:
-    """Insert one canonical unified evaluation summary.
-
-    Args:
-        lifecycle: Open database lifecycle.
-        job_id: Existing job identity.
-        match_score: Canonical 0-100 match score.
-        match_tier: Canonical hard ranking tier.
-        status: Unified evaluator lifecycle status.
-        evaluator_version: Version that produced this result.
-    """
-    async with lifecycle.connection() as connection:
-        await connection.execute(
-            """INSERT INTO evaluation_results(
-                   job_id, match_score, match_tier, status, evaluator_version
-               ) VALUES (?,?,?,?,?)""",
-            (job_id, match_score, match_tier, status, evaluator_version),
         )
 
 

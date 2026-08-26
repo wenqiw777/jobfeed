@@ -46,7 +46,7 @@ class PlanUsageReader:
 
 
 class EvaluationCalibrator:
-    """Return deterministic measured usage for one unified evaluation."""
+    """Return deterministic measured usage for one Quick + Detailed pair."""
 
     def __init__(self) -> None:
         self.job_description: str | None = None
@@ -54,7 +54,14 @@ class EvaluationCalibrator:
     async def calibrate(self, job_description: str) -> SimpleNamespace:
         self.job_description = job_description
         return SimpleNamespace(
-            evaluation=SimpleNamespace(
+            quick=SimpleNamespace(
+                model="gpt-5.6-luna",
+                input_tokens=1_000,
+                output_tokens=100,
+                cost_usd=0.002,
+                latency_ms=1_500,
+            ),
+            detailed=SimpleNamespace(
                 model="gpt-5.6-terra",
                 input_tokens=3_000,
                 output_tokens=500,
@@ -248,7 +255,7 @@ async def test_plan_usage_returns_live_codex_allowance(
 async def test_evaluation_calibration_returns_measured_tokens_cost_and_allowance(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Calibration measures one production unified evaluation for one JD."""
+    """Calibration measures both production evaluation stages for one JD."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
     app = create_web_app()
@@ -266,7 +273,14 @@ async def test_evaluation_calibration_returns_measured_tokens_cost_and_allowance
     assert response.status_code == HTTP_OK, response.text
     assert calibrator.job_description == sample
     assert response.json() == {
-        "evaluation": {
+        "quick": {
+            "model": "gpt-5.6-luna",
+            "input_tokens": 1_000,
+            "output_tokens": 100,
+            "cost_usd": 0.002,
+            "latency_ms": 1_500,
+        },
+        "detailed": {
             "model": "gpt-5.6-terra",
             "input_tokens": 3_000,
             "output_tokens": 500,

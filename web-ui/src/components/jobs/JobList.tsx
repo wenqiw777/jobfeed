@@ -16,12 +16,7 @@ interface JobListProps {
   onSort: (sort: JobListSort) => void;
 }
 
-export type JobListSort =
-  | "discovered_desc"
-  | "posted_asc"
-  | "posted_desc"
-  | "score_asc"
-  | "score_desc";
+export type JobListSort = "posted_asc" | "posted_desc" | "score_asc" | "score_desc";
 
 /** Cloudscape table for one paginated Triage result page. */
 export function JobList({
@@ -53,15 +48,15 @@ export function JobList({
     },
     {
       id: "verdict",
-      header: "Match",
+      header: "Recommendation",
       cell: (job) => <VerdictBadge job={job} />,
       width: 120,
     },
     {
       id: "score",
-      header: "Match score",
+      header: "Fit score",
       sortingField: "score",
-      cell: (job) => job.evaluation_score ?? "—",
+      cell: (job) => job.stage_b_fit_score ?? job.stage_a_score ?? "—",
       width: 70,
     },
     {
@@ -79,9 +74,9 @@ export function JobList({
     },
   ];
   const sortingField = sort.startsWith("score") ? "score" : "posted";
-  const sortingColumn = sort === "discovered_desc"
-    ? undefined
-    : columnDefinitions.find((column) => column.sortingField === sortingField);
+  const sortingColumn = columnDefinitions.find(
+    (column) => column.sortingField === sortingField,
+  );
 
   return (
     <Table
@@ -121,20 +116,17 @@ export function JobList({
 }
 
 function VerdictBadge({ job }: { job: JobSummary }) {
-  if (job.evaluation_status === "error") {
+  if (job.stage_b_status === "error") {
     return <Badge color="red">Evaluation error</Badge>;
   }
-  if (job.evaluation_verdict === "strong_match") {
-    return <Badge color="green">Strong match</Badge>;
+  if (job.verdict === "apply") {
+    return <Badge color="green">Apply</Badge>;
   }
-  if (job.evaluation_verdict === "possible_match") {
-    return <Badge color="blue">Possible match</Badge>;
+  if (job.verdict === "consider") {
+    return <Badge color="blue">Consider</Badge>;
   }
-  if (job.evaluation_verdict === "weak_match") {
-    return <Badge color="grey">Weak match</Badge>;
-  }
-  if (job.evaluation_verdict === "ineligible") {
-    return <Badge color="red">Ineligible</Badge>;
+  if (job.verdict === "skip") {
+    return <Badge color="grey">Skip</Badge>;
   }
   return <Badge color="grey">Not evaluated</Badge>;
 }

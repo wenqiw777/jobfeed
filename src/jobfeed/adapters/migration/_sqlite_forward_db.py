@@ -207,7 +207,7 @@ def _validate_table_set(connection: sqlite3.Connection) -> None:
         "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
     expected = {table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables}
-    expected.update({"run_leases", "evaluation_results"})
+    expected.add("run_leases")
     if {str(row[0]) for row in rows} != expected:
         raise ValueError("SQLite import table coverage mismatch")
 

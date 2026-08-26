@@ -34,6 +34,7 @@ interface ReviewValues {
   blockedTitles: string;
   blockedCompanies: string;
   maximumJobAgeHours: number;
+  detailedThreshold: number;
   defaultJobs: number;
   dailyCalls: number;
   dailyCost: number;
@@ -55,6 +56,8 @@ const CLAUDE_PLAN_CAPACITY_USD: Record<ClaudePlan, number> = {
 const CODEX_WEEKLY_CAPACITY_USD: Record<string, number> = {
   Pro: 82.49,
 };
+
+const DETAILED_PASS_RATE = 0.3;
 
 /** Step 4: editable final settings, honest usage range, and atomic finish. */
 export default function OnboardingReviewPage() {
@@ -119,7 +122,8 @@ function ReviewSettings({
   const [sampleJdOverride, setSampleJdOverride] = useState<string | null>(null);
   const [claudePlan, setClaudePlan] = useState<ClaudePlan>("max5");
   const expectedJobs = values.defaultJobs;
-  const evaluationCalls = Math.min(expectedJobs, values.dailyCalls);
+  const quickCalls = Math.min(expectedJobs, values.dailyCalls);
+  const detailedCalls = Math.round(quickCalls * DETAILED_PASS_RATE);
   const providerLabel = providerName(provider.provider ?? null);
   const sampleJd = sampleJdOverride ?? sampleJob.data?.jd_text ?? "";
 
@@ -158,7 +162,7 @@ function ReviewSettings({
         <Container header={<Header variant="h2">Setup summary</Header>}>
           <ColumnLayout columns={4} variant="text-grid">
             <Summary label="AI provider" value={providerLabel} />
-            <Summary label="Evaluation model" value={provider.detailed_model ?? provider.quick_model ?? "—"} />
+            <Summary label="Models" value={`${provider.quick_model ?? "—"} / ${provider.detailed_model ?? "—"}`} />
             <Summary label="Résumé" value={resumeName ?? "—"} />
             <Summary label="Enabled searches" value={String(enabledSearches)} />
           </ColumnLayout>
@@ -197,10 +201,11 @@ function ReviewSettings({
                 onChange={(value) => update("maximumJobAgeHours", value)}
               />
               <Alert type="info" header="Personal filter learning starts after setup">
-                Unified evaluations remain the teacher. Jobfeed will notify you after the filter passes future shadow validation; it never turns on automatically.
+                Quick evaluations remain the teacher. Jobfeed will notify you after the filter passes future shadow validation; it never turns on automatically.
               </Alert>
             </SpaceBetween>
             <SpaceBetween size="m">
+              <NumberField label="Quick-to-detailed threshold" value={values.detailedThreshold} min={0} max={100} onChange={(value) => update("detailedThreshold", value)} />
               <NumberField
                 label="Maximum unique jobs to evaluate per run"
                 description="Applied after location/date filtering and cross-source company + title deduplication. This same number drives the usage estimate below."
@@ -251,9 +256,10 @@ function ReviewSettings({
           }
         >
           <SpaceBetween size="m">
-            <ColumnLayout columns={2} variant="text-grid">
-              <Summary label="Evaluations" value={`${evaluationCalls} evaluations`} />
-              <Summary label="Total model calls" value={`${evaluationCalls} planned calls`} />
+            <ColumnLayout columns={3} variant="text-grid">
+              <Summary label="Quick evaluation" value={`${quickCalls} Quick evaluations`} />
+              <Summary label="Detailed review" value={`About ${detailedCalls} Detailed reviews (30% pass rate)`} />
+              <Summary label="Total model calls" value={`About ${quickCalls + detailedCalls} planned calls`} />
             </ColumnLayout>
             {provider.provider === "claude_cli" ? (
               <ClaudePlanSelector
@@ -275,7 +281,7 @@ function ReviewSettings({
               header={
                 <Header
                   variant="h3"
-                  description="Runs one real unified evaluation call. Use a typical JD for a useful estimate."
+                  description="Runs two real model calls: one Quick and one Detailed. Use a typical JD for a useful estimate."
                 >
                   Measure one evaluation
                 </Header>
@@ -309,7 +315,7 @@ function ReviewSettings({
                 <Box>
                   <Button
                     loading={calibration.isPending}
-                    loadingText="Measuring one real call"
+                    loadingText="Measuring two real calls"
                     disabled={sampleJd.trim().length < 100}
                     onClick={() => calibration.mutate(sampleJd)}
                   >
@@ -331,7 +337,7 @@ function ReviewSettings({
               </SpaceBetween>
             </Container>
             <Box color="text-body-secondary">
-              Assumption: every selected JD receives one unified evaluation. The measured cost is an API-equivalent value, not an additional subscription charge.
+              Assumption: every JD receives a Quick evaluation and about 30% pass to Detailed review. The measured cost is an API-equivalent value, not an additional subscription charge.
             </Box>
           </SpaceBetween>
         </Container>
@@ -390,7 +396,8 @@ function ClaudePlanSelector({
         </Box>
         {calibration && (
           <AllowanceEstimate
-            evaluationCost={calibration.evaluation.cost_usd}
+            quickCost={calibration.quick.cost_usd}
+            detailedCost={calibration.detailed.cost_usd}
             expectedJobs={expectedJobs}
             capacity={CLAUDE_PLAN_CAPACITY_USD[plan]}
             windowLabel="5-hour"
@@ -480,7 +487,8 @@ function PlanEstimate({
   const projected = calibration === undefined || capacity === undefined
     ? "Measure one evaluation below"
     : allowanceEstimate(
-      calibration.evaluation.cost_usd,
+      calibration.quick.cost_usd,
+      calibration.detailed.cost_usd,
       expectedJobs,
       capacity,
       "7-day",
@@ -507,8 +515,9 @@ function CalibrationResult({
   expectedJobs: number;
   provider: ProviderState["provider"];
 }) {
-  const expectedTokens = totalTokens(result.evaluation);
-  const expectedCost = result.evaluation.cost_usd;
+  const quickTokens = totalTokens(result.quick);
+  const expectedTokens = quickTokens + totalTokens(result.detailed) * DETAILED_PASS_RATE;
+  const expectedCost = result.quick.cost_usd + result.detailed.cost_usd * DETAILED_PASS_RATE;
   const allowance = allowanceChange(result);
   return (
     <SpaceBetween size="m">
@@ -529,10 +538,14 @@ function CalibrationResult({
           value={`About ${formatNumber(Math.round(expectedTokens))} tokens per JD`}
         />
       </ColumnLayout>
-      <ColumnLayout columns={provider === "claude_cli" ? 1 : 2} variant="text-grid">
+      <ColumnLayout columns={provider === "claude_cli" ? 2 : 3} variant="text-grid">
         <Summary
-          label={`Evaluation · ${result.evaluation.model}`}
-          value={`${formatNumber(expectedTokens)} tokens · ${formatUsd(result.evaluation.cost_usd, 4)} · ${formatSeconds(result.evaluation.latency_ms)}`}
+          label={`Quick · ${result.quick.model}`}
+          value={`${formatNumber(quickTokens)} tokens · ${formatUsd(result.quick.cost_usd, 4)} · ${formatSeconds(result.quick.latency_ms)}`}
+        />
+        <Summary
+          label={`Detailed · ${result.detailed.model}`}
+          value={`${formatNumber(totalTokens(result.detailed))} tokens · ${formatUsd(result.detailed.cost_usd, 4)} · ${formatSeconds(result.detailed.latency_ms)}`}
         />
         {provider !== "claude_cli" && (
           <Summary label="Codex allowance change" value={allowance} />
@@ -548,17 +561,19 @@ function CalibrationResult({
 }
 
 function AllowanceEstimate({
-  evaluationCost,
+  quickCost,
+  detailedCost,
   expectedJobs,
   capacity,
   windowLabel,
 }: {
-  evaluationCost: number;
+  quickCost: number;
+  detailedCost: number;
   expectedJobs: number;
   capacity: number;
   windowLabel: string;
 }) {
-  const oneExpected = (evaluationCost / capacity) * 100;
+  const oneExpected = ((quickCost + detailedCost * DETAILED_PASS_RATE) / capacity) * 100;
   const plannedExpected = oneExpected * expectedJobs;
   return (
     <ColumnLayout columns={2} variant="text-grid">
@@ -575,13 +590,14 @@ function AllowanceEstimate({
 }
 
 function allowanceEstimate(
-  evaluationCost: number,
+  quickCost: number,
+  detailedCost: number,
   expectedJobs: number,
   capacity: number,
   windowLabel: string,
 ): string {
   const projected = (
-    (evaluationCost * expectedJobs)
+    ((quickCost + detailedCost * DETAILED_PASS_RATE) * expectedJobs)
     / capacity
   ) * 100;
   return `Estimated ${formatPercent(projected)} of your ${windowLabel} allowance`;
@@ -632,6 +648,7 @@ function initialValues(current: ConfigurationResponse, profile: JobProfile | nul
       ?? profile?.maximum_posting_age_hours
       ?? (profile?.maximum_posting_age_days == null ? null : profile.maximum_posting_age_days * 24)
       ?? 36,
+    detailedThreshold: current.scoring!.stage_a_threshold!,
     defaultJobs: current.scoring!.default_eval_limit!,
     dailyCalls: current.llm!.max_daily_score_calls!,
     dailyCost: current.llm!.max_daily_cost_usd!,
@@ -649,6 +666,7 @@ function buildConfiguration(current: ConfigurationResponse, values: ReviewValues
   editable.llm!.max_concurrent = values.parallelEvaluations;
   editable.llm!.max_daily_score_calls = values.dailyCalls;
   editable.llm!.max_daily_cost_usd = values.dailyCost;
+  editable.scoring!.stage_a_threshold = values.detailedThreshold;
   editable.scoring!.default_eval_limit = values.defaultJobs;
   editable.scoring!.ml_gate_enabled = false;
   editable.ml_gate!.threshold_override = null;

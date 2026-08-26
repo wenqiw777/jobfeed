@@ -17,36 +17,21 @@ import pytest
 
 from jobfeed.domain.dedupe import INFLIGHT_STATUSES
 from jobfeed.domain.filtering import HardFilters
-from jobfeed.domain.interview import InterviewRound
-from jobfeed.domain.models import (
-    ApplicationRecord,
-    FitAnalysis,
-    JobEvaluation,
-    JobPosting,
-    QualityBand,
-    StageAResult,
-    StageBResult,
-    StatusInfo,
-    Verdict,
-)
+from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.models_views import (
     JobsViewPage,
     JobsViewQuery,
     JobsViewRow,
-    TwinStatusRow,
 )
 from jobfeed.services.jobs_view import (
     JOBS_VIEW_CORPUS_LIMIT,
     JobsViewService,
     JobsViewStore,
 )
-from jobfeed.web.schemas.jobs_detail import job_detail_response
 
 _DISCOVERED = datetime(2026, 6, 1, 0, 0, tzinfo=UTC)
 _PAGE_LIMIT = 7
 _PAGE_OFFSET = 3
-_UNIFIED_SCORE = 20
-_ATS_SCORE = 40
 
 
 _TITLE = "Backend Engineer"
@@ -77,10 +62,10 @@ def _row(
         company_norm=company.lower(),
         title_norm=_TITLE.lower(),
         status=status,
-        evaluation_score=None,
-        evaluation_verdict=None,
-        evaluation_status=None,
-        evaluator_version=None,
+        verdict=None,
+        stage_a_score=None,
+        stage_b_fit_score=None,
+        stage_b_status=None,
     )
 
 
@@ -92,7 +77,7 @@ def _posted_row(id: str, posted_at: datetime | None) -> JobsViewRow:
 
 def _fit_row(id: str, fit_score: int) -> JobsViewRow:
     row = _row(id)
-    row.evaluation_score = fit_score
+    row.stage_b_fit_score = fit_score
     return row
 
 
@@ -229,115 +214,3 @@ async def test_unknown_sort_raises_value_error() -> None:
         await _service(store).list_jobs(JobsViewQuery(tab="all"), sort="best_first")
 
     assert store.queries == []
-
-
-class _DetailStore(_RecordingStore):
-    """Detail stub containing conflicting legacy and unified evaluations."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.legacy_reads = 0
-
-    async def get_job(self, job_id: str) -> JobPosting | None:
-        return _row(job_id).job
-
-    async def get_evaluation(self, job_id: str) -> JobEvaluation:
-        self.legacy_reads += 1
-        return JobEvaluation(
-            job=_row(job_id).job,
-            stage_a=StageAResult(
-                score=99,
-                one_line="Legacy top score.",
-                timing_eligible="yes",
-                model="legacy-a",
-                prompt_hash="legacy",
-                resume_hash="legacy",
-            ),
-            stage_b=StageBResult(
-                verdict=Verdict.APPLY,
-                jd_summary="Legacy apply summary.",
-                fit_analysis=FitAnalysis(score=99, strengths=[], gaps=[]),
-                resume_hooks=[],
-                model="legacy-b",
-                prompt_hash="legacy",
-                resume_hash="legacy",
-            ),
-            stage_b_status="completed",
-        )
-
-    async def get_current_evaluation(self, job_id: str) -> dict[str, object]:
-        return {
-            "job_id": job_id,
-            "status": "completed",
-            "eligibility_status": "pass",
-            "match_score": _UNIFIED_SCORE,
-            "match_tier": "weak_match",
-            "evaluator_version": "unified-v2",
-            "model": "mock-unified",
-            "result_json": {
-                "summary": "Canonical summary.",
-                "eligibility_checks": [
-                    {
-                        "kind": "work_authorization",
-                        "requirement": "US work authorization",
-                        "status": "met",
-                        "candidate_evidence": "Authorized",
-                        "reason": "Profile evidence",
-                    }
-                ],
-                "requirements": [
-                    {
-                        "requirement": "Production Python",
-                        "priority": "must_have",
-                        "category": "skill",
-                        "match": "strong",
-                        "resume_evidence": "Built Python services",
-                        "evidence_type": "explicit",
-                    }
-                ],
-                "one_line": "Canonical weak match.",
-                "ats_visibility_score": _ATS_SCORE,
-            },
-        }
-
-    async def get_status(self, _job_id: str) -> StatusInfo | None:
-        return None
-
-    async def get_status_history(self, _job_id: str) -> list[str]:
-        return []
-
-    async def list_interview_rounds(self, _job_id: str) -> list[InterviewRound]:
-        return []
-
-    async def get_application(self, _job_id: str) -> ApplicationRecord | None:
-        return None
-
-    async def list_twin_statuses(self, _job_id: str) -> list[TwinStatusRow]:
-        return []
-
-
-async def test_job_detail_reads_only_canonical_unified_evaluation() -> None:
-    store = _DetailStore()
-
-    detail = await _service(store).get_job_detail("1")
-
-    assert detail is not None
-    assert store.legacy_reads == 0
-    assert detail.evaluation is not None
-    assert detail.evaluation["match_score"] == _UNIFIED_SCORE
-    assert detail.evaluation["match_tier"] == "weak_match"
-    response = job_detail_response(detail).model_dump()
-    assert response["evaluation"]["match_score"] == _UNIFIED_SCORE
-    assert response["evaluation"]["match_tier"] == "weak_match"
-    assert response["evaluation"]["evaluation_status"] == "completed"
-    assert response["evaluation"]["summary"] == "Canonical summary."
-    assert response["evaluation"]["eligibility_status"] == "pass"
-    assert response["evaluation"]["eligibility_checks"][0]["status"] == "met"
-    assert response["evaluation"]["requirements"][0]["match"] == "strong"
-    assert response["evaluation"]["ats_visibility_score"] == _ATS_SCORE
-    assert response["evaluation"]["evaluator_version"] == "unified-v2"
-    assert response["evaluation"]["model"] == "mock-unified"
-    assert "stage_a" not in response["evaluation"]
-    assert "stage_b" not in response["evaluation"]
-    assert "Legacy" not in str(response)
-    assert "apply" not in str(response["evaluation"])

@@ -14,9 +14,6 @@ from jobfeed.domain.scoring_parse import (
     parse_stage_a_response,
     parse_stage_b_response,
 )
-from jobfeed.domain.unified_evaluation_parse import (
-    parse_unified_evaluation_response,
-)
 
 MAX_STAGE_RETRIES = 3
 _RESUME_BEGIN = "---BEGIN MASTER RESUME DATA---"
@@ -107,6 +104,5 @@ __all__ = [
     "compute_resume_hash",
     "parse_stage_a_response",
     "parse_stage_b_response",
-    "parse_unified_evaluation_response",
     "render_user_message",
 ]

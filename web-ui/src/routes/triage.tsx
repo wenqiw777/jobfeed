@@ -20,12 +20,12 @@ import {
 } from "@/api/queries";
 import { BulkBar } from "@/components/jobs/BulkBar";
 import { DetailPane, type UserDecision } from "@/components/jobs/DetailPane";
-import { JobList, type JobListSort } from "@/components/jobs/JobList";
+import { JobList } from "@/components/jobs/JobList";
 import { toast } from "@/components/ui/use-toast";
 import { useSelection } from "@/lib/use-selection";
 
 type TriageFilter = "results" | "wait" | "applied" | "ignored";
-type TriageSort = JobListSort;
+type TriageSort = "posted_asc" | "posted_desc" | "score_asc" | "score_desc";
 
 const PAGE_LIMIT = 50;
 
@@ -55,7 +55,7 @@ function triageQuery(filter: TriageFilter, page: number, sort: TriageSort): Jobs
 export default function TriagePage() {
   const [filter, setFilter] = useState<TriageFilter>("results");
   const [page, setPage] = useState(0);
-  const [sort, setSort] = useState<TriageSort>("discovered_desc");
+  const [sort, setSort] = useState<TriageSort>("posted_desc");
   const [isSelectingAll, setIsSelectingAll] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selection = useSelection();
@@ -211,7 +211,7 @@ export default function TriagePage() {
       <section aria-label="Job detail">
         <Container
           header={
-            <Header variant="h2" description="Review the match, evidence, and your decision.">
+            <Header variant="h2" description="Review the recommendation, evidence, and your decision.">
               {selectedJob ? `${selectedJob.company} · ${selectedJob.title}` : "Job evidence"}
             </Header>
           }

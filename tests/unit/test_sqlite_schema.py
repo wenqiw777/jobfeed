@@ -1,4 +1,4 @@
-"""SQLite v2 schema creation and version-gate tests."""
+"""SQLite v1 schema creation and version-gate tests."""
 
 from __future__ import annotations
 
@@ -45,16 +45,12 @@ async def _table_names(connection: aiosqlite.Connection) -> tuple[str, ...]:
     return tuple(row[0] for row in rows)
 
 
-def test_metadata_matches_frozen_0008_registry_plus_v2_tables() -> None:
-    """Core metadata keeps migrated columns and adds only the v2 table."""
+def test_metadata_matches_frozen_0008_registry_plus_run_leases() -> None:
+    """Core metadata has the exact migrated columns and one lease table."""
     migrated = CANONICAL_SCHEMA_MANIFEST_V1.tables
 
-    assert SQLITE_SCHEMA_VERSION == 2  # noqa: PLR2004 - frozen schema contract
-    expected_names = (
-        *(table.name for table in migrated),
-        "run_leases",
-        "evaluation_results",
-    )
+    assert SQLITE_SCHEMA_VERSION == 1
+    expected_names = (*(table.name for table in migrated), "run_leases")
     assert expected_names == SQLITE_TABLE_NAMES
     assert tuple(SQLITE_METADATA.tables) == SQLITE_TABLE_NAMES
     for expected in migrated:
@@ -72,12 +68,12 @@ def test_metadata_matches_frozen_0008_registry_plus_v2_tables() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_database_migrates_atomically_to_v2_and_reopens() -> None:
-    """A new database gets the exact v2 tables and two permanent leases."""
+async def test_empty_database_migrates_atomically_to_v1_and_reopens() -> None:
+    """A new database gets exactly 15 tables and two idle permanent leases."""
     async with aiosqlite.connect(":memory:") as connection:
         await ensure_sqlite_schema(connection)
 
-        assert await _scalar(connection, "PRAGMA user_version") == SQLITE_SCHEMA_VERSION
+        assert await _scalar(connection, "PRAGMA user_version") == 1
         assert await _table_names(connection) == tuple(sorted(SQLITE_TABLE_NAMES))
         cursor = await connection.execute(
             "SELECT kind, generation, owner_id, run_id, heartbeat_at, expires_at "
@@ -96,9 +92,9 @@ async def test_empty_database_migrates_atomically_to_v2_and_reopens() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("version", [3, 99, 2_147_483_647])
+@pytest.mark.parametrize("version", [2, 99, 2_147_483_647])
 async def test_unknown_schema_version_fails_closed(version: int) -> None:
-    """Versions newer than v2 are never guessed or modified."""
+    """Versions newer than v1 are never guessed or modified."""
     async with aiosqlite.connect(":memory:") as connection:
         await connection.execute(f"PRAGMA user_version={version}")
         with pytest.raises(ValueError, match="unsupported SQLite schema version"):
@@ -108,7 +104,7 @@ async def test_unknown_schema_version_fails_closed(version: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_inconsistent_zero_or_versioned_database_fails_closed() -> None:
+async def test_inconsistent_zero_or_v1_database_fails_closed() -> None:
     """Neither a partial unversioned DB nor a version-only DB is repaired."""
     async with aiosqlite.connect(":memory:") as connection:
         await connection.execute("CREATE TABLE intruder(id INTEGER PRIMARY KEY)")
@@ -118,8 +114,8 @@ async def test_inconsistent_zero_or_versioned_database_fails_closed() -> None:
         assert await _table_names(connection) == ("intruder",)
 
     async with aiosqlite.connect(":memory:") as connection:
-        await connection.execute("PRAGMA user_version=2")
-        with pytest.raises(ValueError, match="schema v2 is inconsistent"):
+        await connection.execute("PRAGMA user_version=1")
+        with pytest.raises(ValueError, match="schema v1 is inconsistent"):
             await ensure_sqlite_schema(connection)
         assert await _table_names(connection) == ()
 
@@ -129,6 +125,7 @@ async def test_current_data_repair_backfills_completed_evaluation_times() -> Non
     """Existing completed evaluations gain stable dates without a DDL migration."""
     async with aiosqlite.connect(":memory:") as connection:
         await ensure_sqlite_schema(connection)
+        await connection.execute("PRAGMA user_version=1")
         await connection.execute(
             """INSERT INTO jobs(
                    platform, canonical_id, url, title, company, location,
@@ -165,7 +162,7 @@ async def test_current_data_repair_backfills_completed_evaluation_times() -> Non
 
         await ensure_sqlite_schema(connection)
 
-        assert await _scalar(connection, "PRAGMA user_version") == SQLITE_SCHEMA_VERSION
+        assert await _scalar(connection, "PRAGMA user_version") == 1
         cursor = await connection.execute(
             "SELECT stage_a_at, stage_b_at FROM evaluations WHERE job_id=?", (job_id,)
         )
@@ -210,7 +207,7 @@ async def test_two_connections_serialize_empty_schema_migration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two starters that both observe version zero converge on exact v2."""
+    """Two starters that both observe version zero converge on exact v1."""
     database_path = tmp_path / "concurrent-schema.db"
     contender = await aiosqlite.connect(database_path)
     migrator = await aiosqlite.connect(database_path)
@@ -246,8 +243,8 @@ async def test_two_connections_serialize_empty_schema_migration(
             await ensure_sqlite_schema(migrator)
         await contender_task
 
-        assert await _scalar(contender, "PRAGMA user_version") == SQLITE_SCHEMA_VERSION
-        assert await _scalar(migrator, "PRAGMA user_version") == SQLITE_SCHEMA_VERSION
+        assert await _scalar(contender, "PRAGMA user_version") == 1
+        assert await _scalar(migrator, "PRAGMA user_version") == 1
         assert await _table_names(contender) == tuple(sorted(SQLITE_TABLE_NAMES))
         assert await _table_names(migrator) == tuple(sorted(SQLITE_TABLE_NAMES))
     finally:
@@ -258,7 +255,7 @@ async def test_two_connections_serialize_empty_schema_migration(
 
 
 @pytest.mark.asyncio
-async def test_v2_reopen_accepts_occupied_leases_but_rejects_schema_tampering() -> None:
+async def test_v1_reopen_accepts_occupied_leases_but_rejects_schema_tampering() -> None:
     """Runtime lease state is data; missing DDL or permanent rows are corruption."""
     async with aiosqlite.connect(":memory:") as connection:
         await ensure_sqlite_schema(connection)
@@ -272,7 +269,7 @@ async def test_v2_reopen_accepts_occupied_leases_but_rejects_schema_tampering() 
 
         await connection.execute("DROP INDEX idx_jobs_dedup_softkey")
         await connection.commit()
-        with pytest.raises(ValueError, match="schema v2 is inconsistent"):
+        with pytest.raises(ValueError, match="schema v1 is inconsistent"):
             await ensure_sqlite_schema(connection)
 
     async with aiosqlite.connect(":memory:") as connection:
@@ -351,7 +348,7 @@ async def test_data_repair_failure_rolls_back_every_change(
         with pytest.raises(RuntimeError, match="injected data repair failure"):
             await ensure_sqlite_schema(connection)
 
-        assert await _scalar(connection, "PRAGMA user_version") == SQLITE_SCHEMA_VERSION
+        assert await _scalar(connection, "PRAGMA user_version") == 1
         assert (
             await _scalar(
                 connection,

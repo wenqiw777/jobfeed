@@ -8,8 +8,8 @@ import InsightsPage from "@/routes/insights";
 function overviewFixture(over: Partial<InsightsOverviewResponse> = {}): InsightsOverviewResponse {
   return {
     window_days: 30,
-    totals: { jobs: 1200, ml_gate_passed: 400, evaluated: 240, detailed_reviewed: 240, applied: 30 },
-    verdict_distribution: { strong_match: 40, possible_match: 80, weak_match: 100, ineligible: 20 },
+    totals: { jobs: 1200, ml_gate_passed: 400, evaluated: 240, detailed_reviewed: 120, applied: 30 },
+    verdict_distribution: { apply: 40, consider: 80, skip: 100, below_threshold: 20 },
     decision_distribution: { results: 150, applied: 35, ignored: 20 },
     daily: [
       { day: "2026-06-10", discovered: 12, evaluated: 6, applied: 2 },
@@ -83,9 +83,9 @@ test("KPI cards: every value is labeled with the selected time range", async () 
   expect(within(kpis).getByText("400")).toBeInTheDocument(); // ml_gate_passed
   expect(within(kpis).getByText("Applied")).toBeInTheDocument();
   expect(within(kpis).queryByText("Applications submitted")).toBeNull();
-  expect(within(kpis).getByText("Evaluated")).toBeInTheDocument();
-  expect(within(kpis).queryByText("Detailed reviewed")).toBeNull();
-  expect(within(kpis).getAllByText("last 30 days")).toHaveLength(4);
+  expect(within(kpis).getByText("Quick evaluated")).toBeInTheDocument();
+  expect(within(kpis).getByText("Detailed reviewed")).toBeInTheDocument();
+  expect(within(kpis).getAllByText("last 30 days")).toHaveLength(5);
 });
 
 test("evaluation coverage: shows absolute counts and shares of all discovered jobs", async () => {
@@ -95,11 +95,12 @@ test("evaluation coverage: shows absolute counts and shares of all discovered jo
   expect(within(coverage).getByRole("progressbar", { name: "Passed local filter" })).toBeInTheDocument();
   expect(within(coverage).getByText("400 of 1,200 jobs in selected period")).toBeInTheDocument();
   expect(within(coverage).getByText("33.3% of selected period")).toBeInTheDocument();
-  expect(within(coverage).getByRole("progressbar", { name: "Evaluated" })).toBeInTheDocument();
+  expect(within(coverage).getByRole("progressbar", { name: "Detailed reviewed" })).toBeInTheDocument();
   expect(coverageStages(overviewFixture())).toEqual([
     { label: "Passed local filter", count: 400, percent: 33.3 },
-    { label: "Evaluated", count: 240, percent: 20 },
-    { label: "Strong match", count: 40, percent: 3.3 },
+    { label: "Quick evaluated", count: 240, percent: 20 },
+    { label: "Detailed reviewed", count: 120, percent: 10 },
+    { label: "Recommended apply", count: 40, percent: 3.3 },
     { label: "Applied", count: 30, percent: 2.5 },
   ]);
 });
@@ -135,7 +136,7 @@ test("an empty window renders per-chart empty states, not crashes", async () => 
 
 test("window presets re-query with ?window= and mark the active chip", async () => {
   renderInsights();
-  expect(await screen.findAllByText("last 30 days")).toHaveLength(4);
+  expect(await screen.findAllByText("last 30 days")).toHaveLength(5);
   expect(screen.getByRole("button", { name: "7 days" })).toBeVisible();
   expect(screen.getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "true");
 
@@ -146,7 +147,7 @@ test("window presets re-query with ?window= and mark the active chip", async () 
   );
   expect(screen.getByRole("button", { name: "60 days" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "false");
-  expect(await screen.findAllByText("last 60 days")).toHaveLength(4);
+  expect(await screen.findAllByText("last 60 days")).toHaveLength(5);
 });
 
 test("All time requests the unbounded cohort and labels every KPI", async () => {
@@ -162,6 +163,6 @@ test("All time requests the unbounded cohort and labels every KPI", async () => 
     "aria-pressed",
     "true",
   );
-  expect(await screen.findAllByText("all time")).toHaveLength(4);
+  expect(await screen.findAllByText("all time")).toHaveLength(5);
   expect(screen.getByText(/share of all-time jobs/i)).toBeInTheDocument();
 });

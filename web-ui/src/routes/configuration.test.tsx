@@ -242,7 +242,14 @@ function mockApi(): void {
       }
       if (url === "/api/onboarding/evaluation-calibration" && method === "POST") {
         return json({
-          evaluation: {
+          quick: {
+            model: "gpt-5.6-luna",
+            input_tokens: 1000,
+            output_tokens: 100,
+            cost_usd: 0.002,
+            latency_ms: 1500,
+          },
+          detailed: {
             model: "gpt-5.6-terra",
             input_tokens: 3000,
             output_tokens: 500,
@@ -492,10 +499,9 @@ test("fresh checkout connects a provider, retries, and saves provider models", a
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
   expect(await screen.findByText("OpenAI API connection verified.")).toBeVisible();
-  expect(screen.getByRole("button", { name: /Evaluation model/ })).toBeVisible();
-  expect(screen.queryByText(/Quick evaluation model/)).toBeNull();
-  expect(screen.queryByText(/Detailed review model/)).toBeNull();
-  fireEvent.mouseDown(screen.getByRole("button", { name: /Evaluation model/ }));
+  expect(screen.getByRole("button", { name: /Quick evaluation model/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Detailed review model/ })).toBeVisible();
+  fireEvent.mouseDown(screen.getByRole("button", { name: /Detailed review model/ }));
   fireEvent.mouseUp(await screen.findByRole("option", { name: "GPT-5.6 Sol" }));
   fireEvent.click(screen.getByRole("button", { name: "Save and continue" }));
 
@@ -506,7 +512,7 @@ test("fresh checkout connects a provider, retries, and saves provider models", a
     expect(request).toBeDefined();
     expect(request?.body).toEqual({
       provider: "openai_api",
-      quick_model: "gpt-5.6-sol",
+      quick_model: "gpt-5.6-terra",
       detailed_model: "gpt-5.6-sol",
     });
   });
@@ -658,11 +664,12 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
     .toHaveValue(150);
   expect(screen.getByLabelText("Maximum job age in hours")).toHaveValue(36);
   expect(screen.getByText(/Indeed keeps the full 2-day window/)).toBeVisible();
-  expect(screen.getByText("150 evaluations")).toBeVisible();
-  expect(screen.getByText("150 planned calls")).toBeVisible();
-  expect(screen.queryByLabelText("Quick-to-detailed threshold")).toBeNull();
+  expect(screen.getByLabelText("Quick-to-detailed threshold")).toHaveValue(60);
+  expect(screen.getByText("150 Quick evaluations")).toBeVisible();
+  expect(screen.getByText("About 45 Detailed reviews (30% pass rate)")).toBeVisible();
   expect(await screen.findByText("Pro plan")).toBeVisible();
   expect(screen.getByText("35% used · 65% remaining")).toBeVisible();
+  expect(screen.getByText("About 195 planned calls")).toBeVisible();
   expect(screen.getByText(/Personal filter learning starts after setup/)).toBeVisible();
   expect(screen.queryByRole("checkbox", { name: "Enable local ML filter" })).not.toBeInTheDocument();
   expect(
@@ -672,9 +679,9 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
     (screen.getByLabelText("Representative job description") as HTMLTextAreaElement).value,
   ).toContain("real production role");
   fireEvent.click(screen.getByRole("button", { name: "Measure one evaluation" }));
-  expect(await screen.findByText("About $0.0100 per JD")).toBeVisible();
-  expect(screen.getByText("About $1.50 for 150 JDs")).toBeVisible();
-  expect(screen.getByText("About 3,500 tokens per JD")).toBeVisible();
+  expect(await screen.findByText("About $0.0050 per JD")).toBeVisible();
+  expect(screen.getByText("About $0.75 for 150 JDs")).toBeVisible();
+  expect(screen.getByText("About 2,150 tokens per JD")).toBeVisible();
   expect(screen.getByText("No whole percentage point detected")).toBeVisible();
   fireEvent.change(screen.getByLabelText("Maximum unique jobs to evaluate per run"), {
     target: { value: "80" },
@@ -789,12 +796,12 @@ test("Claude calibration estimates the selected five-hour plan allowance", async
 
   fireEvent.click(screen.getByRole("button", { name: "Measure one evaluation" }));
   expect(
-    await screen.findByText("Estimated 1.67% of your 5-hour allowance"),
+    await screen.findByText("Estimated 0.83% of your 5-hour allowance"),
   ).toBeVisible();
 
   fireEvent.click(screen.getAllByText("Pro · ≈$18")[0]!);
   expect(
-    screen.getByText("Estimated 8.33% of your 5-hour allowance"),
+    screen.getByText("Estimated 4.17% of your 5-hour allowance"),
   ).toBeVisible();
 });
 
@@ -822,7 +829,7 @@ test("Codex calibration shows projected allowance in the usage summary", async (
   expect(await screen.findByText("Measure one evaluation below")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Measure one evaluation" }));
   expect(
-    await screen.findByText("Estimated 1.82% of your 7-day allowance"),
+    await screen.findByText("Estimated 0.91% of your 7-day allowance"),
   ).toBeVisible();
 });
 

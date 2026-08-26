@@ -170,12 +170,12 @@ _JOBS_VIEW_TAB_PREDICATES: dict[str, str] = {
         " AND jobs.closed_at IS NULL)"
     ),
     # Pending-JD: no usable JD (same quality predicate as
-    # mark_stale_jobs_closed), no unified score, not archived/ignored,
+    # mark_stale_jobs_closed), never Stage A-scored, not archived/ignored,
     # still open (rewrite-spec §15 semantics).
     "pending_jd": (
         "((jobs.jd_quality IS NULL"
         " OR jobs.jd_quality IN ('missing', 'abandoned'))"
-        " AND evaluation_results.match_score IS NULL"
+        " AND evaluations.stage_a_score IS NULL"
         " AND job_status.status NOT IN ('archived', 'ignored')"
         " AND jobs.closed_at IS NULL)"
     ),
@@ -187,21 +187,21 @@ _JOBS_VIEW_TAB_PREDICATES: dict[str, str] = {
 
 _JOBS_VIEW_FROM = (
     "FROM jobs"
-    " LEFT JOIN evaluation_results ON evaluation_results.job_id = jobs.id"
+    " LEFT JOIN evaluations ON evaluations.job_id = jobs.id"
     " LEFT JOIN job_status ON job_status.job_id = jobs.id"
 )
 
 _JOBS_VIEW_COLUMNS = (
     "jobs.*, job_status.status AS status,"
-    " evaluation_results.match_score AS evaluation_score,"
-    " evaluation_results.match_tier AS evaluation_verdict,"
-    " evaluation_results.status AS evaluation_status,"
-    " evaluation_results.evaluator_version"
+    " evaluations.stage_a_score, evaluations.stage_b_verdict,"
+    " evaluations.stage_b_status,"
+    " (evaluations.stage_b_fit_json ->> 'score_0_100')::integer"
+    " AS stage_b_fit_score"
 )
 
 # SQL ORDER BY per JobsViewQuery.sort, mirroring the in-memory keys in
-# services/_jobs_view_sort.py (canonical unified score, NULLS LAST; every
-# sort ends in the discovered_at DESC, id DESC tiebreak)
+# services/_jobs_view_sort.py (score = Stage B fit with Stage A fallback,
+# NULLS LAST; every sort ends in the discovered_at DESC, id DESC tiebreak)
 # so plain Library requests paginate in SQL beyond the corpus cap (D10).
 _JOBS_VIEW_SORT_SQL: dict[str, str] = {
     "discovered_desc": "jobs.discovered_at DESC, jobs.id DESC",
@@ -214,11 +214,13 @@ _JOBS_VIEW_SORT_SQL: dict[str, str] = {
         "jobs.id DESC"
     ),
     "score_desc": (
-        "evaluation_results.match_score DESC NULLS LAST,"
+        "COALESCE((evaluations.stage_b_fit_json ->> 'score_0_100')::integer,"
+        " evaluations.stage_a_score) DESC NULLS LAST,"
         " jobs.discovered_at DESC, jobs.id DESC"
     ),
     "score_asc": (
-        "evaluation_results.match_score ASC NULLS LAST, jobs.discovered_at DESC,"
+        "COALESCE((evaluations.stage_b_fit_json->>'score_0_100')::integer,"
+        " evaluations.stage_a_score) ASC NULLS LAST, jobs.discovered_at DESC,"
         " jobs.id DESC"
     ),
     "company_asc": (
@@ -258,10 +260,7 @@ def _jobs_view_filters(query: JobsViewQuery) -> tuple[list[str], list[object]]:
             f"jobs.discovered_at >= now() - make_interval(days => ${len(params)})"
         )
     if query.require_verdict:
-        fragments.append(
-            "evaluation_results.status='completed' "
-            "AND evaluation_results.match_tier IS NOT NULL"
-        )
+        fragments.append("evaluations.stage_b_verdict IS NOT NULL")
     return fragments, params
 
 
@@ -290,17 +289,19 @@ def _jobs_view_row_from_record(r: asyncpg.Record) -> JobsViewRow:
             evaluation summary columns.
 
     Returns:
-        View row carrying only the canonical unified evaluation summary.
+        View row. The Stage B fit score is lifted from stage_b_fit_json's
+        'score_0_100' key — the same key get_evaluation hydrates FitAnalysis
+        from.
     """
     return JobsViewRow(
         job=_job_from_record(r),
         company_norm=r["company_norm"],
         title_norm=r["title_norm"],
         status=r["status"],
-        evaluation_score=r["evaluation_score"],
-        evaluation_verdict=r["evaluation_verdict"],
-        evaluation_status=r["evaluation_status"],
-        evaluator_version=r["evaluator_version"],
+        verdict=r["stage_b_verdict"],
+        stage_a_score=r["stage_a_score"],
+        stage_b_fit_score=r["stage_b_fit_score"],
+        stage_b_status=r["stage_b_status"],
     )
 
 
@@ -3140,35 +3141,6 @@ class PostgresStore:
         if row is None:
             return None
         return _evaluation_from_record(row)
-
-    async def get_current_evaluation(self, job_id: str) -> dict[str, object] | None:
-        """Fetch one canonical unified evaluation row.
-
-        Args:
-            job_id: Store-assigned identity.
-
-        Returns:
-            Unified evaluation row with decoded ``result_json``, or None.
-        """
-        pool = self._get_pool()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """SELECT job_id, status, eligibility_status, match_tier,
-                          match_score, ats_visibility_score, result_json,
-                          evaluator_version, model, prompt_hash, resume_hash,
-                          cost_usd, evaluated_at, updated_at, error, error_count
-                   FROM evaluation_results
-                   WHERE job_id = $1""",
-                int(job_id),
-            )
-        if row is None:
-            return None
-        result: dict[str, object] = dict(row)
-        result["job_id"] = str(result["job_id"])
-        raw_json = result.get("result_json")
-        if isinstance(raw_json, str):
-            result["result_json"] = json.loads(raw_json)
-        return result
 
     async def get_stage_a_scores(
         self,

@@ -52,17 +52,5 @@ class PromptRenderer(Protocol):
         """
         ...
 
-    def render_unified(self, *, resume_text: str, job: JobPosting) -> PromptBundle:
-        """Render the single-pass objective evaluator prompt bundle.
-
-        Args:
-            resume_text: Master resume text used as candidate evidence.
-            job: Job posting to evaluate.
-
-        Returns:
-            PromptBundle with messages and hashes.
-        """
-        ...
-
 
 __all__ = ["PromptBundle", "PromptRenderer"]

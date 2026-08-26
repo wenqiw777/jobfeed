@@ -148,17 +148,21 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                   <Field label="Resume file">
                     <Input value={llm.master_resume_path} onChange={({ detail }) => updateSection("llm", { ...llm, master_resume_path: detail.value })} />
                   </Field>
-                  <Field label="Evaluation model">
+                  <Field label="Quick evaluation model">
+                    <Select
+                      selectedOption={modelOption(llm.stage_a)}
+                      options={MODEL_OPTIONS}
+                      onChange={({ detail }) => updateSection("llm", { ...llm, stage_a: detail.selectedOption.value! })}
+                    />
+                  </Field>
+                  <Field label="Detailed review model">
                     <Select
                       selectedOption={modelOption(llm.stage_b)}
                       options={MODEL_OPTIONS}
-                      onChange={({ detail }) => updateSection("llm", {
-                        ...llm,
-                        stage_a: detail.selectedOption.value!,
-                        stage_b: detail.selectedOption.value!,
-                      })}
+                      onChange={({ detail }) => updateSection("llm", { ...llm, stage_b: detail.selectedOption.value! })}
                     />
                   </Field>
+                  <NumberField label="Detailed review threshold" value={scoring.stage_a_threshold} min={0} max={100} onChange={(value) => updateSection("scoring", { ...scoring, stage_a_threshold: value })} />
                   <NumberField label="Daily model call limit" value={llm.max_daily_score_calls} min={0} onChange={(value) => updateSection("llm", { ...llm, max_daily_score_calls: value })} />
                   <NumberField label="Daily cost limit (USD)" value={llm.max_daily_cost_usd} min={0} step="0.5" onChange={(value) => updateSection("llm", { ...llm, max_daily_cost_usd: value })} />
                   <NumberField label="Parallel evaluations" value={llm.max_concurrent} min={1} onChange={(value) => updateSection("llm", { ...llm, max_concurrent: value })} />
@@ -235,7 +239,7 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                     </Checkbox>
                     <Box variant="small" color="text-body-secondary">
                       {scoring.ml_gate_enabled
-                        ? "Active. Jobs predicted irrelevant skip evaluation and remain recoverable in the Job library."
+                        ? "Active. Jobs predicted irrelevant skip Quick evaluation and remain recoverable in the Job library."
                         : "Uses the existing trained model immediately. Readiness checks remain advisory; recent recall can still pause filtering automatically."}
                     </Box>
                     {performance && (

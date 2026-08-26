@@ -15,9 +15,6 @@ from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
 from jobfeed.adapters.store.sqlite_status_applications import (
     SqliteStatusApplications,
 )
-from jobfeed.adapters.store.sqlite_unified_evaluations import (
-    SqliteUnifiedEvaluations,
-)
 from jobfeed.adapters.store.sqlite_views_performance import (
     SqliteViewsPerformance,
 )
@@ -28,7 +25,6 @@ Clock = Callable[[], datetime]
 
 class SQLiteStore(
     SqliteJobsEvaluations,
-    SqliteUnifiedEvaluations,
     SqliteClaimsRuns,
     SqliteStatusApplications,
     SqliteOps,

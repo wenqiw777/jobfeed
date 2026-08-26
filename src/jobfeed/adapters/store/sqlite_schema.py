@@ -11,10 +11,7 @@ from jobfeed.adapters.store._sqlite_schema_metadata import (
     SQLITE_METADATA,
     SQLITE_SCHEMA_VERSION,
     SQLITE_TABLE_NAMES,
-    llm_usage_v2_rebuild_statements,
     schema_ddl_statements,
-    schema_v1_ddl_statements,
-    schema_v2_migration_statements,
 )
 from jobfeed.domain.ml_features import classify_role_type
 
@@ -41,9 +38,6 @@ async def ensure_sqlite_schema(connection: aiosqlite.Connection) -> None:
     if version == 0:
         await _migrate_zero_to_current(connection)
         return
-    if version == 1:
-        await _migrate_v1_to_v2(connection)
-        return
     if version == SQLITE_SCHEMA_VERSION:
         await _repair_current_data(connection)
         return
@@ -55,7 +49,7 @@ async def _migrate_zero_to_current(connection: aiosqlite.Connection) -> None:
     try:
         version = await _schema_version(connection)
         if version == SQLITE_SCHEMA_VERSION:
-            await _validate_v2(connection)
+            await _validate_v1(connection)
             await connection.commit()
             return
         if version != 0:
@@ -67,33 +61,7 @@ async def _migrate_zero_to_current(connection: aiosqlite.Connection) -> None:
         await connection.execute(_SEED_LEASE_SQL)
         await _backfill_missing_role_types(connection)
         await connection.execute(f"PRAGMA user_version={SQLITE_SCHEMA_VERSION}")
-        await _validate_v2(connection)
-        await connection.commit()
-    except BaseException:
-        await connection.rollback()
-        raise
-
-
-async def _migrate_v1_to_v2(connection: aiosqlite.Connection) -> None:
-    """Atomically add the independent unified-evaluation result table."""
-    await connection.execute("BEGIN IMMEDIATE")
-    try:
-        version = await _schema_version(connection)
-        if version == SQLITE_SCHEMA_VERSION:
-            await _validate_v2(connection)
-            await connection.commit()
-            return
-        if version != 1:
-            raise ValueError(f"unsupported SQLite schema version: {version}")
         await _validate_v1(connection)
-        for statement in llm_usage_v2_rebuild_statements():
-            await _execute_schema_statement(connection, statement)
-        for statement in schema_v2_migration_statements():
-            await _execute_schema_statement(connection, statement)
-        await connection.execute(f"PRAGMA user_version={SQLITE_SCHEMA_VERSION}")
-        await _validate_v2(connection)
-        await _apply_data_repairs(connection)
-        await _validate_v2(connection)
         await connection.commit()
     except BaseException:
         await connection.rollback()
@@ -107,42 +75,32 @@ async def _repair_current_data(connection: aiosqlite.Connection) -> None:
         version = await _schema_version(connection)
         if version != SQLITE_SCHEMA_VERSION:
             raise ValueError(f"unsupported SQLite schema version: {version}")
-        await _validate_v2(connection)
-        await _apply_data_repairs(connection)
-        await _validate_v2(connection)
-        await connection.commit()
-    except BaseException:
-        await connection.rollback()
-        raise
-
-
-async def _apply_data_repairs(connection: aiosqlite.Connection) -> None:
-    """Apply idempotent legacy data invariant repairs in the caller transaction."""
-    await _execute_data_migration_statement(
-        connection,
-        """UPDATE evaluations
+        await _validate_v1(connection)
+        await _execute_data_migration_statement(
+            connection,
+            """UPDATE evaluations
                SET stage_a_at=created_at
                WHERE stage_a_status='completed' AND stage_a_at IS NULL""",
-    )
-    await _execute_data_migration_statement(
-        connection,
-        """UPDATE evaluations
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """UPDATE evaluations
                SET stage_b_at=updated_at
                WHERE stage_b_status='completed' AND stage_b_at IS NULL""",
-    )
-    await _execute_data_migration_statement(
-        connection,
-        """INSERT INTO job_status_history(
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """INSERT INTO job_status_history(
                    job_id, from_status, to_status, changed_at, reason
                )
                SELECT s.job_id, 'new', 'scored',
                       COALESCE(e.stage_a_at, e.created_at), 'schema_data_repair'
                FROM job_status s JOIN evaluations e ON e.job_id=s.job_id
                WHERE s.status='new' AND e.stage_a_status='completed'""",
-    )
-    await _execute_data_migration_statement(
-        connection,
-        """UPDATE job_status
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """UPDATE job_status
                SET status='scored',
                    last_status_change_at=(
                      SELECT COALESCE(e.stage_a_at, e.created_at)
@@ -153,33 +111,31 @@ async def _apply_data_repairs(connection: aiosqlite.Connection) -> None:
                  WHERE e.job_id=job_status.job_id
                    AND e.stage_a_status='completed'
                )""",
-    )
-    await _execute_data_migration_statement(
-        connection,
-        """INSERT INTO job_status_history(
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """INSERT INTO job_status_history(
                    job_id, from_status, to_status, changed_at, reason
                )
                SELECT s.job_id, 'scored', 'new', s.last_status_change_at,
                       'schema_data_repair'
                FROM job_status s LEFT JOIN evaluations e ON e.job_id=s.job_id
-               WHERE s.status='scored' AND e.job_id IS NULL
-                 AND NOT EXISTS (
-                   SELECT 1 FROM evaluation_results r
-                   WHERE r.job_id=s.job_id AND r.status='completed'
-                 )""",
-    )
-    await _execute_data_migration_statement(
-        connection,
-        """UPDATE job_status
+               WHERE s.status='scored' AND e.job_id IS NULL""",
+        )
+        await _execute_data_migration_statement(
+            connection,
+            """UPDATE job_status
                SET status='new'
                WHERE status='scored' AND NOT EXISTS (
                  SELECT 1 FROM evaluations e WHERE e.job_id=job_status.job_id
-               ) AND NOT EXISTS (
-                 SELECT 1 FROM evaluation_results r
-                 WHERE r.job_id=job_status.job_id AND r.status='completed'
                )""",
-    )
-    await _backfill_missing_role_types(connection)
+        )
+        await _backfill_missing_role_types(connection)
+        await _validate_v1(connection)
+        await connection.commit()
+    except BaseException:
+        await connection.rollback()
+        raise
 
 
 async def _schema_version(connection: aiosqlite.Connection) -> int:
@@ -218,20 +174,7 @@ async def _backfill_missing_role_types(connection: aiosqlite.Connection) -> None
 
 
 async def _validate_v1(connection: aiosqlite.Connection) -> None:
-    await _validate_schema(connection, schema_v1_ddl_statements(), version=1)
-
-
-async def _validate_v2(connection: aiosqlite.Connection) -> None:
-    await _validate_schema(connection, schema_ddl_statements(), version=2)
-
-
-async def _validate_schema(
-    connection: aiosqlite.Connection,
-    statements: tuple[str, ...],
-    *,
-    version: int,
-) -> None:
-    expected = _expected_schema_objects(statements)
+    expected = _expected_schema_objects()
     live = await _live_schema_objects(connection)
     if live != expected:
         missing = sorted(set(expected) - set(live))
@@ -240,7 +183,7 @@ async def _validate_schema(
             name for name in set(live) & set(expected) if live[name] != expected[name]
         )
         raise ValueError(
-            f"SQLite schema v{version} is inconsistent: "
+            "SQLite schema v1 is inconsistent: "
             f"missing={missing}, extra={extra}, changed={changed}"
         )
     cursor = await connection.execute(
@@ -250,16 +193,12 @@ async def _validate_schema(
     leases = await cursor.fetchall()
     await cursor.close()
     if [row[0] for row in leases] != ["evaluate", "scan"]:
-        raise ValueError(
-            f"SQLite schema v{version} is inconsistent: run lease rows differ"
-        )
+        raise ValueError("SQLite schema v1 is inconsistent: run lease rows differ")
 
 
-def _expected_schema_objects(
-    statements: tuple[str, ...],
-) -> dict[tuple[str, str], str]:
+def _expected_schema_objects() -> dict[tuple[str, str], str]:
     objects: dict[tuple[str, str], str] = {}
-    for statement in statements:
+    for statement in schema_ddl_statements():
         match = _CREATE_PREFIX.match(statement.lstrip())
         if match is None:
             raise RuntimeError("generated SQLite DDL has an unknown object")

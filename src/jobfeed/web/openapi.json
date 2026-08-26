@@ -773,71 +773,9 @@
         "title": "EditableConfiguration",
         "type": "object"
       },
-      "EligibilityCheckDetail": {
-        "description": "One evidence-backed hard eligibility check.",
-        "properties": {
-          "candidate_evidence": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate Evidence"
-          },
-          "kind": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Kind"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "requirement": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Requirement"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          }
-        },
-        "title": "EligibilityCheckDetail",
-        "type": "object"
-      },
       "EvaluationCalibrationBody": {
         "additionalProperties": false,
-        "description": "One representative JD used for a real unified calibration.",
+        "description": "One representative JD used for a real two-stage calibration.",
         "properties": {
           "job_description": {
             "maxLength": 30000,
@@ -853,7 +791,7 @@
         "type": "object"
       },
       "EvaluationCalibrationResponse": {
-        "description": "Measured unified-evaluation usage and subscription-meter delta.",
+        "description": "Measured Quick + Detailed usage and subscription-meter delta.",
         "properties": {
           "allowance_after_percent": {
             "anyOf": [
@@ -882,12 +820,16 @@
             "title": "Allowance Resolution Percent",
             "type": "integer"
           },
-          "evaluation": {
+          "detailed": {
+            "$ref": "#/components/schemas/MeasuredEvaluationCallResponse"
+          },
+          "quick": {
             "$ref": "#/components/schemas/MeasuredEvaluationCallResponse"
           }
         },
         "required": [
-          "evaluation",
+          "quick",
+          "detailed",
           "allowance_before_percent",
           "allowance_after_percent"
         ],
@@ -895,38 +837,29 @@
         "type": "object"
       },
       "EvaluationDetail": {
-        "description": "Canonical unified evaluation; legacy Stage A/B never participate.",
+        "description": "Evaluation section of the detail response (stages optional).\n\n``stage_b_status`` is the raw pipeline status (the same store column the\nlist rows carry), set even when ``stage_b`` is None \u2014 below-threshold\nrows have no Stage B blocks but still need their derived display state.",
         "properties": {
-          "ats_visibility_score": {
+          "stage_a": {
             "anyOf": [
               {
-                "type": "integer"
+                "$ref": "#/components/schemas/StageADetail"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Ats Visibility Score"
+            ]
           },
-          "eligibility_checks": {
-            "items": {
-              "$ref": "#/components/schemas/EligibilityCheckDetail"
-            },
-            "title": "Eligibility Checks",
-            "type": "array"
-          },
-          "eligibility_status": {
+          "stage_b": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/StageBDetail"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Eligibility Status"
+            ]
           },
-          "evaluation_status": {
+          "stage_b_status": {
             "anyOf": [
               {
                 "type": "string"
@@ -935,94 +868,13 @@
                 "type": "null"
               }
             ],
-            "title": "Evaluation Status"
-          },
-          "evaluator_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evaluator Version"
-          },
-          "match_score": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Match Score"
-          },
-          "match_tier": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Match Tier"
-          },
-          "model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model"
-          },
-          "one_line": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "One Line"
-          },
-          "requirements": {
-            "items": {
-              "$ref": "#/components/schemas/RequirementDetail"
-            },
-            "title": "Requirements",
-            "type": "array"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
+            "title": "Stage B Status"
           }
         },
         "required": [
-          "summary",
-          "eligibility_status",
-          "eligibility_checks",
-          "requirements",
-          "match_score",
-          "match_tier",
-          "evaluation_status",
-          "one_line",
-          "ats_visibility_score",
-          "evaluator_version",
-          "model"
+          "stage_a",
+          "stage_b",
+          "stage_b_status"
         ],
         "title": "EvaluationDetail",
         "type": "object"
@@ -1092,6 +944,30 @@
           "scored"
         ],
         "title": "FunnelRow",
+        "type": "object"
+      },
+      "GapDetail": {
+        "description": "One missing/weak requirement with severity and mitigation.",
+        "properties": {
+          "mitigation": {
+            "title": "Mitigation",
+            "type": "string"
+          },
+          "requirement": {
+            "title": "Requirement",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement",
+          "severity",
+          "mitigation"
+        ],
+        "title": "GapDetail",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1211,7 +1087,7 @@
         "type": "object"
       },
       "InsightsOverviewResponse": {
-        "description": "``GET /api/insights/overview`` response.\n\nThe requested window selects the discovery-date cohort for totals,\ndistributions, and ``daily``.\n``verdict_distribution`` contains unified ``match_tier`` counts for\ncompleted evaluations; both distributions carry only nonzero buckets.",
+        "description": "``GET /api/insights/overview`` response.\n\nThe requested window selects the discovery-date cohort for totals,\ndistributions, and ``daily``.\n``verdict_distribution`` includes the derived\n``below_threshold`` bucket (triage grouping); both distributions carry\nonly nonzero buckets.",
         "properties": {
           "daily": {
             "items": {
@@ -1793,50 +1669,6 @@
             "title": "Discovered At",
             "type": "string"
           },
-          "evaluation_score": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evaluation Score"
-          },
-          "evaluation_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evaluation Status"
-          },
-          "evaluation_verdict": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evaluation Verdict"
-          },
-          "evaluator_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evaluator Version"
-          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1868,6 +1700,39 @@
             ],
             "title": "Posted At"
           },
+          "stage_a_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage A Score"
+          },
+          "stage_b_fit_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Fit Score"
+          },
+          "stage_b_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Status"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -1890,6 +1755,17 @@
           "url": {
             "title": "Url",
             "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
           }
         },
         "required": [
@@ -1900,10 +1776,10 @@
           "url",
           "status",
           "decision",
-          "evaluation_score",
-          "evaluation_verdict",
-          "evaluation_status",
-          "evaluator_version",
+          "verdict",
+          "stage_a_score",
+          "stage_b_fit_score",
+          "stage_b_status",
           "posted_at",
           "discovered_at",
           "closed_at",
@@ -2755,7 +2631,7 @@
       },
       "ProviderModelsBody": {
         "additionalProperties": false,
-        "description": "Evaluation model mirrored in legacy-compatible provider fields.",
+        "description": "Quick and Detailed model selections from a verified catalog.",
         "properties": {
           "detailed_model": {
             "title": "Detailed Model",
@@ -2861,79 +2737,6 @@
         "title": "ProviderStateResponse",
         "type": "object"
       },
-      "RequirementDetail": {
-        "description": "One unified requirement-to-resume evidence assessment.",
-        "properties": {
-          "category": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Category"
-          },
-          "evidence_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evidence Type"
-          },
-          "match": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Match"
-          },
-          "priority": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Priority"
-          },
-          "requirement": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Requirement"
-          },
-          "resume_evidence": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Resume Evidence"
-          }
-        },
-        "title": "RequirementDetail",
-        "type": "object"
-      },
       "RestoreResponse": {
         "description": "``POST /api/jobs/{id}/restore`` response: where the job landed.",
         "properties": {
@@ -2951,6 +2754,36 @@
           "status"
         ],
         "title": "RestoreResponse",
+        "type": "object"
+      },
+      "ResumeHooksDetail": {
+        "description": "The three resume-hook blocks of the Stage B output.",
+        "properties": {
+          "avoid_mentioning": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Avoid Mentioning",
+            "type": "array"
+          },
+          "lead_with": {
+            "title": "Lead With",
+            "type": "string"
+          },
+          "supporting": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supporting",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lead_with",
+          "supporting",
+          "avoid_mentioning"
+        ],
+        "title": "ResumeHooksDetail",
         "type": "object"
       },
       "ResumeStateResponse": {
@@ -3681,6 +3514,78 @@
         "title": "SourcesSpeedyApplyConfig",
         "type": "object"
       },
+      "StageADetail": {
+        "description": "Stage A summary: fast score plus its one-line rationale.",
+        "properties": {
+          "one_line": {
+            "title": "One Line",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "score",
+          "one_line"
+        ],
+        "title": "StageADetail",
+        "type": "object"
+      },
+      "StageBDetail": {
+        "description": "Stage B blocks: verdict, JD summary, fit analysis, resume hooks.\n\nDisplay DTO \u2014 it must never 500 on real-data nulls. Stage B rows in the\nlive corpus can carry a NULL/absent JD summary or fit score (the verdict-\nindependent fallback also fills here), so ``jd_summary`` and ``fit_score``\nare nullable and the list fields default to empty. ``verdict`` stays a\nplain string (\"\" when unscored, which the pill reads). ``hooks`` keeps a\nnon-optional empty default so both mapper paths and the frontend never\nhave to special-case its absence.",
+        "properties": {
+          "fit_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Score"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/GapDetail"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "hooks": {
+            "$ref": "#/components/schemas/ResumeHooksDetail"
+          },
+          "jd_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jd Summary"
+          },
+          "strengths": {
+            "items": {
+              "$ref": "#/components/schemas/StrengthDetail"
+            },
+            "title": "Strengths",
+            "type": "array"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict"
+        ],
+        "title": "StageBDetail",
+        "type": "object"
+      },
       "StatusDetail": {
         "description": "Workflow section: current status, notes, follow-up, history.",
         "properties": {
@@ -3822,6 +3727,25 @@
         "title": "StepTimingsResponse",
         "type": "object"
       },
+      "StrengthDetail": {
+        "description": "One matched requirement with its resume evidence.",
+        "properties": {
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "requirement": {
+            "title": "Requirement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirement",
+          "evidence"
+        ],
+        "title": "StrengthDetail",
+        "type": "object"
+      },
       "TransitionBody": {
         "description": "``POST /api/jobs/{id}/transition`` request body.",
         "properties": {
@@ -3904,9 +3828,8 @@
             "title": "Limit"
           },
           "stage": {
-            "default": "unified",
+            "default": "both",
             "enum": [
-              "unified",
               "a",
               "b",
               "both"
@@ -4779,7 +4702,7 @@
     },
     "/api/jobs/{job_id}/apply": {
       "post": {
-        "description": "Record an application with resume snapshots and audit fields.\n\nMirrors the CLI apply command: master resume read from settings,\nCanonical evaluation snapshot captured via the shared service helper, and the\nno-op parity result when the job was already applied.\n\nArgs:\n    job_id: Store-assigned job identity.\n    request: Current request (carries the app settings).\n    form: Parsed multipart upload + form fields.\n    service: Shared application service from the app state.\n    store: Shared job store (existence check only).\n\nReturns:\n    ``applied`` flag plus the reapply notice when one applies.\n\nRaises:\n    ApiError: 404 unknown job; 422 non-UTF-8 upload; 409 with code\n        ``illegal_transition`` when the job is in a terminal status.",
+        "description": "Record an application with resume snapshots and audit fields.\n\nMirrors the CLI apply command: master resume read from settings,\nStage B snapshot fields captured via the shared service helper, and the\nno-op parity result when the job was already applied.\n\nArgs:\n    job_id: Store-assigned job identity.\n    request: Current request (carries the app settings).\n    form: Parsed multipart upload + form fields.\n    service: Shared application service from the app state.\n    store: Shared job store (existence check only).\n\nReturns:\n    ``applied`` flag plus the reapply notice when one applies.\n\nRaises:\n    ApiError: 404 unknown job; 422 non-UTF-8 upload; 409 with code\n        ``illegal_transition`` when the job is in a terminal status.",
         "operationId": "apply_to_job_api_jobs__job_id__apply_post",
         "parameters": [
           {
@@ -5324,7 +5247,7 @@
     },
     "/api/onboarding/evaluation-calibration": {
       "post": {
-        "description": "Run one real unified evaluation and return measured usage.\n\nArgs:\n    body: Representative job description to evaluate.\n    calibrator: Shared real evaluation calibration workflow.\n\nReturns:\n    Actual tokens, equivalent cost, latency, and plan-window delta.\n\nRaises:\n    ApiError: If provider or profile setup cannot support calibration.",
+        "description": "Run one real Quick + Detailed pair and return measured usage.\n\nArgs:\n    body: Representative job description to evaluate.\n    calibrator: Shared real evaluation calibration workflow.\n\nReturns:\n    Actual tokens, equivalent cost, latency, and plan-window delta.\n\nRaises:\n    ApiError: If provider or profile setup cannot support calibration.",
         "operationId": "calibrate_evaluation_api_onboarding_evaluation_calibration_post",
         "requestBody": {
           "content": {
@@ -5479,7 +5402,7 @@
     },
     "/api/onboarding/provider/models": {
       "put": {
-        "description": "Persist the provider evaluation model in compatibility fields.\n\nArgs:\n    body: Provider and selected model ids.\n    service: Shared provider-onboarding workflow.\n\nReturns:\n    Updated provider draft.\n\nRaises:\n    ApiError: If the provider or models do not match verified state.",
+        "description": "Persist provider-specific Quick and Detailed model choices.\n\nArgs:\n    body: Provider and selected model ids.\n    service: Shared provider-onboarding workflow.\n\nReturns:\n    Updated provider draft.\n\nRaises:\n    ApiError: If the provider or models do not match verified state.",
         "operationId": "save_provider_models_api_onboarding_provider_models_put",
         "requestBody": {
           "content": {
@@ -6033,7 +5956,7 @@
     },
     "/api/runs/evaluate": {
       "post": {
-        "description": "Trigger a background evaluate run.\n\nArgs:\n    body: Request body with evaluator mode, corpus, and limit.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when an evaluate is already running, 400 when the\n        master resume file is not configured.",
+        "description": "Trigger a background evaluate run.\n\nArgs:\n    body: Request body with stage, corpus, limit.\n    run_manager: Shared run manager.\n\nReturns:\n    The new run's identity and initial status.\n\nRaises:\n    ApiError: 409 when an evaluate is already running, 400 when the\n        master resume file is not configured.",
         "operationId": "trigger_evaluate_api_runs_evaluate_post",
         "requestBody": {
           "content": {

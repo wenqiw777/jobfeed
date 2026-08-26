@@ -92,7 +92,20 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
             isDone={isAfter(run.progress_stage, "ml_gate")}
             isActive={isCurrent(run.progress_stage, "ml_gate")}
           />
-          <EvaluationProgress count={run.jobs_scored} />
+          <StageProgress
+            label="Quick evaluation"
+            processed={run.stage_a_processed}
+            total={run.stage_a_total}
+            isDone={isAfter(run.progress_stage, "stage_a")}
+            isActive={isCurrent(run.progress_stage, "stage_a")}
+          />
+          <StageProgress
+            label="Detailed review"
+            processed={run.stage_b_processed}
+            total={run.stage_b_total}
+            isDone={isAfter(run.progress_stage, "stage_b")}
+            isActive={isCurrent(run.progress_stage, "stage_b")}
+          />
         </SpaceBetween>
         <SpaceBetween size="s">
           <Box variant="awsui-key-label">What is happening</Box>
@@ -115,7 +128,8 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
 function ProgressRail({ stage }: { stage: string | null | undefined }) {
   const steps = [
     ["ml_gate", "Local filter"],
-    ["evaluation", "Evaluation"],
+    ["stage_a", "Quick evaluation"],
+    ["stage_b", "Detailed review"],
     ["finalizing", "Complete"],
   ] as const;
   return (
@@ -128,15 +142,6 @@ function ProgressRail({ stage }: { stage: string | null | undefined }) {
         header: label,
       }))}
     />
-  );
-}
-
-function EvaluationProgress({ count }: { count: number }) {
-  return (
-    <div aria-label={`Evaluation: ${count} evaluated`}>
-      <Box variant="awsui-key-label">Evaluation</Box>
-      <Box fontSize="heading-m" fontWeight="bold">{count} evaluated</Box>
-    </div>
   );
 }
 
@@ -204,15 +209,10 @@ function mergeProgress(polled: RunSummary, streamed: RunSummary | null): RunSumm
   return streamed;
 }
 
-const STAGE_ORDER = ["preparing", "ml_gate", "evaluation", "finalizing"];
-
-function normalizedStage(stage: string | null | undefined): string {
-  if (stage === "stage_a" || stage === "stage_b") return "evaluation";
-  return stage ?? "preparing";
-}
+const STAGE_ORDER = ["preparing", "ml_gate", "stage_a", "stage_b", "finalizing"];
 
 function stageIndex(stage: string | null | undefined): number {
-  const index = STAGE_ORDER.indexOf(normalizedStage(stage));
+  const index = STAGE_ORDER.indexOf(stage ?? "preparing");
   return index === -1 ? 0 : index;
 }
 
@@ -246,9 +246,8 @@ function stageLabel(stage: string | null | undefined): string {
   const labels: Record<string, string> = {
     preparing: "Preparing evaluation",
     ml_gate: "Applying local filters",
-    evaluation: "Evaluating resume fit",
-    stage_a: "Evaluating resume fit",
-    stage_b: "Evaluating resume fit",
+    stage_a: "Running quick evaluation",
+    stage_b: "Running detailed review",
     finalizing: "Saving final results",
   };
   return labels[stage ?? "preparing"] ?? "Evaluation running";

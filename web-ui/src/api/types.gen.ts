@@ -400,7 +400,7 @@ export interface paths {
          * @description Record an application with resume snapshots and audit fields.
          *
          *     Mirrors the CLI apply command: master resume read from settings,
-         *     Canonical evaluation snapshot captured via the shared service helper, and the
+         *     Stage B snapshot fields captured via the shared service helper, and the
          *     no-op parity result when the job was already applied.
          *
          *     Args:
@@ -762,7 +762,7 @@ export interface paths {
         put?: never;
         /**
          * Calibrate Evaluation
-         * @description Run one real unified evaluation and return measured usage.
+         * @description Run one real Quick + Detailed pair and return measured usage.
          *
          *     Args:
          *         body: Representative job description to evaluate.
@@ -907,7 +907,7 @@ export interface paths {
         get?: never;
         /**
          * Save Provider Models
-         * @description Persist the provider evaluation model in compatibility fields.
+         * @description Persist provider-specific Quick and Detailed model choices.
          *
          *     Args:
          *         body: Provider and selected model ids.
@@ -1301,7 +1301,7 @@ export interface paths {
          * @description Trigger a background evaluate run.
          *
          *     Args:
-         *         body: Request body with evaluator mode, corpus, and limit.
+         *         body: Request body with stage, corpus, limit.
          *         run_manager: Shared run manager.
          *
          *     Returns:
@@ -1766,24 +1766,8 @@ export interface components {
             sources?: components["schemas"]["SourcesConfig"];
         };
         /**
-         * EligibilityCheckDetail
-         * @description One evidence-backed hard eligibility check.
-         */
-        EligibilityCheckDetail: {
-            /** Candidate Evidence */
-            candidate_evidence?: string | null;
-            /** Kind */
-            kind?: string | null;
-            /** Reason */
-            reason?: string | null;
-            /** Requirement */
-            requirement?: string | null;
-            /** Status */
-            status?: string | null;
-        };
-        /**
          * EvaluationCalibrationBody
-         * @description One representative JD used for a real unified calibration.
+         * @description One representative JD used for a real two-stage calibration.
          */
         EvaluationCalibrationBody: {
             /** Job Description */
@@ -1791,7 +1775,7 @@ export interface components {
         };
         /**
          * EvaluationCalibrationResponse
-         * @description Measured unified-evaluation usage and subscription-meter delta.
+         * @description Measured Quick + Detailed usage and subscription-meter delta.
          */
         EvaluationCalibrationResponse: {
             /** Allowance After Percent */
@@ -1803,35 +1787,22 @@ export interface components {
              * @default 1
              */
             allowance_resolution_percent: number;
-            evaluation: components["schemas"]["MeasuredEvaluationCallResponse"];
+            detailed: components["schemas"]["MeasuredEvaluationCallResponse"];
+            quick: components["schemas"]["MeasuredEvaluationCallResponse"];
         };
         /**
          * EvaluationDetail
-         * @description Canonical unified evaluation; legacy Stage A/B never participate.
+         * @description Evaluation section of the detail response (stages optional).
+         *
+         *     ``stage_b_status`` is the raw pipeline status (the same store column the
+         *     list rows carry), set even when ``stage_b`` is None — below-threshold
+         *     rows have no Stage B blocks but still need their derived display state.
          */
         EvaluationDetail: {
-            /** Ats Visibility Score */
-            ats_visibility_score: number | null;
-            /** Eligibility Checks */
-            eligibility_checks: components["schemas"]["EligibilityCheckDetail"][];
-            /** Eligibility Status */
-            eligibility_status: string | null;
-            /** Evaluation Status */
-            evaluation_status: string | null;
-            /** Evaluator Version */
-            evaluator_version: string | null;
-            /** Match Score */
-            match_score: number | null;
-            /** Match Tier */
-            match_tier: string | null;
-            /** Model */
-            model: string | null;
-            /** One Line */
-            one_line: string | null;
-            /** Requirements */
-            requirements: components["schemas"]["RequirementDetail"][];
-            /** Summary */
-            summary: string | null;
+            stage_a: components["schemas"]["StageADetail"] | null;
+            stage_b: components["schemas"]["StageBDetail"] | null;
+            /** Stage B Status */
+            stage_b_status: string | null;
         };
         /**
          * FollowupBody
@@ -1868,6 +1839,18 @@ export interface components {
             scored: number;
             /** Total Candidates */
             total_candidates: number;
+        };
+        /**
+         * GapDetail
+         * @description One missing/weak requirement with severity and mitigation.
+         */
+        GapDetail: {
+            /** Mitigation */
+            mitigation: string;
+            /** Requirement */
+            requirement: string;
+            /** Severity */
+            severity: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1925,8 +1908,9 @@ export interface components {
          *
          *     The requested window selects the discovery-date cohort for totals,
          *     distributions, and ``daily``.
-         *     ``verdict_distribution`` contains unified ``match_tier`` counts for
-         *     completed evaluations; both distributions carry only nonzero buckets.
+         *     ``verdict_distribution`` includes the derived
+         *     ``below_threshold`` bucket (triage grouping); both distributions carry
+         *     only nonzero buckets.
          */
         InsightsOverviewResponse: {
             /** Daily */
@@ -2132,14 +2116,6 @@ export interface components {
              * Format: date-time
              */
             discovered_at: string;
-            /** Evaluation Score */
-            evaluation_score: number | null;
-            /** Evaluation Status */
-            evaluation_status: string | null;
-            /** Evaluation Verdict */
-            evaluation_verdict: string | null;
-            /** Evaluator Version */
-            evaluator_version: string | null;
             /** Id */
             id: string;
             /** Jd Quality */
@@ -2148,6 +2124,12 @@ export interface components {
             platform: string;
             /** Posted At */
             posted_at: string | null;
+            /** Stage A Score */
+            stage_a_score: number | null;
+            /** Stage B Fit Score */
+            stage_b_fit_score: number | null;
+            /** Stage B Status */
+            stage_b_status: string | null;
             /** Status */
             status: string;
             /** Title */
@@ -2156,6 +2138,8 @@ export interface components {
             title_norm: string | null;
             /** Url */
             url: string;
+            /** Verdict */
+            verdict: string | null;
         };
         /**
          * JobsListResponse
@@ -2513,7 +2497,7 @@ export interface components {
         };
         /**
          * ProviderModelsBody
-         * @description Evaluation model mirrored in legacy-compatible provider fields.
+         * @description Quick and Detailed model selections from a verified catalog.
          */
         ProviderModelsBody: {
             /** Detailed Model */
@@ -2547,24 +2531,6 @@ export interface components {
             quick_model?: string | null;
         };
         /**
-         * RequirementDetail
-         * @description One unified requirement-to-resume evidence assessment.
-         */
-        RequirementDetail: {
-            /** Category */
-            category?: string | null;
-            /** Evidence Type */
-            evidence_type?: string | null;
-            /** Match */
-            match?: string | null;
-            /** Priority */
-            priority?: string | null;
-            /** Requirement */
-            requirement?: string | null;
-            /** Resume Evidence */
-            resume_evidence?: string | null;
-        };
-        /**
          * RestoreResponse
          * @description ``POST /api/jobs/{id}/restore`` response: where the job landed.
          */
@@ -2573,6 +2539,18 @@ export interface components {
             job_id: string;
             /** Status */
             status: string;
+        };
+        /**
+         * ResumeHooksDetail
+         * @description The three resume-hook blocks of the Stage B output.
+         */
+        ResumeHooksDetail: {
+            /** Avoid Mentioning */
+            avoid_mentioning: string[];
+            /** Lead With */
+            lead_with: string;
+            /** Supporting */
+            supporting: string[];
         };
         /**
          * ResumeStateResponse
@@ -2975,6 +2953,41 @@ export interface components {
             search_urls?: string[];
         };
         /**
+         * StageADetail
+         * @description Stage A summary: fast score plus its one-line rationale.
+         */
+        StageADetail: {
+            /** One Line */
+            one_line: string;
+            /** Score */
+            score: number;
+        };
+        /**
+         * StageBDetail
+         * @description Stage B blocks: verdict, JD summary, fit analysis, resume hooks.
+         *
+         *     Display DTO — it must never 500 on real-data nulls. Stage B rows in the
+         *     live corpus can carry a NULL/absent JD summary or fit score (the verdict-
+         *     independent fallback also fills here), so ``jd_summary`` and ``fit_score``
+         *     are nullable and the list fields default to empty. ``verdict`` stays a
+         *     plain string ("" when unscored, which the pill reads). ``hooks`` keeps a
+         *     non-optional empty default so both mapper paths and the frontend never
+         *     have to special-case its absence.
+         */
+        StageBDetail: {
+            /** Fit Score */
+            fit_score?: number | null;
+            /** Gaps */
+            gaps?: components["schemas"]["GapDetail"][];
+            hooks?: components["schemas"]["ResumeHooksDetail"];
+            /** Jd Summary */
+            jd_summary?: string | null;
+            /** Strengths */
+            strengths?: components["schemas"]["StrengthDetail"][];
+            /** Verdict */
+            verdict: string;
+        };
+        /**
          * StatusDetail
          * @description Workflow section: current status, notes, follow-up, history.
          */
@@ -3022,6 +3035,16 @@ export interface components {
             timings: components["schemas"]["StepTimingRow"][];
         };
         /**
+         * StrengthDetail
+         * @description One matched requirement with its resume evidence.
+         */
+        StrengthDetail: {
+            /** Evidence */
+            evidence: string;
+            /** Requirement */
+            requirement: string;
+        };
+        /**
          * TransitionBody
          * @description ``POST /api/jobs/{id}/transition`` request body.
          */
@@ -3063,10 +3086,10 @@ export interface components {
             limit?: number | null;
             /**
              * Stage
-             * @default unified
+             * @default both
              * @enum {string}
              */
-            stage: "unified" | "a" | "b" | "both";
+            stage: "a" | "b" | "both";
         };
         /**
          * TriggerScanRequest

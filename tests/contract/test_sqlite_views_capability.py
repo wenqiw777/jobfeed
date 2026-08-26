@@ -17,7 +17,6 @@ from tests.support.sqlite_views_performance import (
     open_views_performance,
     rows,
     set_evaluation,
-    set_unified_evaluation,
     utc_text,
 )
 
@@ -33,7 +32,7 @@ async def test_jobs_view_default_query_uses_bounded_discovery_index(
         details = [str(row[3]) for row in plan]
 
         assert any("idx_jobs_discovered_at" in detail for detail in details)
-        assert "LEFT JOIN evaluation_results" in sql
+        assert any("evaluations_1" in detail for detail in details)
         assert any("INTEGER PRIMARY KEY" in detail for detail in details)
     finally:
         await lifecycle.close()
@@ -143,12 +142,8 @@ async def test_jobs_view_uses_discovered_time_for_missing_posted_at(
             company_norm="alpha",
             posted_at=utc_text(NOW - timedelta(days=1)),
         )
-        await set_unified_evaluation(
-            lifecycle, middle, match_score=79, match_tier="possible_match"
-        )
-        await set_unified_evaluation(
-            lifecycle, oldest, match_score=77, match_tier="possible_match"
-        )
+        await set_evaluation(lifecycle, middle, stage_a_score=79)
+        await set_evaluation(lifecycle, oldest, stage_a_score=80, fit_score=77)
 
         discovered = await store.query_jobs_view(
             JobsViewQuery(tab="all", limit=1, offset=1)
@@ -199,11 +194,13 @@ async def test_jobs_view_tabs_filters_and_evaluation_shape(tmp_path: Path) -> No
             discovered_at=utc_text(NOW - timedelta(days=1)),
             status="scored",
         )
-        await set_unified_evaluation(
+        await set_evaluation(
             lifecycle,
             scored,
-            match_score=88,
-            match_tier="strong_match",
+            stage_a_score=80,
+            fit_score=88,
+            verdict="apply",
+            stage_b_status="completed",
         )
         await insert_job(
             lifecycle,
@@ -233,98 +230,7 @@ async def test_jobs_view_tabs_filters_and_evaluation_shape(tmp_path: Path) -> No
         assert [row.job.id for row in pending_page.rows] == [str(pending)]
         assert "closed" not in {row.job.canonical_id for row in queue.rows}
         assert [row.job.id for row in filtered.rows] == [str(scored)]
-        assert filtered.rows[0].evaluation_score == 88
-        assert filtered.rows[0].evaluation_verdict == "strong_match"
-    finally:
-        await lifecycle.close()
-
-
-async def test_jobs_view_never_falls_back_to_conflicting_legacy_scores(
-    tmp_path: Path,
-) -> None:
-    """Canonical list reads ignore legacy Stage A/B even when they are higher."""
-    lifecycle, store = await open_views_performance(tmp_path / "canonical.db")
-    try:
-        unified = await insert_job(
-            lifecycle,
-            "unified",
-            discovered_at=utc_text(NOW),
-            status="scored",
-        )
-        legacy_only = await insert_job(
-            lifecycle,
-            "legacy-only",
-            discovered_at=utc_text(NOW - timedelta(minutes=1)),
-            status="scored",
-        )
-        await set_evaluation(
-            lifecycle,
-            unified,
-            stage_a_score=99,
-            fit_score=99,
-            verdict="apply",
-            stage_b_status="completed",
-        )
-        await set_evaluation(
-            lifecycle,
-            legacy_only,
-            stage_a_score=99,
-            fit_score=99,
-            verdict="apply",
-            stage_b_status="completed",
-        )
-        await set_unified_evaluation(
-            lifecycle,
-            unified,
-            match_score=20,
-            match_tier="weak_match",
-            status="completed",
-            evaluator_version="unified-v2",
-        )
-
-        page = await store.query_jobs_view(JobsViewQuery(tab="all", sort="score_desc"))
-        required = await store.query_jobs_view(
-            JobsViewQuery(tab="all", require_verdict=True)
-        )
-
-        assert [row.job.canonical_id for row in page.rows] == [
-            "unified",
-            "legacy-only",
-        ]
-        canonical = page.rows[0]
-        assert (
-            canonical.evaluation_score,
-            canonical.evaluation_verdict,
-            canonical.evaluation_status,
-            canonical.evaluator_version,
-        ) == (20, "weak_match", "completed", "unified-v2")
-        legacy = page.rows[1]
-        assert (
-            legacy.evaluation_score,
-            legacy.evaluation_verdict,
-            legacy.evaluation_status,
-            legacy.evaluator_version,
-        ) == (None, None, None, None)
-        assert [row.job.canonical_id for row in required.rows] == ["unified"]
-    finally:
-        await lifecycle.close()
-
-
-async def test_pending_jd_ignores_legacy_stage_a_completion(tmp_path: Path) -> None:
-    """A legacy-only score cannot hide a job from the canonical pending-JD tab."""
-    lifecycle, store = await open_views_performance(tmp_path / "pending.db")
-    try:
-        legacy_only = await insert_job(
-            lifecycle,
-            "legacy-pending",
-            discovered_at=utc_text(NOW),
-            quality="missing",
-        )
-        await set_evaluation(lifecycle, legacy_only, stage_a_score=99)
-
-        page = await store.query_jobs_view(JobsViewQuery(tab="pending_jd"))
-
-        assert [row.job.canonical_id for row in page.rows] == ["legacy-pending"]
+        assert filtered.rows[0].stage_b_fit_score == 88
     finally:
         await lifecycle.close()
 

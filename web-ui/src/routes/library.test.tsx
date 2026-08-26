@@ -10,9 +10,8 @@ const calls: string[] = [];
 function row(status: string, postedAt: string | null = "2026-06-16T00:00:00Z"): JobSummary {
   return {
     id: "1", company: "Acme", title: "Engineer", platform: "lever",
-    url: "https://example.com", status, decision: "results",
-    evaluation_score: 90, evaluation_verdict: "strong_match",
-    evaluation_status: "completed", evaluator_version: "unified-v1", jd_quality: "full",
+    url: "https://example.com", status, decision: "results", verdict: "apply", stage_a_score: 80,
+    stage_b_fit_score: 90, stage_b_status: "completed", jd_quality: "full",
     company_norm: "acme", title_norm: "engineer", posted_at: postedAt,
     discovered_at: "2026-06-16T12:00:00Z", closed_at: null,
   };
@@ -51,13 +50,9 @@ test("offers only the simplified decision filters", async () => {
   }
   expect(screen.queryByText("viewing", { exact: true })).not.toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "Posted" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Match" })).toBeInTheDocument();
-  expect(screen.queryByRole("columnheader", { name: "Recommendation" })).toBeNull();
   expect(screen.queryByRole("columnheader", { name: "Added" })).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /Shortlisted|Archived|Scored/ })).not.toBeInTheDocument();
   expect(await screen.findByText("~Jun 16, 2026")).toBeInTheDocument();
-  expect(screen.getByText("Strong match")).toBeInTheDocument();
-  expect(screen.getByText("90")).toBeInTheDocument();
 });
 
 test("Applied filter groups historical application statuses", async () => {
@@ -77,12 +72,12 @@ test("uses 50 rows for every library page", async () => {
   expect(calls.some((url) => url.includes("limit=50"))).toBe(true);
 });
 
-test("sorts all postings from the Match score and Posted headers", async () => {
+test("sorts all postings from the Fit score and Posted headers", async () => {
   renderPage();
   await screen.findByTestId("job-row-1");
 
   const table = screen.getByRole("table", { name: "Library jobs" });
-  const scoreSort = within(table).getByText("Match score").closest("[role=button]");
+  const scoreSort = within(table).getByText("Fit score").closest("[role=button]");
   expect(scoreSort).not.toBeNull();
   fireEvent.click(scoreSort!);
   await waitFor(() => expect(calls.some((url) => url.includes("sort=score_asc"))).toBe(true));

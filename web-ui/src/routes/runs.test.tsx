@@ -144,7 +144,6 @@ beforeEach(() => {
         jobs_inserted: 4,
         jobs_updated: 3,
         jobs_ml_gated: 2,
-        jobs_scored: 8,
         stage_a_scored: 8,
         stage_b_scored: 1,
         total_llm_cost_usd: 0.42,
@@ -208,14 +207,13 @@ test("activity badges use semantic colors and hide zero counters", async () => {
   const activity2 = screen.getByTestId("run-activity-r2");
   const activity1 = screen.getByTestId("run-activity-r1");
 
-  // r2: discovered/inserted/evaluated non-zero; zero counters stay quiet.
+  // r2: discovered/inserted/stage A non-zero; the zero counters stay quiet.
   expect(within(activity2).getByText("12 discovered")).toBeInTheDocument();
   expect(within(activity2).getByText("4 new")).toBeInTheDocument();
   expect(within(activity2).getByText("3 updated")).toBeInTheDocument();
   expect(within(activity2).getByText("2 excluded by local filter")).toBeInTheDocument();
-  expect(within(activity2).getByText("8 evaluated")).toBeInTheDocument();
-  expect(within(activity2).queryByText(/quick evaluations/)).toBeNull();
-  expect(within(activity2).queryByText(/detailed reviews/)).toBeNull();
+  expect(within(activity2).getByText("8 quick evaluations")).toBeInTheDocument();
+  expect(within(activity2).getByText("1 detailed reviews")).toBeInTheDocument();
   expect(within(activity2).queryByText(/errors/)).toBeNull();
   expect(screen.getByText("$0.42")).toBeInTheDocument();
 
@@ -223,7 +221,8 @@ test("activity badges use semantic colors and hide zero counters", async () => {
   expect(within(activity2).getByText("4 new").className).toContain("badge-color-green");
   expect(within(activity2).getByText("3 updated").className).toContain("badge-color-grey");
   expect(within(activity2).getByText("2 excluded by local filter").className).toContain("badge-color-severity-neutral");
-  expect(within(activity2).getByText("8 evaluated").className).toContain("badge-color-severity-low");
+  expect(within(activity2).getByText("8 quick evaluations").className).toContain("badge-color-severity-low");
+  expect(within(activity2).getByText("1 detailed reviews").className).toContain("badge-color-severity-medium");
 
   // r1: only the errors chip — and no cost cell at $0.
   expect(within(activity1).getByText("2 errors")).toBeInTheDocument();
@@ -314,11 +313,8 @@ test("trigger evaluate dialog opens and submits with defaults", async () => {
   fireEvent.click(screen.getAllByRole("button", { name: "Start evaluation" })[0]!);
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByRole("heading", { name: "Start evaluation" })).toBeInTheDocument();
-  expect(screen.queryByRole("radio")).toBeNull();
+  expect(screen.getByRole("radio", { name: /Quick score and detailed review/ })).toBeInTheDocument();
   expect(screen.getByLabelText("Maximum jobs")).toBeInTheDocument();
-  expect(screen.getByText("Leave empty to use the configured default of 150 jobs."))
-    .toBeInTheDocument();
-  expect(screen.queryByText(/evaluate every eligible job/i)).toBeNull();
   expect(within(dialog).getByRole("button", { name: "Start evaluation" })).toBeInTheDocument();
 
   fireEvent.click(within(dialog).getByRole("button", { name: "Start evaluation" }));
@@ -328,16 +324,17 @@ test("trigger evaluate dialog opens and submits with defaults", async () => {
     expect(call).toBeDefined();
     return call!;
   });
-  expect(postCall.body).toEqual({ stage: "unified" });
+  expect(postCall.body).toEqual({ stage: "both" });
   expect(await screen.findByText(/Evaluation started/)).toBeInTheDocument();
 });
 
-test("trigger evaluate submits an optional limit with the unified evaluator", async () => {
+test("trigger evaluate submits a non-default stage", async () => {
   renderRuns();
   await screen.findByTestId("run-row-r2");
 
   fireEvent.click(screen.getAllByRole("button", { name: "Start evaluation" })[0]!);
   const dialog = await screen.findByRole("dialog");
+  fireEvent.click(screen.getByRole("radio", { name: /Detailed review only/ }));
   fireEvent.change(screen.getByLabelText("Maximum jobs"), { target: { value: "1" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Start evaluation" }));
 
@@ -346,7 +343,7 @@ test("trigger evaluate submits an optional limit with the unified evaluator", as
     expect(call).toBeDefined();
     return call!;
   });
-  expect(postCall.body).toEqual({ stage: "unified", limit: 1 });
+  expect(postCall.body).toEqual({ stage: "b", limit: 1 });
 });
 
 test("evaluate 409 shows conflict toast", async () => {

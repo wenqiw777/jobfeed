@@ -56,19 +56,16 @@ export function LibraryTable({ jobs, onOpen, sort, onSort }: LibraryTableProps) 
     },
     {
       id: "verdict",
-      header: "Match",
+      header: "Recommendation",
       cell: (job) => (
-        <VerdictPill
-          verdict={job.evaluation_verdict}
-          status={job.evaluation_status}
-        />
+        <VerdictPill verdict={job.verdict} stageBStatus={job.stage_b_status} />
       ),
     },
     {
       id: "score",
-      header: "Match score",
+      header: "Fit score",
       sortingField: "score",
-      cell: (job) => job.evaluation_score ?? "—",
+      cell: (job) => job.stage_b_fit_score ?? job.stage_a_score ?? "—",
     },
     {
       id: "posted",

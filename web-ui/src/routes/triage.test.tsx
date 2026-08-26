@@ -20,10 +20,10 @@ function job(
     url: "https://example.com/1",
     status,
     decision: status === "ignored" ? "ignored" : "results",
-    evaluation_score: 92,
-    evaluation_verdict: "strong_match",
-    evaluation_status: "completed",
-    evaluator_version: "unified-v1",
+    verdict: "apply",
+    stage_a_score: 84,
+    stage_b_fit_score: 92,
+    stage_b_status: "completed",
     jd_quality: "full",
     company_norm: "readable co",
     title_norm: "software engineer",
@@ -33,7 +33,7 @@ function job(
   };
 }
 
-function detail(evaluationStatus = "completed"): JobDetailResponse {
+function detail(): JobDetailResponse {
   return {
     job: {
       id: "1",
@@ -50,17 +50,16 @@ function detail(evaluationStatus = "completed"): JobDetailResponse {
       jd_text: "Build clear software.",
     },
     evaluation: {
-      summary: "A readable role summary.",
-      eligibility_status: "pass",
-      eligibility_checks: [],
-      requirements: [],
-      match_score: 20,
-      match_tier: "weak_match",
-      one_line: "Canonical weak match.",
-      ats_visibility_score: 40,
-      evaluator_version: "unified-v2",
-      model: "mock-unified",
-      evaluation_status: evaluationStatus,
+      stage_a: { score: 84, one_line: "Strong match." },
+      stage_b_status: "completed",
+      stage_b: {
+        fit_score: 92,
+        verdict: "apply",
+        jd_summary: "A readable role summary.",
+        strengths: [],
+        gaps: [],
+        hooks: { lead_with: "Systems work", supporting: [], avoid_mentioning: [] },
+      },
     },
     status: { status: "scored", decision: "results", history: [], notes: null, next_followup_at: null, resume_variant: null },
     twins: [],
@@ -76,10 +75,7 @@ function json(body: unknown): Response {
   });
 }
 
-function mockApi(
-  postedAt: string | null = "2026-06-16T00:00:00Z",
-  evaluationStatus = "completed",
-): void {
+function mockApi(postedAt: string | null = "2026-06-16T00:00:00Z"): void {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -91,7 +87,7 @@ function mockApi(
         tab_counts: { queue: 1, pending_jd: 0, all: 1, scored: 1, shortlisted: 0, archived: 0 },
       });
     }
-    if (method === "GET" && url === "/api/jobs/1") return json(detail(evaluationStatus));
+    if (method === "GET" && url === "/api/jobs/1") return json(detail());
     if (url === "/api/jobs/1/transition") return json({ job_id: "1", status: "shortlisted" });
     if (url === "/api/jobs/bulk/transition") {
       return json({ succeeded: 1, skipped: 0, failed: [], cascaded: 0 });
@@ -125,35 +121,10 @@ test("shows Results plus the three decision filters", async () => {
   }
   expect(screen.queryByText("viewing", { exact: true })).not.toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "Posted" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Match" })).toBeInTheDocument();
-  expect(screen.queryByRole("columnheader", { name: "Recommendation" })).toBeNull();
   expect(screen.queryByRole("columnheader", { name: "Added" })).not.toBeInTheDocument();
   expect(await screen.findByText("~Jun 16, 2026")).toBeInTheDocument();
   expect(await screen.findByText("Estimated from date added")).toBeInTheDocument();
-  expect(screen.getByText("Strong match")).toBeInTheDocument();
-  expect(within(screen.getByRole("table", { name: "Jobs" })).getByText("92"))
-    .toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /Pending JD/ })).not.toBeInTheDocument();
-});
-
-test("detail displays only the canonical unified evaluation", async () => {
-  renderPage();
-  await screen.findByTestId("job-row-1");
-  expect(screen.getByText("Review the match, evidence, and your decision."))
-    .toBeInTheDocument();
-  expect(await screen.findByText("Canonical weak match.")).toBeInTheDocument();
-  expect(screen.getByText("Weak match")).toBeInTheDocument();
-  expect(screen.getByText("20")).toBeInTheDocument();
-  expect(screen.queryByText("99")).toBeNull();
-  expect(screen.queryByText("Apply")).toBeNull();
-});
-
-test("detail uses canonical evaluation error status like the list", async () => {
-  mockApi("2026-06-16T00:00:00Z", "error");
-  renderPage();
-  await screen.findByTestId("job-row-1");
-  expect(await screen.findByText("Evaluation error")).toBeInTheDocument();
-  expect(screen.queryByText("Weak match")).toBeNull();
 });
 
 test("Ignored requests one decision that includes archived workflow rows", async () => {
@@ -194,23 +165,23 @@ test("shows 50 results per page and paginates through the complete result set", 
   expect(requests.some((url) =>
     url.includes("limit=50")
     && url.includes("offset=50")
-    && url.includes("sort=discovered_desc")
+    && url.includes("sort=posted_desc")
   )).toBe(true);
 });
 
-test("sorts the full result set from the Match score and Posted headers", async () => {
+test("sorts the full result set from the Fit score and Posted headers", async () => {
   renderPage();
   await screen.findByTestId("job-row-1");
   await waitFor(() => {
-    expect(calls.some((call) => call.url.includes("sort=discovered_desc"))).toBe(true);
+    expect(calls.some((call) => call.url.includes("sort=posted_desc"))).toBe(true);
   });
 
   const table = screen.getByRole("table", { name: "Jobs" });
-  fireEvent.click(within(table).getByRole("button", { name: /Match score/ }));
+  fireEvent.click(within(table).getByRole("button", { name: /Fit score/ }));
   await waitFor(() => {
     expect(calls.some((call) => call.url.includes("sort=score_asc"))).toBe(true);
   });
-  fireEvent.click(within(table).getByRole("button", { name: /Match score/ }));
+  fireEvent.click(within(table).getByRole("button", { name: /Fit score/ }));
   await waitFor(() => {
     expect(calls.some((call) => call.url.includes("sort=score_desc"))).toBe(true);
   });

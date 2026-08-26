@@ -24,18 +24,19 @@ class _FakeClaudeClient:
 
     async def complete(self, _request: object) -> LLMResponse:
         self.calls.append(self._model)
+        detailed = "opus" in self._model
         return LLMResponse(
             content="{}",
             model=self._model,
-            input_tokens=3_000,
-            output_tokens=500,
-            cost_usd=_EVALUATION_COST_USD,
-            latency_ms=4_500,
+            input_tokens=3_000 if detailed else 1_000,
+            output_tokens=500 if detailed else 100,
+            cost_usd=_DETAILED_COST_USD if detailed else _QUICK_COST_USD,
+            latency_ms=4_500 if detailed else 1_500,
         )
 
 
 async def test_claude_cli_calibration_uses_exact_reported_cost(monkeypatch) -> None:
-    """Claude CLI measures one unified call without reading a live meter."""
+    """Claude CLI measures both stages without pretending it has a live meter."""
     monkeypatch.setattr(
         "jobfeed.onboarding_evaluation_calibration.ClaudeCliLLM",
         _FakeClaudeClient,
@@ -78,10 +79,12 @@ async def test_claude_cli_calibration_uses_exact_reported_cost(monkeypatch) -> N
 
     result = await calibrator.calibrate("Representative platform job. " * 8)
 
-    assert _FakeClaudeClient.calls == ["claude-opus-4-8"]
-    assert result.evaluation.cost_usd == _EVALUATION_COST_USD
+    assert _FakeClaudeClient.calls == ["claude-sonnet-5", "claude-opus-4-8"]
+    assert result.quick.cost_usd == _QUICK_COST_USD
+    assert result.detailed.cost_usd == _DETAILED_COST_USD
     assert result.allowance_before_percent is None
     assert result.allowance_after_percent is None
 
 
-_EVALUATION_COST_USD = 0.48
+_QUICK_COST_USD = 0.12
+_DETAILED_COST_USD = 0.48
