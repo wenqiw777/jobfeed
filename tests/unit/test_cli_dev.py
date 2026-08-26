@@ -15,9 +15,12 @@ dev_module = importlib.import_module("jobfeed.cli.dev")
 
 def test_dev_command_runs_api_and_vite_under_one_supervisor(
     monkeypatch,
+    tmp_path: Path,
 ) -> None:
     """The original jobfeed command family owns the hot-reload entrypoint."""
     calls: list[tuple[Path | None, int, int]] = []
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
 
     monkeypatch.setattr(
         dev_module,
