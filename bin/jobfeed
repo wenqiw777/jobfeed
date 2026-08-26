@@ -17,14 +17,13 @@ fail() {
     exit 2
 }
 
-if [ "$#" -eq 0 ]; then
-    exec "$REPO_ROOT/setup.sh" --launch-only
-fi
-
 HOST_JOBFEED="$REPO_ROOT/.venv/bin/jobfeed"
 if [ ! -x "$HOST_JOBFEED" ]; then
     fail "host runtime is not installed; run ./setup.sh"
 fi
 
 cd "$REPO_ROOT"
+if [ "$#" -eq 0 ]; then
+    set -- serve --port "${JOBFEED_PORT:-7654}"
+fi
 exec "$HOST_JOBFEED" "$@"

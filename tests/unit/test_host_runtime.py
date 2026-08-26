@@ -17,6 +17,8 @@ def test_normal_wrapper_executes_repo_host_runtime() -> None:
     wrapper = _WRAPPER.read_text("utf-8")
 
     assert 'HOST_JOBFEED="$REPO_ROOT/.venv/bin/jobfeed"' in wrapper
+    assert 'set -- serve --port "${JOBFEED_PORT:-7654}"' in wrapper
+    assert 'setup.sh" --launch-only' not in wrapper
     assert 'exec "$HOST_JOBFEED" "$@"' in wrapper
     assert "docker" not in wrapper.lower()
 
@@ -26,6 +28,7 @@ def test_powershell_wrapper_executes_repo_host_runtime() -> None:
     wrapper = _POWERSHELL_WRAPPER.read_text("utf-8")
 
     assert ".venv\\Scripts\\jobfeed.exe" in wrapper
+    assert '$args = @("serve")' in wrapper
     assert "docker" not in wrapper.lower()
 
 

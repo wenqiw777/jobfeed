@@ -6,5 +6,8 @@ if (-not (Test-Path -Path $HostJobfeed -PathType Leaf)) {
     exit 2
 }
 Set-Location $RepoRoot
+if ($args.Count -eq 0) {
+    $args = @("serve")
+}
 & $HostJobfeed @args
 exit $LASTEXITCODE

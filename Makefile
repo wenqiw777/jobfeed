@@ -1,4 +1,8 @@
-.PHONY: test test-postgres lint fmt quality update-prices web-schema web-build
+.PHONY: test test-postgres lint fmt quality update-prices web-schema web-build dev
+
+# Run the API and Vite in one foreground session. Ctrl-C stops both.
+dev:
+	PATH="$(CURDIR)/.venv/bin:$$PATH" python3 scripts/dev.py
 
 test:
 	pytest
