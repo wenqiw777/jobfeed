@@ -49,6 +49,7 @@ async def list_jobs(
         apply_hard_filters=params.apply_hard_filters,
         dedupe=params.dedupe,
         sort=params.sort,
+        fast=params.fast,
     )
     return jobs_list_response(page)
 

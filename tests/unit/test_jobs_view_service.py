@@ -24,6 +24,7 @@ from jobfeed.domain.models_views import (
     JobsViewRow,
 )
 from jobfeed.services.jobs_view import (
+    DEFAULT_SORT,
     JOBS_VIEW_CORPUS_LIMIT,
     JobsViewService,
     JobsViewStore,
@@ -182,6 +183,30 @@ async def test_triage_overfetches_and_honors_explicit_sort(
         sort,
     )
     assert [row.job.id for row in page.rows] == expected
+
+
+async def test_fast_triage_page_reads_only_a_small_candidate_window() -> None:
+    """The provisional first paint must not materialize the 10k corpus."""
+    page_size = 50
+    store = _RecordingStore(
+        rows=[_posted_row(str(index), _DISCOVERED) for index in range(80)]
+    )
+
+    page = await _service(store).list_jobs(
+        JobsViewQuery(tab="queue", limit=page_size, offset=0),
+        sort="posted_desc",
+        dedupe=True,
+        fast=True,
+    )
+
+    sent = store.queries[0]
+    assert page_size <= sent.limit < JOBS_VIEW_CORPUS_LIMIT
+    assert sent.offset == 0
+    assert sent.include_counts is False
+    assert sent.sort == DEFAULT_SORT
+    assert len(page.rows) == page_size
+    assert page.total_is_exact is False
+    assert store.twin_calls == []
 
 
 async def test_dedupe_pulls_inflight_twins_and_suppresses_their_clusters() -> None:

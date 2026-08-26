@@ -11,6 +11,8 @@ interface BulkBarProps {
   selectedIds: string[];
   /** True total matching the current filters (the API's `total`). */
   total: number;
+  /** False while the first-page fast path is still resolving the exact total. */
+  totalIsExact: boolean;
   isSelectingAll: boolean;
   onSelectPage: () => void;
   onSelectAllMatching: () => void;
@@ -36,6 +38,7 @@ export function BulkBar({
   currentDecision,
   selectedIds,
   total,
+  totalIsExact,
   isSelectingAll,
   onSelectPage,
   onSelectAllMatching,
@@ -114,10 +117,12 @@ export function BulkBar({
                 variant="link"
                 wrapText={false}
                 loading={isSelectingAll}
-                disabled={bulk.isPending}
+                disabled={bulk.isPending || !totalIsExact}
                 onClick={onSelectAllMatching}
               >
-                {`Select all ${total} ${total === 1 ? "result" : "results"}`}
+                {totalIsExact
+                  ? `Select all ${total} ${total === 1 ? "result" : "results"}`
+                  : "Loading all results"}
               </Button>
               <Button
                 variant="link"

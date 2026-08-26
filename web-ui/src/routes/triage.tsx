@@ -64,6 +64,7 @@ export default function TriagePage() {
   const query = useMemo(() => triageQuery(filter, page, sort), [filter, page, sort]);
   const list = useJobsList(query, { keepPrevious: true });
   const jobs = useMemo(() => list.data?.jobs ?? [], [list.data]);
+  const totalIsExact = list.data?.total_is_exact !== false;
   // Decide/advance handlers read the displayed order through a ref so a
   // setTimeout never closes over a stale list. Synced in an effect (refs
   // must not be written during render); handlers only run after effects.
@@ -147,7 +148,7 @@ export default function TriagePage() {
   };
 
   const selectAllMatching = async () => {
-    if (list.data === undefined || isSelectingAll) {
+    if (list.data === undefined || !totalIsExact || isSelectingAll) {
       return;
     }
     setIsSelectingAll(true);
@@ -203,7 +204,9 @@ export default function TriagePage() {
           ]}
           actions={
             <Box variant="small" color="text-body-secondary">
-              {list.data !== undefined ? `${list.data.total} postings` : "Loading"}
+              {list.data !== undefined
+                ? `${list.data.total}${totalIsExact ? "" : "+"} postings`
+                : "Loading"}
             </Box>
           }
         />
@@ -235,6 +238,7 @@ export default function TriagePage() {
           currentDecision={filter}
           selectedIds={selection.selectedIds}
           total={list.data?.total ?? 0}
+          totalIsExact={totalIsExact}
           onSelectPage={() => selection.selectMany(jobs.map((job) => job.id))}
           isSelectingAll={isSelectingAll}
           onSelectAllMatching={() => void selectAllMatching()}
@@ -255,7 +259,7 @@ export default function TriagePage() {
             setSelectedId(null);
           }}
         />
-        {(list.data?.total ?? 0) > PAGE_LIMIT && (
+        {totalIsExact && (list.data?.total ?? 0) > PAGE_LIMIT && (
           <SpaceBetween size="xs" alignItems="center">
             <Pagination
               currentPageIndex={page + 1}

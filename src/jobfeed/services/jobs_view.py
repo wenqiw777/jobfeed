@@ -50,6 +50,7 @@ from jobfeed.services._jobs_view_sort import (
 #: corpora are 10^2-scale; the cap keeps the in-memory pipeline bounded even
 #: against a pathological database.
 JOBS_VIEW_CORPUS_LIMIT = 10_000
+_FAST_PAGE_MULTIPLIER = 5
 
 _TRIAGE_TABS = frozenset({"queue", "pending_jd"})
 
@@ -160,6 +161,7 @@ class JobsViewService:
         apply_hard_filters: bool = False,
         dedupe: bool = False,
         sort: str = DEFAULT_SORT,
+        fast: bool = False,
     ) -> JobsViewPage:
         """Run the composed list view for one request.
 
@@ -189,6 +191,40 @@ class JobsViewService:
         if not (is_triage or apply_hard_filters or dedupe):
             return await self._store.query_jobs_view(
                 replace(query, sort=effective_sort)
+            )
+        if fast and query.offset == 0:
+            candidate_limit = min(
+                JOBS_VIEW_CORPUS_LIMIT,
+                max(query.limit, query.limit * _FAST_PAGE_MULTIPLIER),
+            )
+            corpus = await self._store.query_jobs_view(
+                replace(
+                    query,
+                    limit=candidate_limit,
+                    offset=0,
+                    # The provisional window reads only the evaluated corpus;
+                    # the exact background request applies the chosen global
+                    # sort across every matching row.
+                    sort=DEFAULT_SORT,
+                    include_counts=False,
+                )
+            )
+            rows = corpus.rows
+            if apply_hard_filters:
+                rows = self._drop_hard_filtered(rows)
+            # Exact cross-status dedupe is deliberately deferred to the
+            # background request; its twin lookup would block first paint.
+            sort_key = (
+                verdict_group_sort_key
+                if is_triage and effective_sort == DEFAULT_SORT
+                else LIBRARY_SORT_KEYS[effective_sort]
+            )
+            rows = sorted(rows, key=sort_key)
+            return JobsViewPage(
+                rows=rows[: query.limit],
+                total=len(rows),
+                tab_counts={},
+                total_is_exact=False,
             )
         # Over-fetch corpus in the effective SQL order so the cap keeps the
         # best rows under the requested sort even on pathological databases.

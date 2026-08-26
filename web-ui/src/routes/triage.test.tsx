@@ -169,6 +169,45 @@ test("shows 50 results per page and paginates through the complete result set", 
   )).toBe(true);
 });
 
+test("renders the fast first page before the exact total finishes", async () => {
+  let releaseExact: (() => void) | undefined;
+  const exactBlocked = new Promise<void>((resolve) => {
+    releaseExact = resolve;
+  });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/jobs?") && url.includes("fast=true")) {
+      return json({
+        jobs: [job()],
+        total: 1938,
+        total_is_exact: false,
+        tab_counts: { queue: 1938, pending_jd: 0, all: 1938, scored: 1938, shortlisted: 0, archived: 0 },
+      });
+    }
+    if (url.startsWith("/api/jobs?")) {
+      await exactBlocked;
+      return json({
+        jobs: [job()],
+        total: 566,
+        total_is_exact: true,
+        tab_counts: { queue: 566, pending_jd: 0, all: 566, scored: 566, shortlisted: 0, archived: 0 },
+      });
+    }
+    if (url === "/api/jobs/1") return json(detail());
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+
+  renderPage();
+
+  await screen.findByTestId("job-row-1");
+  expect(screen.getByText("1938+ postings")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Results pagination")).not.toBeInTheDocument();
+
+  releaseExact?.();
+  expect(await screen.findByText("566 postings")).toBeInTheDocument();
+  expect(screen.getByLabelText("Results pagination")).toBeInTheDocument();
+});
+
 test("sorts the full result set from the Fit score and Posted headers", async () => {
   renderPage();
   await screen.findByTestId("job-row-1");

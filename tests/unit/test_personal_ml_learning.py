@@ -2,6 +2,8 @@
 
 # ruff: noqa: PLR2004
 
+from time import perf_counter
+
 from jobfeed.personal_ml_learning import (
     PersonalMLObservation,
     assess_personal_ml,
@@ -21,6 +23,26 @@ def _observation(
         baseline_pass=baseline_pass,
         family=family,
     )
+
+
+def test_large_history_assessment_stays_below_interactive_budget() -> None:
+    """Status reads must not refit the threshold with a quadratic scan."""
+    seed = [_observation(label=True)] * 100
+    history = [
+        _observation(
+            label=index % 3 != 0,
+            score=(index % 997) / 1000,
+            family="backend" if index % 2 else "frontend",
+        )
+        for index in range(9_900)
+    ]
+
+    started = perf_counter()
+    status = assess_personal_ml(seed + history, enabled=True)
+    elapsed = perf_counter() - started
+
+    assert status.label_count == 10_000
+    assert elapsed < 0.25
 
 
 def test_collects_first_100_quick_labels_before_scoring() -> None:

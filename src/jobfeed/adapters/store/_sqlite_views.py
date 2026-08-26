@@ -48,8 +48,17 @@ _FROM = (
     " LEFT JOIN evaluations AS e ON e.job_id=j.id"
     " LEFT JOIN job_status AS s ON s.job_id=j.id"
 )
+_VERDICT_FROM = (
+    " FROM evaluations AS e INDEXED BY idx_eval_stage_b_completed"
+    " JOIN jobs AS j ON j.id=e.job_id"
+    " LEFT JOIN job_status AS s ON s.job_id=j.id"
+)
 _COLUMNS = (
-    "j.*, s.status AS status, e.stage_a_score, e.stage_b_verdict,"
+    "j.id, j.platform, j.canonical_id, j.url, j.title, j.company,"
+    " j.location, j.discovered_at, NULL AS jd_text, j.jd_quality,"
+    " j.posted_at, NULL AS enriched_at, NULL AS enrich_source,"
+    " j.closed_at, NULL AS enrich_error, j.company_norm, j.title_norm,"
+    " s.status AS status, e.stage_a_score, e.stage_b_verdict,"
     " e.stage_b_status,"
     " CAST(json_extract(e.stage_b_fit_json, '$.score_0_100') AS INTEGER)"
     " AS stage_b_fit_score"
@@ -140,8 +149,13 @@ def _jobs_view_rows_query(
     """Build the production bounded rows query for execution or plan evidence."""
     shared, params = _shared_filters(query, now)
     active_where = _where(_TAB_PREDICATES[query.tab], shared)
+    if not query.include_counts and query.require_verdict:
+        active_where = f"({active_where}) AND e.stage_b_status='completed'"
+    rows_from = (
+        _VERDICT_FROM if not query.include_counts and query.require_verdict else _FROM
+    )
     sql = (
-        f"SELECT {_COLUMNS}{_FROM} WHERE {active_where}"
+        f"SELECT {_COLUMNS}{rows_from} WHERE {active_where}"
         f" ORDER BY {_SORTS[query.sort]} LIMIT ? OFFSET ?"
     )
     return sql, [*params, query.limit, query.offset]
@@ -169,6 +183,13 @@ class _SqliteViews:
                 rows_sql,
                 rows_params,
             )
+            if not query.include_counts:
+                return JobsViewPage(
+                    rows=[_view_row(row) for row in row_records],
+                    total=len(row_records),
+                    tab_counts={},
+                    total_is_exact=False,
+                )
             total_row = await _fetch_row(
                 connection,
                 f"SELECT COUNT(*) AS n{_FROM} WHERE {active_where}",

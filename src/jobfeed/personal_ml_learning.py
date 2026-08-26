@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import ceil
 from typing import Literal, Protocol, runtime_checkable
 
 LearningState = Literal["collecting", "ranking", "shadow", "ready", "active", "paused"]
@@ -202,21 +203,18 @@ def _fit_recall_threshold(
     negatives = [item for item in observations if not item.quick_pass]
     if not positives or not negatives:
         return None
-    candidates = sorted(
-        {item.model_score for item in observations if item.model_score is not None}
+    positive_scores = sorted(
+        (item.model_score for item in positives if item.model_score is not None),
+        reverse=True,
     )
-    eligible = [
-        threshold
-        for threshold in candidates
-        if (_threshold_recall := _recall(observations, threshold)) is not None
-        and _threshold_recall >= _MIN_RECALL
-    ]
-    if not eligible:
+    required_kept = ceil(_MIN_RECALL * len(positives))
+    if len(positive_scores) < required_kept:
         return None
-    return max(
-        eligible,
-        key=lambda threshold: (_rejection(observations, threshold) or 0.0, threshold),
-    )
+    # Rejection is monotonic as the threshold rises, so the highest threshold
+    # that still keeps the required positive count is exactly the former
+    # exhaustive-search winner. Selecting the quantile avoids rescanning the
+    # complete history once per distinct model score.
+    return positive_scores[required_kept - 1]
 
 
 def _metrics(

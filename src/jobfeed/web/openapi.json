@@ -1810,6 +1810,11 @@
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "total_is_exact": {
+            "default": true,
+            "title": "Total Is Exact",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4551,6 +4556,16 @@
             "schema": {
               "default": false,
               "title": "Dedupe",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fast",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Fast",
               "type": "boolean"
             }
           },

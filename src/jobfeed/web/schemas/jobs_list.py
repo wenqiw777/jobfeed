@@ -45,6 +45,7 @@ class JobsListParams(BaseModel):
     require_verdict: bool = False
     apply_hard_filters: bool = False
     dedupe: bool = False
+    fast: bool = False
     sort: SortName = "discovered_desc"
     limit: int = Field(default=_DEFAULT_PAGE_LIMIT, ge=0, le=JOBS_VIEW_CORPUS_LIMIT)
     offset: int = Field(default=0, ge=0)
@@ -106,6 +107,7 @@ class JobsListResponse(BaseModel):
     jobs: list[JobSummary]
     total: int
     tab_counts: dict[str, int]
+    total_is_exact: bool = True
 
 
 def jobs_list_response(page: JobsViewPage) -> JobsListResponse:
@@ -121,6 +123,7 @@ def jobs_list_response(page: JobsViewPage) -> JobsListResponse:
         jobs=[_job_summary(row) for row in page.rows],
         total=page.total,
         tab_counts=page.tab_counts,
+        total_is_exact=page.total_is_exact,
     )
 
 

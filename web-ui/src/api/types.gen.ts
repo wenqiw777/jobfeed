@@ -2154,6 +2154,11 @@ export interface components {
             };
             /** Total */
             total: number;
+            /**
+             * Total Is Exact
+             * @default true
+             */
+            total_is_exact: boolean;
         };
         /**
          * LLMDailyStatsRow
@@ -3508,6 +3513,7 @@ export interface operations {
                 require_verdict?: boolean;
                 apply_hard_filters?: boolean;
                 dedupe?: boolean;
+                fast?: boolean;
                 sort?: "discovered_desc" | "posted_asc" | "posted_desc" | "score_asc" | "score_desc" | "company_asc";
                 limit?: number;
                 offset?: number;

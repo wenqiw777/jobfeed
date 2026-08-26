@@ -61,6 +61,8 @@ class JobsViewQuery:
             D10) must request the full corpus (large limit) and paginate
             post-fold, or the fold corpus is silently truncated.
         offset: Rows to skip before the returned window.
+        include_counts: Whether the store should calculate exact totals and
+            tab counts. Provisional first-page requests disable this work.
     """
 
     tab: str
@@ -71,6 +73,7 @@ class JobsViewQuery:
     sort: str = DEFAULT_SORT
     limit: int = _DEFAULT_LIMIT
     offset: int = 0
+    include_counts: bool = True
 
     def __post_init__(self) -> None:
         if self.tab not in VALID_TABS:
@@ -130,6 +133,7 @@ class JobsViewPage:
     rows: list[JobsViewRow]
     total: int
     tab_counts: dict[str, int]
+    total_is_exact: bool = True
 
 
 @dataclass(frozen=True, kw_only=True)

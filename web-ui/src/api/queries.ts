@@ -87,11 +87,30 @@ export function buildJobsParams(query: JobsQuery): URLSearchParams {
  * last page on screen while a filter/page change refetches (Library) —
  * off by default so the triage zones keep their loading semantics. */
 export function useJobsList(query: JobsQuery, options: { keepPrevious?: boolean } = {}) {
-  return useQuery({
+  const fastEligible =
+    query.offset === 0
+    && query.tab === "queue"
+    && query.apply_hard_filters === true
+    && query.dedupe === true
+    && query.require_verdict === true;
+  const fastQuery = useQuery({
+    queryKey: [...jobsKeys.list(query), "fast"],
+    queryFn: () => apiFetch<JobsListResponse>(
+      `/api/jobs?${buildJobsParams({ ...query, fast: true })}`,
+    ),
+    enabled: fastEligible,
+  });
+  const exactQuery = useQuery({
     queryKey: jobsKeys.list(query),
     queryFn: () => apiFetch<JobsListResponse>(`/api/jobs?${buildJobsParams(query)}`),
     placeholderData: options.keepPrevious === true ? keepPreviousData : undefined,
+    enabled: !fastEligible || fastQuery.data !== undefined,
   });
+
+  if (!fastEligible || exactQuery.data !== undefined) {
+    return exactQuery;
+  }
+  return fastQuery;
 }
 
 /** Load every job id matching a jobs query, across the API's 10k-row windows. */

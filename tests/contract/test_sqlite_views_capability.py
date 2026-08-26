@@ -38,6 +38,30 @@ async def test_jobs_view_default_query_uses_bounded_discovery_index(
         await lifecycle.close()
 
 
+def test_jobs_view_page_query_does_not_materialize_full_job_descriptions() -> None:
+    """List pages hydrate summaries, not thousands of complete JD payloads."""
+    sql, _ = _jobs_view_rows_query(JobsViewQuery(tab="queue"), NOW)
+
+    assert "j.*" not in sql
+    assert "j.jd_text" not in sql
+
+
+def test_provisional_page_query_starts_from_the_small_evaluated_corpus() -> None:
+    """Fast first paint scans evaluated jobs and changes no DB schema."""
+    sql, _ = _jobs_view_rows_query(
+        JobsViewQuery(
+            tab="queue",
+            require_verdict=True,
+            sort="discovered_desc",
+            include_counts=False,
+        ),
+        NOW,
+    )
+
+    assert "FROM evaluations AS e INDEXED BY idx_eval_stage_b_completed" in sql
+    assert "e.stage_b_status='completed'" in sql
+
+
 async def test_scan_run_reports_exact_new_jobs_by_configured_source(
     tmp_path: Path,
 ) -> None:
