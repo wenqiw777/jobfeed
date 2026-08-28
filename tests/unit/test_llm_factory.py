@@ -11,7 +11,8 @@ from jobfeed.adapters.llm._factory import (
     LLMRuntimeUnavailable,
     build_llm_client,
 )
-from jobfeed.adapters.llm._pricing import load_price_table
+from jobfeed.adapters.llm._pricing import ModelPricing, load_price_table
+from jobfeed.adapters.llm.bedrock import BedrockLLM
 from jobfeed.adapters.llm.claude import ClaudeCliLLM
 from jobfeed.adapters.llm.codex import CodexCliLLM
 from jobfeed.adapters.llm.mock import MockLLM
@@ -255,3 +256,39 @@ def test_openai_compat_empty_api_key_raises(monkeypatch, price_table, logger):
             price_table=price_table,
             logger=logger,
         )
+
+
+def test_bedrock_backend_uses_region_profile_timeout_and_retries(monkeypatch, logger):
+    """bedrock/model builds a native Converse adapter from an AWS session."""
+    bedrock_timeout_s = 180
+    runtime = object()
+    session_calls = []
+    client_calls = []
+
+    class FakeSession:
+        def __init__(self, *, profile_name=None):
+            session_calls.append(profile_name)
+
+        def client(self, service_name, *, region_name, config):
+            client_calls.append((service_name, region_name, config))
+            return runtime
+
+    monkeypatch.setattr("boto3.Session", FakeSession)
+    model = "anthropic.claude-sonnet-5"
+    client = build_llm_client(
+        f"bedrock/{model}",
+        settings=LLMSettings(
+            bedrock_region="us-east-1",
+            bedrock_profile="jobfeed-dev",
+            bedrock_timeout_s=bedrock_timeout_s,
+        ),
+        price_table={model: ModelPricing(3e-6, 15e-6)},
+        logger=logger,
+    )
+
+    assert isinstance(client, BedrockLLM)
+    assert session_calls == ["jobfeed-dev"]
+    assert client_calls[0][0:2] == ("bedrock-runtime", "us-east-1")
+    config = client_calls[0][2]
+    assert config.read_timeout == bedrock_timeout_s
+    assert config.retries["max_attempts"] == DEFAULT_ADAPTER_RETRIES + 1

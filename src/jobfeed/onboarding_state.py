@@ -39,6 +39,8 @@ class OnboardingDraftStore:
             models=models,
             quick_model=raw.get("quick_model"),
             detailed_model=raw.get("detailed_model"),
+            region=raw.get("region"),
+            profile=raw.get("profile"),
         )
 
     def save_connection(self, result: ConnectionResult) -> ProviderOnboardingState:
@@ -61,6 +63,8 @@ class OnboardingDraftStore:
             detailed_model=_preserve_choice(
                 previous, result.provider, available, False
             ),
+            region=result.region,
+            profile=result.profile,
         )
         self._write(state)
         return state
@@ -97,6 +101,8 @@ class OnboardingDraftStore:
             models=current.models,
             quick_model=quick_model,
             detailed_model=detailed_model,
+            region=current.region,
+            profile=current.profile,
         )
         self._write(updated)
         return updated
@@ -109,6 +115,8 @@ class OnboardingDraftStore:
             "models": [model.__dict__ for model in state.models],
             "quick_model": state.quick_model,
             "detailed_model": state.detailed_model,
+            "region": state.region,
+            "profile": state.profile,
         }
         content = json.dumps(document, indent=2, sort_keys=True) + "\n"
         self._path.parent.mkdir(parents=True, exist_ok=True)

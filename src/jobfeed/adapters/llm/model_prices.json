@@ -1,4 +1,19 @@
 {
+  "anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "input_cost_per_token": 0.000001,
+    "output_cost_per_token": 0.000005,
+    "cache_read_input_token_cost": 0.0000001
+  },
+  "us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "input_cost_per_token": 0.0000011,
+    "output_cost_per_token": 0.0000055,
+    "cache_read_input_token_cost": 0.00000011
+  },
+  "anthropic.claude-sonnet-5": {
+    "input_cost_per_token": 0.000003,
+    "output_cost_per_token": 0.000015,
+    "cache_read_input_token_cost": 0.0000003
+  },
   "1024-x-1024/dall-e-2": {
     "input_cost_per_pixel": 1.9e-08,
     "litellm_provider": "openai",

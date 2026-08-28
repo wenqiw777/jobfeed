@@ -131,10 +131,12 @@ let providerState = {
   provider: null as string | null,
   connected: false,
   detail: null as string | null,
-  models: [] as { id: string; label: string }[],
+  models: [] as { id: string; label: string; kind?: string }[],
   has_secret: false,
   quick_model: null as string | null,
   detailed_model: null as string | null,
+  region: null as string | null,
+  profile: null as string | null,
 };
 let providerNetworkError = false;
 let providerSaveError = false;
@@ -275,6 +277,31 @@ function mockApi(): void {
       }
       if (url === "/api/onboarding/provider/test" && method === "POST") {
         if (providerNetworkError) throw new Error("connection lost");
+        if ((body as { provider?: string }).provider === "amazon_bedrock") {
+          providerState = {
+            provider: "amazon_bedrock",
+            connected: true,
+            detail: "Amazon Bedrock connection verified.",
+            models: [
+              {
+                id: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                label: "Claude Haiku 4.5 (US)",
+                kind: "inference_profile",
+              },
+              {
+                id: "us.anthropic.claude-sonnet-5",
+                label: "Claude Sonnet 5",
+                kind: "inference_profile",
+              },
+            ],
+            has_secret: false,
+            quick_model: null,
+            detailed_model: null,
+            region: (body as { region?: string }).region ?? null,
+            profile: (body as { profile?: string }).profile ?? null,
+          };
+          return json(providerState);
+        }
         if ((body as { api_key?: string }).api_key === "sk-ui-rejected") {
           return json({
             ...providerState,
@@ -293,6 +320,8 @@ function mockApi(): void {
           has_secret: true,
           quick_model: null,
           detailed_model: null,
+          region: null,
+          profile: null,
         };
         return json(providerState);
       }
@@ -452,6 +481,8 @@ beforeEach(() => {
     has_secret: false,
     quick_model: null,
     detailed_model: null,
+    region: null,
+    profile: null,
   };
   providerNetworkError = false;
   providerSaveError = false;
@@ -529,6 +560,35 @@ test("fresh checkout connects a provider, retries, and saves provider models", a
   ).not.toContain("sk-ui-secret");
 });
 
+test("Amazon Bedrock sends AWS context and defaults to Haiku and Sonnet 5", async () => {
+  renderApp();
+  await screen.findByRole("heading", { name: "Connect an AI provider" });
+
+  fireEvent.mouseDown(screen.getByRole("button", { name: /AI provider/ }));
+  fireEvent.mouseUp(await screen.findByRole("option", { name: /Amazon Bedrock/ }));
+  fireEvent.change(screen.getByLabelText("AWS region"), {
+    target: { value: "us-west-2" },
+  });
+  fireEvent.change(screen.getByLabelText("AWS profile"), {
+    target: { value: "jobfeed" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+
+  expect(await screen.findByText("Amazon Bedrock connection verified.")).toBeVisible();
+  expect(screen.getByRole("button", { name: /Quick evaluation model/ })).toHaveTextContent(
+    "Claude Haiku 4.5 (US)",
+  );
+  expect(screen.getByRole("button", { name: /Detailed review model/ })).toHaveTextContent(
+    "Claude Sonnet 5",
+  );
+  expect(calls.find((call) => call.url.endsWith("/provider/test"))?.body).toEqual({
+    provider: "amazon_bedrock",
+    api_key: null,
+    region: "us-west-2",
+    profile: "jobfeed",
+  });
+});
+
 test("provider connection and model save failures stay visible", async () => {
   providerNetworkError = true;
   renderApp();
@@ -563,6 +623,8 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
     has_secret: true,
     quick_model: "gpt-5.6-terra",
     detailed_model: "gpt-5.6-sol",
+    region: null,
+    profile: null,
   };
   renderApp("/setup/resume");
   expect(
@@ -682,7 +744,7 @@ test("résumé upload, analysis, edits, and confirmation stay resumable", async 
   expect(await screen.findByText("About $0.0050 per JD")).toBeVisible();
   expect(screen.getByText("About $0.75 for 150 JDs")).toBeVisible();
   expect(screen.getByText("About 2,150 tokens per JD")).toBeVisible();
-  expect(screen.getByText("No whole percentage point detected")).toBeVisible();
+  expect(screen.queryByText("No whole percentage point detected")).toBeNull();
   fireEvent.change(screen.getByLabelText("Maximum unique jobs to evaluate per run"), {
     target: { value: "80" },
   });
@@ -778,6 +840,8 @@ test("Claude calibration estimates the selected five-hour plan allowance", async
     has_secret: false,
     quick_model: "claude-sonnet-5",
     detailed_model: "claude-opus-4-8",
+    region: null,
+    profile: null,
   };
   resumeState = {
     original_name: "candidate.md",
@@ -817,6 +881,8 @@ test("Codex calibration shows projected allowance in the usage summary", async (
     has_secret: false,
     quick_model: "gpt-5.6-luna",
     detailed_model: "gpt-5.6-terra",
+    region: null,
+    profile: null,
   };
   resumeState = {
     original_name: "candidate.md",
@@ -843,6 +909,8 @@ test("review loads a representative JD from confirmed Indeed searches", async ()
     has_secret: false,
     quick_model: "gpt-5.6-luna",
     detailed_model: "gpt-5.6-terra",
+    region: null,
+    profile: null,
   };
   resumeState = {
     original_name: "candidate.md",

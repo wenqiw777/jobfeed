@@ -205,7 +205,12 @@ async def test_provider_connection(
         Redacted connection result and model catalog.
     """
     api_key = body.api_key.get_secret_value() if body.api_key is not None else None
-    state = await service.test_connection(body.provider, api_key=api_key)
+    state = await service.test_connection(
+        body.provider,
+        api_key=api_key,
+        region=body.region,
+        profile=body.profile,
+    )
     return provider_state_response(state)
 
 

@@ -18,11 +18,19 @@ export function useProviderOnboarding() {
 }
 
 /** Test one provider connection and cache its redacted model catalog. */
-export function testProviderConnection(provider: ProviderName, apiKey?: string) {
+export function testProviderConnection(
+  provider: ProviderName,
+  apiKey?: string,
+  aws?: { region: string; profile?: string },
+) {
   return apiFetch<ProviderState>("/api/onboarding/provider/test", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, api_key: apiKey || null }),
+    body: JSON.stringify({
+      provider,
+      api_key: apiKey || null,
+      ...(aws ? { region: aws.region, profile: aws.profile || null } : {}),
+    }),
   });
 }
 

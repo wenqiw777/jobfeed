@@ -64,6 +64,9 @@ class LLMSettings(BaseModel):
     openai_compat_base_url: str = "https://api.openai.com/v1"
     openai_compat_api_key_env: str = "OPENAI_API_KEY"
     openai_compat_timeout_s: float = 60.0
+    bedrock_region: str = "us-east-1"
+    bedrock_profile: str | None = None
+    bedrock_timeout_s: float = 180.0
     max_concurrent: int = 4
     master_resume_path: str = "resume.example.md"
     preamble_personal_path: str | None = None
@@ -77,6 +80,21 @@ class LLMSettings(BaseModel):
             msg = f"must be in 'backend/model' format, got {v!r}"
             raise ValueError(msg)
         return v
+
+    @field_validator("bedrock_region")
+    @classmethod
+    def _validate_bedrock_region(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("bedrock_region must not be empty")
+        return value
+
+    @field_validator("bedrock_profile")
+    @classmethod
+    def _normalize_bedrock_profile(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class ScoringSettings(BaseModel):

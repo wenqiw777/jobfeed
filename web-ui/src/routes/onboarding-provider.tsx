@@ -50,6 +50,11 @@ const PROVIDERS: {
     title: "Claude Code CLI",
     description: "Uses your locally installed and signed-in Claude Code CLI.",
   },
+  {
+    id: "amazon_bedrock",
+    title: "Amazon Bedrock",
+    description: "Uses the standard AWS credential chain and models available in your region.",
+  },
 ];
 
 /** First runnable onboarding milestone: provider connection and model choice. */
@@ -62,6 +67,8 @@ export default function OnboardingProviderPage() {
   const [testError, setTestError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ProviderName | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [region, setRegion] = useState<string | null>(null);
+  const [profile, setProfile] = useState<string | null>(null);
   const [quickModel, setQuickModel] = useState<string | null>(null);
   const [detailedModel, setDetailedModel] = useState<string | null>(null);
 
@@ -76,12 +83,16 @@ export default function OnboardingProviderPage() {
   const provider = selected ?? state.provider ?? null;
   const definition = PROVIDERS.find((item) => item.id === provider);
   const models = state.provider === provider && state.connected ? state.models : [];
+  const bedrockRegion = region ?? state.region ?? "us-east-1";
+  const bedrockProfile = profile ?? state.profile ?? "";
   const quick = quickModel ?? state.quick_model ?? models[0]?.id ?? null;
   const detailed = detailedModel ?? state.detailed_model ?? models[0]?.id ?? null;
 
   function choose(next: ProviderName) {
     setSelected(next);
     setApiKey("");
+    setRegion(null);
+    setProfile(null);
     setQuickModel(null);
     setDetailedModel(null);
     setTestError(null);
@@ -93,11 +104,17 @@ export default function OnboardingProviderPage() {
     setTestError(null);
     setIsTesting(true);
     try {
-      const next = await testProviderConnection(provider, apiKey);
+      const next = await testProviderConnection(
+        provider,
+        apiKey,
+        provider === "amazon_bedrock"
+          ? { region: bedrockRegion, profile: bedrockProfile }
+          : undefined,
+      );
       queryClient.setQueryData(providerOnboardingKey, next);
       if (next.connected) setApiKey("");
-      setQuickModel(next.models[0]?.id ?? null);
-      setDetailedModel(next.models[0]?.id ?? null);
+      setQuickModel(preferredModel(next.models, "us.anthropic.claude-haiku-4-5-20251001-v1:0"));
+      setDetailedModel(preferredModel(next.models, "us.anthropic.claude-sonnet-5"));
     } catch (error) {
       setTestError(error instanceof Error ? error.message : "Connection test failed. Try again.");
     } finally {
@@ -167,6 +184,22 @@ export default function OnboardingProviderPage() {
                   />
                 </FormField>
               )}
+              {provider === "amazon_bedrock" && (
+                <ColumnLayout columns={2} minColumnWidth={280}>
+                  <FormField label="AWS region">
+                    <Input
+                      value={bedrockRegion}
+                      onChange={({ detail }) => setRegion(detail.value)}
+                    />
+                  </FormField>
+                  <FormField label="AWS profile" description="Optional. Leave blank to use the default AWS credential chain.">
+                    <Input
+                      value={bedrockProfile}
+                      onChange={({ detail }) => setProfile(detail.value)}
+                    />
+                  </FormField>
+                </ColumnLayout>
+              )}
               {state.provider === provider && state.detail && (
                 <Alert type={state.connected ? "success" : "error"}>{state.detail}</Alert>
               )}
@@ -214,4 +247,8 @@ export default function OnboardingProviderPage() {
 function modelOption(models: { id: string; label: string }[], selected: string | null) {
   const model = models.find((item) => item.id === selected);
   return model ? { label: model.label, value: model.id } : null;
+}
+
+function preferredModel(models: { id: string }[], preferred: string): string | null {
+  return models.find((model) => model.id === preferred)?.id ?? models[0]?.id ?? null;
 }

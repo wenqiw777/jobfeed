@@ -201,6 +201,44 @@ async def test_finish_applies_models_resume_and_selected_searches(
     assert saved["sources"]["ats"]["title_keywords"] == ["Platform Engineer"]
 
 
+async def test_finish_applies_bedrock_models_region_and_profile(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Bedrock connection settings become the active evaluation backend."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    app = create_web_app()
+    _wire_ready_drafts(app)
+    app.state.onboarding_provider_service = StateService(
+        ProviderOnboardingState(
+            provider="amazon_bedrock",
+            connected=True,
+            quick_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            detailed_model="us.anthropic.claude-sonnet-5",
+            region="us-east-1",
+            profile="jobfeed",
+        )
+    )
+
+    async with _open_client(app) as client:
+        configuration = (await client.get("/api/config")).json()
+        configuration.pop("configured")
+        configuration.pop("ml_gate_performance")
+        response = await client.post(
+            "/api/onboarding/finish",
+            json={"configuration": configuration, "expected_jobs": 80},
+        )
+
+    assert response.status_code == HTTP_OK, response.text
+    saved = tomllib.loads((tmp_path / "config.toml").read_text(encoding="utf-8"))
+    assert saved["llm"]["stage_a"] == (
+        "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    )
+    assert saved["llm"]["stage_b"] == "bedrock/us.anthropic.claude-sonnet-5"
+    assert saved["llm"]["bedrock_region"] == "us-east-1"
+    assert saved["llm"]["bedrock_profile"] == "jobfeed"
+
+
 async def test_finish_rejects_incomplete_draft_without_creating_config(
     tmp_path: Path, monkeypatch
 ) -> None:

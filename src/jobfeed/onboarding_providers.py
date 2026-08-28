@@ -10,7 +10,10 @@ from contextlib import suppress
 from dataclasses import dataclass
 
 import httpx
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
+from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.onboarding_types import (
     API_PROVIDERS,
     ConnectionResult,
@@ -30,7 +33,12 @@ class ProcessResult:
 
 ProcessRunner = Callable[[Sequence[str]], Awaitable[ProcessResult]]
 ExecutableLookup = Callable[[str], str | None]
+BedrockSessionFactory = Callable[[str | None], object]
 _PROCESS_TIMEOUT_SECONDS = 15.0
+_BEDROCK_RECOMMENDED = {
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0": 0,
+    "us.anthropic.claude-sonnet-5": 1,
+}
 
 
 class ProviderChecker:
@@ -41,14 +49,22 @@ class ProviderChecker:
         http_client: httpx.AsyncClient | None = None,
         process_runner: ProcessRunner | None = None,
         executable_lookup: ExecutableLookup = shutil.which,
+        bedrock_session_factory: BedrockSessionFactory | None = None,
     ) -> None:
         """Create a checker with optionally injected HTTP/process boundaries."""
         self._http_client = http_client
         self._run_process = process_runner or _run_process
         self._find_executable = executable_lookup
+        self._bedrock_session_factory = bedrock_session_factory or _bedrock_session
+        self._bedrock_priced_models = frozenset(load_price_table())
 
     async def check(
-        self, provider: ProviderName, *, api_key: str | None = None
+        self,
+        provider: ProviderName,
+        *,
+        api_key: str | None = None,
+        region: str | None = None,
+        profile: str | None = None,
     ) -> ConnectionResult:
         """Verify one provider and return a redacted available-model catalog.
 
@@ -67,7 +83,96 @@ class ProviderChecker:
             return await self._check_anthropic(api_key or "")
         if provider == "codex_cli":
             return await self._check_codex()
+        if provider == "amazon_bedrock":
+            return await self._check_bedrock(region=region, profile=profile)
         return await self._check_claude()
+
+    async def _check_bedrock(
+        self, *, region: str | None, profile: str | None
+    ) -> ConnectionResult:
+        if not region or not region.strip():
+            return _failure("amazon_bedrock", "Choose an AWS Region, then try again.")
+        normalized_region = region.strip()
+        normalized_profile = profile.strip() if profile and profile.strip() else None
+        try:
+            models = await asyncio.to_thread(
+                self._discover_bedrock_models,
+                normalized_region,
+                normalized_profile,
+            )
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            code = str(error.get("Code", "")) if isinstance(error, dict) else ""
+            detail = (
+                "AWS credentials were found, but Bedrock model discovery was "
+                "denied. Check the profile IAM permissions."
+                if code in {"AccessDeniedException", "UnauthorizedException"}
+                else f"Amazon Bedrock returned {code or 'an AWS error'}. Try again."
+            )
+            return _bedrock_failure(detail, normalized_region, normalized_profile)
+        except BotoCoreError:
+            return _bedrock_failure(
+                "AWS credentials or profile could not be loaded. Sign in and retry.",
+                normalized_region,
+                normalized_profile,
+            )
+        if not models:
+            return _bedrock_failure(
+                "Connected, but no priced Converse models were found in this Region.",
+                normalized_region,
+                normalized_profile,
+            )
+        return ConnectionResult(
+            provider="amazon_bedrock",
+            connected=True,
+            detail="Amazon Bedrock credentials and model catalog verified.",
+            models=models,
+            region=normalized_region,
+            profile=normalized_profile,
+        )
+
+    def _discover_bedrock_models(
+        self, region: str, profile: str | None
+    ) -> tuple[ProviderModel, ...]:
+        session = self._bedrock_session_factory(profile)
+        client = session.client(  # type: ignore[attr-defined]
+            "bedrock",
+            region_name=region,
+            config=Config(
+                read_timeout=_PROCESS_TIMEOUT_SECONDS,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
+        )
+        foundations = client.list_foundation_models(
+            byOutputModality="TEXT",
+            byInferenceType="ON_DEMAND",
+        )
+        models = _bedrock_foundation_models(foundations, self._bedrock_priced_models)
+        profiles: list[dict[str, object]] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, object] = {"maxResults": 100}
+            if token is not None:
+                kwargs["nextToken"] = token
+            page = client.list_inference_profiles(**kwargs)
+            rows = page.get("inferenceProfileSummaries", [])
+            if isinstance(rows, list):
+                profiles.extend(row for row in rows if isinstance(row, dict))
+            next_token = page.get("nextToken")
+            token = next_token if isinstance(next_token, str) and next_token else None
+            if token is None:
+                break
+        models.extend(
+            _bedrock_inference_profiles(profiles, self._bedrock_priced_models)
+        )
+        models.sort(
+            key=lambda model: (
+                _BEDROCK_RECOMMENDED.get(model.id, 2),
+                model.label.casefold(),
+                model.id,
+            )
+        )
+        return tuple(models)
 
     async def _check_openai(self, api_key: str) -> ConnectionResult:
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -244,6 +349,97 @@ def _failure(provider: ProviderName, detail: str) -> ConnectionResult:
 
 def _provider_label(provider: ProviderName) -> str:
     return "OpenAI API" if provider == "openai_api" else "Anthropic API"
+
+
+def _bedrock_foundation_models(
+    payload: object, priced_models: frozenset[str]
+) -> list[ProviderModel]:
+    if not isinstance(payload, dict) or not isinstance(
+        payload.get("modelSummaries"), list
+    ):
+        raise ValueError("invalid Bedrock foundation model response")
+    models: list[ProviderModel] = []
+    for row in payload["modelSummaries"]:
+        if not isinstance(row, dict):
+            continue
+        model_id = row.get("modelId")
+        lifecycle = row.get("modelLifecycle")
+        outputs = row.get("outputModalities")
+        if (
+            not isinstance(model_id, str)
+            or model_id not in priced_models
+            or not isinstance(lifecycle, dict)
+            or lifecycle.get("status") != "ACTIVE"
+            or not isinstance(outputs, list)
+            or "TEXT" not in outputs
+        ):
+            continue
+        name = row.get("modelName")
+        label = name if isinstance(name, str) and name else model_id
+        models.append(
+            ProviderModel(
+                id=model_id,
+                label=f"{label} · Foundation model",
+                kind="foundation_model",
+                pricing_model=model_id,
+            )
+        )
+    return models
+
+
+def _bedrock_inference_profiles(
+    rows: list[dict[str, object]], priced_models: frozenset[str]
+) -> list[ProviderModel]:
+    models: list[ProviderModel] = []
+    for row in rows:
+        if row.get("status") != "ACTIVE" or row.get("type") != "SYSTEM_DEFINED":
+            continue
+        identifier = row.get("inferenceProfileId")
+        pricing_model = _profile_pricing_model(row)
+        if (
+            not isinstance(identifier, str)
+            or pricing_model is None
+            or (identifier not in priced_models and pricing_model not in priced_models)
+        ):
+            continue
+        name = row.get("inferenceProfileName")
+        label = name if isinstance(name, str) and name else identifier
+        models.append(
+            ProviderModel(
+                id=identifier,
+                label=f"{label} · Inference profile",
+                kind="inference_profile",
+                pricing_model=pricing_model,
+            )
+        )
+    return models
+
+
+def _profile_pricing_model(row: dict[str, object]) -> str | None:
+    models = row.get("models")
+    if not isinstance(models, list) or not models:
+        return None
+    first = models[0]
+    arn = first.get("modelArn") if isinstance(first, dict) else None
+    if not isinstance(arn, str) or "/" not in arn:
+        return None
+    return arn.rsplit("/", 1)[-1]
+
+
+def _bedrock_failure(detail: str, region: str, profile: str | None) -> ConnectionResult:
+    return ConnectionResult(
+        provider="amazon_bedrock",
+        connected=False,
+        detail=detail,
+        region=region,
+        profile=profile,
+    )
+
+
+def _bedrock_session(profile: str | None) -> object:
+    import boto3  # noqa: PLC0415
+
+    return boto3.Session(profile_name=profile)
 
 
 async def _run_process(command: Sequence[str]) -> ProcessResult:

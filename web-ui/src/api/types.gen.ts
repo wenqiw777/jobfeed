@@ -2251,6 +2251,18 @@ export interface components {
          * @description LLM model and runtime limits used by evaluation services.
          */
         LLMSettings: {
+            /** Bedrock Profile */
+            bedrock_profile?: string | null;
+            /**
+             * Bedrock Region
+             * @default us-east-1
+             */
+            bedrock_region: string;
+            /**
+             * Bedrock Timeout S
+             * @default 180
+             */
+            bedrock_timeout_s: number;
             /**
              * Claude Timeout S
              * @default 210
@@ -2493,7 +2505,7 @@ export interface components {
             /** Plan Name */
             plan_name?: string | null;
             /** Provider */
-            provider: ("openai_api" | "anthropic_api" | "codex_cli" | "claude_cli") | null;
+            provider: ("openai_api" | "anthropic_api" | "codex_cli" | "claude_cli" | "amazon_bedrock") | null;
             /** Remaining Percent */
             remaining_percent?: number | null;
             /** Resets At */
@@ -2548,11 +2560,15 @@ export interface components {
         ProviderConnectionBody: {
             /** Api Key */
             api_key?: string | null;
+            /** Profile */
+            profile?: string | null;
             /**
              * Provider
              * @enum {string}
              */
-            provider: "openai_api" | "anthropic_api" | "codex_cli" | "claude_cli";
+            provider: "openai_api" | "anthropic_api" | "codex_cli" | "claude_cli" | "amazon_bedrock";
+            /** Region */
+            region?: string | null;
         };
         /**
          * ProviderModelOut
@@ -2561,6 +2577,12 @@ export interface components {
         ProviderModelOut: {
             /** Id */
             id: string;
+            /**
+             * Kind
+             * @default model
+             * @enum {string}
+             */
+            kind: "model" | "foundation_model" | "inference_profile";
             /** Label */
             label: string;
         };
@@ -2575,7 +2597,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai_api" | "anthropic_api" | "codex_cli" | "claude_cli";
+            provider: "openai_api" | "anthropic_api" | "codex_cli" | "claude_cli" | "amazon_bedrock";
             /** Quick Model */
             quick_model: string;
         };
@@ -2594,10 +2616,14 @@ export interface components {
             has_secret: boolean;
             /** Models */
             models: components["schemas"]["ProviderModelOut"][];
+            /** Profile */
+            profile?: string | null;
             /** Provider */
-            provider?: ("openai_api" | "anthropic_api" | "codex_cli" | "claude_cli") | null;
+            provider?: ("openai_api" | "anthropic_api" | "codex_cli" | "claude_cli" | "amazon_bedrock") | null;
             /** Quick Model */
             quick_model?: string | null;
+            /** Region */
+            region?: string | null;
         };
         /**
          * RestoreResponse

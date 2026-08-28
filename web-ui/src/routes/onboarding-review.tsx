@@ -538,7 +538,7 @@ function CalibrationResult({
           value={`About ${formatNumber(Math.round(expectedTokens))} tokens per JD`}
         />
       </ColumnLayout>
-      <ColumnLayout columns={provider === "claude_cli" ? 2 : 3} variant="text-grid">
+      <ColumnLayout columns={provider === "codex_cli" ? 3 : 2} variant="text-grid">
         <Summary
           label={`Quick · ${result.quick.model}`}
           value={`${formatNumber(quickTokens)} tokens · ${formatUsd(result.quick.cost_usd, 4)} · ${formatSeconds(result.quick.latency_ms)}`}
@@ -547,11 +547,11 @@ function CalibrationResult({
           label={`Detailed · ${result.detailed.model}`}
           value={`${formatNumber(totalTokens(result.detailed))} tokens · ${formatUsd(result.detailed.cost_usd, 4)} · ${formatSeconds(result.detailed.latency_ms)}`}
         />
-        {provider !== "claude_cli" && (
+        {provider === "codex_cli" && (
           <Summary label="Codex allowance change" value={allowance} />
         )}
       </ColumnLayout>
-      {provider !== "claude_cli" && (
+      {provider === "codex_cli" && (
         <Box color="text-body-secondary">
           Codex allowance meter resolution: {result.allowance_resolution_percent} percentage point.
         </Box>
@@ -703,6 +703,7 @@ function providerName(provider: string | null): string {
     anthropic_api: "Anthropic API",
     codex_cli: "Codex CLI",
     claude_cli: "Claude CLI",
+    amazon_bedrock: "Amazon Bedrock",
   } as Record<string, string>)[provider ?? ""] ?? "Not connected";
 }
 

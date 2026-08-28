@@ -16,6 +16,8 @@ class ProviderConnectionBody(BaseModel):
 
     provider: ProviderName
     api_key: SecretStr | None = None
+    region: str | None = None
+    profile: str | None = None
 
 
 class ProviderModelsBody(BaseModel):
@@ -33,6 +35,7 @@ class ProviderModelOut(BaseModel):
 
     id: str
     label: str
+    kind: Literal["model", "foundation_model", "inference_profile"] = "model"
 
 
 class ProviderStateResponse(BaseModel):
@@ -45,6 +48,8 @@ class ProviderStateResponse(BaseModel):
     has_secret: bool
     quick_model: str | None = None
     detailed_model: str | None = None
+    region: str | None = None
+    profile: str | None = None
 
 
 class PlanUsageResponse(BaseModel):
@@ -126,11 +131,14 @@ def provider_state_response(state: ProviderOnboardingState) -> ProviderStateResp
         connected=state.connected,
         detail=state.detail,
         models=[
-            ProviderModelOut(id=model.id, label=model.label) for model in state.models
+            ProviderModelOut(id=model.id, label=model.label, kind=model.kind)
+            for model in state.models
         ],
         has_secret=state.has_secret,
         quick_model=state.quick_model,
         detailed_model=state.detailed_model,
+        region=state.region,
+        profile=state.profile,
     )
 
 

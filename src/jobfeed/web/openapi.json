@@ -1891,6 +1891,27 @@
         "additionalProperties": false,
         "description": "LLM model and runtime limits used by evaluation services.",
         "properties": {
+          "bedrock_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bedrock Profile"
+          },
+          "bedrock_region": {
+            "default": "us-east-1",
+            "title": "Bedrock Region",
+            "type": "string"
+          },
+          "bedrock_timeout_s": {
+            "default": 180.0,
+            "title": "Bedrock Timeout S",
+            "type": "number"
+          },
           "claude_timeout_s": {
             "default": 210.0,
             "title": "Claude Timeout S",
@@ -2430,7 +2451,8 @@
                   "openai_api",
                   "anthropic_api",
                   "codex_cli",
-                  "claude_cli"
+                  "claude_cli",
+                  "amazon_bedrock"
                 ],
                 "type": "string"
               },
@@ -2604,15 +2626,38 @@
             ],
             "title": "Api Key"
           },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile"
+          },
           "provider": {
             "enum": [
               "openai_api",
               "anthropic_api",
               "codex_cli",
-              "claude_cli"
+              "claude_cli",
+              "amazon_bedrock"
             ],
             "title": "Provider",
             "type": "string"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
           }
         },
         "required": [
@@ -2626,6 +2671,16 @@
         "properties": {
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "model",
+            "enum": [
+              "model",
+              "foundation_model",
+              "inference_profile"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "label": {
@@ -2653,7 +2708,8 @@
               "openai_api",
               "anthropic_api",
               "codex_cli",
-              "claude_cli"
+              "claude_cli",
+              "amazon_bedrock"
             ],
             "title": "Provider",
             "type": "string"
@@ -2711,6 +2767,17 @@
             "title": "Models",
             "type": "array"
           },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile"
+          },
           "provider": {
             "anyOf": [
               {
@@ -2718,7 +2785,8 @@
                   "openai_api",
                   "anthropic_api",
                   "codex_cli",
-                  "claude_cli"
+                  "claude_cli",
+                  "amazon_bedrock"
                 ],
                 "type": "string"
               },
@@ -2738,6 +2806,17 @@
               }
             ],
             "title": "Quick Model"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
           }
         },
         "required": [

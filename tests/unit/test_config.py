@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # LLM config default values (mirrors LLMSettings defaults)
 LLM_DEFAULT_CODEX_TIMEOUT_S = 60.0
 LLM_DEFAULT_CLAUDE_TIMEOUT_S = 210.0
+LLM_DEFAULT_BEDROCK_TIMEOUT_S = 180.0
 LLM_DEFAULT_MAX_CONCURRENT = 4
 LLM_DEFAULT_MAX_DAILY_SCORE_CALLS = 150
 LLM_DEFAULT_MAX_DAILY_COST_USD = 10.0
@@ -228,6 +229,9 @@ def test_llm_settings_defaults() -> None:
     assert cfg.stage_b == "codex-cli/gpt-5.6-sol"
     assert cfg.codex_timeout_s == LLM_DEFAULT_CODEX_TIMEOUT_S
     assert cfg.claude_timeout_s == LLM_DEFAULT_CLAUDE_TIMEOUT_S
+    assert cfg.bedrock_region == "us-east-1"
+    assert cfg.bedrock_profile is None
+    assert cfg.bedrock_timeout_s == LLM_DEFAULT_BEDROCK_TIMEOUT_S
     assert cfg.max_concurrent == LLM_DEFAULT_MAX_CONCURRENT
     assert cfg.master_resume_path == "resume.example.md"
     assert cfg.preamble_personal_path is None
@@ -246,6 +250,7 @@ def test_llm_settings_accepts_all_backends() -> None:
     for spec in [
         "codex-cli/gpt-5.4-mini",
         "claude-cli/claude-haiku-4-5",
+        "bedrock/us.anthropic.claude-sonnet-5",
         "mock/stage-a",
     ]:
         cfg = LLMSettings(stage_a=spec)

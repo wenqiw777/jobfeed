@@ -19,7 +19,12 @@ class ProviderCheck(Protocol):
     """Capability required to verify one provider connection."""
 
     async def check(
-        self, provider: ProviderName, *, api_key: str | None = None
+        self,
+        provider: ProviderName,
+        *,
+        api_key: str | None = None,
+        region: str | None = None,
+        profile: str | None = None,
     ) -> ConnectionResult:
         """Return redacted connection evidence and available models.
 
@@ -69,7 +74,12 @@ class OnboardingProviderService:
         return self._with_secret_state(state)
 
     async def test_connection(
-        self, provider: ProviderName, *, api_key: str | None = None
+        self,
+        provider: ProviderName,
+        *,
+        api_key: str | None = None,
+        region: str | None = None,
+        profile: str | None = None,
     ) -> ProviderOnboardingState:
         """Check a provider and persist successful secret-free evidence.
 
@@ -84,7 +94,14 @@ class OnboardingProviderService:
             resolved = api_key
             if provider in API_PROVIDERS and not resolved:
                 resolved = self._secrets.resolve(provider)
-            result = await self._checker.check(provider, api_key=resolved)
+            if provider == "amazon_bedrock":
+                result = await self._checker.check(
+                    provider,
+                    region=region,
+                    profile=profile,
+                )
+            else:
+                result = await self._checker.check(provider, api_key=resolved)
             if not result.connected:
                 state = self._drafts.save_connection(result)
                 return self._with_secret_state(state)
@@ -128,6 +145,8 @@ class OnboardingProviderService:
             has_secret=self._has_secret(state.provider),
             quick_model=state.quick_model,
             detailed_model=state.detailed_model,
+            region=state.region,
+            profile=state.profile,
         )
 
     def _has_secret(self, provider: ProviderName | None) -> bool:

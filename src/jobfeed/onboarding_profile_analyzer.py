@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
 
+from jobfeed.adapters.llm._factory import LLMClientBuildOptions, build_llm_client
 from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.llm.claude import ClaudeCliLLM
 from jobfeed.adapters.llm.codex import CodexCliLLM
 from jobfeed.adapters.llm.openai_compat import OpenAiCompatLLM
+from jobfeed.config import LLMSettings
 from jobfeed.domain.models import LLMRequest, Message
 from jobfeed.observability import JobfeedLogger
 from jobfeed.onboarding_companies import (
@@ -21,7 +24,7 @@ from jobfeed.onboarding_companies import (
 from jobfeed.onboarding_resume import parse_job_profile
 from jobfeed.onboarding_resume_types import JobProfile
 from jobfeed.onboarding_secrets import ProviderSecretStore
-from jobfeed.onboarding_types import ProviderName
+from jobfeed.onboarding_types import ProviderName, ProviderOnboardingState
 
 _SYSTEM_PROMPT = """You are an experienced recruiter creating a useful,
 high-recall initial job-search profile from a résumé. Return only one JSON
@@ -87,11 +90,13 @@ class OnboardingProfileAnalyzer:
         *,
         secrets: ProviderSecretStore,
         logger: JobfeedLogger,
+        provider_state: Callable[[], ProviderOnboardingState],
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create the analyzer with local secrets and optional shared HTTP."""
         self._secrets = secrets
         self._logger = logger
+        self._provider_state = provider_state
         self._http_client = http_client
 
     async def analyze(
@@ -211,6 +216,19 @@ class OnboardingProfileAnalyzer:
                 logger=self._logger,
             )
             return (await claude_client.complete(request)).content
+        if provider == "amazon_bedrock":
+            state = self._provider_state()
+            bedrock_client = build_llm_client(
+                f"bedrock/{model}",
+                settings=LLMSettings(
+                    bedrock_region=state.region or "us-east-1",
+                    bedrock_profile=state.profile,
+                ),
+                price_table=prices,
+                logger=self._logger,
+                options=LLMClientBuildOptions(timeout_s=210.0, max_retries=1),
+            )
+            return (await bedrock_client.complete(request)).content
         key = self._require_key("openai_api")
         from openai import AsyncOpenAI  # noqa: PLC0415
 

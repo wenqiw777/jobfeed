@@ -39,15 +39,17 @@ def test_filter_openai_drops_non_dict_entries() -> None:
     assert set(result) == {"gpt-5.5"}
 
 
-def test_vendored_table_is_openai_only() -> None:
-    """The committed price table must not regress to the full LiteLLM dump."""
+def test_vendored_table_contains_only_openai_and_pinned_bedrock() -> None:
+    """The table stays limited to OpenAI plus the pinned Bedrock models."""
     table_path = (
         Path(__file__).resolve().parents[2]
         / "src/jobfeed/adapters/llm/model_prices.json"
     )
     data = json.loads(table_path.read_text())
 
-    providers = {
-        v.get("litellm_provider") for v in data.values() if isinstance(v, dict)
+    non_openai = {
+        key
+        for key, value in data.items()
+        if isinstance(value, dict) and value.get("litellm_provider") != "openai"
     }
-    assert providers == {"openai"}
+    assert non_openai == set(update_prices.BEDROCK_PRICES)

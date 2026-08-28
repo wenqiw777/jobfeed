@@ -15,6 +15,137 @@ from jobfeed.onboarding_providers import (
     ProviderChecker,
 )
 
+BEDROCK_DISCOVERY_TIMEOUT_S = 15
+
+
+async def test_bedrock_lists_priced_models_and_profiles() -> None:
+    """Bedrock discovery is credential-chain based and returns safe model metadata."""
+    session_profiles: list[str | None] = []
+    client_calls: list[tuple[str, str]] = []
+
+    class FakeBedrock:
+        def list_foundation_models(self, **kwargs):
+            assert kwargs == {
+                "byOutputModality": "TEXT",
+                "byInferenceType": "ON_DEMAND",
+            }
+            return {
+                "modelSummaries": [
+                    {
+                        "modelId": "anthropic.claude-haiku-4-5-20251001-v1:0",
+                        "modelName": "Claude Haiku 4.5",
+                        "outputModalities": ["TEXT"],
+                        "modelLifecycle": {"status": "ACTIVE"},
+                    },
+                    {
+                        "modelId": "unpriced.model",
+                        "modelName": "Unpriced",
+                        "outputModalities": ["TEXT"],
+                        "modelLifecycle": {"status": "ACTIVE"},
+                    },
+                ]
+            }
+
+        def list_inference_profiles(self, **kwargs):
+            assert kwargs in (
+                {"maxResults": 100},
+                {"maxResults": 100, "nextToken": "next"},
+            )
+            if "nextToken" not in kwargs:
+                return {
+                    "inferenceProfileSummaries": [
+                        {
+                            "inferenceProfileName": "US Claude Haiku 4.5",
+                            "inferenceProfileId": (
+                                "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+                            ),
+                            "inferenceProfileArn": "arn:system-profile",
+                            "models": [
+                                {
+                                    "modelArn": (
+                                        "arn:aws:bedrock:us-east-1::"
+                                        "foundation-model/anthropic.claude-"
+                                        "haiku-4-5-20251001-v1:0"
+                                    )
+                                }
+                            ],
+                            "status": "ACTIVE",
+                            "type": "SYSTEM_DEFINED",
+                        },
+                        {
+                            "inferenceProfileName": "US Claude Sonnet 5",
+                            "inferenceProfileId": "us.anthropic.claude-sonnet-5",
+                            "inferenceProfileArn": "arn:system-profile-sonnet",
+                            "models": [
+                                {
+                                    "modelArn": (
+                                        "arn:aws:bedrock:us-east-1::"
+                                        "foundation-model/anthropic.claude-sonnet-5"
+                                    )
+                                }
+                            ],
+                            "status": "ACTIVE",
+                            "type": "SYSTEM_DEFINED",
+                        },
+                    ],
+                    "nextToken": "next",
+                }
+            return {"inferenceProfileSummaries": []}
+
+    class FakeSession:
+        def client(self, service_name, *, region_name, config):
+            client_calls.append((service_name, region_name))
+            assert config.read_timeout == BEDROCK_DISCOVERY_TIMEOUT_S
+            return FakeBedrock()
+
+    def session_factory(profile: str | None):
+        session_profiles.append(profile)
+        return FakeSession()
+
+    result = await ProviderChecker(bedrock_session_factory=session_factory).check(
+        "amazon_bedrock",
+        region="us-east-1",
+        profile="jobfeed-dev",
+    )
+
+    assert result.connected is True
+    assert session_profiles == ["jobfeed-dev"]
+    assert client_calls == [("bedrock", "us-east-1")]
+    assert [(model.id, model.kind, model.pricing_model) for model in result.models] == [
+        (
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "inference_profile",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        ),
+        (
+            "us.anthropic.claude-sonnet-5",
+            "inference_profile",
+            "anthropic.claude-sonnet-5",
+        ),
+        (
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "foundation_model",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        ),
+    ]
+
+
+async def test_bedrock_requires_region_without_attempting_a_session() -> None:
+    called = False
+
+    def session_factory(_profile: str | None):
+        nonlocal called
+        called = True
+        raise AssertionError("must not create a session")
+
+    result = await ProviderChecker(bedrock_session_factory=session_factory).check(
+        "amazon_bedrock"
+    )
+
+    assert result.connected is False
+    assert "region" in result.detail.lower()
+    assert called is False
+
 
 async def test_openai_connection_lists_only_evaluation_models() -> None:
     """OpenAI authentication and model discovery share the official models call."""

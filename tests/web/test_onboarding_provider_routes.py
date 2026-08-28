@@ -66,6 +66,36 @@ class SucceedsThenFailsChecker:
         )
 
 
+class FakeBedrockChecker:
+    async def check(
+        self,
+        provider: ProviderName,
+        *,
+        api_key: str | None = None,
+        region: str | None = None,
+        profile: str | None = None,
+    ) -> ConnectionResult:
+        assert provider == "amazon_bedrock"
+        assert api_key is None
+        assert region == "us-east-1"
+        assert profile == "default"
+        return ConnectionResult(
+            provider=provider,
+            connected=True,
+            detail="Amazon Bedrock credentials and model catalog verified.",
+            models=(
+                ProviderModel(
+                    id="us.anthropic.claude-sonnet-5",
+                    label="Claude Sonnet 5 · Inference profile",
+                    kind="inference_profile",
+                    pricing_model="anthropic.claude-sonnet-5",
+                ),
+            ),
+            region=region,
+            profile=profile,
+        )
+
+
 @asynccontextmanager
 async def _open_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with app.router.lifespan_context(app):
@@ -156,6 +186,40 @@ async def test_failed_recheck_replaces_stale_connected_draft(tmp_path: Path) -> 
     assert resumed.json()["connected"] is False
     assert resumed.json()["models"] == []
     assert resumed.json()["detail"] == "The API key was rejected. Check it and retry."
+
+
+async def test_bedrock_route_round_trips_region_profile_and_model_kind(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "data").mkdir()
+    app = create_web_app()
+    app.state.onboarding_provider_service = OnboardingProviderService(
+        checker=FakeBedrockChecker(),
+        secrets=ProviderSecretStore(tmp_path / "data" / "secrets.toml"),
+        drafts=OnboardingDraftStore(tmp_path / "data" / "onboarding.json"),
+    )
+
+    async with _open_client(app) as client:
+        checked = await client.post(
+            "/api/onboarding/provider/test",
+            json={
+                "provider": "amazon_bedrock",
+                "region": "us-east-1",
+                "profile": "default",
+            },
+        )
+
+    assert checked.status_code == HTTP_OK, checked.text
+    assert checked.json()["region"] == "us-east-1"
+    assert checked.json()["profile"] == "default"
+    assert checked.json()["models"] == [
+        {
+            "id": "us.anthropic.claude-sonnet-5",
+            "label": "Claude Sonnet 5 · Inference profile",
+            "kind": "inference_profile",
+        }
+    ]
+    assert checked.json()["has_secret"] is False
 
 
 async def test_onboarding_mutations_document_shared_422_error_shape(

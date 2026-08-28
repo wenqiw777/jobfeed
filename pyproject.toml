@@ -12,6 +12,9 @@ dependencies = [
     "alembic >= 1.15",
     "asyncpg >= 0.30",
     "beautifulsoup4 >= 4.12",
+    # Native Amazon Bedrock provider: credential chain, model discovery, and
+    # the provider-neutral Converse runtime API.
+    "boto3 >= 1.42, < 2",
     "click",
     # FastAPI thin shell served by uvicorn from `jobfeed
     # serve`; python-multipart backs the multipart apply-upload route.
@@ -157,7 +160,7 @@ mypy_path = "src"
 # onnxruntime likewise ship no stubs and are confined to the lazily imported
 # ML-gate adapter (adapters/ml/*); treat them as untyped too.
 [[tool.mypy.overrides]]
-module = ["jobspy.*", "pandas", "xgboost.*", "fastembed.*", "onnxruntime.*", "opentelemetry.*", "sentry_sdk.*"]
+module = ["boto3.*", "botocore.*", "jobspy.*", "pandas", "xgboost.*", "fastembed.*", "onnxruntime.*", "opentelemetry.*", "sentry_sdk.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

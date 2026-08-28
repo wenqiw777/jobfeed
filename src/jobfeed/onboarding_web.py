@@ -46,7 +46,11 @@ def build_onboarding_services(
         secrets=secrets,
         drafts=OnboardingDraftStore(project_root / "data" / "onboarding.json"),
     )
-    analyzer = OnboardingProfileAnalyzer(secrets=secrets, logger=logger)
+    analyzer = OnboardingProfileAnalyzer(
+        secrets=secrets,
+        logger=logger,
+        provider_state=provider.state,
+    )
     resume = ResumeOnboardingService(
         files=ResumeFileStore(project_root / "data" / "resumes"),
         drafts=ResumeDraftStore(project_root / "data" / "onboarding-resume.json"),

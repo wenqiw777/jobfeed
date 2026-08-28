@@ -10,6 +10,7 @@ ProviderName = Literal[
     "anthropic_api",
     "codex_cli",
     "claude_cli",
+    "amazon_bedrock",
 ]
 
 API_PROVIDERS = frozenset({"openai_api", "anthropic_api"})
@@ -21,6 +22,8 @@ class ProviderModel:
 
     id: str
     label: str
+    kind: Literal["model", "foundation_model", "inference_profile"] = "model"
+    pricing_model: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -31,6 +34,8 @@ class ConnectionResult:
     connected: bool
     detail: str
     models: tuple[ProviderModel, ...] = ()
+    region: str | None = None
+    profile: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -44,6 +49,8 @@ class ProviderOnboardingState:
     has_secret: bool = False
     quick_model: str | None = None
     detailed_model: str | None = None
+    region: str | None = None
+    profile: str | None = None
 
 
 __all__ = [

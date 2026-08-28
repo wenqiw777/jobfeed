@@ -41,6 +41,7 @@ _BACKEND_BY_PROVIDER = {
     "anthropic_api": "anthropic-api",
     "codex_cli": "codex-cli",
     "claude_cli": "claude-cli",
+    "amazon_bedrock": "bedrock",
 }
 
 
@@ -142,6 +143,13 @@ async def finish_onboarding(
                 "master_resume_path": f"data/resumes/{resume.stored_name}",
             }
         )
+        if provider.provider == "amazon_bedrock":
+            payload["llm"].update(
+                {
+                    "bedrock_region": provider.region or "us-east-1",
+                    "bedrock_profile": provider.profile,
+                }
+            )
         for source in ("linkedin_guest", "indeed"):
             urls = [search.url for search in enabled if search.source == source]
             payload["sources"][source].update(

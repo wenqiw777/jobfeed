@@ -94,6 +94,15 @@ def build_llm_client(
             opts=opts,
         )
 
+    if backend == "bedrock":
+        return _build_bedrock(
+            model_name,
+            settings=settings,
+            price_table=price_table,
+            logger=logger,
+            opts=opts,
+        )
+
     if backend == "mock":
         from jobfeed.adapters.llm.mock import MockLLM  # noqa: PLC0415
 
@@ -130,6 +139,41 @@ def _build_openai_compat(
     return OpenAiCompatLLM(
         client=client,
         model=model_name,
+        price_table=price_table,
+        logger=logger,
+    )
+
+
+def _build_bedrock(
+    model_name: str,
+    *,
+    settings: LLMSettings,
+    price_table: dict[str, ModelPricing],
+    logger: JobfeedLogger,
+    opts: LLMClientBuildOptions,
+) -> LLMClient:
+    """Build a native Bedrock Converse client from the AWS credential chain."""
+    import boto3  # noqa: PLC0415
+    from botocore.config import Config  # noqa: PLC0415
+
+    from jobfeed.adapters.llm.bedrock import BedrockLLM  # noqa: PLC0415
+
+    timeout = _resolve_timeout(settings.bedrock_timeout_s, opts)
+    config_args: dict[str, object] = {
+        "retries": {"max_attempts": opts.max_retries + 1, "mode": "standard"},
+    }
+    if timeout is not None:
+        config_args["read_timeout"] = timeout
+    session = boto3.Session(profile_name=settings.bedrock_profile)
+    client = session.client(
+        "bedrock-runtime",
+        region_name=settings.bedrock_region,
+        config=Config(**config_args),
+    )
+    return BedrockLLM(
+        client=client,
+        model=model_name,
+        region=settings.bedrock_region,
         price_table=price_table,
         logger=logger,
     )

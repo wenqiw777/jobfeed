@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from jobfeed.adapters.llm._factory import LLMClientBuildOptions, build_llm_client
 from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.llm._prompts import JinjaPromptRenderer
 from jobfeed.adapters.llm.claude import ClaudeCliLLM
 from jobfeed.adapters.llm.codex import CodexCliLLM
+from jobfeed.config import LLMSettings
 from jobfeed.domain.models import JobPosting, LLMRequest, LLMResponse
 from jobfeed.observability import JobfeedLogger
 from jobfeed.onboarding_plan_usage import (
@@ -19,6 +21,7 @@ from jobfeed.onboarding_plan_usage import (
 )
 from jobfeed.onboarding_resume_types import ResumeDraftState
 from jobfeed.onboarding_types import ProviderOnboardingState
+from jobfeed.ports.llm import LLMClient
 
 _REPRESENTATIVE_STAGE_A_SCORE = 70
 
@@ -75,12 +78,14 @@ class OnboardingEvaluationCalibrator:
         provider = self._provider_state()
         resume = self._resume_state()
         if (
-            provider.provider not in {"codex_cli", "claude_cli"}
+            provider.provider not in {"codex_cli", "claude_cli", "amazon_bedrock"}
             or not provider.connected
             or provider.quick_model is None
             or provider.detailed_model is None
         ):
-            raise ValueError("Connect Codex or Claude CLI and choose both models first")
+            raise ValueError(
+                "Connect a supported provider and choose both models first"
+            )
         if resume.extracted_text is None or resume.profile is None:
             raise ValueError("Upload a résumé and confirm the job profile first")
 
@@ -98,12 +103,12 @@ class OnboardingEvaluationCalibrator:
             stage_a_score=_REPRESENTATIVE_STAGE_A_SCORE,
         )
         quick_client = self._client(
-            provider=provider.provider,
+            provider=provider,
             model=provider.quick_model,
             timeout_s=120.0,
         )
         detailed_client = self._client(
-            provider=provider.provider,
+            provider=provider,
             model=provider.detailed_model,
             timeout_s=210.0,
         )
@@ -132,9 +137,20 @@ class OnboardingEvaluationCalibrator:
         )
 
     def _client(
-        self, *, provider: str, model: str, timeout_s: float
-    ) -> CodexCliLLM | ClaudeCliLLM:
-        if provider == "claude_cli":
+        self, *, provider: ProviderOnboardingState, model: str, timeout_s: float
+    ) -> LLMClient:
+        if provider.provider == "amazon_bedrock":
+            return build_llm_client(
+                f"bedrock/{model}",
+                settings=LLMSettings(
+                    bedrock_region=provider.region or "us-east-1",
+                    bedrock_profile=provider.profile,
+                ),
+                price_table=load_price_table(),
+                logger=self._logger,
+                options=LLMClientBuildOptions(timeout_s=timeout_s, max_retries=0),
+            )
+        if provider.provider == "claude_cli":
             return ClaudeCliLLM(
                 model=model,
                 timeout_s=timeout_s,
