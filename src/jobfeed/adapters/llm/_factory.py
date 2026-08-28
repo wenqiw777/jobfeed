@@ -209,6 +209,9 @@ def _build_azure_openai(
         model=deployment,
         price_table=deployment_prices,
         logger=logger,
+        request_profile=(
+            "gpt5" if selected.base_model.lower().startswith("gpt-5") else "legacy"
+        ),
     )
 
 

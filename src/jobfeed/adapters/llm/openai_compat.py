@@ -19,7 +19,7 @@ module.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jobfeed.adapters.llm._pricing import ModelPricing, TokenUsage, estimate_cost
 from jobfeed.domain.models import LLMRequest, LLMResponse
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 _MS_PER_S = 1000
+RequestProfile = Literal["legacy", "gpt5"]
 
 
 class OpenAiCompatLLM:
@@ -47,11 +48,13 @@ class OpenAiCompatLLM:
         model: str,
         price_table: dict[str, ModelPricing],
         logger: JobfeedLogger,
+        request_profile: RequestProfile = "legacy",
     ) -> None:
         self._client = client
         self._model = model
         self._price_table = price_table
         self._logger = logger
+        self._request_profile = request_profile
         self._warned_unpriced: set[str] = set()
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
@@ -69,12 +72,19 @@ class OpenAiCompatLLM:
         ]
 
         start = time.monotonic()
-        response = await self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,  # type: ignore[arg-type]
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-        )
+        if self._request_profile == "gpt5":
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,  # type: ignore[arg-type]
+                max_completion_tokens=request.max_tokens,
+            )
+        else:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,  # type: ignore[arg-type]
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+            )
         latency_ms = int((time.monotonic() - start) * _MS_PER_S)
 
         return self._build_response(self._model, response, latency_ms)
