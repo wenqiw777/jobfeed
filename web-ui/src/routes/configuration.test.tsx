@@ -7,6 +7,9 @@ import type { components } from "@/api/types.gen";
 import { DensityProvider } from "@/lib/density";
 
 type JobProfile = components["schemas"]["JobProfile"];
+type ProviderState = Omit<components["schemas"]["ProviderStateResponse"], "models"> & {
+  models: { id: string; label: string; kind?: "model" | "foundation_model" | "inference_profile" }[];
+};
 
 const CONFIG = {
   configured: false,
@@ -127,11 +130,11 @@ const PROFILE: JobProfile = {
 
 const calls: { url: string; method: string; body: unknown }[] = [];
 let currentConfig = structuredClone(CONFIG);
-let providerState = {
-  provider: null as string | null,
+let providerState: ProviderState = {
+  provider: null,
   connected: false,
   detail: null as string | null,
-  models: [] as { id: string; label: string; kind?: string }[],
+  models: [],
   has_secret: false,
   quick_model: null as string | null,
   detailed_model: null as string | null,
@@ -277,6 +280,36 @@ function mockApi(): void {
       }
       if (url === "/api/onboarding/provider/test" && method === "POST") {
         if (providerNetworkError) throw new Error("connection lost");
+        if ((body as { provider?: string }).provider === "azure_openai") {
+          providerState = {
+            provider: "azure_openai",
+            connected: true,
+            detail: "Azure OpenAI connection verified.",
+            models: [],
+            has_secret: true,
+            quick_model: null,
+            detailed_model: null,
+            region: null,
+            profile: null,
+            endpoint: (body as { endpoint?: string }).endpoint ?? null,
+            deployment_pricing: [],
+            pricing_catalog: [
+              {
+                base_model: "gpt-4.1-mini",
+                input_usd_per_million: 0.4,
+                output_usd_per_million: 1.6,
+                cached_input_usd_per_million: 0.1,
+              },
+              {
+                base_model: "gpt-4.1",
+                input_usd_per_million: 2,
+                output_usd_per_million: 8,
+                cached_input_usd_per_million: 0.5,
+              },
+            ],
+          };
+          return json(providerState);
+        }
         if ((body as { provider?: string }).provider === "amazon_bedrock") {
           providerState = {
             provider: "amazon_bedrock",
@@ -587,6 +620,70 @@ test("Amazon Bedrock sends AWS context and defaults to Haiku and Sonnet 5", asyn
     region: "us-west-2",
     profile: "jobfeed",
   });
+});
+
+test("Azure OpenAI maps deployments to user-confirmed prices", async () => {
+  renderApp();
+  await screen.findByRole("heading", { name: "Connect an AI provider" });
+
+  fireEvent.mouseDown(screen.getByRole("button", { name: /AI provider/ }));
+  fireEvent.mouseUp(await screen.findByRole("option", { name: /Azure OpenAI/ }));
+  fireEvent.change(screen.getByLabelText("Azure OpenAI endpoint"), {
+    target: { value: "https://jobfeed.openai.azure.com/openai/v1" },
+  });
+  fireEvent.change(screen.getByLabelText("Azure OpenAI API key"), {
+    target: { value: "azure-ui-secret" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+
+  expect(await screen.findByText("Azure OpenAI connection verified.")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Quick deployment name"), {
+    target: { value: "quick-prod" },
+  });
+  fireEvent.change(screen.getByLabelText("Detailed deployment name"), {
+    target: { value: "detailed-prod" },
+  });
+
+  fireEvent.mouseDown(screen.getByRole("button", { name: "quick-prod base model" }));
+  fireEvent.mouseUp(await screen.findByRole("option", { name: "gpt-4.1-mini" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Confirm prices for quick-prod" }));
+  fireEvent.mouseDown(screen.getByRole("button", { name: "detailed-prod base model" }));
+  fireEvent.mouseUp(await screen.findByRole("option", { name: "gpt-4.1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Confirm prices for detailed-prod" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save and continue" }));
+
+  await waitFor(() => {
+    const save = calls.find(
+      (call) => call.url === "/api/onboarding/provider/models" && call.method === "PUT",
+    );
+    expect(save?.body).toEqual({
+      provider: "azure_openai",
+      quick_model: "quick-prod",
+      detailed_model: "detailed-prod",
+      deployment_pricing: [
+        {
+          deployment: "quick-prod",
+          base_model: "gpt-4.1-mini",
+          input_usd_per_million: 0.4,
+          output_usd_per_million: 1.6,
+          cached_input_usd_per_million: 0.1,
+        },
+        {
+          deployment: "detailed-prod",
+          base_model: "gpt-4.1",
+          input_usd_per_million: 2,
+          output_usd_per_million: 8,
+          cached_input_usd_per_million: 0.5,
+        },
+      ],
+    });
+  });
+  expect(calls.find((call) => call.url.endsWith("/provider/test"))?.body).toEqual({
+    provider: "azure_openai",
+    api_key: "azure-ui-secret",
+    endpoint: "https://jobfeed.openai.azure.com/openai/v1",
+  });
+  expect(JSON.stringify(providerState)).not.toContain("azure-ui-secret");
 });
 
 test("provider connection and model save failures stay visible", async () => {

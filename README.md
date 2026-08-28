@@ -128,9 +128,12 @@ GUI. Running `./setup.sh` again is also safe.
 A fresh checkout opens `/setup`. Setup is resumable, and **nothing starts a
 scan automatically**.
 
-1. **Connect an AI provider.** Choose OpenAI API, Anthropic API, a signed-in
-   Codex CLI, or a signed-in Claude Code CLI. Test the connection, then choose
-   separate Quick and Detailed models.
+1. **Connect an AI provider.** Choose OpenAI API, Anthropic API, Azure OpenAI,
+   a signed-in Codex CLI, or a signed-in Claude Code CLI. Test the connection,
+   then choose separate Quick and Detailed models. For Azure, enter the current
+   resource `/openai/v1` endpoint, enter existing deployment aliases, map each
+   alias to its base model, and confirm its input, output, and optional cached
+   input price. Those confirmed prices drive the daily dollar limit.
 2. **Confirm your job profile.** Upload a PDF, DOCX, Markdown, or text résumé.
    Preview the locally extracted text, explicitly send it for analysis, and
    edit every suggested preference before confirming it.
@@ -160,8 +163,8 @@ start the first scan or evaluation when you are ready.
 After onboarding, open **Settings** in the GUI to manage:
 
 - **Résumé** — select the Markdown or text file used as evaluation evidence.
-- **Models** — use a signed-in Codex or Claude app, or an OpenAI-compatible API
-  endpoint.
+- **Models** — use a signed-in Codex or Claude app, an OpenAI-compatible API,
+  or Azure OpenAI deployment aliases with confirmed per-deployment prices.
 - **Sources** — enable feeds, edit search URLs and tracked ATS companies, and
   set one total job cap per source rather than per search URL.
 - **Filters** — limit locations, companies, and posting age before evaluation.

@@ -21,7 +21,7 @@ export function useProviderOnboarding() {
 export function testProviderConnection(
   provider: ProviderName,
   apiKey?: string,
-  aws?: { region: string; profile?: string },
+  context?: { region?: string; profile?: string; endpoint?: string },
 ) {
   return apiFetch<ProviderState>("/api/onboarding/provider/test", {
     method: "POST",
@@ -29,7 +29,8 @@ export function testProviderConnection(
     body: JSON.stringify({
       provider,
       api_key: apiKey || null,
-      ...(aws ? { region: aws.region, profile: aws.profile || null } : {}),
+      ...(context?.region ? { region: context.region, profile: context.profile || null } : {}),
+      ...(context?.endpoint ? { endpoint: context.endpoint } : {}),
     }),
   });
 }

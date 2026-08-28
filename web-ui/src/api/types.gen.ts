@@ -1607,6 +1607,22 @@ export interface components {
             /** Stuck Scoring */
             stuck_scoring: components["schemas"]["PipelineAttentionEntry"][];
         };
+        /**
+         * AzureDeploymentPricingSettings
+         * @description Confirmed per-token rates for one Azure deployment alias.
+         */
+        AzureDeploymentPricingSettings: {
+            /** Base Model */
+            base_model: string;
+            /** Cached Input Usd Per Million */
+            cached_input_usd_per_million?: number | null;
+            /** Deployment */
+            deployment: string;
+            /** Input Usd Per Million */
+            input_usd_per_million: number;
+            /** Output Usd Per Million */
+            output_usd_per_million: number;
+        };
         /** Body_apply_to_job_api_jobs__job_id__apply_post */
         Body_apply_to_job_api_jobs__job_id__apply_post: {
             /** Cover Letter */
@@ -1816,6 +1832,22 @@ export interface components {
             scoring?: components["schemas"]["ScoringSettings"];
             seniority_gate?: components["schemas"]["SeniorityGateSettings"];
             sources?: components["schemas"]["SourcesConfig"];
+        };
+        /**
+         * DeploymentPricingBody
+         * @description Confirmed Azure pricing for one selected deployment alias.
+         */
+        DeploymentPricingBody: {
+            /** Base Model */
+            base_model: string;
+            /** Cached Input Usd Per Million */
+            cached_input_usd_per_million?: number | null;
+            /** Deployment */
+            deployment: string;
+            /** Input Usd Per Million */
+            input_usd_per_million: number;
+            /** Output Usd Per Million */
+            output_usd_per_million: number;
         };
         /**
          * EditableConfiguration
@@ -2251,6 +2283,20 @@ export interface components {
          * @description LLM model and runtime limits used by evaluation services.
          */
         LLMSettings: {
+            /** Azure Deployment Pricing */
+            azure_deployment_pricing?: components["schemas"]["AzureDeploymentPricingSettings"][];
+            /**
+             * Azure Openai Api Key Env
+             * @default AZURE_OPENAI_API_KEY
+             */
+            azure_openai_api_key_env: string;
+            /** Azure Openai Endpoint */
+            azure_openai_endpoint?: string | null;
+            /**
+             * Azure Openai Timeout S
+             * @default 60
+             */
+            azure_openai_timeout_s: number;
             /** Bedrock Profile */
             bedrock_profile?: string | null;
             /**
@@ -2397,6 +2443,20 @@ export interface components {
             output_tokens: number;
         };
         /**
+         * ModelPriceReferenceOut
+         * @description Editable reference rates safe to offer in Azure onboarding.
+         */
+        ModelPriceReferenceOut: {
+            /** Base Model */
+            base_model: string;
+            /** Cached Input Usd Per Million */
+            cached_input_usd_per_million?: number | null;
+            /** Input Usd Per Million */
+            input_usd_per_million: number;
+            /** Output Usd Per Million */
+            output_usd_per_million: number;
+        };
+        /**
          * NoteBody
          * @description ``POST /api/jobs/{id}/note`` request body.
          */
@@ -2505,7 +2565,7 @@ export interface components {
             /** Plan Name */
             plan_name?: string | null;
             /** Provider */
-            provider: ("openai_api" | "anthropic_api" | "codex_cli" | "claude_cli" | "amazon_bedrock") | null;
+            provider: ("openai_api" | "anthropic_api" | "azure_openai" | "codex_cli" | "claude_cli" | "amazon_bedrock") | null;
             /** Remaining Percent */
             remaining_percent?: number | null;
             /** Resets At */
@@ -2560,13 +2620,15 @@ export interface components {
         ProviderConnectionBody: {
             /** Api Key */
             api_key?: string | null;
+            /** Endpoint */
+            endpoint?: string | null;
             /** Profile */
             profile?: string | null;
             /**
              * Provider
              * @enum {string}
              */
-            provider: "openai_api" | "anthropic_api" | "codex_cli" | "claude_cli" | "amazon_bedrock";
+            provider: "openai_api" | "anthropic_api" | "azure_openai" | "codex_cli" | "claude_cli" | "amazon_bedrock";
             /** Region */
             region?: string | null;
         };
@@ -2591,13 +2653,15 @@ export interface components {
          * @description Quick and Detailed model selections from a verified catalog.
          */
         ProviderModelsBody: {
+            /** Deployment Pricing */
+            deployment_pricing?: components["schemas"]["DeploymentPricingBody"][];
             /** Detailed Model */
             detailed_model: string;
             /**
              * Provider
              * @enum {string}
              */
-            provider: "openai_api" | "anthropic_api" | "codex_cli" | "claude_cli" | "amazon_bedrock";
+            provider: "openai_api" | "anthropic_api" | "azure_openai" | "codex_cli" | "claude_cli" | "amazon_bedrock";
             /** Quick Model */
             quick_model: string;
         };
@@ -2608,18 +2672,24 @@ export interface components {
         ProviderStateResponse: {
             /** Connected */
             connected: boolean;
+            /** Deployment Pricing */
+            deployment_pricing?: components["schemas"]["DeploymentPricingBody"][];
             /** Detail */
             detail?: string | null;
             /** Detailed Model */
             detailed_model?: string | null;
+            /** Endpoint */
+            endpoint?: string | null;
             /** Has Secret */
             has_secret: boolean;
             /** Models */
             models: components["schemas"]["ProviderModelOut"][];
+            /** Pricing Catalog */
+            pricing_catalog?: components["schemas"]["ModelPriceReferenceOut"][];
             /** Profile */
             profile?: string | null;
             /** Provider */
-            provider?: ("openai_api" | "anthropic_api" | "codex_cli" | "claude_cli" | "amazon_bedrock") | null;
+            provider?: ("openai_api" | "anthropic_api" | "azure_openai" | "codex_cli" | "claude_cli" | "amazon_bedrock") | null;
             /** Quick Model */
             quick_model?: string | null;
             /** Region */
