@@ -39,6 +39,7 @@ class OnboardingFinishBody(BaseModel):
 _BACKEND_BY_PROVIDER = {
     "openai_api": "openai-compat",
     "anthropic_api": "anthropic-api",
+    "azure_openai": "azure-openai",
     "codex_cli": "codex-cli",
     "claude_cli": "claude-cli",
     "amazon_bedrock": "bedrock",
@@ -148,6 +149,21 @@ async def finish_onboarding(
                 {
                     "bedrock_region": provider.region or "us-east-1",
                     "bedrock_profile": provider.profile,
+                }
+            )
+        if provider.provider == "azure_openai":
+            if provider.endpoint is None or not provider.deployment_pricing:
+                raise ValueError(
+                    "Azure OpenAI endpoint and confirmed deployment pricing "
+                    "are required"
+                )
+            payload["llm"].update(
+                {
+                    "azure_openai_endpoint": provider.endpoint,
+                    "azure_openai_api_key_env": "AZURE_OPENAI_API_KEY",
+                    "azure_deployment_pricing": [
+                        price.__dict__ for price in provider.deployment_pricing
+                    ],
                 }
             )
         for source in ("linkedin_guest", "indeed"):

@@ -257,6 +257,52 @@
         "title": "AttentionResponse",
         "type": "object"
       },
+      "AzureDeploymentPricingSettings": {
+        "additionalProperties": false,
+        "description": "Confirmed per-token rates for one Azure deployment alias.",
+        "properties": {
+          "base_model": {
+            "minLength": 1,
+            "title": "Base Model",
+            "type": "string"
+          },
+          "cached_input_usd_per_million": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cached Input Usd Per Million"
+          },
+          "deployment": {
+            "minLength": 1,
+            "title": "Deployment",
+            "type": "string"
+          },
+          "input_usd_per_million": {
+            "minimum": 0.0,
+            "title": "Input Usd Per Million",
+            "type": "number"
+          },
+          "output_usd_per_million": {
+            "minimum": 0.0,
+            "title": "Output Usd Per Million",
+            "type": "number"
+          }
+        },
+        "required": [
+          "deployment",
+          "base_model",
+          "input_usd_per_million",
+          "output_usd_per_million"
+        ],
+        "title": "AzureDeploymentPricingSettings",
+        "type": "object"
+      },
       "Body_apply_to_job_api_jobs__job_id__apply_post": {
         "properties": {
           "cover_letter": {
@@ -751,6 +797,52 @@
           "configured"
         ],
         "title": "ConfigurationResponse",
+        "type": "object"
+      },
+      "DeploymentPricingBody": {
+        "additionalProperties": false,
+        "description": "Confirmed Azure pricing for one selected deployment alias.",
+        "properties": {
+          "base_model": {
+            "minLength": 1,
+            "title": "Base Model",
+            "type": "string"
+          },
+          "cached_input_usd_per_million": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cached Input Usd Per Million"
+          },
+          "deployment": {
+            "minLength": 1,
+            "title": "Deployment",
+            "type": "string"
+          },
+          "input_usd_per_million": {
+            "minimum": 0.0,
+            "title": "Input Usd Per Million",
+            "type": "number"
+          },
+          "output_usd_per_million": {
+            "minimum": 0.0,
+            "title": "Output Usd Per Million",
+            "type": "number"
+          }
+        },
+        "required": [
+          "deployment",
+          "base_model",
+          "input_usd_per_million",
+          "output_usd_per_million"
+        ],
+        "title": "DeploymentPricingBody",
         "type": "object"
       },
       "EditableConfiguration": {
@@ -1891,6 +1983,34 @@
         "additionalProperties": false,
         "description": "LLM model and runtime limits used by evaluation services.",
         "properties": {
+          "azure_deployment_pricing": {
+            "items": {
+              "$ref": "#/components/schemas/AzureDeploymentPricingSettings"
+            },
+            "title": "Azure Deployment Pricing",
+            "type": "array"
+          },
+          "azure_openai_api_key_env": {
+            "default": "AZURE_OPENAI_API_KEY",
+            "title": "Azure Openai Api Key Env",
+            "type": "string"
+          },
+          "azure_openai_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Azure Openai Endpoint"
+          },
+          "azure_openai_timeout_s": {
+            "default": 60.0,
+            "title": "Azure Openai Timeout S",
+            "type": "number"
+          },
           "bedrock_profile": {
             "anyOf": [
               {
@@ -2132,6 +2252,41 @@
           "latency_ms"
         ],
         "title": "MeasuredEvaluationCallResponse",
+        "type": "object"
+      },
+      "ModelPriceReferenceOut": {
+        "description": "Editable reference rates safe to offer in Azure onboarding.",
+        "properties": {
+          "base_model": {
+            "title": "Base Model",
+            "type": "string"
+          },
+          "cached_input_usd_per_million": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cached Input Usd Per Million"
+          },
+          "input_usd_per_million": {
+            "title": "Input Usd Per Million",
+            "type": "number"
+          },
+          "output_usd_per_million": {
+            "title": "Output Usd Per Million",
+            "type": "number"
+          }
+        },
+        "required": [
+          "base_model",
+          "input_usd_per_million",
+          "output_usd_per_million"
+        ],
+        "title": "ModelPriceReferenceOut",
         "type": "object"
       },
       "NoteBody": {
@@ -2450,6 +2605,7 @@
                 "enum": [
                   "openai_api",
                   "anthropic_api",
+                  "azure_openai",
                   "codex_cli",
                   "claude_cli",
                   "amazon_bedrock"
@@ -2626,6 +2782,17 @@
             ],
             "title": "Api Key"
           },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
           "profile": {
             "anyOf": [
               {
@@ -2641,6 +2808,7 @@
             "enum": [
               "openai_api",
               "anthropic_api",
+              "azure_openai",
               "codex_cli",
               "claude_cli",
               "amazon_bedrock"
@@ -2699,6 +2867,13 @@
         "additionalProperties": false,
         "description": "Quick and Detailed model selections from a verified catalog.",
         "properties": {
+          "deployment_pricing": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentPricingBody"
+            },
+            "title": "Deployment Pricing",
+            "type": "array"
+          },
           "detailed_model": {
             "title": "Detailed Model",
             "type": "string"
@@ -2707,6 +2882,7 @@
             "enum": [
               "openai_api",
               "anthropic_api",
+              "azure_openai",
               "codex_cli",
               "claude_cli",
               "amazon_bedrock"
@@ -2734,6 +2910,13 @@
             "title": "Connected",
             "type": "boolean"
           },
+          "deployment_pricing": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentPricingBody"
+            },
+            "title": "Deployment Pricing",
+            "type": "array"
+          },
           "detail": {
             "anyOf": [
               {
@@ -2756,6 +2939,17 @@
             ],
             "title": "Detailed Model"
           },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
           "has_secret": {
             "title": "Has Secret",
             "type": "boolean"
@@ -2765,6 +2959,13 @@
               "$ref": "#/components/schemas/ProviderModelOut"
             },
             "title": "Models",
+            "type": "array"
+          },
+          "pricing_catalog": {
+            "items": {
+              "$ref": "#/components/schemas/ModelPriceReferenceOut"
+            },
+            "title": "Pricing Catalog",
             "type": "array"
           },
           "profile": {
@@ -2784,6 +2985,7 @@
                 "enum": [
                   "openai_api",
                   "anthropic_api",
+                  "azure_openai",
                   "codex_cli",
                   "claude_cli",
                   "amazon_bedrock"

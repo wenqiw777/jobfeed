@@ -210,6 +210,7 @@ async def test_provider_connection(
         api_key=api_key,
         region=body.region,
         profile=body.profile,
+        endpoint=body.endpoint,
     )
     return provider_state_response(state)
 
@@ -239,6 +240,7 @@ async def save_provider_models(
             body.provider,
             body.quick_model,
             body.detailed_model,
+            tuple(price.to_domain() for price in body.deployment_pricing),
         )
     except ValueError as exc:
         raise ApiError(422, "invalid_model_selection", str(exc)) from exc

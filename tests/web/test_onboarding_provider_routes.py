@@ -96,6 +96,26 @@ class FakeBedrockChecker:
         )
 
 
+class FakeAzureChecker:
+    async def check(
+        self,
+        provider: ProviderName,
+        *,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+    ) -> ConnectionResult:
+        assert provider == "azure_openai"
+        assert api_key == "azure-route-secret"
+        assert endpoint == "https://jobfeed.openai.azure.com/openai/v1"
+        return ConnectionResult(
+            provider=provider,
+            connected=True,
+            detail="Azure OpenAI connection verified. Enter deployment aliases.",
+            models=(),
+            endpoint=endpoint,
+        )
+
+
 @asynccontextmanager
 async def _open_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with app.router.lifespan_context(app):
@@ -220,6 +240,60 @@ async def test_bedrock_route_round_trips_region_profile_and_model_kind(
         }
     ]
     assert checked.json()["has_secret"] is False
+
+
+async def test_azure_route_round_trips_endpoint_and_confirmed_deployment_prices(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "data").mkdir()
+    app = create_web_app()
+    app.state.onboarding_provider_service = OnboardingProviderService(
+        checker=FakeAzureChecker(),
+        secrets=ProviderSecretStore(tmp_path / "data" / "secrets.toml"),
+        drafts=OnboardingDraftStore(tmp_path / "data" / "onboarding.json"),
+    )
+
+    async with _open_client(app) as client:
+        checked = await client.post(
+            "/api/onboarding/provider/test",
+            json={
+                "provider": "azure_openai",
+                "api_key": "azure-route-secret",
+                "endpoint": "https://jobfeed.openai.azure.com/openai/v1",
+            },
+        )
+        selected = await client.put(
+            "/api/onboarding/provider/models",
+            json={
+                "provider": "azure_openai",
+                "quick_model": "quick-prod",
+                "detailed_model": "quick-prod",
+                "deployment_pricing": [
+                    {
+                        "deployment": "quick-prod",
+                        "base_model": "gpt-4.1-mini",
+                        "input_usd_per_million": 0.4,
+                        "output_usd_per_million": 1.6,
+                        "cached_input_usd_per_million": 0.1,
+                    }
+                ],
+            },
+        )
+
+    assert checked.status_code == HTTP_OK, checked.text
+    assert checked.json()["endpoint"] == ("https://jobfeed.openai.azure.com/openai/v1")
+    assert checked.json()["models"] == []
+    assert selected.status_code == HTTP_OK, selected.text
+    assert selected.json()["deployment_pricing"] == [
+        {
+            "deployment": "quick-prod",
+            "base_model": "gpt-4.1-mini",
+            "input_usd_per_million": 0.4,
+            "output_usd_per_million": 1.6,
+            "cached_input_usd_per_million": 0.1,
+        }
+    ]
+    assert "azure-route-secret" not in checked.text + selected.text
 
 
 async def test_onboarding_mutations_document_shared_422_error_shape(

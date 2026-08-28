@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from jobfeed.onboarding_plan_usage import PlanUsageSnapshot
 from jobfeed.onboarding_resume_types import JobProfile, ResumeDraftState
 from jobfeed.onboarding_searches import SearchDraftState, SearchSuggestion
-from jobfeed.onboarding_types import ProviderOnboardingState
+from jobfeed.onboarding_types import DeploymentPricing, ProviderOnboardingState
 from jobfeed.web.app import create_web_app
 
 HTTP_OK = 200
@@ -237,6 +237,75 @@ async def test_finish_applies_bedrock_models_region_and_profile(
     assert saved["llm"]["stage_b"] == "bedrock/us.anthropic.claude-sonnet-5"
     assert saved["llm"]["bedrock_region"] == "us-east-1"
     assert saved["llm"]["bedrock_profile"] == "jobfeed"
+
+
+async def test_finish_applies_azure_endpoint_deployments_and_confirmed_prices(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Azure onboarding becomes a restart-safe runtime configuration."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    app = create_web_app()
+    _wire_ready_drafts(app)
+    app.state.onboarding_provider_service = StateService(
+        ProviderOnboardingState(
+            provider="azure_openai",
+            connected=True,
+            quick_model="quick-prod",
+            detailed_model="detailed-prod",
+            endpoint="https://jobfeed.openai.azure.com/openai/v1",
+            deployment_pricing=(
+                DeploymentPricing(
+                    deployment="quick-prod",
+                    base_model="gpt-4.1-mini",
+                    input_usd_per_million=0.4,
+                    output_usd_per_million=1.6,
+                    cached_input_usd_per_million=0.1,
+                ),
+                DeploymentPricing(
+                    deployment="detailed-prod",
+                    base_model="gpt-4.1",
+                    input_usd_per_million=2.0,
+                    output_usd_per_million=8.0,
+                    cached_input_usd_per_million=0.5,
+                ),
+            ),
+        )
+    )
+
+    async with _open_client(app) as client:
+        configuration = (await client.get("/api/config")).json()
+        configuration.pop("configured")
+        configuration.pop("ml_gate_performance")
+        response = await client.post(
+            "/api/onboarding/finish",
+            json={"configuration": configuration, "expected_jobs": 80},
+        )
+
+    assert response.status_code == HTTP_OK, response.text
+    saved = tomllib.loads((tmp_path / "config.toml").read_text(encoding="utf-8"))
+    assert saved["llm"]["stage_a"] == "azure-openai/quick-prod"
+    assert saved["llm"]["stage_b"] == "azure-openai/detailed-prod"
+    assert saved["llm"]["azure_openai_endpoint"] == (
+        "https://jobfeed.openai.azure.com/openai/v1"
+    )
+    assert saved["llm"]["azure_openai_api_key_env"] == "AZURE_OPENAI_API_KEY"
+    assert saved["llm"]["azure_deployment_pricing"] == [
+        {
+            "deployment": "quick-prod",
+            "base_model": "gpt-4.1-mini",
+            "input_usd_per_million": 0.4,
+            "output_usd_per_million": 1.6,
+            "cached_input_usd_per_million": 0.1,
+        },
+        {
+            "deployment": "detailed-prod",
+            "base_model": "gpt-4.1",
+            "input_usd_per_million": 2.0,
+            "output_usd_per_million": 8.0,
+            "cached_input_usd_per_million": 0.5,
+        },
+    ]
 
 
 async def test_finish_rejects_incomplete_draft_without_creating_config(

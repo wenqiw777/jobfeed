@@ -25,6 +25,7 @@ from jobfeed.onboarding_state import OnboardingDraftStore
 def build_onboarding_services(
     project_root: Path,
     logger: JobfeedLogger,
+    secrets: ProviderSecretStore | None = None,
 ) -> tuple[
     OnboardingProviderService,
     ResumeOnboardingService,
@@ -40,7 +41,7 @@ def build_onboarding_services(
     Returns:
         Provider, résumé/profile, and search-selection workflows.
     """
-    secrets = ProviderSecretStore(project_root / "data" / "secrets.toml")
+    secrets = secrets or ProviderSecretStore(project_root / "data" / "secrets.toml")
     provider = OnboardingProviderService(
         checker=ProviderChecker(),
         secrets=secrets,

@@ -10,6 +10,7 @@ from jobfeed.onboarding_state import OnboardingDraftStore
 from jobfeed.onboarding_types import (
     API_PROVIDERS,
     ConnectionResult,
+    DeploymentPricing,
     ProviderName,
     ProviderOnboardingState,
 )
@@ -25,6 +26,7 @@ class ProviderCheck(Protocol):
         api_key: str | None = None,
         region: str | None = None,
         profile: str | None = None,
+        endpoint: str | None = None,
     ) -> ConnectionResult:
         """Return redacted connection evidence and available models.
 
@@ -80,6 +82,7 @@ class OnboardingProviderService:
         api_key: str | None = None,
         region: str | None = None,
         profile: str | None = None,
+        endpoint: str | None = None,
     ) -> ProviderOnboardingState:
         """Check a provider and persist successful secret-free evidence.
 
@@ -100,6 +103,12 @@ class OnboardingProviderService:
                     region=region,
                     profile=profile,
                 )
+            elif provider == "azure_openai":
+                result = await self._checker.check(
+                    provider,
+                    api_key=resolved,
+                    endpoint=endpoint,
+                )
             else:
                 result = await self._checker.check(provider, api_key=resolved)
             if not result.connected:
@@ -115,6 +124,7 @@ class OnboardingProviderService:
         provider: ProviderName,
         quick_model: str,
         detailed_model: str,
+        deployment_pricing: tuple[DeploymentPricing, ...] = (),
     ) -> ProviderOnboardingState:
         """Save provider-scoped Quick and Detailed model choices.
 
@@ -131,7 +141,12 @@ class OnboardingProviderService:
         """
         if provider in API_PROVIDERS and not self._secrets.has_secret(provider):
             raise ValueError("Enter the API key and test this provider again")
-        state = self._drafts.save_models(provider, quick_model, detailed_model)
+        state = self._drafts.save_models(
+            provider,
+            quick_model,
+            detailed_model,
+            deployment_pricing,
+        )
         return self._with_secret_state(state)
 
     def _with_secret_state(
@@ -147,6 +162,9 @@ class OnboardingProviderService:
             detailed_model=state.detailed_model,
             region=state.region,
             profile=state.profile,
+            endpoint=state.endpoint,
+            deployment_pricing=state.deployment_pricing,
+            pricing_catalog=state.pricing_catalog,
         )
 
     def _has_secret(self, provider: ProviderName | None) -> bool:

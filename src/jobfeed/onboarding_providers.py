@@ -5,18 +5,20 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import httpx
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
-from jobfeed.adapters.llm._pricing import load_price_table
+from jobfeed.adapters.llm._pricing import ModelPricing, load_price_table
 from jobfeed.onboarding_types import (
     API_PROVIDERS,
     ConnectionResult,
+    ModelPriceReference,
     ProviderModel,
     ProviderName,
 )
@@ -56,7 +58,8 @@ class ProviderChecker:
         self._run_process = process_runner or _run_process
         self._find_executable = executable_lookup
         self._bedrock_session_factory = bedrock_session_factory or _bedrock_session
-        self._bedrock_priced_models = frozenset(load_price_table())
+        self._price_table = load_price_table()
+        self._bedrock_priced_models = frozenset(self._price_table)
 
     async def check(
         self,
@@ -65,6 +68,7 @@ class ProviderChecker:
         api_key: str | None = None,
         region: str | None = None,
         profile: str | None = None,
+        endpoint: str | None = None,
     ) -> ConnectionResult:
         """Verify one provider and return a redacted available-model catalog.
 
@@ -81,6 +85,8 @@ class ProviderChecker:
             return await self._check_openai(api_key or "")
         if provider == "anthropic_api":
             return await self._check_anthropic(api_key or "")
+        if provider == "azure_openai":
+            return await self._check_azure(api_key or "", endpoint)
         if provider == "codex_cli":
             return await self._check_codex()
         if provider == "amazon_bedrock":
@@ -190,6 +196,35 @@ class ProviderChecker:
             "https://api.anthropic.com/v1/models?limit=1000",
             headers,
             _anthropic_models,
+        )
+
+    async def _check_azure(
+        self, api_key: str, endpoint: str | None
+    ) -> ConnectionResult:
+        normalized = _normalize_azure_endpoint(endpoint)
+        if normalized is None:
+            return _failure(
+                "azure_openai",
+                "Enter a valid Azure OpenAI HTTPS endpoint, then try again.",
+            )
+        headers = {"Authorization": f"Bearer {api_key}"}
+        result = await self._check_api(
+            "azure_openai",
+            f"{normalized}/models",
+            headers,
+            _azure_catalog_models,
+        )
+        return ConnectionResult(
+            provider=result.provider,
+            connected=result.connected,
+            detail=(
+                "Azure OpenAI connection verified. Enter your deployment aliases."
+                if result.connected
+                else result.detail
+            ),
+            models=(),
+            endpoint=normalized,
+            pricing_catalog=_azure_price_catalog(self._price_table),
         )
 
     async def _check_api(
@@ -318,6 +353,64 @@ def _anthropic_models(payload: object) -> tuple[ProviderModel, ...]:
     return tuple(models)
 
 
+def _azure_catalog_models(payload: object) -> tuple[ProviderModel, ...]:
+    ids = {
+        model_id
+        for row in _model_rows(payload)
+        if isinstance((model_id := row.get("id")), str) and model_id.strip()
+    }
+    return tuple(ProviderModel(id=model_id, label=model_id) for model_id in sorted(ids))
+
+
+def _normalize_azure_endpoint(endpoint: str | None) -> str | None:
+    if endpoint is None:
+        return None
+    parsed = urlsplit(endpoint.strip())
+    hostname = (parsed.hostname or "").lower()
+    supported_host = hostname.endswith((".openai.azure.com", ".services.ai.azure.com"))
+    if (
+        parsed.scheme != "https"
+        or not supported_host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    path = parsed.path.rstrip("/")
+    if path not in {"", "/openai/v1"}:
+        return None
+    return f"https://{parsed.netloc}/openai/v1"
+
+
+def _azure_price_catalog(
+    prices: Mapping[str, ModelPricing],
+) -> tuple[ModelPriceReference, ...]:
+    excluded = ("audio", "realtime", "transcribe", "tts", "image", "search")
+    references = []
+    for model, price in prices.items():
+        if not model.startswith(("gpt-", "o1", "o3", "o4")):
+            continue
+        if any(part in model for part in excluded):
+            continue
+        input_cost = getattr(price, "input_cost_per_token", None)
+        output_cost = getattr(price, "output_cost_per_token", None)
+        cached_cost = getattr(price, "cached_input_cost_per_token", None)
+        if not isinstance(input_cost, float) or not isinstance(output_cost, float):
+            continue
+        references.append(
+            ModelPriceReference(
+                base_model=model,
+                input_usd_per_million=input_cost * 1_000_000,
+                output_usd_per_million=output_cost * 1_000_000,
+                cached_input_usd_per_million=(
+                    cached_cost * 1_000_000 if isinstance(cached_cost, float) else None
+                ),
+            )
+        )
+    return tuple(sorted(references, key=lambda item: item.base_model))
+
+
 def _codex_models(payload: object) -> tuple[ProviderModel, ...]:
     if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
         raise ValueError("invalid Codex model catalog")
@@ -348,7 +441,12 @@ def _failure(provider: ProviderName, detail: str) -> ConnectionResult:
 
 
 def _provider_label(provider: ProviderName) -> str:
-    return "OpenAI API" if provider == "openai_api" else "Anthropic API"
+    labels = {
+        "openai_api": "OpenAI API",
+        "anthropic_api": "Anthropic API",
+        "azure_openai": "Azure OpenAI",
+    }
+    return labels.get(provider, provider)
 
 
 def _bedrock_foundation_models(

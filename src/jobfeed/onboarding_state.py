@@ -9,6 +9,8 @@ from pathlib import Path
 
 from jobfeed.onboarding_types import (
     ConnectionResult,
+    DeploymentPricing,
+    ModelPriceReference,
     ProviderModel,
     ProviderName,
     ProviderOnboardingState,
@@ -32,6 +34,12 @@ class OnboardingDraftStore:
             return ProviderOnboardingState()
         raw = json.loads(self._path.read_text(encoding="utf-8"))
         models = tuple(ProviderModel(**model) for model in raw.get("models", []))
+        deployment_pricing = tuple(
+            DeploymentPricing(**price) for price in raw.get("deployment_pricing", [])
+        )
+        pricing_catalog = tuple(
+            ModelPriceReference(**price) for price in raw.get("pricing_catalog", [])
+        )
         return ProviderOnboardingState(
             provider=raw.get("provider"),
             connected=bool(raw.get("connected", False)),
@@ -41,6 +49,9 @@ class OnboardingDraftStore:
             detailed_model=raw.get("detailed_model"),
             region=raw.get("region"),
             profile=raw.get("profile"),
+            endpoint=raw.get("endpoint"),
+            deployment_pricing=deployment_pricing,
+            pricing_catalog=pricing_catalog,
         )
 
     def save_connection(self, result: ConnectionResult) -> ProviderOnboardingState:
@@ -65,6 +76,14 @@ class OnboardingDraftStore:
             ),
             region=result.region,
             profile=result.profile,
+            endpoint=result.endpoint,
+            deployment_pricing=_preserve_pricing(
+                previous,
+                result.provider,
+                result.endpoint,
+                available,
+            ),
+            pricing_catalog=result.pricing_catalog,
         )
         self._write(state)
         return state
@@ -74,6 +93,7 @@ class OnboardingDraftStore:
         provider: ProviderName,
         quick_model: str,
         detailed_model: str,
+        deployment_pricing: tuple[DeploymentPricing, ...] = (),
     ) -> ProviderOnboardingState:
         """Persist two model choices after validating the verified catalog.
 
@@ -92,8 +112,13 @@ class OnboardingDraftStore:
         if not current.connected or current.provider != provider:
             raise ValueError("Test this provider connection before choosing models")
         available = {model.id for model in current.models}
-        if quick_model not in available or detailed_model not in available:
+        if provider == "azure_openai":
+            if not quick_model.strip() or not detailed_model.strip():
+                raise ValueError("Enter both Azure deployment aliases")
+        elif quick_model not in available or detailed_model not in available:
             raise ValueError("Choose models returned by the verified provider")
+        if provider == "azure_openai":
+            _validate_azure_pricing(deployment_pricing, {quick_model, detailed_model})
         updated = ProviderOnboardingState(
             provider=provider,
             connected=True,
@@ -103,6 +128,9 @@ class OnboardingDraftStore:
             detailed_model=detailed_model,
             region=current.region,
             profile=current.profile,
+            endpoint=current.endpoint,
+            deployment_pricing=deployment_pricing,
+            pricing_catalog=current.pricing_catalog,
         )
         self._write(updated)
         return updated
@@ -117,6 +145,11 @@ class OnboardingDraftStore:
             "detailed_model": state.detailed_model,
             "region": state.region,
             "profile": state.profile,
+            "endpoint": state.endpoint,
+            "deployment_pricing": [
+                price.__dict__ for price in state.deployment_pricing
+            ],
+            "pricing_catalog": [price.__dict__ for price in state.pricing_catalog],
         }
         content = json.dumps(document, indent=2, sort_keys=True) + "\n"
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -146,7 +179,43 @@ def _preserve_choice(
     if previous.provider != provider:
         return None
     choice = previous.quick_model if is_quick else previous.detailed_model
+    if provider == "azure_openai":
+        return choice
     return choice if choice in available else None
+
+
+def _preserve_pricing(
+    previous: ProviderOnboardingState,
+    provider: ProviderName,
+    endpoint: str | None,
+    available: set[str],
+) -> tuple[DeploymentPricing, ...]:
+    if previous.provider != provider or previous.endpoint != endpoint:
+        return ()
+    if provider == "azure_openai":
+        return previous.deployment_pricing
+    return tuple(
+        price for price in previous.deployment_pricing if price.deployment in available
+    )
+
+
+def _validate_azure_pricing(
+    prices: tuple[DeploymentPricing, ...],
+    selected: set[str],
+) -> None:
+    by_deployment = {price.deployment: price for price in prices}
+    if len(by_deployment) != len(prices) or set(by_deployment) != selected:
+        raise ValueError("Provide confirmed pricing for each selected deployment")
+    for price in prices:
+        if not price.deployment.strip() or not price.base_model.strip():
+            raise ValueError("Provide confirmed pricing for each selected deployment")
+        values = (
+            price.input_usd_per_million,
+            price.output_usd_per_million,
+            price.cached_input_usd_per_million,
+        )
+        if any(value is not None and value < 0 for value in values):
+            raise ValueError("Confirmed deployment prices must not be negative")
 
 
 __all__ = ["OnboardingDraftStore"]

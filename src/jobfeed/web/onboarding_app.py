@@ -52,7 +52,9 @@ def _configure_onboarding(
         cast(PersonalMLObservationStore, store)
     )
     provider, resume, searches, companies = build_onboarding_services(
-        project_root, logger
+        project_root,
+        logger,
+        context.get("provider_secrets"),
     )
     app.state.onboarding_provider_service = provider
     app.state.onboarding_resume_service = resume
@@ -66,6 +68,7 @@ def _configure_onboarding(
         resume_state=resume.state,
         plan_usage_reader=usage,
         logger=logger,
+        secrets=context.get("provider_secrets"),
     )
     app.state.onboarding_calibration_job_sampler = OnboardingCalibrationJobSampler(
         search_state=searches.state,

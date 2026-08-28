@@ -13,7 +13,7 @@ from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.llm.claude import ClaudeCliLLM
 from jobfeed.adapters.llm.codex import CodexCliLLM
 from jobfeed.adapters.llm.openai_compat import OpenAiCompatLLM
-from jobfeed.config import LLMSettings
+from jobfeed.config import AzureDeploymentPricingSettings, LLMSettings
 from jobfeed.domain.models import LLMRequest, Message
 from jobfeed.observability import JobfeedLogger
 from jobfeed.onboarding_companies import (
@@ -229,6 +229,32 @@ class OnboardingProfileAnalyzer:
                 options=LLMClientBuildOptions(timeout_s=210.0, max_retries=1),
             )
             return (await bedrock_client.complete(request)).content
+        if provider == "azure_openai":
+            state = self._provider_state()
+            if state.endpoint is None or not state.deployment_pricing:
+                raise ValueError(
+                    "Azure OpenAI endpoint and confirmed pricing are unavailable"
+                )
+            azure_client = build_llm_client(
+                f"azure-openai/{model}",
+                settings=LLMSettings(
+                    azure_openai_endpoint=state.endpoint,
+                    azure_deployment_pricing=[
+                        AzureDeploymentPricingSettings.model_validate(price.__dict__)
+                        for price in state.deployment_pricing
+                    ],
+                ),
+                price_table=prices,
+                logger=self._logger,
+                options=LLMClientBuildOptions(
+                    timeout_s=120.0,
+                    max_retries=1,
+                    api_key_overrides={
+                        "azure-openai": self._require_key("azure_openai")
+                    },
+                ),
+            )
+            return (await azure_client.complete(request)).content
         key = self._require_key("openai_api")
         from openai import AsyncOpenAI  # noqa: PLC0415
 

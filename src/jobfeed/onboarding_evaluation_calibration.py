@@ -12,7 +12,7 @@ from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.llm._prompts import JinjaPromptRenderer
 from jobfeed.adapters.llm.claude import ClaudeCliLLM
 from jobfeed.adapters.llm.codex import CodexCliLLM
-from jobfeed.config import LLMSettings
+from jobfeed.config import AzureDeploymentPricingSettings, LLMSettings
 from jobfeed.domain.models import JobPosting, LLMRequest, LLMResponse
 from jobfeed.observability import JobfeedLogger
 from jobfeed.onboarding_plan_usage import (
@@ -20,6 +20,7 @@ from jobfeed.onboarding_plan_usage import (
     PlanUsageUnavailable,
 )
 from jobfeed.onboarding_resume_types import ResumeDraftState
+from jobfeed.onboarding_secrets import ProviderSecretStore
 from jobfeed.onboarding_types import ProviderOnboardingState
 from jobfeed.ports.llm import LLMClient
 
@@ -57,11 +58,13 @@ class OnboardingEvaluationCalibrator:
         resume_state: Callable[[], ResumeDraftState],
         plan_usage_reader: CodexPlanUsageReader,
         logger: JobfeedLogger,
+        secrets: ProviderSecretStore | None = None,
     ) -> None:
         self._provider_state = provider_state
         self._resume_state = resume_state
         self._plan_usage_reader = plan_usage_reader
         self._logger = logger
+        self._secrets = secrets
 
     async def calibrate(self, job_description: str) -> EvaluationCalibration:
         """Measure one Quick call and one Detailed call for the supplied JD.
@@ -78,7 +81,8 @@ class OnboardingEvaluationCalibrator:
         provider = self._provider_state()
         resume = self._resume_state()
         if (
-            provider.provider not in {"codex_cli", "claude_cli", "amazon_bedrock"}
+            provider.provider
+            not in {"codex_cli", "claude_cli", "amazon_bedrock", "azure_openai"}
             or not provider.connected
             or provider.quick_model is None
             or provider.detailed_model is None
@@ -149,6 +153,35 @@ class OnboardingEvaluationCalibrator:
                 price_table=load_price_table(),
                 logger=self._logger,
                 options=LLMClientBuildOptions(timeout_s=timeout_s, max_retries=0),
+            )
+        if provider.provider == "azure_openai":
+            if (
+                provider.endpoint is None
+                or not provider.deployment_pricing
+                or self._secrets is None
+            ):
+                raise ValueError(
+                    "Azure OpenAI endpoint, pricing, or API key is unavailable"
+                )
+            api_key = self._secrets.resolve("azure_openai")
+            if api_key is None:
+                raise ValueError("The Azure OpenAI API key is no longer available")
+            return build_llm_client(
+                f"azure-openai/{model}",
+                settings=LLMSettings(
+                    azure_openai_endpoint=provider.endpoint,
+                    azure_deployment_pricing=[
+                        AzureDeploymentPricingSettings.model_validate(price.__dict__)
+                        for price in provider.deployment_pricing
+                    ],
+                ),
+                price_table=load_price_table(),
+                logger=self._logger,
+                options=LLMClientBuildOptions(
+                    timeout_s=timeout_s,
+                    max_retries=0,
+                    api_key_overrides={"azure-openai": api_key},
+                ),
             )
         if provider.provider == "claude_cli":
             return ClaudeCliLLM(

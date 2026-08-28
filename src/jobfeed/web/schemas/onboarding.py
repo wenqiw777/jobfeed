@@ -6,7 +6,40 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from jobfeed.onboarding_types import ProviderName, ProviderOnboardingState
+from jobfeed.onboarding_types import (
+    DeploymentPricing,
+    ProviderName,
+    ProviderOnboardingState,
+)
+
+
+class DeploymentPricingBody(BaseModel):
+    """Confirmed Azure pricing for one selected deployment alias."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deployment: str = Field(min_length=1)
+    base_model: str = Field(min_length=1)
+    input_usd_per_million: float = Field(ge=0)
+    output_usd_per_million: float = Field(ge=0)
+    cached_input_usd_per_million: float | None = Field(default=None, ge=0)
+
+    def to_domain(self) -> DeploymentPricing:
+        """Convert the validated wire value to the onboarding domain type.
+
+        Returns:
+            Confirmed deployment pricing for the onboarding domain.
+        """
+        return DeploymentPricing(**self.model_dump())
+
+
+class ModelPriceReferenceOut(BaseModel):
+    """Editable reference rates safe to offer in Azure onboarding."""
+
+    base_model: str
+    input_usd_per_million: float
+    output_usd_per_million: float
+    cached_input_usd_per_million: float | None = None
 
 
 class ProviderConnectionBody(BaseModel):
@@ -18,6 +51,7 @@ class ProviderConnectionBody(BaseModel):
     api_key: SecretStr | None = None
     region: str | None = None
     profile: str | None = None
+    endpoint: str | None = None
 
 
 class ProviderModelsBody(BaseModel):
@@ -28,6 +62,7 @@ class ProviderModelsBody(BaseModel):
     provider: ProviderName
     quick_model: str
     detailed_model: str
+    deployment_pricing: list[DeploymentPricingBody] = Field(default_factory=list)
 
 
 class ProviderModelOut(BaseModel):
@@ -50,6 +85,9 @@ class ProviderStateResponse(BaseModel):
     detailed_model: str | None = None
     region: str | None = None
     profile: str | None = None
+    endpoint: str | None = None
+    deployment_pricing: list[DeploymentPricingBody] = Field(default_factory=list)
+    pricing_catalog: list[ModelPriceReferenceOut] = Field(default_factory=list)
 
 
 class PlanUsageResponse(BaseModel):
@@ -139,15 +177,26 @@ def provider_state_response(state: ProviderOnboardingState) -> ProviderStateResp
         detailed_model=state.detailed_model,
         region=state.region,
         profile=state.profile,
+        endpoint=state.endpoint,
+        deployment_pricing=[
+            DeploymentPricingBody.model_validate(price.__dict__)
+            for price in state.deployment_pricing
+        ],
+        pricing_catalog=[
+            ModelPriceReferenceOut.model_validate(price.__dict__)
+            for price in state.pricing_catalog
+        ],
     )
 
 
 __all__ = [
     "ApiErrorResponse",
     "CalibrationJobResponse",
+    "DeploymentPricingBody",
     "EvaluationCalibrationBody",
     "EvaluationCalibrationResponse",
     "MeasuredEvaluationCallResponse",
+    "ModelPriceReferenceOut",
     "PlanUsageResponse",
     "ProviderConnectionBody",
     "ProviderModelsBody",
