@@ -15,6 +15,7 @@ import TriagePage from "@/routes/triage";
 import OnboardingResumePage from "@/routes/onboarding-resume";
 import OnboardingSearchesPage from "@/routes/onboarding-searches";
 import OnboardingCompaniesPage from "@/routes/onboarding-companies";
+import OnboardingProviderPage from "@/routes/onboarding-provider";
 import OnboardingReviewPage from "@/routes/onboarding-review";
 
 // Keep dashboard routes lazy so ordinary triage startup stays small.
@@ -46,6 +47,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/setup" element={<ConfigurationPage />} />
+      <Route path="/setup/provider" element={<OnboardingProviderPage />} />
       <Route path="/setup/resume" element={<OnboardingResumePage />} />
       <Route path="/setup/searches" element={<OnboardingSearchesPage />} />
       <Route path="/setup/companies" element={<OnboardingCompaniesPage />} />
