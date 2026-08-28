@@ -1042,6 +1042,19 @@ test("enabled URL sources explain what is missing before save", async () => {
   expect(calls.some((call) => call.method === "PUT")).toBe(false);
 });
 
+test("configured workspace can reopen provider onboarding without changing settings", async () => {
+  currentConfig = { ...structuredClone(CONFIG), configured: true };
+  renderApp("/setup");
+  await screen.findByRole("heading", { name: "Workspace settings" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Run onboarding again" }));
+
+  expect(
+    await screen.findByRole("heading", { name: "Connect an AI provider" }),
+  ).toBeVisible();
+  expect(calls.some((call) => call.method === "PUT")).toBe(false);
+});
+
 test("trained personal ML can be explicitly enabled from workspace settings", async () => {
   currentConfig = { ...structuredClone(CONFIG), configured: true };
   renderApp("/setup");

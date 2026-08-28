@@ -115,6 +115,9 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
           <Header
             variant="h1"
             description="Choose what Jobfeed watches and how it scores. Settings and job data stay on this computer."
+            actions={
+              <Button onClick={() => navigate("/setup/provider")}>Run onboarding again</Button>
+            }
           >
             Workspace settings
           </Header>
