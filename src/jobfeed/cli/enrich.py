@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -92,7 +93,7 @@ def _load_jd_text(from_file: Path | None) -> str:
         click.ClickException: If the file cannot be read.
     """
     if from_file is None:
-        return click.get_text_stream("stdin").read()
+        return sys.stdin.read()
     try:
         return from_file.read_text(encoding="utf-8")
     except OSError as exc:
