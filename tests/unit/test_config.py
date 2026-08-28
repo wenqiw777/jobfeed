@@ -273,6 +273,19 @@ def test_llm_settings_rejects_negative_budget_limits() -> None:
         LLMSettings(max_daily_cost_usd=-0.01)
 
 
+def test_llm_settings_rejects_duplicate_azure_deployment_prices() -> None:
+    """Each Azure deployment alias must resolve to exactly one price record."""
+    duplicate = {
+        "deployment": "quick-prod",
+        "base_model": "gpt-4.1-mini",
+        "input_usd_per_million": 0.4,
+        "output_usd_per_million": 1.6,
+    }
+
+    with pytest.raises(ValidationError, match="duplicate Azure deployment pricing"):
+        LLMSettings(azure_deployment_pricing=[duplicate, duplicate])
+
+
 LLM_TOML_CODEX_TIMEOUT = 90.0
 LLM_TOML_CLAUDE_TIMEOUT = 300.0
 LLM_TOML_DAILY_CALLS = 200

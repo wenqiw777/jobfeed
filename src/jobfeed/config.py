@@ -52,6 +52,18 @@ class DBSettings(BaseModel):
         return value
 
 
+class AzureDeploymentPricingSettings(BaseModel):
+    """Confirmed per-token rates for one Azure deployment alias."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deployment: str = Field(min_length=1)
+    base_model: str = Field(min_length=1)
+    input_usd_per_million: float = Field(ge=0)
+    output_usd_per_million: float = Field(ge=0)
+    cached_input_usd_per_million: float | None = Field(default=None, ge=0)
+
+
 class LLMSettings(BaseModel):
     """LLM model and runtime limits used by evaluation services."""
 
@@ -64,6 +76,12 @@ class LLMSettings(BaseModel):
     openai_compat_base_url: str = "https://api.openai.com/v1"
     openai_compat_api_key_env: str = "OPENAI_API_KEY"
     openai_compat_timeout_s: float = 60.0
+    azure_openai_endpoint: str | None = None
+    azure_openai_api_key_env: str = "AZURE_OPENAI_API_KEY"
+    azure_openai_timeout_s: float = 60.0
+    azure_deployment_pricing: list[AzureDeploymentPricingSettings] = Field(
+        default_factory=list
+    )
     bedrock_region: str = "us-east-1"
     bedrock_profile: str | None = None
     bedrock_timeout_s: float = 180.0
@@ -95,6 +113,13 @@ class LLMSettings(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @model_validator(mode="after")
+    def _validate_unique_azure_deployments(self) -> LLMSettings:
+        deployments = [price.deployment for price in self.azure_deployment_pricing]
+        if len(deployments) != len(set(deployments)):
+            raise ValueError("duplicate Azure deployment pricing is not allowed")
+        return self
 
 
 class ScoringSettings(BaseModel):
@@ -251,6 +276,7 @@ def _resolve_database_path(settings: Settings, config_path: Path | None) -> Sett
 
 
 __all__ = [
+    "AzureDeploymentPricingSettings",
     "DBSettings",
     "DigestSettings",
     "ExecutionSettings",

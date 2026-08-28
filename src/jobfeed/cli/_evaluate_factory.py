@@ -102,7 +102,13 @@ def build_evaluate_service(
     unused_llm = MockLLM()
     needs_a = not params.dry_run and params.stage != "b"
     needs_b = not params.dry_run and params.stage != "a"
-    primary_options = LLMClientBuildOptions(max_retries=0)
+    secrets = app.get("provider_secrets")
+    azure_key = secrets.resolve("azure_openai") if secrets is not None else None
+    api_key_overrides = {"azure-openai": azure_key} if azure_key else {}
+    primary_options = LLMClientBuildOptions(
+        max_retries=0,
+        api_key_overrides=api_key_overrides,
+    )
     llm_a = (
         build_llm_client(
             llm_settings.stage_a,
@@ -133,7 +139,11 @@ def build_evaluate_service(
             settings=llm_settings,
             price_table=price_table,
             logger=logger,
-            options=LLMClientBuildOptions(timeout_s=None, max_retries=0),
+            options=LLMClientBuildOptions(
+                timeout_s=None,
+                max_retries=0,
+                api_key_overrides=api_key_overrides,
+            ),
         )
 
     preamble = (

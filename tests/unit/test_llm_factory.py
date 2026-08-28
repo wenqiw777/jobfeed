@@ -258,6 +258,57 @@ def test_openai_compat_empty_api_key_raises(monkeypatch, price_table, logger):
         )
 
 
+def test_azure_openai_builds_compat_adapter_with_confirmed_deployment_price(
+    price_table, logger
+):
+    """Azure routes by deployment alias while cost uses its confirmed rates."""
+    client = build_llm_client(
+        "azure-openai/jobfeed-quick",
+        settings=LLMSettings(
+            azure_openai_endpoint=("https://jobfeed.openai.azure.com/openai/v1"),
+            azure_deployment_pricing=[
+                {
+                    "deployment": "jobfeed-quick",
+                    "base_model": "gpt-4.1-mini",
+                    "input_usd_per_million": 0.4,
+                    "output_usd_per_million": 1.6,
+                    "cached_input_usd_per_million": 0.1,
+                }
+            ],
+        ),
+        price_table=price_table,
+        logger=logger,
+        options=LLMClientBuildOptions(
+            api_key_overrides={"azure-openai": "azure-secret"}
+        ),
+    )
+
+    assert isinstance(client, OpenAiCompatLLM)
+    assert str(client._client.base_url) == (
+        "https://jobfeed.openai.azure.com/openai/v1/"
+    )
+    assert client._model == "jobfeed-quick"
+    price = client._price_table["jobfeed-quick"]
+    assert price.input_cost_per_token == pytest.approx(0.4 / 1_000_000)
+    assert price.output_cost_per_token == pytest.approx(1.6 / 1_000_000)
+    assert price.cached_input_cost_per_token == pytest.approx(0.1 / 1_000_000)
+
+
+def test_azure_openai_rejects_unpriced_deployment_before_network(price_table, logger):
+    with pytest.raises(ValueError, match="confirmed pricing"):
+        build_llm_client(
+            "azure-openai/missing-price",
+            settings=LLMSettings(
+                azure_openai_endpoint=("https://jobfeed.openai.azure.com/openai/v1"),
+            ),
+            price_table=price_table,
+            logger=logger,
+            options=LLMClientBuildOptions(
+                api_key_overrides={"azure-openai": "azure-secret"}
+            ),
+        )
+
+
 def test_bedrock_backend_uses_region_profile_timeout_and_retries(monkeypatch, logger):
     """bedrock/model builds a native Converse adapter from an AWS session."""
     bedrock_timeout_s = 180

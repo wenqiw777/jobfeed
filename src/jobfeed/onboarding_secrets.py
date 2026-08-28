@@ -14,10 +14,12 @@ from jobfeed.onboarding_types import ProviderName
 _ENV_NAMES = {
     "openai_api": "OPENAI_API_KEY",
     "anthropic_api": "ANTHROPIC_API_KEY",
+    "azure_openai": "AZURE_OPENAI_API_KEY",
 }
 _KEY_NAMES = {
     "openai_api": "openai_api_key",
     "anthropic_api": "anthropic_api_key",
+    "azure_openai": "azure_openai_api_key",
 }
 
 

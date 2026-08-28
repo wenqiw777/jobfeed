@@ -20,6 +20,7 @@ from jobfeed.observability import (
     init_otel,
     init_sentry,
 )
+from jobfeed.onboarding_secrets import ProviderSecretStore
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ext import StageBThresholdSync
@@ -44,6 +45,7 @@ class AppContext(TypedDict):
     probe_company: ProbeVendorFn
     logger: JobfeedLogger
     verbose: bool
+    provider_secrets: NotRequired[ProviderSecretStore]
 
 
 def create_app(config_path: Path | None = None) -> AppContext:
@@ -73,6 +75,8 @@ def create_app(config_path: Path | None = None) -> AppContext:
     init_sentry(settings.observability)
     logger = get_logger()
     store = _create_store(settings)
+    project_root = config_path.resolve().parent if config_path else Path.cwd()
+    provider_secrets = ProviderSecretStore(project_root / "data" / "secrets.toml")
     run_orchestrator = RunLeaseOrchestrator(store)
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
     return AppContext(
@@ -91,6 +95,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
         probe_company=build_probe_company(settings),
         logger=logger,
         verbose=False,
+        provider_secrets=provider_secrets,
     )
 
 

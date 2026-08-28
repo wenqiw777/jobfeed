@@ -57,6 +57,23 @@ claude_timeout_s = 210
 # openai_compat_api_key_env = "ANTHROPIC_API_KEY"  # then: stage_b = "openai-compat/claude-sonnet-4-6"
 # ------------------------------------------------------------------------
 
+# --- Azure OpenAI backend ------------------------------------------------
+# The GUI onboarding flow is recommended: enter the resource endpoint and API
+# key, enter existing deployment aliases, map each alias to its base model,
+# review the per-million-token prices, and explicitly confirm them. The key is
+# stored only in data/secrets.toml; this file contains its env-var name only.
+# Manual equivalent (prices below are examples, not a pricing guarantee):
+# stage_a = "azure-openai/quick-prod"
+# stage_b = "azure-openai/detailed-prod"
+# azure_openai_endpoint = "https://YOUR-RESOURCE.openai.azure.com/openai/v1"
+# azure_openai_api_key_env = "AZURE_OPENAI_API_KEY"
+# azure_openai_timeout_s = 60
+# azure_deployment_pricing = [
+#   { deployment = "quick-prod", base_model = "gpt-4.1-mini", input_usd_per_million = 0.40, output_usd_per_million = 1.60, cached_input_usd_per_million = 0.10 },
+#   { deployment = "detailed-prod", base_model = "gpt-4.1", input_usd_per_million = 2.00, output_usd_per_million = 8.00, cached_input_usd_per_million = 0.50 },
+# ]
+# ------------------------------------------------------------------------
+
 max_daily_score_calls = 150
 max_daily_cost_usd = 10.0
 max_concurrent = 4
