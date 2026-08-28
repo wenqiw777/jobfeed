@@ -23,6 +23,7 @@ from jobfeed.domain.models import (
     PipelineRun,
     StageAResult,
 )
+from jobfeed.domain.seniority import SeniorityDecision, SeniorityInput
 from jobfeed.personal_ml_learning import PersonalMLStatus
 from jobfeed.ports.ml_gate import GateInput
 from jobfeed.ports.prompts import PromptBundle
@@ -74,6 +75,7 @@ class FakeStore:
         self._gate_state = gate_state or {}
         self._decay_result = decay_result or AutoDecayResult(ghosted=0, archived=0)
         self.gate_results: list[tuple[str, MLGateResult]] = []
+        self.hard_filter_results: dict[str, str] = {}
         self.claim_calls: list[list[str]] = []
         self.stage_a_saved: list[str] = []
         self.stage_a_errors: list[tuple[str, str]] = []
@@ -84,6 +86,9 @@ class FakeStore:
         self.load_gate_kwargs: list[dict[str, object]] = []
         self.auto_decay_calls: list[dict[str, int]] = []
 
+    async def save_hard_filters(self, reasons: dict[str, str]) -> None:
+        self.hard_filter_results.update(reasons)
+
     async def load_gate_candidates(  # noqa: PLR0913 - mirrors the store port signature
         self,
         *,
@@ -93,6 +98,7 @@ class FakeStore:
         limit: int = 100,
         exclude_gate_failed: bool = True,
         after: tuple[datetime, int] | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[GateCandidate]:
         """Return preconfigured candidates and record the call kwargs.
 
@@ -111,10 +117,14 @@ class FakeStore:
                 "limit": limit,
                 "exclude_gate_failed": exclude_gate_failed,
                 "after": after,
+                "job_ids": job_ids,
             }
         )
+        wanted = set(job_ids) if job_ids is not None else None
         out: list[GateCandidate] = []
         for job in self._candidates:
+            if wanted is not None and job.id not in wanted:
+                continue
             state = self._gate_state.get(job.id or "")
             if exclude_gate_failed and state == "fail":
                 continue
@@ -349,6 +359,7 @@ def _deps(
     gate: MockGate | None,
     filters: HardFilters | None,
     personal_ml: StubPersonalML | None = None,
+    seniority_gate: object | None = None,
 ):
     """Build EvaluateDependencies wired to fakes."""
     return EvaluateDependencies(
@@ -359,6 +370,7 @@ def _deps(
         llm_stage_a=StageALLM(),  # type: ignore[arg-type]
         llm_stage_b=StageALLM(),  # type: ignore[arg-type]
         ml_gate=gate,
+        seniority_gate=seniority_gate,  # type: ignore[arg-type]
         hard_filters=filters,
         personal_ml=personal_ml,  # type: ignore[arg-type]
     )
@@ -379,6 +391,21 @@ def _config(*, ml_gate_enabled: bool) -> EvaluateRuntimeConfig:
         ml_gate_enabled=ml_gate_enabled,
         ml_gate_max_candidates=GATE_MAX_CANDIDATES,
     )
+
+
+class _OutScopeEleven:
+    async def predict_batch(
+        self, jobs: list[SeniorityInput]
+    ) -> list[SeniorityDecision]:
+        return [
+            SeniorityDecision(
+                result="out_of_scope" if job.job_id == "11" else "in_scope",
+                reason="test",
+                yoe_min=3 if job.job_id == "11" else 2,
+                confidence=1.0,
+            )
+            for job in jobs
+        ]
 
 
 def _run() -> PipelineRun:
@@ -436,6 +463,9 @@ async def test_hard_filter_drops_are_excluded_and_counted() -> None:
 
     assert survivors == ["keep"]
     assert run.jobs_filtered == 1
+    assert store.hard_filter_results == {
+        "blocked": 'company contains "BlockedCo"',
+    }
     # The blocked job is never gated.
     assert [jid for jid, _ in store.gate_results] == ["keep"]
 
@@ -461,6 +491,38 @@ async def test_none_hard_filters_treated_as_no_drops() -> None:
 
     assert run.jobs_filtered == 0
     assert set(survivors) == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_seniority_gate_runs_after_sde_gate_and_before_stage_a() -> None:
+    jobs = [
+        _job("11", title="Backend Engineer"),
+        _job("21", title="Platform Engineer"),
+    ]
+    store = FakeStore(jobs)
+    deps = _deps(
+        store,
+        gate=MockGate(),
+        filters=None,
+        seniority_gate=_OutScopeEleven(),
+    )
+    config = replace(_config(ml_gate_enabled=True), seniority_gate_mode="filter")
+    run = _run()
+
+    survivors = await run_funnel(
+        deps,
+        config,
+        run,
+        "unrated",
+        None,
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+        dry_run=False,
+    )
+
+    assert survivors == ["21"]
+    assert run.jobs_filtered == 0
+    assert run.jobs_seniority_filtered == 1
+    assert {job_id for job_id, _result in store.gate_results} == {"11", "21"}
 
 
 @pytest.mark.asyncio

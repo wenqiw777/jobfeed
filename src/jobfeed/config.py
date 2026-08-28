@@ -106,6 +106,19 @@ class MLGateSettings(BaseModel):
     max_candidates: int = Field(default=5000, ge=1)
 
 
+class SeniorityGateSettings(BaseModel):
+    """Independent seniority gate applied after the SDE ML gate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["off", "shadow", "filter"] = "filter"
+    model_dir: str = "models/seniority_gate"
+    model_version: str = "v20260826T201223Z"
+    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_max_chars: int = Field(default=2000, gt=0)
+    out_of_scope_threshold: float = Field(default=0.9210827946662903, ge=0, le=1)
+
+
 class HardFiltersSettings(BaseModel):
     """Hard filter settings mirroring HardFilters domain object.
 
@@ -186,6 +199,7 @@ class Settings(BaseModel):
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     ml_gate: MLGateSettings = Field(default_factory=MLGateSettings)
+    seniority_gate: SeniorityGateSettings = Field(default_factory=SeniorityGateSettings)
     hard_filters: HardFiltersSettings = Field(default_factory=HardFiltersSettings)
 
 
@@ -227,6 +241,7 @@ __all__ = [
     "MLGateSettings",
     "ObservabilitySettings",
     "ScoringSettings",
+    "SeniorityGateSettings",
     "Settings",
     "SourcesATSConfig",
     "SourcesConfig",

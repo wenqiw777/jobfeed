@@ -71,6 +71,9 @@ def build_evaluate_service(
     from jobfeed.adapters.llm._pricing import load_price_table  # noqa: PLC0415
     from jobfeed.adapters.llm._prompts import JinjaPromptRenderer  # noqa: PLC0415
     from jobfeed.adapters.llm.mock import MockLLM  # noqa: PLC0415
+    from jobfeed.adapters.ml.seniority_model import (  # noqa: PLC0415
+        XGBoostSeniorityModel,
+    )
     from jobfeed.cli.ml_gate import (  # noqa: PLC0415
         build_hard_filters,
         build_ml_gate,
@@ -84,6 +87,7 @@ def build_evaluate_service(
         EvaluateLLMConfig,
         EvaluateRuntimeConfig,
     )
+    from jobfeed.services.seniority_gate import HybridSeniorityGate  # noqa: PLC0415
 
     settings = app["settings"]
     llm_settings = settings.llm
@@ -150,6 +154,18 @@ def build_evaluate_service(
     )
     ml_gate_enabled = settings.scoring.ml_gate_enabled
     needs_gate = needs_ml_gate(params.stage, params.limit, ml_gate_enabled=True)
+    seniority_settings = settings.seniority_gate
+    needs_seniority = params.stage != "b" and seniority_settings.mode != "off"
+    seniority_model = (
+        XGBoostSeniorityModel(
+            model_dir=seniority_settings.model_dir,
+            model_version=seniority_settings.model_version,
+            embedding_model=seniority_settings.embedding_model,
+            embedding_max_chars=seniority_settings.embedding_max_chars,
+        )
+        if needs_seniority
+        else None
+    )
     return EvaluateService(
         deps=EvaluateDependencies(
             store=store,
@@ -161,6 +177,15 @@ def build_evaluate_service(
             llm_stage_b_sweep=llm_b_sweep,
             ml_gate=(
                 build_ml_gate(settings, allow_disabled=True) if needs_gate else None
+            ),
+            seniority_gate=(
+                HybridSeniorityGate(
+                    model=seniority_model,
+                    out_of_scope_threshold=seniority_settings.out_of_scope_threshold,
+                    version=seniority_settings.model_version,
+                )
+                if needs_seniority
+                else None
             ),
             hard_filters=build_hard_filters(settings),
             personal_ml=PersonalMLLearningService(
@@ -181,6 +206,7 @@ def build_evaluate_service(
             default_eval_limit=settings.scoring.default_eval_limit,
             ml_gate_enabled=ml_gate_enabled,
             ml_gate_max_candidates=settings.ml_gate.max_candidates,
+            seniority_gate_mode=seniority_settings.mode,
         ),
         run_orchestrator=app.get("run_orchestrator"),
         logger=logger,

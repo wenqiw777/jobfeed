@@ -28,16 +28,16 @@ A single JSON object with exactly these three keys:
 
 ### `score` — TECHNICAL FIT ONLY
 
-The score reflects how well the candidate's skills, stack, projects, and
-seniority match this role **as if timing were not a question**. Do NOT
+The score reflects how well the candidate's skills, stack, and projects match
+this role **as if timing were not a question**. Do NOT
 discount the score because of graduation date / cohort year / start
 window — that is captured separately in `timing_eligible`.
 
 Calibrate against the bands in the preamble above (0-20, 21-40, 41-59,
 60-74, 75-89, 90-100). Use the full range. Do not anchor on 50.
 
-Hard caps still apply for things that aren't timing: seniority gap, hard
-clearance requirement, missing-primary-language, wrong-domain (e.g. only
+Hard caps still apply for things that aren't timing: hard clearance
+requirement, missing-primary-language, wrong-domain (e.g. only
 embedded firmware, only hardware test, only finance compliance).
 
 ### `one_line`
@@ -45,7 +45,7 @@ embedded firmware, only hardware test, only finance compliance).
 Cites a specific resume signal or specific JD requirement. Not generic
 praise. Examples of good `one_line`:
 - "ML systems role with distributed-training focus; matches AI Lab thesis"
-- "Senior backend; resume only has 1yr internship — seniority mismatch"
+- "Backend systems role; resume shows matching distributed-service work"
 - "Frontend-heavy React role; resume has only minor frontend exposure"
 
 ### `timing_eligible`

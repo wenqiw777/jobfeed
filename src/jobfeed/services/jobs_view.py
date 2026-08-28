@@ -229,7 +229,13 @@ class JobsViewService:
         # Over-fetch corpus in the effective SQL order so the cap keeps the
         # best rows under the requested sort even on pathological databases.
         corpus = await self._store.query_jobs_view(
-            replace(query, limit=JOBS_VIEW_CORPUS_LIMIT, offset=0, sort=effective_sort)
+            replace(
+                query,
+                limit=JOBS_VIEW_CORPUS_LIMIT,
+                offset=0,
+                sort=effective_sort,
+                include_total=False,
+            )
         )
         rows = corpus.rows
         if apply_hard_filters:

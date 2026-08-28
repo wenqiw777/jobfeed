@@ -15,6 +15,7 @@ import {
   useJobTransition,
   fetchAllMatchingJobIds,
   jobsKeys,
+  type JobsListResponse,
   type JobsQuery,
   type JobSummary,
 } from "@/api/queries";
@@ -105,6 +106,30 @@ export default function TriagePage() {
     advanceFrom(id);
   };
 
+  /** Remove completed decisions from both the provisional and exact current
+   * page caches. The authoritative refetch still runs in the background to
+   * refill the page and reconcile counts/dedupe. */
+  const removeCompletedFromCurrentPage = (completedIds: string[]) => {
+    const completed = new Set(completedIds);
+    queryClient.setQueriesData<JobsListResponse>(
+      { queryKey: jobsKeys.list(query) },
+      (previous) => {
+        if (previous === undefined) {
+          return previous;
+        }
+        const removedCount = previous.jobs.filter((job) => completed.has(job.id)).length;
+        if (removedCount === 0) {
+          return previous;
+        }
+        return {
+          ...previous,
+          jobs: previous.jobs.filter((job) => !completed.has(job.id)),
+          total: Math.max(0, previous.total - removedCount),
+        };
+      },
+    );
+  };
+
   const decide = (to: UserDecision) => {
     const id = effectiveSelectedId;
     if (id === null || transition.isPending) {
@@ -113,7 +138,10 @@ export default function TriagePage() {
     transition.mutate(
       { id, to },
       {
-        onSuccess: () => handleDecided(id),
+        onSuccess: () => {
+          removeCompletedFromCurrentPage([id]);
+          handleDecided(id);
+        },
         onError: (error) =>
           toast({
             variant: "destructive",
@@ -131,20 +159,7 @@ export default function TriagePage() {
     if (completedIds.includes(selectedId ?? "")) {
       setSelectedId(null);
     }
-    queryClient.setQueryData(jobsKeys.list(query), (previous: typeof list.data) => {
-      if (previous === undefined) {
-        return previous;
-      }
-      const completedOnPage = previous.jobs.filter((job) => completedIds.includes(job.id));
-      if (completedOnPage.length === 0) {
-        return previous;
-      }
-      return {
-        ...previous,
-        jobs: previous.jobs.filter((job) => !completedIds.includes(job.id)),
-        total: Math.max(0, previous.total - completedOnPage.length),
-      };
-    });
+    removeCompletedFromCurrentPage(completedIds);
   };
 
   const selectAllMatching = async () => {

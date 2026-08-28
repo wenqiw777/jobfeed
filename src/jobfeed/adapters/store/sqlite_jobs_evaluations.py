@@ -75,6 +75,14 @@ class SqliteJobsEvaluations:
         """
         await _sqlite_jobs._save_ml_gate_result(self._lifecycle, job_id, result)
 
+    async def save_hard_filters(self, reasons: dict[str, str]) -> None:
+        """Persist deterministic exclusion reasons in one store operation.
+
+        Args:
+            reasons: Store job IDs mapped to exclusion reasons.
+        """
+        await _sqlite_jobs._save_hard_filters(self._lifecycle, reasons)
+
     async def save_stage_a(self, job_id: str, result: StageAResult) -> None:
         """Persist Stage A success and atomically advance new jobs to scored.
 

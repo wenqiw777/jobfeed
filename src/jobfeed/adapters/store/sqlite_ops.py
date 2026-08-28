@@ -110,7 +110,11 @@ class SqliteOps:
         )
 
     async def list_unenriched_jobs(
-        self, *, platform: str, limit: int
+        self,
+        *,
+        platform: str,
+        limit: int,
+        job_ids: list[str] | None = None,
     ) -> list[UnenrichedJob]:
         """List open jobs lacking JD text in stable recency order.
 
@@ -118,7 +122,10 @@ class SqliteOps:
         Returns: unenriched identity rows.
         """
         return await _sqlite_ops_enrichment._list_unenriched_jobs(
-            self._lifecycle, platform=platform, limit=limit
+            self._lifecycle,
+            platform=platform,
+            limit=limit,
+            job_ids=job_ids,
         )
 
     async def mark_job_closed(

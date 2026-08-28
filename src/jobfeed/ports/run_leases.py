@@ -71,16 +71,44 @@ class RunLeaseStore(Protocol):
         """Persist a terminal run and release only its exact fencing token.
 
         Args:
-            run: Terminal pipeline counters to persist.
+            run: Terminal pipeline run snapshot.
             kind: Exclusive pipeline kind.
             owner_id: Worker identity from acquisition.
             generation: Positive fencing generation from acquisition.
             now: Aware UTC finalization timestamp.
 
         Returns:
-            True only when the exact token finalized the run.
+            True only when the run and exact lease were finalized.
         """
         ...
 
 
-__all__ = ["RunKind", "RunLeaseStore"]
+@runtime_checkable
+class RecoverableRunLeaseStore(Protocol):
+    """Optional lifecycle controls exposed by stores with durable run leases."""
+
+    async def recover_expired_run_leases(self, *, now: datetime) -> int:
+        """Fail expired running rows and release their leases.
+
+        Args:
+            now: Aware UTC recovery timestamp.
+
+        Returns:
+            Number of expired leases recovered.
+        """
+        ...
+
+    async def stop_pipeline_run(self, run_id: str, *, now: datetime) -> bool:
+        """Fail one running row and release its matching lease.
+
+        Args:
+            run_id: Pipeline run identity to stop.
+            now: Aware UTC stop timestamp.
+
+        Returns:
+            True when a running row and its lease were stopped.
+        """
+        ...
+
+
+__all__ = ["RecoverableRunLeaseStore", "RunKind", "RunLeaseStore"]

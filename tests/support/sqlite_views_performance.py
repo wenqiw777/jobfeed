@@ -154,9 +154,10 @@ async def insert_run(lifecycle: SqliteLifecycle, run: PipelineRun) -> None:
             """INSERT INTO pipeline_runs (
                    run_id, started_at, source, status, jobs_discovered,
                    jobs_inserted, jobs_updated, jobs_filtered, jobs_ml_gated,
-                   jobs_gate_passed, stage_a_scored, stage_b_scored, jobs_scored,
+                   jobs_seniority_filtered, jobs_gate_passed, stage_a_scored,
+                   stage_b_scored, jobs_scored,
                    total_llm_cost_usd, errors, finished_at
-               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 run.run_id,
                 utc_text(run.started_at),
@@ -167,6 +168,7 @@ async def insert_run(lifecycle: SqliteLifecycle, run: PipelineRun) -> None:
                 run.jobs_updated,
                 run.jobs_filtered,
                 run.jobs_ml_gated,
+                run.jobs_seniority_filtered,
                 run.jobs_gate_passed,
                 run.stage_a_scored,
                 run.stage_b_scored,

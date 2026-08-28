@@ -245,7 +245,11 @@ async def test_successful_web_scan_runs_post_scan_hook() -> None:
     captured: list[list[SourceSpec]] = []
     specs: list[SourceSpec] = [("linkedin_guest", object(), {})]
 
-    async def post_scan_hook(received: list[SourceSpec]) -> None:
+    async def post_scan_hook(
+        _run: PipelineRun,
+        received: list[SourceSpec],
+        _on_progress: object,
+    ) -> None:
         captured.append(received)
         called.set()
 

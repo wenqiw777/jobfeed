@@ -35,7 +35,11 @@ async def _load_pending_stage_a(
 ) -> list[JobPosting]:
     """Load the non-claiming Stage A corpus with stable ordering."""
     _validate_limit(limit)
-    conditions = [_corpus_condition(corpus), "jobs.closed_at IS NULL"]
+    conditions = [
+        _corpus_condition(corpus),
+        "jobs.closed_at IS NULL",
+        "COALESCE(jobs.hard_filter,'')=''",
+    ]
     conditions.append(
         "(evaluations.stage_a_status IS NULL OR evaluations.stage_a_status<>'error' "
         f"OR evaluations.stage_a_error_count<{MAX_STAGE_RETRIES})"

@@ -79,6 +79,7 @@ class StoreEvaluationClaimMixin(Protocol):
         limit: int = 100,
         exclude_gate_failed: bool = True,
         after: tuple[datetime, int] | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[GateCandidate]:
         """Load ML-gate candidates pending Stage A without claiming.
 
@@ -128,6 +129,7 @@ class StoreEvaluationClaimMixin(Protocol):
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[JobPosting]:
         """Claim Stage B jobs for one real evaluation run.
 
@@ -135,6 +137,7 @@ class StoreEvaluationClaimMixin(Protocol):
             limit: Max jobs.
             max_days: Freshness filter.
             stage_a_threshold: Optional minimum Stage A score.
+            job_ids: Optional store identities restricting the claim.
 
         Returns:
             Claimed Stage B jobs.

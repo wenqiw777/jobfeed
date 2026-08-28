@@ -59,12 +59,20 @@ class _FakeStore:
     list_calls: list[tuple[str, int]] = field(default_factory=list)
     enrichments: list[dict[str, object]] = field(default_factory=list)
     closures: list[dict[str, object]] = field(default_factory=list)
+    listed_job_ids: list[str] | None = None
 
     async def list_unenriched_jobs(
-        self, *, platform: str, limit: int
+        self,
+        *,
+        platform: str,
+        limit: int,
+        job_ids: list[str] | None = None,
     ) -> list[UnenrichedJob]:
         self.list_calls.append((platform, limit))
-        return self.rows[:limit]
+        self.listed_job_ids = job_ids
+        wanted = set(job_ids) if job_ids is not None else None
+        rows = [row for row in self.rows if wanted is None or row.job_id in wanted]
+        return rows[:limit]
 
     async def record_enrichment(self, **kwargs: object) -> None:
         self.enrichments.append(kwargs)
@@ -151,6 +159,25 @@ async def test_all_successes_recorded_with_linkedin_guest_source() -> None:
     assert all(e["enrich_source"] == "linkedin_guest" for e in store.enrichments)
     assert all(e["jd_quality"] == QualityBand.FULL.value for e in store.enrichments)
     assert all(e["jd_text"] == _JD_TEXT for e in store.enrichments)
+
+
+async def test_progress_reports_current_listing_and_completed_count() -> None:
+    """The caller can render live status during a paced enrich pass."""
+    rows = [_row(1), _row(2)]
+    service, _, _, _ = _build(rows, [_success(), _success()])
+    events = []
+
+    await service.run(
+        platform="linkedin_guest",
+        batch_limit=_BATCH_LIMIT,
+        on_progress=events.append,
+    )
+
+    assert events[0].total == len(rows)
+    assert events[0].processed == 0
+    assert any(event.current_job_id == "li-1" for event in events)
+    assert events[-1].processed == len(rows)
+    assert events[-1].current_job_id is None
 
 
 async def test_posted_at_forwarded_to_record_enrichment() -> None:

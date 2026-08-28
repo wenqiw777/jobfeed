@@ -238,6 +238,47 @@ test("records Applied as a lightweight status without an application dialog", as
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
+test("Mark as applied removes the Result before the exact refresh finishes", async () => {
+  let wasApplied = false;
+  let releaseRefresh: (() => void) | undefined;
+  const refreshBlocked = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const method = url === "/api/jobs/1/transition" ? "POST" : "GET";
+    if (url.startsWith("/api/jobs?")) {
+      if (wasApplied) await refreshBlocked;
+      return json({
+        jobs: wasApplied ? [] : [job()],
+        total: wasApplied ? 0 : 1,
+        tab_counts: { queue: wasApplied ? 0 : 1, pending_jd: 0, all: 1, scored: wasApplied ? 0 : 1, shortlisted: 0, archived: 0 },
+      });
+    }
+    if (url === "/api/jobs/1") return json(detail());
+    if (method === "POST") {
+      wasApplied = true;
+      return json({ job_id: "1", status: "applied" });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  fireEvent.click(screen.getByRole("button", { name: "Mark as applied" }));
+
+  await waitFor(() => {
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([input]) => String(input) === "/api/jobs/1/transition",
+    )).toBe(true);
+  });
+  await waitFor(() => {
+    expect(screen.queryByTestId("job-row-1")).not.toBeInTheDocument();
+  });
+  expect(screen.getByText("0 postings")).toBeInTheDocument();
+  releaseRefresh?.();
+});
+
 test.each([
   ["Move to Wait", "shortlisted"],
   ["Ignore", "ignored"],

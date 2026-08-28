@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from jobfeed.domain.filtering import HardFilters
 from jobfeed.personal_ml_learning import PersonalMLLearningService
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.ml_gate import MLGate
 from jobfeed.ports.prompts import PromptRenderer
+from jobfeed.ports.seniority_gate import SeniorityGate
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ext import StageBThresholdSync
 from jobfeed.ports.store_ops import StoreOpsMixin
@@ -27,6 +29,7 @@ class EvaluateDependencies:
     llm_stage_b: LLMClient
     llm_stage_b_sweep: LLMClient | None = None
     ml_gate: MLGate | None = None
+    seniority_gate: SeniorityGate | None = None
     hard_filters: HardFilters | None = None
     personal_ml: PersonalMLLearningService | None = None
     stage_b_threshold_sync: StageBThresholdSync | None = None
@@ -53,6 +56,7 @@ class EvaluateRuntimeConfig:
     default_eval_limit: int = 150
     ml_gate_enabled: bool = False
     ml_gate_max_candidates: int = 5000
+    seniority_gate_mode: Literal["off", "shadow", "filter"] = "off"
     ghost_days: int = 30
     archive_ignored_days: int = 14
 

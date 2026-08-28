@@ -245,6 +245,7 @@ class _SqlitePerformance:
             rows = await _fetch_rows(
                 connection,
                 """SELECT run_id, jobs_filtered, jobs_ml_gated,
+                          jobs_seniority_filtered,
                           jobs_gate_passed, stage_a_scored, stage_b_scored
                    FROM pipeline_runs
                    WHERE started_at>=? AND source='evaluate'
@@ -259,7 +260,11 @@ class _SqlitePerformance:
                 int(row["stage_b_scored"]),
             )
             scored = max(int(row["stage_a_scored"]), int(row["stage_b_scored"]))
-            after_filter = int(row["jobs_ml_gated"]) + after_gate
+            after_filter = (
+                int(row["jobs_ml_gated"])
+                + int(row["jobs_seniority_filtered"])
+                + after_gate
+            )
             result.append(
                 FunnelStats(
                     run_id=str(row["run_id"]),

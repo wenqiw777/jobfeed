@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from jobfeed.domain.errors import RunConflictError
 from jobfeed.domain.models import PipelineRun
-from jobfeed.ports.run_leases import RunLeaseStore
+from jobfeed.ports.run_leases import RecoverableRunLeaseStore, RunLeaseStore
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
 from jobfeed.services.run_tracking import ActiveRun, RunProgressBroker
 from jobfeed.services.scan import SourceSpec, run_source_name
@@ -32,6 +34,11 @@ SourceResolver = Callable[[str, contextlib.AsyncExitStack], Awaitable[list[Sourc
 """Composition-injected resolver: source token -> SourceSpec entries; raises a
 domain error (SourceConfigError) so this service never imports CLI/adapters."""
 
+PostScanHook = Callable[
+    [PipelineRun, list[SourceSpec], Callable[[PipelineRun], None]], Awaitable[None]
+]
+"""Optional web-only work that extends a scan's live progress stream."""
+
 
 class RunManager:
     """Async task lifecycle manager for web-triggered pipeline runs.
@@ -48,10 +55,11 @@ class RunManager:
         evaluate_service_factory: Callable[..., EvaluateService],
         scan_source_resolver: SourceResolver | None = None,
         run_orchestrator: RunLeaseOrchestrator | None = None,
-        post_scan_hook: Callable[[list[SourceSpec]], Awaitable[None]] | None = None,
+        post_scan_hook: PostScanHook | None = None,
     ) -> None:
         """Create a RunManager with injected factories and source resolver."""
         self._logger = logger
+        self._store = store
         self._scan_factory = scan_service_factory
         self._eval_factory = evaluate_service_factory
         self._source_resolver = scan_source_resolver
@@ -94,8 +102,9 @@ class RunManager:
                     on_progress=cb,
                     lease_session=active_session,
                 )
+                await self._persist_scan_insertions(active_session.run)
                 if self._post_scan_hook is not None:
-                    await self._post_scan_hook(specs)
+                    await self._post_scan_hook(active_session.run, specs, cb)
 
             self._tasks[session.run.run_id] = asyncio.create_task(
                 self._execute_run(self._scan_lock, session, _work, stack)
@@ -129,6 +138,11 @@ class RunManager:
         run: PipelineRun | None = None
         session: RunLeaseSession | None = None
         try:
+            scope = str(kwargs.pop("scope", "latest_scan"))
+            if scope == "latest_scan":
+                kwargs["job_ids"] = await self._latest_scan_inserted_job_ids()
+            elif scope != "backlog":
+                raise ValueError(f"unknown evaluation scope: {scope!r}")
             service = self._eval_factory(**kwargs)
             dry_run = bool(kwargs.get("dry_run", False))
             if dry_run:
@@ -166,6 +180,32 @@ class RunManager:
             finally:
                 self._eval_lock.release()
             raise
+
+    async def _persist_scan_insertions(self, run: PipelineRun) -> None:
+        setter = getattr(self._store, "set_state", None)
+        if setter is None:
+            return
+        payload = json.dumps(
+            {"run_id": run.run_id, "job_ids": run.scan_inserted_job_ids},
+            separators=(",", ":"),
+        )
+        await setter("latest_scan_inserted_job_ids", payload)
+
+    async def _latest_scan_inserted_job_ids(self) -> list[str]:
+        getter = getattr(self._store, "get_state", None)
+        if getter is None:
+            return []
+        raw = await getter("latest_scan_inserted_job_ids")
+        if raw is None:
+            return []
+        try:
+            payload = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            return []
+        values = payload.get("job_ids") if isinstance(payload, dict) else None
+        if not isinstance(values, list):
+            return []
+        return [value for value in values if isinstance(value, str)]
 
     async def _execute_run(
         self,
@@ -284,15 +324,33 @@ class RunManager:
         """Create a progress callback that broadcasts to subscribers."""
         return self._progress.callback(run_id)
 
-    async def recover_stale_runs(self) -> int:
-        """Return zero because store lifecycle owns expired-only recovery.
+    async def stop_run(self, run_id: str) -> bool:
+        """Stop a local task or atomically clear a durable stale run.
 
-        ``store.connect()`` performs the atomic, lease-expiry-aware recovery.
-        Keeping this no-op preserves the web lifespan call until composition is
-        migrated without reintroducing a scan of every running history row.
+        Args:
+            run_id: Pipeline run identity to stop.
 
-        Returns: Always zero; no run rows are read or mutated here.
+        Returns:
+            True when the run was stopped.
         """
+        task = self._tasks.get(run_id)
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            return True
+        if isinstance(self._store, RecoverableRunLeaseStore):
+            return await self._store.stop_pipeline_run(run_id, now=datetime.now(UTC))
+        return False
+
+    async def recover_stale_runs(self) -> int:
+        """Recover expired durable leases when the store supports it.
+
+        Returns:
+            Number of stale runs recovered.
+        """
+        if isinstance(self._store, RecoverableRunLeaseStore):
+            return await self._store.recover_expired_run_leases(now=datetime.now(UTC))
         return 0
 
 

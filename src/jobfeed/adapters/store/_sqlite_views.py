@@ -53,6 +53,16 @@ _VERDICT_FROM = (
     " JOIN jobs AS j ON j.id=e.job_id"
     " LEFT JOIN job_status AS s ON s.job_id=j.id"
 )
+_EXACT_VERDICT_FROM = (
+    " FROM evaluations AS e INDEXED BY idx_eval_verdict_job"
+    # SQLite may reorder an ordinary INNER JOIN back to the 90k-row status
+    # table even with INDEXED BY. CROSS JOIN makes the small verdict corpus the
+    # loop driver while preserving the same inner-join result.
+    " CROSS JOIN jobs AS j ON j.id=e.job_id"
+    # Every job owns a trigger-seeded status row, so this remains semantically
+    # equivalent to the general LEFT JOIN while locking the final loop order.
+    " CROSS JOIN job_status AS s ON s.job_id=j.id"
+)
 _COLUMNS = (
     "j.id, j.platform, j.canonical_id, j.url, j.title, j.company,"
     " j.location, j.discovered_at, NULL AS jd_text, j.jd_quality,"
@@ -151,9 +161,10 @@ def _jobs_view_rows_query(
     active_where = _where(_TAB_PREDICATES[query.tab], shared)
     if not query.include_counts and query.require_verdict:
         active_where = f"({active_where}) AND e.stage_b_status='completed'"
-    rows_from = (
-        _VERDICT_FROM if not query.include_counts and query.require_verdict else _FROM
-    )
+    if query.require_verdict:
+        rows_from = _VERDICT_FROM if not query.include_counts else _EXACT_VERDICT_FROM
+    else:
+        rows_from = _FROM
     sql = (
         f"SELECT {_COLUMNS}{rows_from} WHERE {active_where}"
         f" ORDER BY {_SORTS[query.sort]} LIMIT ? OFFSET ?"
@@ -190,20 +201,22 @@ class _SqliteViews:
                     tab_counts={},
                     total_is_exact=False,
                 )
-            total_row = await _fetch_row(
-                connection,
-                f"SELECT COUNT(*) AS n{_FROM} WHERE {active_where}",
-                params,
-            )
+            total_row = None
+            if query.include_total:
+                total_row = await _fetch_row(
+                    connection,
+                    f"SELECT COUNT(*) AS n{_FROM} WHERE {active_where}",
+                    params,
+                )
             counts = await _fetch_row(
                 connection,
                 f"SELECT {count_columns}{_FROM} WHERE {shared_where}",
                 params,
             )
-        assert total_row is not None and counts is not None
+        assert counts is not None
         return JobsViewPage(
             rows=[_view_row(row) for row in row_records],
-            total=int(total_row["n"]),
+            total=(int(total_row["n"]) if total_row is not None else len(row_records)),
             tab_counts={tab: int(counts[tab]) for tab in VALID_TABS},
         )
 

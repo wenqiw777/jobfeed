@@ -20,9 +20,11 @@ from jobfeed.domain.models import (
     PipelineRun,
 )
 from jobfeed.observability import JobfeedLogger
+from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_claims import GateCandidate
 from jobfeed.services._evaluate_claims import load_gate_candidates_for_run
 from jobfeed.services._evaluate_gate import gate_representatives, resolve_gate_mode
+from jobfeed.services._evaluate_seniority import apply_seniority_gate
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 
 # Generous safety bound on candidate pages scanned per funnel run, so a long
@@ -41,6 +43,7 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
     logger: JobfeedLogger,
     dry_run: bool,
     limit: int | None = None,
+    job_ids: list[str] | None = None,
     on_progress: Callable[[], None] | None = None,
 ) -> list[str]:
     """Run the candidate funnel and return survivor Stage A job-ids.
@@ -77,7 +80,9 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
         corpus,
         max_days,
         logger,
+        job_ids=job_ids,
         exclude_gate_failed=gate_mode == "filter",
+        persist_hard_filters=not dry_run,
     )
     survivors = await gate_representatives(
         deps,
@@ -88,6 +93,13 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
         mode=gate_mode,
         on_progress=on_progress,
     )
+    if deps.seniority_gate is not None:
+        survivors, seniority_blocked = await apply_seniority_gate(
+            deps.seniority_gate,
+            survivors,
+            mode=config.seniority_gate_mode,
+        )
+        run.jobs_seniority_filtered += seniority_blocked
     if dry_run:
         # Append (not assign) so a later Stage-B preview pass keeps this pass's
         # items; matches build_dry_run_preview's Stage-B ``.extend`` and is
@@ -105,7 +117,9 @@ async def _load_representatives(  # noqa: PLR0913 - paginated load inputs
     max_days: int | None,
     logger: JobfeedLogger,
     *,
+    job_ids: list[str] | None,
     exclude_gate_failed: bool,
+    persist_hard_filters: bool,
 ) -> list[GateCandidate]:
     """Page + hard-filter + dedupe candidates until enough REPRESENTATIVES.
 
@@ -137,8 +151,17 @@ async def _load_representatives(  # noqa: PLR0913 - paginated load inputs
             max_days,
             exclude_gate_failed=exclude_gate_failed,
             after=after,
+            job_ids=job_ids,
         )
-        survivors.extend(_apply_hard_filters(page, deps.hard_filters, run))
+        survivors.extend(
+            await _apply_hard_filters(
+                page,
+                deps.hard_filters,
+                run,
+                store=deps.store,
+                persist=persist_hard_filters,
+            )
+        )
         representatives = _representatives(survivors)
         if len(representatives) >= page_size or len(page) < page_size:
             # Target met or eligible set exhausted; cap to the gate budget (a
@@ -150,10 +173,13 @@ async def _load_representatives(  # noqa: PLR0913 - paginated load inputs
     return _representatives(survivors)[:page_size]
 
 
-def _apply_hard_filters(
+async def _apply_hard_filters(
     candidates: list[GateCandidate],
     filters: HardFilters | None,
     run: PipelineRun,
+    *,
+    store: JobStore,
+    persist: bool,
 ) -> list[GateCandidate]:
     """Drop hard-filter-blocked candidates and count the drops.
 
@@ -167,8 +193,17 @@ def _apply_hard_filters(
     """
     if filters is None:
         return candidates
-    kept = [c for c in candidates if apply_hard_filters(c.job, filters) is None]
-    run.jobs_filtered += len(candidates) - len(kept)
+    kept: list[GateCandidate] = []
+    rejected: dict[str, str] = {}
+    for candidate in candidates:
+        reason = apply_hard_filters(candidate.job, filters)
+        if reason is None:
+            kept.append(candidate)
+            continue
+        rejected[_job_id(candidate.job)] = reason
+    if persist and rejected:
+        await store.save_hard_filters(rejected)
+    run.jobs_filtered += len(rejected)
     return kept
 
 

@@ -175,6 +175,7 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
                 jobs_discovered=10,
                 jobs_filtered=3,
                 jobs_ml_gated=2,
+                jobs_seniority_filtered=1,
                 jobs_gate_passed=4,
                 stage_a_scored=5,
                 stage_b_scored=6,
@@ -266,9 +267,9 @@ async def test_step_series_llm_percentiles_and_funnel_semantics(
         assert [item.call_count for item in daily] == [1, 2, 2]
         assert daily[1].avg_input_tokens == 45
         assert [item.run_id for item in funnel] == ["eval-new", "eval-boundary"]
-        assert funnel[0].total_candidates == 11
+        assert funnel[0].total_candidates == 12
         assert funnel[0].after_gate == 6
         assert funnel[0].scored == 6
-        assert funnel[0].after_filter == 8
+        assert funnel[0].after_filter == 9
     finally:
         await lifecycle.close()

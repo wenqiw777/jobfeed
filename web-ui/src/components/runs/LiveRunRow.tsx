@@ -9,9 +9,10 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Steps, { type StepsProps } from "@cloudscape-design/components/steps";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { runsKeys, type RunSummary } from "@/api/queries";
+import { RunActionButton } from "@/components/runs/RunActionButton";
 import { formatLocalDateTime, formatRelativeAge } from "@/lib/dates";
 import { useSSE, type SSEState } from "@/lib/use-sse";
 
@@ -46,6 +47,10 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
     `/api/runs/${run.run_id}/progress`,
   );
   const hasFiredDone = useRef(false);
+  const [lastScanItem, setLastScanItem] = useState<{
+    phaseKey: string;
+    jobId: string | null;
+  }>({ phaseKey: "", jobId: null });
 
   useEffect(() => {
     if (sse.isDone && !hasFiredDone.current) {
@@ -56,6 +61,17 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
   }, [sse.isDone, queryClient, onDone]);
 
   const live = mergeProgress(run.counters, sse.data);
+  const phaseKey = `${live.scan_source ?? ""}:${live.scan_phase ?? ""}`;
+  if (lastScanItem.phaseKey !== phaseKey) {
+    setLastScanItem({ phaseKey, jobId: live.scan_current_job_id ?? null });
+  } else if (
+    live.scan_current_job_id
+    && live.scan_current_job_id !== lastScanItem.jobId
+  ) {
+    setLastScanItem({ phaseKey, jobId: live.scan_current_job_id });
+  }
+  const currentJobId = live.scan_current_job_id
+    ?? (lastScanItem.phaseKey === phaseKey ? lastScanItem.jobId : null);
   return (
     <li data-testid={`live-run-${run.run_id}`}>
       <Container
@@ -63,7 +79,12 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
           <Header
             variant="h3"
             description={`${formatLocalDateTime(run.started_at)} · ${run.run_id}`}
-            actions={<LiveStatus sse={sse} />}
+            actions={
+              <SpaceBetween direction="horizontal" size="xs">
+                <LiveStatus sse={sse} />
+                <RunActionButton runId={run.run_id} isRunning />
+              </SpaceBetween>
+            }
           >
             {liveRunLabel(run.source)}
           </Header>
@@ -72,7 +93,11 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
         {run.source === "evaluate" ? (
           <EvaluateProgress run={live} />
         ) : (
-          <ScanProgress run={live} isConnected={sse.isConnected} />
+          <ScanProgress
+            run={live}
+            isConnected={sse.isConnected}
+            currentJobId={currentJobId}
+          />
         )}
       </Container>
     </li>
@@ -86,7 +111,7 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
       <ColumnLayout columns={2} variant="text-grid">
         <SpaceBetween size="s">
           <StageProgress
-            label="Local filter"
+            label="SDE role filter"
             processed={run.ml_gate_processed}
             total={run.ml_gate_total}
             isDone={isAfter(run.progress_stage, "ml_gate")}
@@ -111,6 +136,14 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
           <Box variant="awsui-key-label">What is happening</Box>
           <Box fontSize="heading-m" fontWeight="bold">{stageLabel(run.progress_stage)}</Box>
           <SpaceBetween direction="horizontal" size="s">
+            <Badge color="severity-neutral">
+              {run.jobs_ml_gated} excluded by SDE role filter
+            </Badge>
+            <Badge color="severity-neutral">
+              {run.jobs_seniority_filtered} excluded by seniority filter
+            </Badge>
+          </SpaceBetween>
+          <SpaceBetween direction="horizontal" size="s">
             <Badge color="blue">{formatCost(run.total_llm_cost_usd)}</Badge>
             <Badge color={run.errors > 0 ? "red" : "green"}>
               {run.errors} {run.errors === 1 ? "error" : "errors"}
@@ -127,7 +160,7 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
 
 function ProgressRail({ stage }: { stage: string | null | undefined }) {
   const steps = [
-    ["ml_gate", "Local filter"],
+    ["ml_gate", "SDE role filter"],
     ["stage_a", "Quick evaluation"],
     ["stage_b", "Detailed review"],
     ["finalizing", "Complete"],
@@ -177,13 +210,29 @@ function StageProgress({
   );
 }
 
-function ScanProgress({ run, isConnected }: { run: RunSummary; isConnected: boolean }) {
+function ScanProgress({
+  run,
+  isConnected,
+  currentJobId,
+}: {
+  run: RunSummary;
+  isConnected: boolean;
+  currentJobId: string | null;
+}) {
   const counters = SCAN_COUNTERS.filter(({ key }) => (run[key] as number) > 0);
+  const activity = scanActivity(run);
   return (
-    <ColumnLayout columns={2} variant="text-grid">
+    <ColumnLayout columns={3} variant="text-grid">
       <div>
         <Box variant="awsui-key-label">Progress stream</Box>
         <Box>{isConnected ? "Receiving live counters" : "Connecting to live counters"}</Box>
+      </div>
+      <div>
+        <Box variant="awsui-key-label">What is happening</Box>
+        <Box>{activity ?? "Starting sources"}</Box>
+        <Box color="text-body-secondary">
+          {currentJobId ? `Listing ${currentJobId}` : "\u00a0"}
+        </Box>
       </div>
       <div>
         <Box variant="awsui-key-label">Activity</Box>
@@ -197,6 +246,21 @@ function ScanProgress({ run, isConnected }: { run: RunSummary; isConnected: bool
       </div>
     </ColumnLayout>
   );
+}
+
+function scanActivity(run: RunSummary): string | null {
+  if (!run.scan_source || !run.scan_phase) return null;
+  const source = run.scan_source === "linkedin_guest" ? "LinkedIn Guest" : run.scan_source;
+  const phase = {
+    fetching: "Fetching listings",
+    saving: "Saving listings",
+    completed: "Source complete",
+    enriching_job_descriptions: "Enriching job descriptions",
+  }[run.scan_phase] ?? run.scan_phase;
+  if (run.scan_total === null || run.scan_total === undefined) {
+    return `${source} · ${phase}`;
+  }
+  return `${source} · ${phase} · ${run.scan_processed} / ${run.scan_total}`;
 }
 
 function mergeProgress(polled: RunSummary, streamed: RunSummary | null): RunSummary {

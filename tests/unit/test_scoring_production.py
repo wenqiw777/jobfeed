@@ -56,6 +56,15 @@ class TestRenderSystemPrompt:
         assert "Stage A" in result
         assert "score" in result.lower()
 
+    def test_seniority_is_delegated_to_the_pre_llm_gate(self) -> None:
+        """Scoring must not repeat seniority eligibility decisions."""
+        result = render_system_prompt("stage_a_prompt.md", TEMPLATES_DIR)
+        normalized = " ".join(result.split())
+
+        assert "Seniority eligibility is handled before this scorer" in normalized
+        assert "3+ years" not in normalized
+        assert "seniority mismatch" not in normalized.lower()
+
     def test_stage_b_renders_blocks(self) -> None:
         """Stage B template should render block schemas when blocks given."""
         blocks = ("verdict", "jd_summary", "fit_analysis", "resume_hooks")

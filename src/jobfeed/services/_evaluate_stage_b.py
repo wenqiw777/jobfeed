@@ -28,12 +28,13 @@ if TYPE_CHECKING:
     from jobfeed.services.evaluate import EvaluateService
 
 
-async def _run_stage_b(
+async def _run_stage_b(  # noqa: PLR0913 - service context plus scoped run inputs
     service: EvaluateService,
     run: PipelineRun,
     limit: int,
     max_days: int | None,
     lease_session: RunLeaseSession,
+    job_ids: list[str] | None = None,
 ) -> None:
     """Load, score, and sweep Stage B jobs under a scheduling fence."""
     if limit <= 0:
@@ -57,6 +58,7 @@ async def _run_stage_b(
         limit,
         max_days,
         service._config.stage_a_threshold,
+        job_ids,
     )
     lease_session.ensure_active()
     run.stage_b_total = len(jobs)

@@ -18,6 +18,19 @@ AsyncSleeper = Callable[[float], Awaitable[None]]
 
 
 @dataclass(frozen=True, kw_only=True)
+class EnrichProgress:
+    """One live snapshot of a paced enrichment pass."""
+
+    platform: str
+    total: int
+    processed: int
+    current_job_id: str | None
+
+
+EnrichProgressCallback = Callable[[EnrichProgress], None]
+
+
+@dataclass(frozen=True, kw_only=True)
 class EnrichPacing:
     """Pacing and backoff knobs for one enrichment pass.
 
@@ -92,7 +105,14 @@ class EnrichService:
         self._sleep = sleeper
         self.pacing = pacing if pacing is not None else EnrichPacing()
 
-    async def run(self, *, platform: str, batch_limit: int) -> EnrichSummary:
+    async def run(
+        self,
+        *,
+        platform: str,
+        batch_limit: int,
+        job_ids: list[str] | None = None,
+        on_progress: EnrichProgressCallback | None = None,
+    ) -> EnrichSummary:
         """Enrich up to ``batch_limit`` un-enriched rows sequentially.
 
         A blocked attempt re-queues its row (the row is not consumed) and
@@ -110,16 +130,43 @@ class EnrichService:
             Counters for the pass.
         """
         rows = await self.store.list_unenriched_jobs(
-            platform=platform, limit=batch_limit
+            platform=platform,
+            limit=batch_limit,
+            job_ids=job_ids,
         )
         self.logger.info("enrich_pass_started", platform=platform, queued=len(rows))
         state = _PassState(platform=platform, queue=deque(rows))
+        self._report_progress(state, len(rows), on_progress)
         while state.queue and not state.stopped_early:
             await self._pace(state)
             row = state.queue.popleft()
+            self._report_progress(
+                state, len(rows), on_progress, current_job_id=row.canonical_id
+            )
             outcome = await self._attempt(row)
             await self._handle_outcome(state, row, outcome)
+            self._report_progress(state, len(rows), on_progress)
         return self._summarize(state)
+
+    @staticmethod
+    def _report_progress(
+        state: _PassState,
+        total: int,
+        on_progress: EnrichProgressCallback | None,
+        *,
+        current_job_id: str | None = None,
+    ) -> None:
+        """Notify observers without making enrichment dependent on telemetry."""
+        if on_progress is None:
+            return
+        on_progress(
+            EnrichProgress(
+                platform=state.platform,
+                total=total,
+                processed=state.enriched + state.closed + state.skipped,
+                current_job_id=current_job_id,
+            )
+        )
 
     async def _pace(self, state: _PassState) -> None:
         if state.needs_gap_sleep:
@@ -228,4 +275,10 @@ class EnrichService:
         return summary
 
 
-__all__ = ["EnrichPacing", "EnrichService", "EnrichSummary"]
+__all__ = [
+    "EnrichPacing",
+    "EnrichProgress",
+    "EnrichProgressCallback",
+    "EnrichService",
+    "EnrichSummary",
+]

@@ -17,6 +17,7 @@ from jobfeed.config import (
     LLMSettings,
     MLGateSettings,
     ScoringSettings,
+    SeniorityGateSettings,
     Settings,
 )
 from jobfeed.config_sources import SourcesConfig
@@ -35,6 +36,7 @@ class EditableConfiguration(BaseModel):
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     hard_filters: HardFiltersSettings = Field(default_factory=HardFiltersSettings)
     ml_gate: MLGateSettings = Field(default_factory=MLGateSettings)
+    seniority_gate: SeniorityGateSettings = Field(default_factory=SeniorityGateSettings)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> EditableConfiguration:
@@ -49,7 +51,14 @@ class EditableConfiguration(BaseModel):
         return cls.model_validate(
             settings.model_dump(
                 mode="json",
-                include={"llm", "scoring", "sources", "hard_filters", "ml_gate"},
+                include={
+                    "llm",
+                    "scoring",
+                    "sources",
+                    "hard_filters",
+                    "ml_gate",
+                    "seniority_gate",
+                },
             )
         )
 
@@ -64,7 +73,14 @@ class EditableConfiguration(BaseModel):
         """
         updates = {
             name: getattr(self, name)
-            for name in ("llm", "scoring", "sources", "hard_filters", "ml_gate")
+            for name in (
+                "llm",
+                "scoring",
+                "sources",
+                "hard_filters",
+                "ml_gate",
+                "seniority_gate",
+            )
         }
         return settings.model_copy(update=updates)
 

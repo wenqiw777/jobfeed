@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
@@ -12,6 +13,7 @@ from fastapi import FastAPI
 from jobfeed.cli import AppContext
 from jobfeed.cli.bootstrap import load_company_catalog
 from jobfeed.cli.enrich import run_guest_enrich_pass
+from jobfeed.domain.models import PipelineRun
 from jobfeed.onboarding_calibration_job import (
     OnboardingCalibrationJobSampler,
     fetch_indeed_sample,
@@ -23,6 +25,7 @@ from jobfeed.personal_ml_learning import (
     PersonalMLLearningService,
     PersonalMLObservationStore,
 )
+from jobfeed.services.enrich import EnrichProgress
 from jobfeed.services.scan import SourceSpec
 from jobfeed.web.routes.onboarding import router as onboarding_router
 from jobfeed.web.routes.onboarding_companies import (
@@ -32,7 +35,9 @@ from jobfeed.web.routes.onboarding_resume import router as onboarding_resume_rou
 from jobfeed.web.routes.onboarding_searches import router as onboarding_searches_router
 from jobfeed.web.routes.personal_ml import router as personal_ml_router
 
-_PostScanHook = Callable[[list[SourceSpec]], Awaitable[None]]
+_PostScanHook = Callable[
+    [PipelineRun, list[SourceSpec], Callable[[PipelineRun], None]], Awaitable[None]
+]
 
 
 def _configure_onboarding(
@@ -87,18 +92,34 @@ def _include_onboarding_routers(app: FastAPI) -> None:
 def _make_post_scan_hook(context: AppContext) -> _PostScanHook:
     """Automatically fetch LinkedIn Guest JDs after web discovery."""
 
-    async def _post_scan(specs: list[SourceSpec]) -> None:
+    async def _post_scan(
+        run: PipelineRun,
+        specs: list[SourceSpec],
+        on_progress: Callable[[PipelineRun], None],
+    ) -> None:
         if all(name != "linkedin_guest" for name, _, _ in specs):
             return
         config = context["settings"].sources.linkedin_guest
         if not config.enrich_after_scan:
             return
         logger = context["logger"]
+
+        def _report(progress: EnrichProgress) -> None:
+            run.scan_source = progress.platform
+            run.scan_phase = "enriching_job_descriptions"
+            run.scan_total = progress.total
+            run.scan_processed = progress.processed
+            run.scan_current_job_id = progress.current_job_id
+            run.progress_updated_at = datetime.now(UTC)
+            on_progress(run)
+
         try:
             summary = await run_guest_enrich_pass(
                 context,
                 config,
-                batch_limit=config.max_jobs,
+                batch_limit=len(run.scan_inserted_job_ids),
+                job_ids=run.scan_inserted_job_ids,
+                on_progress=_report,
             )
         except Exception as exc:
             logger.error("web_scan_guest_enrich_failed", error=str(exc))

@@ -62,6 +62,47 @@ def test_provisional_page_query_starts_from_the_small_evaluated_corpus() -> None
     assert "e.stage_b_status='completed'" in sql
 
 
+def test_exact_verdict_page_query_starts_from_the_verdict_corpus() -> None:
+    """Exact Triage rows must not fan out from the much larger status table."""
+    sql, _ = _jobs_view_rows_query(
+        JobsViewQuery(
+            tab="queue",
+            require_verdict=True,
+            sort="posted_desc",
+            include_counts=True,
+        ),
+        NOW,
+    )
+
+    assert "FROM evaluations AS e INDEXED BY idx_eval_verdict_job" in sql
+    assert "e.stage_b_verdict IS NOT NULL" in sql
+
+
+async def test_exact_verdict_query_plan_drives_from_the_verdict_index(
+    tmp_path: Path,
+) -> None:
+    """INDEXED BY alone is insufficient: the verdict index must drive the join."""
+    lifecycle, _store = await open_views_performance(tmp_path / "verdict-plan.db")
+    try:
+        sql, params = _jobs_view_rows_query(
+            JobsViewQuery(
+                tab="queue",
+                require_verdict=True,
+                sort="posted_desc",
+                limit=10_000,
+                include_counts=True,
+                include_total=False,
+            ),
+            NOW,
+        )
+        plan = await rows(lifecycle, f"EXPLAIN QUERY PLAN {sql}", tuple(params))
+        details = [str(row[3]) for row in plan]
+
+        assert "idx_eval_verdict_job" in details[0]
+    finally:
+        await lifecycle.close()
+
+
 async def test_scan_run_reports_exact_new_jobs_by_configured_source(
     tmp_path: Path,
 ) -> None:

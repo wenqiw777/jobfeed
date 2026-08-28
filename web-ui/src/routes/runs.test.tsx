@@ -35,12 +35,14 @@ function runRow(id: string, over: Partial<RunSummary> = {}): RunSummary {
     jobs_updated: 0,
     jobs_filtered: 0,
     jobs_ml_gated: 0,
+    jobs_seniority_filtered: 0,
     jobs_scored: 0,
     stage_a_scored: 0,
     stage_b_scored: 0,
     ml_gate_processed: 0,
     stage_a_processed: 0,
     stage_b_processed: 0,
+    scan_processed: 0,
     errors: 0,
     total_llm_cost_usd: 0,
     ...over,
@@ -112,6 +114,12 @@ function mockApi(state: ServerState): void {
       if (method === "POST" && url === "/api/runs/evaluate") {
         return json({ run_id: "new-eval-1", status: "running" });
       }
+      if (method === "POST" && url.endsWith("/stop")) {
+        return json({ run_id: url.split("/")[3], status: "failed" });
+      }
+      if (method === "POST" && url.endsWith("/retry")) {
+        return json({ run_id: "retry-1", status: "running" });
+      }
       throw new Error(`unexpected fetch in test: ${method} ${url}`);
     }),
   );
@@ -173,6 +181,21 @@ test("renders the Cloudscape run operations workspace and history table", async 
   expect(screen.getByRole("columnheader", { name: "Cost" })).toBeVisible();
 });
 
+test("separates job rules, SDE role, and seniority filter counters", async () => {
+  state.runs[0] = runRow("r2", {
+    ...state.runs[0],
+    jobs_filtered: 4,
+    jobs_ml_gated: 2,
+    jobs_seniority_filtered: 3,
+  } as Partial<RunSummary> & { jobs_seniority_filtered: number });
+
+  renderRuns();
+
+  expect(await screen.findByText("4 excluded by job rules")).toBeVisible();
+  expect(screen.getByText("2 excluded by SDE role filter")).toBeVisible();
+  expect(screen.getByText("3 excluded by seniority filter")).toBeVisible();
+});
+
 test("run history table follows the selected row density", async () => {
   window.localStorage.setItem("jobfeed:density", "comfortable");
   renderRuns();
@@ -211,7 +234,7 @@ test("activity badges use semantic colors and hide zero counters", async () => {
   expect(within(activity2).getByText("12 discovered")).toBeInTheDocument();
   expect(within(activity2).getByText("4 new")).toBeInTheDocument();
   expect(within(activity2).getByText("3 updated")).toBeInTheDocument();
-  expect(within(activity2).getByText("2 excluded by local filter")).toBeInTheDocument();
+  expect(within(activity2).getByText("2 excluded by SDE role filter")).toBeInTheDocument();
   expect(within(activity2).getByText("8 quick evaluations")).toBeInTheDocument();
   expect(within(activity2).getByText("1 detailed reviews")).toBeInTheDocument();
   expect(within(activity2).queryByText(/errors/)).toBeNull();
@@ -220,7 +243,7 @@ test("activity badges use semantic colors and hide zero counters", async () => {
   expect(within(activity2).getByText("12 discovered").className).toContain("badge-color-blue");
   expect(within(activity2).getByText("4 new").className).toContain("badge-color-green");
   expect(within(activity2).getByText("3 updated").className).toContain("badge-color-grey");
-  expect(within(activity2).getByText("2 excluded by local filter").className).toContain("badge-color-severity-neutral");
+  expect(within(activity2).getByText("2 excluded by SDE role filter").className).toContain("badge-color-severity-neutral");
   expect(within(activity2).getByText("8 quick evaluations").className).toContain("badge-color-severity-low");
   expect(within(activity2).getByText("1 detailed reviews").className).toContain("badge-color-severity-medium");
 
@@ -239,6 +262,25 @@ test("failed runs use an error indicator instead of a success check", async () =
   expect(failed.closest('[class*="status-error"]')).not.toBeNull();
   expect(screen.getByText("No activity recorded")).toBeVisible();
   expect(screen.queryByText("No counters")).not.toBeInTheDocument();
+});
+
+test("running rows can be stopped and failed rows can be retried", async () => {
+  state.runs = [
+    runRow("stale-run", { status: "running", finished_at: null }),
+    runRow("failed-run", { status: "failed" }),
+    runRow("succeeded-run"),
+  ];
+  renderRuns();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+  const retryButtons = screen.getAllByRole("button", { name: "Retry" });
+  expect(retryButtons).toHaveLength(1);
+  fireEvent.click(retryButtons[0]!);
+
+  await waitFor(() => {
+    expect(calls.some((call) => call.method === "POST" && call.url === "/api/runs/stale-run/stop")).toBe(true);
+    expect(calls.some((call) => call.method === "POST" && call.url === "/api/runs/failed-run/retry")).toBe(true);
+  });
 });
 
 test("expanding a row reveals the full counter grid, run id, and finished time", async () => {
@@ -324,7 +366,7 @@ test("trigger evaluate dialog opens and submits with defaults", async () => {
     expect(call).toBeDefined();
     return call!;
   });
-  expect(postCall.body).toEqual({ stage: "both" });
+  expect(postCall.body).toEqual({ stage: "both", scope: "latest_scan" });
   expect(await screen.findByText(/Evaluation started/)).toBeInTheDocument();
 });
 
@@ -343,7 +385,11 @@ test("trigger evaluate submits a non-default stage", async () => {
     expect(call).toBeDefined();
     return call!;
   });
-  expect(postCall.body).toEqual({ stage: "b", limit: 1 });
+  expect(postCall.body).toEqual({
+    stage: "b",
+    limit: 1,
+    scope: "latest_scan",
+  });
 });
 
 test("evaluate 409 shows conflict toast", async () => {

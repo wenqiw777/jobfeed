@@ -18,7 +18,12 @@ from jobfeed.cli import AppContext, require_app, require_enabled, run_with_store
 from jobfeed.config_sources import SourcesLinkedInGuestConfig
 from jobfeed.domain.quality import assess_quality
 from jobfeed.ports.store_ops import StoreOpsMixin
-from jobfeed.services.enrich import EnrichPacing, EnrichService, EnrichSummary
+from jobfeed.services.enrich import (
+    EnrichPacing,
+    EnrichProgressCallback,
+    EnrichService,
+    EnrichSummary,
+)
 
 _PLATFORM_CHOICES = ("linkedin", "linkedin_guest", "indeed")
 
@@ -152,6 +157,8 @@ async def run_guest_enrich_pass(
     config: SourcesLinkedInGuestConfig,
     *,
     batch_limit: int | None = None,
+    job_ids: list[str] | None = None,
+    on_progress: EnrichProgressCallback | None = None,
 ) -> EnrichSummary:
     """Build the guest enricher + service and run one enrichment pass.
 
@@ -184,6 +191,8 @@ async def run_guest_enrich_pass(
         return await service.run(
             platform="linkedin_guest",
             batch_limit=batch_limit or config.enrich_batch_limit,
+            job_ids=job_ids,
+            on_progress=on_progress,
         )
 
 

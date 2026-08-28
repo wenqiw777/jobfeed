@@ -740,6 +740,9 @@
           "scoring": {
             "$ref": "#/components/schemas/ScoringSettings"
           },
+          "seniority_gate": {
+            "$ref": "#/components/schemas/SeniorityGateSettings"
+          },
           "sources": {
             "$ref": "#/components/schemas/SourcesConfig"
           }
@@ -765,6 +768,9 @@
           },
           "scoring": {
             "$ref": "#/components/schemas/ScoringSettings"
+          },
+          "seniority_gate": {
+            "$ref": "#/components/schemas/SeniorityGateSettings"
           },
           "sources": {
             "$ref": "#/components/schemas/SourcesConfig"
@@ -2912,6 +2918,10 @@
             "title": "Jobs Scored",
             "type": "integer"
           },
+          "jobs_seniority_filtered": {
+            "title": "Jobs Seniority Filtered",
+            "type": "integer"
+          },
           "jobs_updated": {
             "title": "Jobs Updated",
             "type": "integer"
@@ -2958,6 +2968,55 @@
           "run_id": {
             "title": "Run Id",
             "type": "string"
+          },
+          "scan_current_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Current Job Id"
+          },
+          "scan_phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Phase"
+          },
+          "scan_processed": {
+            "default": 0,
+            "title": "Scan Processed",
+            "type": "integer"
+          },
+          "scan_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Source"
+          },
+          "scan_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Total"
           },
           "source": {
             "title": "Source",
@@ -3027,6 +3086,7 @@
           "jobs_updated",
           "jobs_filtered",
           "jobs_ml_gated",
+          "jobs_seniority_filtered",
           "stage_a_scored",
           "stage_b_scored",
           "jobs_scored",
@@ -3169,6 +3229,52 @@
           "url"
         ],
         "title": "SearchSuggestion",
+        "type": "object"
+      },
+      "SeniorityGateSettings": {
+        "additionalProperties": false,
+        "description": "Independent seniority gate applied after the SDE ML gate.",
+        "properties": {
+          "embedding_max_chars": {
+            "default": 2000,
+            "exclusiveMinimum": 0.0,
+            "title": "Embedding Max Chars",
+            "type": "integer"
+          },
+          "embedding_model": {
+            "default": "all-MiniLM-L6-v2",
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "mode": {
+            "default": "filter",
+            "enum": [
+              "off",
+              "shadow",
+              "filter"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model_dir": {
+            "default": "models/seniority_gate",
+            "title": "Model Dir",
+            "type": "string"
+          },
+          "model_version": {
+            "default": "v20260826T201223Z",
+            "title": "Model Version",
+            "type": "string"
+          },
+          "out_of_scope_threshold": {
+            "default": 0.9210827946662903,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Out Of Scope Threshold",
+            "type": "number"
+          }
+        },
+        "title": "SeniorityGateSettings",
         "type": "object"
       },
       "SourcesATSConfig": {
@@ -3832,6 +3938,15 @@
             ],
             "title": "Limit"
           },
+          "scope": {
+            "default": "latest_scan",
+            "enum": [
+              "latest_scan",
+              "backlog"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
           "stage": {
             "default": "both",
             "enum": [
@@ -4000,6 +4115,25 @@
           "days_since"
         ],
         "title": "WorkflowAttentionEntry",
+        "type": "object"
+      },
+      "_StopResponse": {
+        "description": "Response after a run is stopped.",
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "failed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "_StopResponse",
         "type": "object"
       },
       "_TriggerResponse": {
@@ -6163,6 +6297,86 @@
           }
         },
         "summary": "Stream Progress"
+      }
+    },
+    "/api/runs/{run_id}/retry": {
+      "post": {
+        "description": "Start a new run using the historical run's type and source.\n\nArgs:\n    run_id: Historical pipeline run identity.\n    run_manager: Shared run manager.\n    store: Shared job store.\n\nReturns:\n    Newly triggered run identity and status.\n\nRaises:\n    ApiError: When the source run is unknown, active, or cannot be retried.",
+        "operationId": "retry_run_api_runs__run_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_TriggerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Run"
+      }
+    },
+    "/api/runs/{run_id}/stop": {
+      "post": {
+        "description": "Stop a live run or clear a stale durable running row.\n\nArgs:\n    run_id: Pipeline run identity.\n    run_manager: Shared run manager.\n    store: Shared job store.\n\nReturns:\n    Stopped run identity and terminal status.\n\nRaises:\n    ApiError: When the run is unknown, terminal, or cannot be stopped.",
+        "operationId": "stop_run_api_runs__run_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_StopResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Run"
       }
     }
   }

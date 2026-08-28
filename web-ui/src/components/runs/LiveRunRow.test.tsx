@@ -86,6 +86,7 @@ function runCounters(overrides: Partial<RunSummary> = {}): RunSummary {
     jobs_updated: 0,
     jobs_filtered: 0,
     jobs_ml_gated: 0,
+    jobs_seniority_filtered: 0,
     jobs_scored: 0,
     stage_a_scored: 0,
     stage_b_scored: 0,
@@ -171,6 +172,24 @@ test("renders non-zero live counters as chips", () => {
   const row = screen.getByTestId("live-run-r-live-1");
   expect(row).toHaveTextContent("discovered");
   expect(row).not.toHaveTextContent("errors");
+});
+
+test("shows the current scan source, phase, and bounded progress", () => {
+  renderRow(vi.fn(), {
+    ...RUN,
+    counters: runCounters({
+      source: "all",
+      scan_source: "linkedin_guest",
+      scan_phase: "enriching_job_descriptions",
+      scan_total: 8000,
+      scan_processed: 218,
+      scan_current_job_id: "li-123",
+    } as Partial<RunSummary>),
+  });
+
+  const row = screen.getByTestId("live-run-r-live-1");
+  expect(row).toHaveTextContent("LinkedIn Guest · Enriching job descriptions · 218 / 8000");
+  expect(row).toHaveTextContent("Listing li-123");
 });
 
 test("renders the real evaluate phase, denominators, cost, and errors", () => {

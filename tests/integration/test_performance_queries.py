@@ -348,6 +348,7 @@ async def test_funnel_stats_computes_totals(store: PostgresStore) -> None:
             started_at=now - timedelta(hours=1),
             jobs_filtered=5,
             jobs_ml_gated=3,
+            jobs_seniority_filtered=2,
             stage_a_scored=10,
             stage_b_scored=4,
             jobs_scored=14,  # stage_a + stage_b sum; must NOT leak into funnel
@@ -359,9 +360,9 @@ async def test_funnel_stats_computes_totals(store: PostgresStore) -> None:
     assert len(funnels) == 1
     f = funnels[0]
     assert f.run_id == "perf-funnel-1"
-    expected_total = 18  # 5 + 3 + 10
+    expected_total = 20  # 5 + 3 + 2 + 10
     assert f.total_candidates == expected_total
-    expected_after_filter = 13  # 3 + 10
+    expected_after_filter = 15  # 3 + 2 + 10
     assert f.after_filter == expected_after_filter
     expected_after_gate = 10  # stage_a_scored, not jobs_scored (14)
     assert f.after_gate == expected_after_gate

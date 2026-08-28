@@ -38,6 +38,7 @@ async def load_gate_candidates_for_run(  # noqa: PLR0913 - distinct load filters
     *,
     exclude_gate_failed: bool,
     after: tuple[datetime, int] | None = None,
+    job_ids: list[str] | None = None,
 ) -> list[GateCandidate]:
     """Load one page of Stage A gate candidates without claiming, for the funnel.
 
@@ -63,6 +64,7 @@ async def load_gate_candidates_for_run(  # noqa: PLR0913 - distinct load filters
             limit=limit,
             exclude_gate_failed=exclude_gate_failed,
             after=after,
+            job_ids=job_ids,
         )
     jobs = await store.load_pending_stage_a(
         quality_bands=STAGE_A_QUALITY_BANDS,
@@ -70,7 +72,12 @@ async def load_gate_candidates_for_run(  # noqa: PLR0913 - distinct load filters
         limit=limit,
         max_days=max_days,
     )
-    return [GateCandidate(job=job, ml_gate_result=None) for job in jobs]
+    wanted = None if job_ids is None else set(job_ids)
+    return [
+        GateCandidate(job=job, ml_gate_result=None)
+        for job in jobs
+        if wanted is None or job.id in wanted
+    ]
 
 
 async def load_stage_a_for_run(
@@ -166,6 +173,7 @@ async def load_stage_b_for_run(
     limit: int,
     max_days: int | None,
     threshold: int,
+    job_ids: list[str] | None = None,
 ) -> list[JobPosting]:
     """Claim or load Stage B jobs for a real evaluation run.
 
@@ -183,12 +191,17 @@ async def load_stage_b_for_run(
             limit=limit,
             max_days=max_days,
             stage_a_threshold=threshold,
+            job_ids=job_ids,
         )
-    return await store.load_pending_stage_b(
+    jobs = await store.load_pending_stage_b(
         limit=limit,
         max_days=max_days,
         stage_a_threshold=threshold,
     )
+    if job_ids is None:
+        return jobs
+    wanted = set(job_ids)
+    return [job for job in jobs if job.id in wanted]
 
 
 async def release_stage_a_for_run(store: JobStore, job_id: str) -> None:

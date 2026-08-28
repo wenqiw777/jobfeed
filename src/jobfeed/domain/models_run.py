@@ -29,6 +29,7 @@ class PipelineRun:
     jobs_updated: int = 0
     jobs_filtered: int = 0
     jobs_ml_gated: int = 0
+    jobs_seniority_filtered: int = 0
     jobs_gate_passed: int = 0
     stage_a_scored: int = 0
     stage_b_scored: int = 0
@@ -44,5 +45,11 @@ class PipelineRun:
     stage_a_processed: int = 0
     stage_b_total: int | None = None
     stage_b_processed: int = 0
+    scan_source: str | None = None
+    scan_phase: str | None = None
+    scan_total: int | None = None
+    scan_processed: int = 0
+    scan_current_job_id: str | None = None
+    scan_inserted_job_ids: list[str] = field(default_factory=list)
     progress_updated_at: datetime | None = None
     dry_run_preview: list[DryRunPreviewItem] = field(default_factory=list)

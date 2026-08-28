@@ -55,9 +55,10 @@ def capture_canonical_aggregates(
         ),
     }
     funnel = reader.rows(
-        "SELECT run_id, jobs_filtered+jobs_ml_gated+"
+        "SELECT run_id, jobs_filtered+jobs_ml_gated+jobs_seniority_filtered+"
         "GREATEST(jobs_gate_passed,stage_a_scored,stage_b_scored) total_candidates, "
-        "jobs_ml_gated+GREATEST(jobs_gate_passed,stage_a_scored,stage_b_scored) "
+        "jobs_ml_gated+jobs_seniority_filtered+"
+        "GREATEST(jobs_gate_passed,stage_a_scored,stage_b_scored) "
         "after_filter, GREATEST(jobs_gate_passed,stage_a_scored,stage_b_scored) "
         "after_gate, GREATEST(stage_a_scored,stage_b_scored) scored "
         "FROM pipeline_runs WHERE source='evaluate' "

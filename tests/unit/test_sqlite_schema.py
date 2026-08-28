@@ -281,6 +281,51 @@ async def test_v1_reopen_accepts_occupied_leases_but_rejects_schema_tampering() 
 
 
 @pytest.mark.asyncio
+async def test_v1_reopen_installs_the_additive_verdict_index() -> None:
+    """Existing v1 databases gain the verdict index without a table migration."""
+    async with aiosqlite.connect(":memory:") as connection:
+        await ensure_sqlite_schema(connection)
+        await connection.execute("DROP INDEX idx_eval_verdict_job")
+        await connection.commit()
+
+        await ensure_sqlite_schema(connection)
+
+        assert (
+            await _scalar(
+                connection,
+                "SELECT COUNT(*) FROM sqlite_schema "
+                "WHERE type='index' AND name='idx_eval_verdict_job'",
+            )
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_v1_reopen_installs_the_additive_seniority_counter() -> None:
+    """Existing v1 databases gain the seniority counter without data loss."""
+    async with aiosqlite.connect(":memory:") as connection:
+        await ensure_sqlite_schema(connection)
+        await connection.execute(
+            "INSERT INTO pipeline_runs(run_id, started_at, source, status) "
+            "VALUES('kept', '2026-08-27T00:00:00Z', 'evaluate', 'succeeded')"
+        )
+        await connection.execute(
+            "ALTER TABLE pipeline_runs DROP COLUMN jobs_seniority_filtered"
+        )
+        await connection.commit()
+
+        await ensure_sqlite_schema(connection)
+
+        assert (
+            await _scalar(
+                connection,
+                "SELECT jobs_seniority_filtered FROM pipeline_runs WHERE run_id='kept'",
+            )
+            == 0
+        )
+
+
+@pytest.mark.asyncio
 async def test_migration_failure_rolls_back_every_ddl_statement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1,0 +1,15 @@
+{
+  "version": "v20260826T201223Z",
+  "threshold": 0.9210827946662903,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "embedding_dim": 384,
+  "train_size": 10000,
+  "positive_count": 5000,
+  "negative_count": 5000,
+  "label_source": "deterministic-rule-v1",
+  "validation": "5-fold-out-of-fold",
+  "in_scope_recall": 0.99,
+  "out_of_scope_recall": 0.7696,
+  "out_of_scope_precision": 0.987172909184197,
+  "blocked_pct": 0.3898
+}

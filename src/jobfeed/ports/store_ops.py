@@ -116,12 +116,14 @@ class StoreOpsMixin(Protocol):
         *,
         platform: str,
         limit: int,
+        job_ids: list[str] | None = None,
     ) -> list[UnenrichedJob]:
         """List open jobs on a platform that still have no JD text.
 
         Args:
             platform: Source platform to scope the listing to.
             limit: Maximum rows to return.
+            job_ids: Optional store identities restricting the queue.
 
         Returns:
             Rows with jd_text IS NULL and closed_at IS NULL, newest

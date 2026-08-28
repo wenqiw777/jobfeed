@@ -13,6 +13,7 @@ import { useTriggerEvaluate } from "@/api/queries";
 import { toast } from "@/components/ui/use-toast";
 
 type Stage = "a" | "b" | "both";
+type Scope = "latest_scan" | "backlog";
 
 const STAGE_OPTIONS = [
   { label: "Quick score and detailed review", value: "both", description: "Run the complete evaluation" },
@@ -20,10 +21,24 @@ const STAGE_OPTIONS = [
   { label: "Detailed review only", value: "b", description: "Review jobs that already passed the quick score" },
 ];
 
+const SCOPE_OPTIONS = [
+  {
+    label: "New jobs from the latest scan",
+    value: "latest_scan",
+    description: "Evaluate only jobs inserted by the latest scan",
+  },
+  {
+    label: "Historical backlog",
+    value: "backlog",
+    description: "Explicitly evaluate eligible unrated jobs already in the database",
+  },
+];
+
 /** Cloudscape evaluation form with stage and optional batch limit. */
 export function TriggerEvaluateButton() {
   const [isOpen, setIsOpen] = useState(false);
   const [stage, setStage] = useState<Stage>("both");
+  const [scope, setScope] = useState<Scope>("latest_scan");
   const [limitText, setLimitText] = useState("");
   const trigger = useTriggerEvaluate();
   const limit = limitText.trim() === "" ? null : Number(limitText);
@@ -32,11 +47,12 @@ export function TriggerEvaluateButton() {
   const submit = () => {
     if (isLimitInvalid) return;
     trigger.mutate(
-      { stage, limit },
+      { stage, scope, limit },
       {
         onSuccess: () => {
           setIsOpen(false);
           setStage("both");
+          setScope("latest_scan");
           setLimitText("");
           toast({ title: `Evaluation started (${stageLabel(stage)})` });
         },
@@ -88,6 +104,17 @@ export function TriggerEvaluateButton() {
       >
         <Form>
           <SpaceBetween size="l">
+            <FormField
+              label="Evaluation scope"
+              description="Normal runs process only jobs newly inserted by the latest scan."
+            >
+              <RadioGroup
+                value={scope}
+                items={SCOPE_OPTIONS}
+                ariaLabel="Evaluation scope"
+                onChange={({ detail }) => setScope(detail.value as Scope)}
+              />
+            </FormField>
             <FormField label="Evaluation depth" description="Choose how much evaluation to run.">
               <RadioGroup
                 value={stage}
@@ -98,13 +125,13 @@ export function TriggerEvaluateButton() {
             </FormField>
             <FormField
               label="Maximum jobs (optional)"
-              description="Leave empty to evaluate every eligible job."
+              description="Leave empty to evaluate every eligible job in the selected scope."
               errorText={isLimitInvalid ? "Maximum jobs must be a number of at least 1." : undefined}
             >
               <Input
                 type="number"
                 value={limitText}
-                placeholder="All eligible jobs"
+                placeholder="All jobs in scope"
                 ariaLabel="Maximum jobs"
                 invalid={isLimitInvalid}
                 nativeInputAttributes={{ min: 1 }}

@@ -25,6 +25,7 @@ def _run_fixture(number: int, *, status: str = "running") -> PipelineRun:
         jobs_updated=number + 2,
         jobs_filtered=number + 3,
         jobs_ml_gated=number + 4,
+        jobs_seniority_filtered=number + 5,
         jobs_gate_passed=number + 5,
         stage_a_scored=number + 6,
         stage_b_scored=number + 7,

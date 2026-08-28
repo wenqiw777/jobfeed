@@ -1440,6 +1440,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Run
+         * @description Start a new run using the historical run's type and source.
+         *
+         *     Args:
+         *         run_id: Historical pipeline run identity.
+         *         run_manager: Shared run manager.
+         *         store: Shared job store.
+         *
+         *     Returns:
+         *         Newly triggered run identity and status.
+         *
+         *     Raises:
+         *         ApiError: When the source run is unknown, active, or cannot be retried.
+         */
+        post: operations["retry_run_api_runs__run_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Run
+         * @description Stop a live run or clear a stale durable running row.
+         *
+         *     Args:
+         *         run_id: Pipeline run identity.
+         *         run_manager: Shared run manager.
+         *         store: Shared job store.
+         *
+         *     Returns:
+         *         Stopped run identity and terminal status.
+         *
+         *     Raises:
+         *         ApiError: When the run is unknown, terminal, or cannot be stopped.
+         */
+        post: operations["stop_run_api_runs__run_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1752,6 +1814,7 @@ export interface components {
             ml_gate?: components["schemas"]["MLGateSettings"];
             ml_gate_performance?: components["schemas"]["MLGatePerformance"] | null;
             scoring?: components["schemas"]["ScoringSettings"];
+            seniority_gate?: components["schemas"]["SeniorityGateSettings"];
             sources?: components["schemas"]["SourcesConfig"];
         };
         /**
@@ -1763,6 +1826,7 @@ export interface components {
             llm?: components["schemas"]["LLMSettings"];
             ml_gate?: components["schemas"]["MLGateSettings"];
             scoring?: components["schemas"]["ScoringSettings"];
+            seniority_gate?: components["schemas"]["SeniorityGateSettings"];
             sources?: components["schemas"]["SourcesConfig"];
         };
         /**
@@ -2610,6 +2674,8 @@ export interface components {
             jobs_ml_gated: number;
             /** Jobs Scored */
             jobs_scored: number;
+            /** Jobs Seniority Filtered */
+            jobs_seniority_filtered: number;
             /** Jobs Updated */
             jobs_updated: number;
             /**
@@ -2625,6 +2691,19 @@ export interface components {
             progress_updated_at?: string | null;
             /** Run Id */
             run_id: string;
+            /** Scan Current Job Id */
+            scan_current_job_id?: string | null;
+            /** Scan Phase */
+            scan_phase?: string | null;
+            /**
+             * Scan Processed
+             * @default 0
+             */
+            scan_processed: number;
+            /** Scan Source */
+            scan_source?: string | null;
+            /** Scan Total */
+            scan_total?: number | null;
             /** Source */
             source: string;
             /**
@@ -2727,6 +2806,43 @@ export interface components {
             source: "linkedin_guest" | "indeed";
             /** Url */
             url: string;
+        };
+        /**
+         * SeniorityGateSettings
+         * @description Independent seniority gate applied after the SDE ML gate.
+         */
+        SeniorityGateSettings: {
+            /**
+             * Embedding Max Chars
+             * @default 2000
+             */
+            embedding_max_chars: number;
+            /**
+             * Embedding Model
+             * @default all-MiniLM-L6-v2
+             */
+            embedding_model: string;
+            /**
+             * Mode
+             * @default filter
+             * @enum {string}
+             */
+            mode: "off" | "shadow" | "filter";
+            /**
+             * Model Dir
+             * @default models/seniority_gate
+             */
+            model_dir: string;
+            /**
+             * Model Version
+             * @default v20260826T201223Z
+             */
+            model_version: string;
+            /**
+             * Out Of Scope Threshold
+             * @default 0.9210827946662903
+             */
+            out_of_scope_threshold: number;
         };
         /**
          * SourcesATSConfig
@@ -3090,6 +3206,12 @@ export interface components {
             /** Limit */
             limit?: number | null;
             /**
+             * Scope
+             * @default latest_scan
+             * @enum {string}
+             */
+            scope: "latest_scan" | "backlog";
+            /**
              * Stage
              * @default both
              * @enum {string}
@@ -3162,6 +3284,19 @@ export interface components {
             title: string;
             /** Url */
             url: string;
+        };
+        /**
+         * _StopResponse
+         * @description Response after a run is stopped.
+         */
+        _StopResponse: {
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @default failed
+             */
+            status: string;
         };
         /**
          * _TriggerResponse
@@ -4731,6 +4866,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_run_api_runs__run_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_TriggerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_run_api_runs__run_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_StopResponse"];
                 };
             };
             /** @description Validation Error */

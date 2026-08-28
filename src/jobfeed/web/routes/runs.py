@@ -54,6 +54,7 @@ class TriggerEvaluateRequest(BaseModel):
     """POST /api/runs/evaluate body."""
 
     stage: Literal["a", "b", "both"] = "both"
+    scope: Literal["latest_scan", "backlog"] = "latest_scan"
     corpus: str = "unrated"
     limit: int | None = None
 
@@ -65,6 +66,13 @@ class _TriggerResponse(BaseModel):
     status: str = "running"
 
 
+class _StopResponse(BaseModel):
+    """Response after a run is stopped."""
+
+    run_id: str
+    status: str = "failed"
+
+
 # ---------------------------------------------------------------------------
 # Read-only routes
 # ---------------------------------------------------------------------------
@@ -73,6 +81,7 @@ class _TriggerResponse(BaseModel):
 @router.get("/runs")
 async def list_runs(
     store: _Store,
+    run_manager: _Manager,
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
     offset: Annotated[int, Query(ge=0)] = 0,
     days: Annotated[int | None, Query(ge=1, le=_MAX_WINDOW_DAYS)] = None,
@@ -88,6 +97,7 @@ async def list_runs(
     Returns:
         Runs window plus the total count matching ``days``.
     """
+    await run_manager.recover_stale_runs()
     runs, total = await cast(StoreViewsMixin, store).list_pipeline_runs(
         limit=limit, offset=offset, days=days
     )
@@ -204,6 +214,7 @@ async def trigger_evaluate(
     try:
         run_id = await run_manager.trigger_evaluate(
             stage=body.stage,
+            scope=body.scope,
             corpus=body.corpus,
             limit=body.limit,
         )
@@ -214,6 +225,84 @@ async def trigger_evaluate(
         # other missing files (ML model, price table) stay 500s.
         raise ApiError(_HTTP_BAD_REQUEST, "resume_not_configured", str(exc)) from exc
     return _TriggerResponse(run_id=run_id)
+
+
+@router.post("/runs/{run_id}/stop")
+async def stop_run(
+    run_id: str,
+    run_manager: _Manager,
+    store: _Store,
+) -> _StopResponse:
+    """Stop a live run or clear a stale durable running row.
+
+    Args:
+        run_id: Pipeline run identity.
+        run_manager: Shared run manager.
+        store: Shared job store.
+
+    Returns:
+        Stopped run identity and terminal status.
+
+    Raises:
+        ApiError: When the run is unknown, terminal, or cannot be stopped.
+    """
+    run = await store.get_pipeline_run(run_id)
+    if run is None:
+        raise ApiError(_HTTP_NOT_FOUND, "not_found", f"run {run_id} not found")
+    if run.status != "running":
+        raise ApiError(_HTTP_CONFLICT, "run_not_running", "Run is not running")
+    if not await run_manager.stop_run(run_id):
+        raise ApiError(_HTTP_CONFLICT, "run_stop_failed", "Run could not be stopped")
+    return _StopResponse(run_id=run_id)
+
+
+@router.post("/runs/{run_id}/retry")
+async def retry_run(
+    run_id: str,
+    run_manager: _Manager,
+    store: _Store,
+) -> _TriggerResponse:
+    """Start a new run using the historical run's type and source.
+
+    Args:
+        run_id: Historical pipeline run identity.
+        run_manager: Shared run manager.
+        store: Shared job store.
+
+    Returns:
+        Newly triggered run identity and status.
+
+    Raises:
+        ApiError: When the source run is unknown, active, or cannot be retried.
+    """
+    run = await store.get_pipeline_run(run_id)
+    if run is None:
+        raise ApiError(_HTTP_NOT_FOUND, "not_found", f"run {run_id} not found")
+    if run.status == "running":
+        raise ApiError(
+            _HTTP_CONFLICT,
+            "run_still_running",
+            "Stop the run before retrying",
+        )
+    if run.source == "evaluate":
+        new_run_id = await run_manager.trigger_evaluate(
+            stage=run.evaluate_stage or "both",
+            scope="latest_scan",
+            corpus="unrated",
+            limit=None,
+        )
+        return _TriggerResponse(run_id=new_run_id)
+    source = {"scan": "all", "linkedin_guest": "linkedin-guest"}.get(
+        run.source, run.source
+    )
+    if source not in _KNOWN_SOURCES:
+        raise ApiError(
+            _HTTP_BAD_REQUEST,
+            "unknown_source",
+            f"source {source!r} cannot be retried",
+        )
+    new_run_id = await run_manager.trigger_scan(source)
+    return _TriggerResponse(run_id=new_run_id)
 
 
 # ---------------------------------------------------------------------------

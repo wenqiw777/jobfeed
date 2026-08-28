@@ -258,6 +258,25 @@ async def test_startup_recovery_only_clears_expired_occupied_leases(
     await lifecycle.close()
 
 
+async def test_stop_pipeline_run_fails_row_and_releases_live_lease(
+    tmp_path: Path,
+) -> None:
+    lifecycle, leases = await _open_capability(tmp_path)
+    running = _run(42)
+    assert await leases.start_run_with_lease(
+        running, kind="scan", owner_id=_OWNER_A, now=_NOW
+    )
+
+    stopped_at = _NOW + timedelta(seconds=1)
+    assert await leases.stop_pipeline_run(running.run_id, now=stopped_at)
+    assert await _run_state(lifecycle, running.run_id) == (
+        "failed",
+        sqlite_timestamp(stopped_at),
+    )
+    assert await _lease_owner(lifecycle, "scan") == (1, None, None)
+    await lifecycle.close()
+
+
 @pytest.mark.parametrize(
     ("kind", "owner", "now"),
     [

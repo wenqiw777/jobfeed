@@ -11,6 +11,7 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 
 import { type RunSummary, useRunNewJobSources } from "@/api/queries";
+import { RunActionButton } from "@/components/runs/RunActionButton";
 import { formatLocalDateTime } from "@/lib/dates";
 import { useDensity } from "@/lib/density";
 
@@ -21,6 +22,7 @@ type CounterKey = Extract<
   | "jobs_updated"
   | "jobs_filtered"
   | "jobs_ml_gated"
+  | "jobs_seniority_filtered"
   | "jobs_scored"
   | "stage_a_scored"
   | "stage_b_scored"
@@ -37,12 +39,17 @@ const FULL_COUNTERS: {
   { key: "jobs_updated", label: "updated", color: "grey" },
   {
     key: "jobs_filtered",
-    label: "excluded by job filters",
+    label: "excluded by job rules",
     color: "severity-neutral",
   },
   {
     key: "jobs_ml_gated",
-    label: "excluded by local filter",
+    label: "excluded by SDE role filter",
+    color: "severity-neutral",
+  },
+  {
+    key: "jobs_seniority_filtered",
+    label: "excluded by seniority filter",
     color: "severity-neutral",
   },
   { key: "jobs_scored", label: "evaluated", color: "severity-low" },
@@ -121,6 +128,21 @@ export function RunHistoryTable(props: RunHistoryTableProps) {
             id: "cost",
             header: "Cost",
             cell: (run) => run.total_llm_cost_usd > 0 ? formatCost(run.total_llm_cost_usd) : "—",
+          },
+          {
+            id: "actions",
+            header: "Actions",
+            width: 120,
+            cell: (run) => {
+              const isRunning = run.status === "running" && run.finished_at === null;
+              if (isRunning) {
+                return <RunActionButton runId={run.run_id} isRunning />;
+              }
+              if (run.status === "failed") {
+                return <RunActionButton runId={run.run_id} isRunning={false} />;
+              }
+              return null;
+            },
           },
         ]}
         pagination={

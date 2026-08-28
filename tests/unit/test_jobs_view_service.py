@@ -209,6 +209,21 @@ async def test_fast_triage_page_reads_only_a_small_candidate_window() -> None:
     assert store.twin_calls == []
 
 
+async def test_exact_triage_skips_unused_store_total_but_keeps_tab_counts() -> None:
+    """Post-processing owns the exact total, so SQL must not calculate it again."""
+    store = _RecordingStore(rows=[_row("1"), _row("2")])
+
+    page = await _service(store).list_jobs(
+        JobsViewQuery(tab="queue", require_verdict=True),
+        dedupe=True,
+    )
+
+    sent = store.queries[0]
+    assert sent.include_counts is True
+    assert sent.include_total is False
+    assert page.total == 1
+
+
 async def test_dedupe_pulls_inflight_twins_and_suppresses_their_clusters() -> None:
     """The fold asks the store for in-flight twins of the corpus keys; a
     cluster whose winner is in-flight (out of corpus) drops off the page.

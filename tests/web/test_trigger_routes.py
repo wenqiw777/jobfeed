@@ -55,6 +55,7 @@ class FakeRunManager:
         self._active: list[ActiveRun] = []
         self.scan_calls: list[object] = []
         self.eval_calls: list[dict[str, object]] = []
+        self.stop_calls: list[str] = []
 
     async def trigger_scan(self, source_name_or_specs: object) -> str:
         """Record the call and return a run id, or raise on conflict/config."""
@@ -86,6 +87,11 @@ class FakeRunManager:
         """No-op recovery."""
         return 0
 
+    async def stop_run(self, run_id: str) -> bool:
+        """Record a requested stop."""
+        self.stop_calls.append(run_id)
+        return True
+
 
 class RunSourcesFakeStore(FakeStore):
     """Store fake exposing one historical scan and its source counts."""
@@ -101,6 +107,17 @@ class RunSourcesFakeStore(FakeStore):
     async def get_new_job_source_counts(self, run_id: str) -> dict[str, int]:
         """Return exact configured-source counts for the known run."""
         return {"ats": 124, "indeed": 320} if run_id == self.run.run_id else {}
+
+
+class RunControlFakeStore(FakeStore):
+    """Store fake exposing one controllable historical run."""
+
+    def __init__(self, run: PipelineRun) -> None:
+        super().__init__()
+        self.run = run
+
+    async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
+        return self.run if run_id == self.run.run_id else None
 
 
 def _build_app(
@@ -177,6 +194,38 @@ async def test_trigger_scan_conflict_returns_409() -> None:
 
     assert resp.status_code == HTTP_CONFLICT
     assert resp.json()["error"]["code"] == "scan_already_running"
+
+
+async def test_stop_running_history_row() -> None:
+    run = _make_run("stale-run", source="all")
+    store = RunControlFakeStore(run)
+    app = build_web_app(fake_context(store))
+    manager = FakeRunManager()
+    app.state.run_manager = manager
+
+    async with open_client(app) as client:
+        response = await client.post("/api/runs/stale-run/stop", json={})
+
+    assert response.status_code == HTTP_OK
+    assert response.json() == {"run_id": "stale-run", "status": "failed"}
+    assert manager.stop_calls == ["stale-run"]
+
+
+async def test_retry_failed_scan_uses_original_source() -> None:
+    run = _make_run("failed-run", source="all")
+    run.status = "failed"
+    run.finished_at = datetime.now(UTC)
+    store = RunControlFakeStore(run)
+    app = build_web_app(fake_context(store))
+    manager = FakeRunManager()
+    app.state.run_manager = manager
+
+    async with open_client(app) as client:
+        response = await client.post("/api/runs/failed-run/retry", json={})
+
+    assert response.status_code == HTTP_OK
+    assert response.json() == {"run_id": "run-scan-1", "status": "running"}
+    assert manager.scan_calls == ["all"]
 
 
 # ---------------------------------------------------------------------------

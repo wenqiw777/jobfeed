@@ -64,6 +64,7 @@ class EvaluateService:
         limit: int | None = None,
         max_days: int | None = None,
         dry_run: bool = False,
+        job_ids: list[str] | None = None,
         on_progress: Callable[[PipelineRun], None] | None = None,
         run: PipelineRun | None = None,
         lease_session: RunLeaseSession | None = None,
@@ -84,7 +85,7 @@ class EvaluateService:
             if run is None:
                 run = self._run_orchestrator.new_unpersisted_run("evaluate")
             bind_run_id(run.run_id)
-            request = DryRunRequest(self._logger, stage, corpus, lim, max_days)
+            request = DryRunRequest(self._logger, stage, corpus, lim, max_days, job_ids)
             await build_dry_run_preview(self._deps, self._config, run, request)
             run.jobs_scored = run.stage_a_scored + run.stage_b_scored
             self._run_orchestrator.finish_unpersisted(run, "succeeded")
@@ -103,6 +104,7 @@ class EvaluateService:
                     corpus=corpus,
                     limit=lim,
                     max_days=max_days,
+                    job_ids=job_ids,
                     on_progress=on_progress,
                 ),
             )
@@ -115,6 +117,7 @@ class EvaluateService:
             corpus=corpus,
             limit=lim,
             max_days=max_days,
+            job_ids=job_ids,
             on_progress=on_progress,
         )
         return lease_session.run
@@ -127,6 +130,7 @@ class EvaluateService:
         corpus: str,
         limit: int,
         max_days: int | None,
+        job_ids: list[str] | None,
         on_progress: Callable[[PipelineRun], None] | None,
     ) -> None:
         """Execute evaluation work under an already-started fencing token."""
@@ -140,10 +144,19 @@ class EvaluateService:
         await run_auto_decay(self._deps, self._config, self._logger)
         lease_session.ensure_active()
         if stage != "b":
-            await self._run_stage_a(run, corpus, limit, max_days, lease_session)
+            await self._run_stage_a(
+                run, corpus, limit, max_days, job_ids, lease_session
+            )
         if stage != "a":
             async with self._st(run.run_id, "stage", "stage_b"):
-                await _run_stage_b(self, run, limit, max_days, lease_session)
+                await _run_stage_b(
+                    self,
+                    run,
+                    limit,
+                    max_days,
+                    lease_session,
+                    job_ids=job_ids,
+                )
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
         run.progress_stage = "finalizing"
         self._emit_progress(run)
@@ -156,12 +169,13 @@ class EvaluateService:
     def _st(self, run_id: str, step_type: str, step_name: str) -> StepTimer:
         return StepTimer(self._perf, run_id, step_type, step_name, self._tracer)
 
-    async def _run_stage_a(
+    async def _run_stage_a(  # noqa: PLR0913 - scoped funnel inputs plus lease
         self,
         run: PipelineRun,
         corpus: str,
         limit: int,
         max_days: int | None,
+        job_ids: list[str] | None,
         lease_session: RunLeaseSession,
     ) -> None:
         if limit <= 0:
@@ -180,6 +194,7 @@ class EvaluateService:
                 run,
                 corpus,
                 max_days,
+                job_ids=job_ids,
                 logger=self._logger,
                 dry_run=False,
                 on_progress=lambda: self._emit_progress(run),

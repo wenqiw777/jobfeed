@@ -38,6 +38,7 @@ def _pipeline_run_from_row(row: aiosqlite.Row) -> PipelineRun:
         jobs_updated=int(row["jobs_updated"]),
         jobs_filtered=int(row["jobs_filtered"]),
         jobs_ml_gated=int(row["jobs_ml_gated"]),
+        jobs_seniority_filtered=int(row["jobs_seniority_filtered"]),
         jobs_gate_passed=int(row["jobs_gate_passed"]),
         stage_a_scored=int(row["stage_a_scored"]),
         stage_b_scored=int(row["stage_b_scored"]),

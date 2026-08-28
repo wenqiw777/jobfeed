@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from jobfeed.adapters.store._sqlite_capability_support import _fetch_row, _fetch_rows
+from jobfeed.adapters.store._sqlite_capability_support import (
+    _fetch_row,
+    _fetch_rows,
+    _placeholders,
+)
 from jobfeed.adapters.store._sqlite_values import _datetime_from_text, _utc_text
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.domain.ml_features import classify_role_type
@@ -38,7 +42,7 @@ async def _record_enrichment(  # noqa: PLR0913
                 enrich_source=?,jd_lang=?,enrich_error=NULL,closed_at=NULL,
                 posted_at=COALESCE(posted_at,?),ml_gate_score=NULL,
                 ml_gate_result=NULL,ml_gate_fail_reason=NULL,ml_gate_at=NULL,
-                ml_gate_version=NULL,role_type=? WHERE id=?""",
+                ml_gate_version=NULL,hard_filter=NULL,role_type=? WHERE id=?""",
             (
                 jd_text,
                 jd_quality,
@@ -57,14 +61,24 @@ async def _list_unenriched_jobs(
     *,
     platform: str,
     limit: int,
+    job_ids: list[str] | None = None,
 ) -> list[UnenrichedJob]:
+    numeric_ids = None if job_ids is None else tuple(int(value) for value in job_ids)
+    if numeric_ids == ():
+        return []
+    conditions = ["platform=?", "jd_text IS NULL", "closed_at IS NULL"]
+    params: list[object] = [platform]
+    if numeric_ids is not None:
+        conditions.append(f"id IN ({_placeholders(numeric_ids)})")
+        params.extend(numeric_ids)
+    params.append(limit)
     async with lifecycle.connection() as connection:
         rows = await _fetch_rows(
             connection,
-            "SELECT id,canonical_id,url FROM jobs WHERE platform=? "
-            "AND jd_text IS NULL AND closed_at IS NULL "
-            "ORDER BY discovered_at DESC,id DESC LIMIT ?",
-            (platform, limit),
+            "SELECT id,canonical_id,url FROM jobs WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY discovered_at DESC,id DESC LIMIT ?",
+            params,
         )
     return [
         UnenrichedJob(

@@ -134,6 +134,21 @@ async def _save_ml_gate_result(
         )
 
 
+async def _save_hard_filters(
+    lifecycle: SqliteLifecycle,
+    reasons: dict[str, str],
+) -> None:
+    """Persist one deterministic exclusion reason per numeric job id."""
+    rows = [(reason, int(job_id)) for job_id, reason in reasons.items()]
+    if not rows:
+        return
+    async with lifecycle.connection() as connection:
+        await connection.executemany(
+            "UPDATE jobs SET hard_filter=? WHERE id=?",
+            rows,
+        )
+
+
 def _job_values(job: JobPosting) -> tuple[object, ...]:
     return (
         job.platform,
@@ -192,6 +207,15 @@ async def _update_job(
         else existing["enrich_source"]
     )
     gate_changed = job.title != existing["title"] or jd_text != existing["jd_text"]
+    hard_filter_input_changed = (
+        job.company != existing["company"]
+        or job.location != existing["location"]
+        or (_time(job.posted_at) or existing["posted_at"]) != existing["posted_at"]
+        or (
+            job.posted_at is None
+            and _utc_text(job.discovered_at) != existing["discovered_at"]
+        )
+    )
     role_type = classify_role_type(job.title, jd_text or "")
     closed_at = (
         None
@@ -213,12 +237,14 @@ async def _update_job(
         if gate_changed
         else ""
     )
+    hard_filter_sql = ", hard_filter=NULL" if hard_filter_input_changed else ""
     await connection.execute(
         """UPDATE jobs SET url=?, title=?, company=?, location=?, jd_text=?,
             jd_quality=?, posted_at=?, discovered_at=?, enriched_at=?, enrich_source=?,
             company_norm=?, title_norm=?, location_norm=?, closed_at=?,
             enrich_error=?, role_type=?"""
         + gate_sql
+        + hard_filter_sql
         + " WHERE id=?",
         (
             job.url,

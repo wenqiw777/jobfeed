@@ -174,6 +174,30 @@ class _SqliteRunLeases:
                 await _recover_lease(connection, row, now_text)
         return len(rows)
 
+    async def stop_pipeline_run(self, run_id: str, *, now: datetime) -> bool:
+        """Atomically fail one running row and clear its matching lease."""
+        now_text = _require_utc_timestamp(now)
+        async with (
+            self._lifecycle.connection() as connection,
+            _immediate_transaction(connection),
+        ):
+            cursor = await connection.execute(
+                """UPDATE pipeline_runs SET status='failed', finished_at=?
+                   WHERE run_id=? AND status='running'""",
+                (now_text, run_id),
+            )
+            stopped = cursor.rowcount == 1
+            await cursor.close()
+            if not stopped:
+                return False
+            await connection.execute(
+                """UPDATE run_leases SET owner_id=NULL, run_id=NULL,
+                       heartbeat_at=NULL, expires_at=NULL
+                   WHERE run_id=?""",
+                (run_id,),
+            )
+        return True
+
     async def _after_start_lease_mutation(
         self,
         connection: aiosqlite.Connection,

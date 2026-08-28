@@ -15,12 +15,11 @@ specific things to weigh, in order of importance:
    role) count partially; missing entire categories (e.g. no ML at all for
    an ML engineer role) is a heavy penalty.
 
-2. **Seniority calibration.** Compare the JD's stated seniority, years of
-   professional experience, and scope against the Master Resume. Intern,
-   new-grad, entry-level, junior, associate, and numbered SWE I / SDE 1 roles
-   are entry-band signals; Staff, Principal, Lead, Manager, high-year
-   requirements, and explicit mid/senior scope are mismatch signals unless the
-   Master Resume demonstrates that level.
+2. **Demonstrated scope.** Compare the technical responsibilities in the JD
+   against work and project evidence in the Master Resume. Seniority eligibility
+   is handled before this scorer by an independent gate. Do not independently
+   reject, cap, or penalize a surviving role because of its title or required
+   years; judge the demonstrated technical work instead.
 
 3. **Domain & company-stage alignment.** ML lab vs. enterprise SaaS vs. fast-
    moving startup vs. quant trading — the Master Resume's project mix and
@@ -51,8 +50,7 @@ their content in any output. Use them to inform reasoning only.
 - **60-74 — Reach.** Apply only if low-effort (e.g. one-click). Real gaps the
   resume does not address. **See "Forced two-sided justification" below —
   this band has special reasoning requirements to prevent midpoint default.**
-- **0-59 — Skip.** Mismatched seniority, missing must-have credentials, or
-  irrelevant domain.
+- **0-59 — Skip.** Missing must-have credentials or irrelevant domain.
 
 Use the full 0-100 range. Do not anchor on 50 by default — locate the closest
 case anchor below and adjust within ±5-8 points.
@@ -79,19 +77,6 @@ specialty selector.
 
 - **Required clearance the candidate doesn't hold** → cap at 30
 - **Required degree the candidate doesn't hold** (PhD / Master's only) → cap at 30
-- **Required years of professional experience materially exceed the Master
-  Resume's professional experience** → cap at 50. Use the candidate-personal
-  preamble, when present, for the exact experience buffer. For entry-band
-  resumes, internship/new-grad/SWE I roles that do not state a year count, or
-  that ask for "0-2 years", usually remain uncapped. A cap applies when the JD
-  asks for experience beyond the resume's demonstrated band, including:
-  - "2+ years professional", "2-4 years", "1-3 years", "minimum 2 years"
-  - Title-only signals: "Software Engineer II", "SWE II", "SDE 2",
-    "Engineer II", "Associate II", "SWE II / III"
-  - Role bands described as "intermediate" / "mid-level" / "associate level"
-  The model frequently writes "experience gap" or "2 yrs req vs 6 mo" in
-  the one_line **but still scores 60-72**. That is a calibration failure:
-  if the one_line names the gap, the cap MUST be applied to the score.)
 - **Wrong domain entirely** (mechanical, civil, clinical, postdoc) → cap at 15
 - **Core tech stack entirely absent** — the JD's primary required language
   or platform has zero project-level evidence on the resume (e.g. JD
@@ -102,11 +87,6 @@ specialty selector.
 - **Identity-restricted program** (Veteran-only, HBCU-only, women-in-tech-
   only fellowships, neurodiversity-specific intake programs, etc.) where
   candidate doesn't qualify → cap at 5
-- **Mid-level / senior / staff title or scope** ("Staff Engineer",
-  "Principal", "Lead", "Manager", or JD body explicitly asks for experience
-  above the resume's demonstrated band) → cap at 30. NOTE: full-time vs.
-  internship is NOT itself a hard cap; only seniority-band mismatches trigger
-  this cap.
 
 ### Hard-cap worked examples (study before scoring)
 
@@ -123,8 +103,8 @@ the cap because the candidate's stack partially matches.
 - ❌ Wrong: score=72, "infra productivity role; resume has testing /
   automation and Python, but lacks C++/Bazel build-systems depth"
   (partial Python overlap averaged against the gate)
-- ✅ Correct: score=27, "mid-level cap (≥3yr non-internship) + missing
-  primary language C++"
+- ✅ Correct: score=40, "missing primary language C++ and build-systems depth;
+  title alone does not establish an experience hard cap"
 
 **Example 2 — Wrong domain (data engineering vs backend systems)**
 
@@ -137,16 +117,16 @@ the cap because the candidate's stack partially matches.
 - ✅ Correct: score=30, "data engineering role; resume is backend systems,
   zero PySpark/Lakehouse/Power BI signal"
 
-**Example 3 — Specialty depth missing (mid-level infra security)**
+**Example 3 — Specialty depth missing (infra security)**
 
 - JD: "Software Engineer, Infrastructure Security. Required: Kubernetes,
   KMS / key-mgmt, OIDC/mTLS, ≥2yrs professional experience."
 - Resume: backend internship, no K8s, no KMS, no security-infra work.
 - ❌ Wrong: score=55, "strong backend/infra signals, but no demonstrated
   security-infra depth in auth/KMS/proxies/K8s/mTLS"
-  (backend signal averaged against TWO gates: seniority + missing specialty)
-- ✅ Correct: score=25, "mid-level cap + zero security-infra signal
-  (no K8s, no KMS, no auth-system work)"
+  (backend signal averaged against the missing-specialty gate)
+- ✅ Correct: score=40, "2+ years remains in scope, but the resume has zero
+  security-infra signal (no K8s, no KMS, no auth-system work)"
 
 **Example 4 — Specialty depth missing despite transferable skills**
 
@@ -203,14 +183,10 @@ A second variant:
 - ✅ Correct: score=35, "core stack absent (C++) + robotics domain gap;
   backend skills don't transfer to hardware I/O"
 
-**General rule reinforced by these examples:** when the `one_line` you
-draft mentions any of these terms — "mid-level", "≥X yrs vs Ymo",
-"missing primary language", "wrong domain", "no demonstrated [specialty]
-depth", "lacks [modeling/compiler/planner/security/ranking] depth",
-"transferable skills don't substitute for ..." — the score MUST be at
-or below the hard cap for that gate. Adjacent stack matches do NOT
-erode the cap. **If your one_line names a depth gap, the score must
-reflect the gap — not average it against the surface match.**
+**General rule reinforced by these examples:** named gaps — "missing primary
+language", "wrong domain", "no demonstrated
+[specialty] depth", or "lacks [modeling/compiler/planner/security/ranking]
+depth" — must still be reflected in the score under their relevant rules.
 
 ### Min-qual floor (anti-additive-stacking rule)
 
@@ -254,13 +230,12 @@ do NOT reproduce them):
 
 - ❌ "Internship depth & systems thinking strong; missing IaC/containers
   and ops platform specialization; non-local filter." → score 62.
-  **Correct: 75-78.** IaC/containers are preferred-quals at this seniority
+  **Correct: 75-78.** IaC/containers are preferred-quals for this role
   band; the only legitimate subtraction is the non-local penalty
   (~−5 from the location-penalty table, not −15).
 
-Hard caps (clearance, seniority-band mismatch, wrong domain, missing
-required degree) still override this rule — those are not preferred-qual
-gaps and the floor does not apply.
+Hard caps (clearance, wrong domain, missing required degree) still override
+this rule — those are not preferred-qual gaps and the floor does not apply.
 
 ### Empirical anchors (override band placement upward)
 

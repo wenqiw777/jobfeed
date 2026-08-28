@@ -104,8 +104,9 @@ async def _funnel(
     )
     return await _dict_rows(
         connection,
-        f"SELECT run_id, jobs_filtered+jobs_ml_gated+({greatest_stage}) "
-        f"total_candidates, jobs_ml_gated+({greatest_stage}) after_filter, "
+        f"SELECT run_id, jobs_filtered+jobs_ml_gated+jobs_seniority_filtered+"
+        f"({greatest_stage}) total_candidates, jobs_ml_gated+"
+        f"jobs_seniority_filtered+({greatest_stage}) after_filter, "
         f"({greatest_stage}) after_gate, ({greatest_scored}) scored "
         "FROM pipeline_runs WHERE source='evaluate' AND started_at >= ? "
         "ORDER BY started_at DESC, run_id DESC",

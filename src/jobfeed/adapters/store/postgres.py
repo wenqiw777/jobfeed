@@ -657,6 +657,7 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         jobs_updated=r["jobs_updated"],
         jobs_filtered=r["jobs_filtered"],
         jobs_ml_gated=r["jobs_ml_gated"],
+        jobs_seniority_filtered=r["jobs_seniority_filtered"],
         jobs_gate_passed=r["jobs_gate_passed"],
         stage_a_scored=r["stage_a_scored"],
         stage_b_scored=r["stage_b_scored"],
@@ -1135,6 +1136,7 @@ def _stage_a_pending_filters(
     # predicate is shared, so it covers load_gate_candidates AND every claim
     # path (claim_pending_stage_a, claim_stage_a_by_ids).
     conditions.append("jobs.closed_at IS NULL")
+    conditions.append("COALESCE(jobs.hard_filter, '') = ''")
     if quality_bands:
         params.append(sorted(quality_bands))
         conditions.append(f"jobs.jd_quality = ANY(${len(params)})")
@@ -1466,6 +1468,7 @@ def _build_gate_candidates_query(
     exclude_gate_failed: bool,
     now: datetime,
     after: tuple[datetime, int] | None = None,
+    job_ids: list[int] | None = None,
 ) -> tuple[str, list[Any]]:
     """Build the NON-claiming ML-gate candidate query.
 
@@ -1528,6 +1531,12 @@ def _build_gate_candidates_query(
     params.append(now - _PG_EVALUATION_CLAIM_TTL)
     stale_ref = f"${len(params)}"
     conditions.append(_stage_a_claim_status_condition(corpus, stale_ref))
+    if job_ids is not None:
+        if job_ids:
+            params.append(job_ids)
+            conditions.append(f"jobs.id = ANY(${len(params)})")
+        else:
+            conditions.append("FALSE")
     if after is not None:
         cursor_ts, cursor_id = after
         params.append(cursor_ts)
@@ -1599,6 +1608,7 @@ def _build_claim_stage_b_query(
     max_days: int | None,
     stage_a_threshold: int | None,
     now: datetime,
+    job_ids: list[int] | None = None,
 ) -> tuple[str, list[Any]]:
     """Build the Stage B atomic claim query."""
     conditions = [
@@ -1612,6 +1622,12 @@ def _build_claim_stage_b_query(
     if stage_a_threshold is not None:
         params.append(stage_a_threshold)
         conditions.append(f"evaluations.stage_a_score >= ${len(params)}")
+    if job_ids is not None:
+        if job_ids:
+            params.append(job_ids)
+            conditions.append(f"jobs.id = ANY(${len(params)})")
+        else:
+            conditions.append("FALSE")
     params.append(now - _PG_EVALUATION_CLAIM_TTL)
     stale_ref = f"${len(params)}"
     stage_b_claim_condition = (
@@ -2324,6 +2340,14 @@ class PostgresStore:
                                         ELSE COALESCE(jobs.closed_at, EXCLUDED.closed_at) END,
                        enrich_error = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
                                            ELSE COALESCE(EXCLUDED.enrich_error, jobs.enrich_error) END,
+                       hard_filter = CASE
+                           WHEN jobs.company IS DISTINCT FROM EXCLUDED.company
+                             OR jobs.location IS DISTINCT FROM EXCLUDED.location
+                             OR (EXCLUDED.posted_at IS NOT NULL
+                                 AND jobs.posted_at IS DISTINCT FROM EXCLUDED.posted_at)
+                             OR (EXCLUDED.posted_at IS NULL
+                                 AND jobs.discovered_at IS DISTINCT FROM EXCLUDED.discovered_at)
+                           THEN NULL ELSE jobs.hard_filter END,
                        -- Reset the stale ML-gate verdict iff a gate INPUT
                        -- feature (title, or the JD that actually WINS this
                        -- upsert) changed. A stale 'fail' is excluded forever
@@ -2363,6 +2387,21 @@ class PostgresStore:
                 job_id=str(row["id"]),
                 inserted=inserted,
                 updated=not inserted,
+            )
+
+    async def save_hard_filters(self, reasons: dict[str, str]) -> None:
+        """Persist deterministic hard-filter reasons in one transaction.
+
+        Args:
+            reasons: Store job IDs mapped to exclusion reasons.
+        """
+        rows = [(int(job_id), reason) for job_id, reason in reasons.items()]
+        if not rows:
+            return
+        async with self._get_pool().acquire() as conn, conn.transaction():
+            await conn.executemany(
+                "UPDATE jobs SET hard_filter=$2 WHERE id=$1",
+                rows,
             )
 
     async def get_job(self, job_id: str) -> JobPosting | None:
@@ -2848,6 +2887,7 @@ class PostgresStore:
         limit: int = 100,
         exclude_gate_failed: bool = True,
         after: tuple[datetime, int] | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[GateCandidate]:
         """Load ML-gate candidates pending Stage A (NON-claiming read).
 
@@ -2886,6 +2926,7 @@ class PostgresStore:
             exclude_gate_failed=exclude_gate_failed,
             now=datetime.now(UTC),
             after=after,
+            job_ids=None if job_ids is None else _numeric_job_ids(job_ids),
         )
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -2969,6 +3010,7 @@ class PostgresStore:
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[JobPosting]:
         """Atomically claim jobs pending Stage B evaluation.
 
@@ -2985,6 +3027,7 @@ class PostgresStore:
             max_days=max_days,
             stage_a_threshold=stage_a_threshold,
             now=datetime.now(UTC),
+            job_ids=None if job_ids is None else _numeric_job_ids(job_ids),
         )
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -3236,18 +3279,26 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(rows_sql, *params, query.limit, query.offset)
-            total = await self._count(
-                conn,
-                f"SELECT COUNT(*) {_JOBS_VIEW_FROM} WHERE {where}",
-                *params,
-            )
-            counts_row = await conn.fetchrow(
-                _jobs_view_counts_sql(shared_where), *params
-            )
+            total = len(rows)
+            if query.include_total:
+                total = await self._count(
+                    conn,
+                    f"SELECT COUNT(*) {_JOBS_VIEW_FROM} WHERE {where}",
+                    *params,
+                )
+            counts_row = None
+            if query.include_counts:
+                counts_row = await conn.fetchrow(
+                    _jobs_view_counts_sql(shared_where), *params
+                )
         return JobsViewPage(
             rows=[_jobs_view_row_from_record(r) for r in rows],
             total=total,
-            tab_counts={tab: int(counts_row[tab]) for tab in VALID_TABS},
+            tab_counts=(
+                {tab: int(counts_row[tab]) for tab in VALID_TABS}
+                if counts_row is not None
+                else {}
+            ),
         )
 
     async def list_twin_rows_by_status(
@@ -3392,11 +3443,11 @@ class PostgresStore:
                 """INSERT INTO pipeline_runs (
                        run_id, started_at, source, status, jobs_discovered,
                        jobs_inserted, jobs_updated, jobs_filtered,
-                       jobs_ml_gated, jobs_gate_passed, stage_a_scored,
-                       stage_b_scored, jobs_scored, total_llm_cost_usd,
-                       errors, finished_at
+                       jobs_ml_gated, jobs_seniority_filtered,
+                       jobs_gate_passed, stage_a_scored, stage_b_scored,
+                       jobs_scored, total_llm_cost_usd, errors, finished_at
                    ) VALUES (
-                       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
+                       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
                    )""",
                 run.run_id,
                 run.started_at,
@@ -3407,6 +3458,7 @@ class PostgresStore:
                 run.jobs_updated,
                 run.jobs_filtered,
                 run.jobs_ml_gated,
+                run.jobs_seniority_filtered,
                 run.jobs_gate_passed,
                 run.stage_a_scored,
                 run.stage_b_scored,
@@ -3521,11 +3573,11 @@ class PostgresStore:
                    SET status = $1, finished_at = $2,
                        jobs_discovered = $3, jobs_inserted = $4,
                        jobs_updated = $5, jobs_filtered = $6,
-                       jobs_ml_gated = $7, jobs_gate_passed = $8,
-                       stage_a_scored = $9, stage_b_scored = $10,
-                       jobs_scored = $11, total_llm_cost_usd = $12,
-                       errors = $13
-                   WHERE run_id = $14""",
+                       jobs_ml_gated = $7, jobs_seniority_filtered = $8,
+                       jobs_gate_passed = $9, stage_a_scored = $10,
+                       stage_b_scored = $11, jobs_scored = $12,
+                       total_llm_cost_usd = $13, errors = $14
+                   WHERE run_id = $15""",
                 run.status,
                 run.finished_at,
                 run.jobs_discovered,
@@ -3533,6 +3585,7 @@ class PostgresStore:
                 run.jobs_updated,
                 run.jobs_filtered,
                 run.jobs_ml_gated,
+                run.jobs_seniority_filtered,
                 run.jobs_gate_passed,
                 run.stage_a_scored,
                 run.stage_b_scored,
@@ -3779,11 +3832,11 @@ class PostgresStore:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """SELECT run_id,
-                          jobs_filtered + jobs_ml_gated
+                          jobs_filtered + jobs_ml_gated + jobs_seniority_filtered
                               + GREATEST(jobs_gate_passed, stage_a_scored,
                                          stage_b_scored)
                               AS total_candidates,
-                          jobs_ml_gated
+                          jobs_ml_gated + jobs_seniority_filtered
                               + GREATEST(jobs_gate_passed, stage_a_scored,
                                          stage_b_scored)
                               AS after_filter,
@@ -5538,7 +5591,7 @@ class PostgresStore:
                        -- and save_job's input-change reset).
                        ml_gate_score = NULL, ml_gate_result = NULL,
                        ml_gate_fail_reason = NULL, ml_gate_at = NULL,
-                       ml_gate_version = NULL
+                       ml_gate_version = NULL, hard_filter = NULL
                    WHERE id = $6""",
                 jd_text,
                 jd_quality,
@@ -5554,6 +5607,7 @@ class PostgresStore:
         *,
         platform: str,
         limit: int,
+        job_ids: list[str] | None = None,
     ) -> list[UnenrichedJob]:
         """List open jobs on a platform that still have no JD text.
 
@@ -5565,6 +5619,9 @@ class PostgresStore:
             Rows with jd_text IS NULL and closed_at IS NULL, newest
             discovered_at first (id breaks ties). Empty when none match.
         """
+        numeric_ids = None if job_ids is None else _numeric_job_ids(job_ids)
+        if numeric_ids == []:
+            return []
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -5572,10 +5629,12 @@ class PostgresStore:
                    WHERE platform = $1
                      AND jd_text IS NULL
                      AND closed_at IS NULL
+                     AND ($3::bigint[] IS NULL OR id = ANY($3))
                    ORDER BY discovered_at DESC, id DESC
                    LIMIT $2""",
                 platform,
                 limit,
+                numeric_ids,
             )
         return [
             UnenrichedJob(

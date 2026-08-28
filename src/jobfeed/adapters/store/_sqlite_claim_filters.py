@@ -26,7 +26,7 @@ class StageAQuery:
     quality_bands: frozenset[str] | None = None
     corpus: str = "unrated"
     max_days: int | None = None
-    job_ids: tuple[int, ...] = ()
+    job_ids: tuple[int, ...] | None = None
     exclude_gate_failed: bool = False
     after: tuple[datetime, int] | None = None
     is_gate_query: bool = False
@@ -40,6 +40,7 @@ class StageBQuery:
     limit: int = 100
     max_days: int | None = None
     stage_a_threshold: int | None = None
+    job_ids: tuple[int, ...] | None = None
 
 
 def _build_stage_a_select(query: StageAQuery) -> tuple[str, list[object]]:
@@ -48,15 +49,19 @@ def _build_stage_a_select(query: StageAQuery) -> tuple[str, list[object]]:
     params: list[object] = []
     conditions = [
         "j.closed_at IS NULL",
+        "COALESCE(j.hard_filter,'')=''",
         "(e.stage_a_status IS NOT 'error' "
         f"OR e.stage_a_error_count < {MAX_STAGE_RETRIES})",
     ]
     cutoff = _require_utc_timestamp(query.now - _CLAIM_TTL, "now")
     conditions.append(_stage_a_status(query.corpus, cutoff, params))
     _append_common_filters(query, conditions, params)
-    if query.job_ids:
-        conditions.append(f"j.id IN ({_placeholders(query.job_ids)})")
-        params.extend(query.job_ids)
+    if query.job_ids is not None:
+        if query.job_ids:
+            conditions.append(f"j.id IN ({_placeholders(query.job_ids)})")
+            params.extend(query.job_ids)
+        else:
+            conditions.append("FALSE")
     if query.is_gate_query:
         _append_gate_filters(query, conditions, params)
     params.append(query.limit)
@@ -86,6 +91,12 @@ def _build_stage_b_select(query: StageBQuery) -> tuple[str, list[object]]:
     if query.stage_a_threshold is not None:
         conditions.append("e.stage_a_score>=?")
         params.append(query.stage_a_threshold)
+    if query.job_ids is not None:
+        if query.job_ids:
+            conditions.append(f"j.id IN ({_placeholders(query.job_ids)})")
+            params.extend(query.job_ids)
+        else:
+            conditions.append("FALSE")
     conditions.append(
         "(e.stage_b_status IS NULL OR e.stage_b_status='error' OR "
         "(e.stage_b_status='in_progress' AND e.updated_at<? "

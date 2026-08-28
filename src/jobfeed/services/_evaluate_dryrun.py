@@ -32,6 +32,7 @@ class DryRunRequest:
     corpus: str
     limit: int
     max_days: int | None
+    job_ids: list[str] | None = None
 
 
 async def build_dry_run_preview(
@@ -71,6 +72,7 @@ async def build_dry_run_preview(
             run,
             request.corpus,
             request.max_days,
+            job_ids=request.job_ids,
             logger=request.logger,
             dry_run=True,
             limit=request.limit,

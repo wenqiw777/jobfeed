@@ -249,6 +249,13 @@ class FakeStore:
             result: Gate decision.
         """
 
+    async def save_hard_filters(self, reasons: dict[str, str]) -> None:
+        """Persist deterministic hard-filter reasons.
+
+        Args:
+            reasons: Store job IDs mapped to exclusion reasons.
+        """
+
     async def transition_status(self, request: TransitionRequest) -> str:
         """Transition job status.
 
@@ -407,6 +414,7 @@ def test_job_store_protocol_has_required_async_methods() -> None:
         "get_evaluation",
         "top_evaluated_jobs",
         "save_ml_gate_result",
+        "save_hard_filters",
         "get_pipeline_run",
         "connect",
         "close",

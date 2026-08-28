@@ -35,7 +35,7 @@ async def test_snapshot_gates_and_streams_exact_v1_source(tmp_path: Path) -> Non
         assert snapshot.source.journal_mode == "delete"
         assert snapshot.source.has_wal is False
         assert snapshot.manifest.manifest_version == 1
-        assert snapshot.manifest.schema_registry["alembic_revision"] == "0008"
+        assert snapshot.manifest.schema_registry["alembic_revision"] == "0009"
         assert tuple(item.table_name for item in snapshot.table_metrics) == (
             MIGRATED_TABLE_ORDER_V1
         )

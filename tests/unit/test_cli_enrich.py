@@ -235,9 +235,21 @@ class TestEnrichLinkedInGuest:
                 self.run_calls: list[dict[str, Any]] = []
                 services.append(self)
 
-            async def run(self, *, platform: str, batch_limit: int) -> EnrichSummary:
+            async def run(
+                self,
+                *,
+                platform: str,
+                batch_limit: int,
+                job_ids: list[str] | None = None,
+                on_progress: object | None = None,
+            ) -> EnrichSummary:
                 self.run_calls.append(
-                    {"platform": platform, "batch_limit": batch_limit}
+                    {
+                        "platform": platform,
+                        "batch_limit": batch_limit,
+                        "job_ids": job_ids,
+                        "on_progress": on_progress,
+                    }
                 )
                 if run_error is not None:
                     raise run_error
@@ -267,7 +279,12 @@ class TestEnrichLinkedInGuest:
         assert result.exit_code == 0, result.output
         (service,) = services
         assert service.run_calls == [
-            {"platform": "linkedin_guest", "batch_limit": _GUEST_BATCH_LIMIT}
+            {
+                "platform": "linkedin_guest",
+                "batch_limit": _GUEST_BATCH_LIMIT,
+                "job_ids": None,
+                "on_progress": None,
+            }
         ]
         assert isinstance(service.kwargs["enricher"], LinkedInGuestEnricher)
         assert service.kwargs["store"] is store

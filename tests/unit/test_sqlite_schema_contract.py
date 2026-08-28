@@ -14,6 +14,7 @@ _EXPLICIT_INDEXES = {
     "idx_eval_stage_a_score",
     "idx_eval_stage_b_completed",
     "idx_eval_stage_b_queue",
+    "idx_eval_verdict_job",
     "idx_interview_rounds_job",
     "idx_interview_rounds_upcoming",
     "idx_jobs_dedup_softkey",
@@ -192,7 +193,7 @@ async def test_trigger_timestamps_are_canonical_and_lexical_cutoffs_work() -> No
 
 @pytest.mark.asyncio
 async def test_explicit_indexes_and_trigger_names_are_exact() -> None:
-    """The v1 schema retains every 0008 hot-path index and one seed trigger."""
+    """The v1 schema retains every hot-path index and one seed trigger."""
     connection = await _new_database()
     try:
         cursor = await connection.execute(

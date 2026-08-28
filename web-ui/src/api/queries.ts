@@ -386,6 +386,29 @@ export function useTriggerScan() {
   });
 }
 
+function invalidateRuns(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: runsKeys.active });
+  void queryClient.invalidateQueries({ queryKey: runsKeys.list({}) });
+}
+
+export function useStopRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId }: { runId: string }) =>
+      apiPost<{ run_id: string; status: string }>(`/api/runs/${runId}/stop`, {}),
+    onSuccess: () => invalidateRuns(queryClient),
+  });
+}
+
+export function useRetryRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId }: { runId: string }) =>
+      apiPost<TriggerResponse>(`/api/runs/${runId}/retry`, {}),
+    onSuccess: () => invalidateRuns(queryClient),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Performance
 // ---------------------------------------------------------------------------
@@ -456,13 +479,16 @@ export function useTriggerEvaluate() {
   return useMutation({
     mutationFn: ({
       stage,
+      scope,
       limit,
     }: {
       stage: "a" | "b" | "both";
+      scope: "latest_scan" | "backlog";
       limit: number | null;
     }) =>
       apiPost<TriggerResponse>("/api/runs/evaluate", {
         stage,
+        scope,
         limit: limit ?? undefined,
       }),
     onSuccess: () => {

@@ -213,6 +213,14 @@ class JobStore(Protocol):
         """
         ...
 
+    async def save_hard_filters(self, reasons: dict[str, str]) -> None:
+        """Persist deterministic hard-filter reasons by job identity.
+
+        Args:
+            reasons: Store job id to human-readable exclusion reason.
+        """
+        ...
+
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Load a pipeline run by identity.
 

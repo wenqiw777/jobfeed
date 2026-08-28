@@ -1,4 +1,4 @@
-"""Alembic-0008 contracts for the versioned canonical schema manifest."""
+"""Alembic-0009 contracts for the versioned canonical schema manifest."""
 
 from __future__ import annotations
 
@@ -128,6 +128,12 @@ def _create_table_columns() -> dict[str, list[dict[str, object]]]:
                 "nullable": False,
                 "primary_key": False,
             },
+            {
+                "name": "jobs_seniority_filtered",
+                "source_sql_type": "integer",
+                "nullable": False,
+                "primary_key": False,
+            },
         ]
     )
     return tables
@@ -156,11 +162,11 @@ def _target_type(kind: str) -> str:
 
 
 def test_manifest_matches_every_alembic_0008_table_and_column() -> None:
-    """The registry exactly covers 0008 order, PK, type, kind, and nullability."""
+    """The registry exactly covers 0009 order, PK, type, kind, and nullability."""
     alembic = _create_table_columns()
     manifest = CANONICAL_SCHEMA_MANIFEST_V1
 
-    assert manifest.alembic_revision == "0008"
+    assert manifest.alembic_revision == "0009"
     assert tuple(table.name for table in manifest.tables) == _TABLE_ORDER
     assert tuple(schema.name for schema in CANONICAL_ROW_SCHEMAS_V1) == tuple(
         f"{name}-v1" for name in _TABLE_ORDER

@@ -30,6 +30,7 @@ _DEFAULTS: Final[dict[tuple[str, str], str]] = {
     ("pipeline_runs", "jobs_updated"): "0",
     ("pipeline_runs", "jobs_filtered"): "0",
     ("pipeline_runs", "jobs_ml_gated"): "0",
+    ("pipeline_runs", "jobs_seniority_filtered"): "0",
     ("pipeline_runs", "stage_a_scored"): "0",
     ("pipeline_runs", "stage_b_scored"): "0",
     ("pipeline_runs", "jobs_scored"): "0",
@@ -238,6 +239,11 @@ def _add_indexes(metadata: sa.MetaData) -> None:
         "idx_eval_stage_b_completed",
         (tables["evaluations"].c.stage_a_score,),
         where="stage_b_status = 'completed'",
+    )
+    _index(
+        "idx_eval_verdict_job",
+        (tables["evaluations"].c.job_id,),
+        where="stage_b_verdict IS NOT NULL",
     )
     _index(
         "idx_job_status_status",

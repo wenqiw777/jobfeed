@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -17,7 +18,7 @@ from fastapi import FastAPI
 from jobfeed.adapters.sources.mock import MockSource
 from jobfeed.cli import AppContext, cli
 from jobfeed.config import Settings
-from jobfeed.domain.models import JobPosting
+from jobfeed.domain.models import JobPosting, PipelineRun
 from jobfeed.services.enrich import EnrichSummary
 from jobfeed.web import onboarding_app as onboarding_app_module
 from jobfeed.web.app import build_web_app, create_web_app
@@ -198,15 +199,18 @@ async def test_web_post_scan_hook_enriches_guest_up_to_source_limit(
             }
         }
     )
-    calls: list[tuple[object, int]] = []
+    calls: list[tuple[object, int, list[str] | None]] = []
 
     async def fake_enrich(
         _context: object,
         config: object,
         *,
         batch_limit: int | None = None,
+        job_ids: list[str] | None = None,
+        on_progress: object | None = None,
     ) -> EnrichSummary:
-        calls.append((config, batch_limit or 0))
+        del on_progress
+        calls.append((config, batch_limit or 0, job_ids))
         return EnrichSummary(
             enriched=7,
             closed=0,
@@ -230,9 +234,21 @@ async def test_web_post_scan_hook_enriches_guest_up_to_source_limit(
     )
 
     hook = onboarding_app_module._make_post_scan_hook(context)
-    await hook([("linkedin_guest", object(), {})])
+    run = PipelineRun(
+        run_id="scan-1",
+        started_at=datetime.now(UTC),
+        source="scan",
+        scan_inserted_job_ids=[str(index) for index in range(7)],
+    )
+    await hook(run, [("linkedin_guest", object(), {})], lambda _run: None)
 
-    assert calls == [(settings.sources.linkedin_guest, 7)]
+    assert calls == [
+        (
+            settings.sources.linkedin_guest,
+            7,
+            [str(index) for index in range(7)],
+        )
+    ]
 
 
 async def test_validation_error_uses_error_shape() -> None:

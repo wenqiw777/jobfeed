@@ -80,6 +80,7 @@ class _SqliteEvaluationClaims:
         limit: int = 100,
         exclude_gate_failed: bool = True,
         after: tuple[datetime, int] | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[GateCandidate]:
         """Load a keyset page of read-only ML-gate candidates."""
         query = StageAQuery(
@@ -91,6 +92,7 @@ class _SqliteEvaluationClaims:
             exclude_gate_failed=exclude_gate_failed,
             after=after,
             is_gate_query=True,
+            job_ids=None if job_ids is None else _numeric_ids(job_ids),
         )
         sql, params = _build_stage_a_select(query)
         async with self._lifecycle.connection() as connection:
@@ -131,6 +133,7 @@ class _SqliteEvaluationClaims:
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        job_ids: list[str] | None = None,
     ) -> list[JobPosting]:
         """Claim ordered Stage B work using strict one-hour stale recovery."""
         claim_time = self._claim_time(now)
@@ -139,6 +142,7 @@ class _SqliteEvaluationClaims:
             limit=limit,
             max_days=max_days,
             stage_a_threshold=stage_a_threshold,
+            job_ids=None if job_ids is None else _numeric_ids(job_ids),
         )
         sql, params = _build_stage_b_select(query)
         timestamp = _require_utc_timestamp(claim_time)
@@ -147,12 +151,12 @@ class _SqliteEvaluationClaims:
             _immediate_transaction(connection),
         ):
             rows = await _fetch_rows(connection, sql, params)
-            job_ids = tuple(int(row["id"]) for row in rows)
-            if job_ids:
+            claimed_job_ids = tuple(int(row["id"]) for row in rows)
+            if claimed_job_ids:
                 await connection.execute(
                     "UPDATE evaluations SET stage_b_status='in_progress', "
-                    f"updated_at=? WHERE job_id IN ({_placeholders(job_ids)})",
-                    (timestamp, *job_ids),
+                    f"updated_at=? WHERE job_id IN ({_placeholders(claimed_job_ids)})",
+                    (timestamp, *claimed_job_ids),
                 )
             await self._after_claim_selection("stage_b", connection)
         return [_hydrate_job(row) for row in rows]

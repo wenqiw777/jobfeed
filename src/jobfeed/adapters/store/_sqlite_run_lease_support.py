@@ -110,9 +110,10 @@ async def _insert_run(
         """INSERT INTO pipeline_runs (
                run_id, started_at, source, status, jobs_discovered,
                jobs_inserted, jobs_updated, jobs_filtered, jobs_ml_gated,
-               jobs_gate_passed, stage_a_scored, stage_b_scored, jobs_scored,
+               jobs_seniority_filtered, jobs_gate_passed, stage_a_scored,
+               stage_b_scored, jobs_scored,
                total_llm_cost_usd, errors, finished_at
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         _run_values(run),
     )
 
@@ -128,7 +129,8 @@ async def _update_terminal_run(
         """UPDATE pipeline_runs SET
                status=?, finished_at=?, jobs_discovered=?, jobs_inserted=?,
                jobs_updated=?, jobs_filtered=?, jobs_ml_gated=?,
-               jobs_gate_passed=?, stage_a_scored=?, stage_b_scored=?,
+               jobs_seniority_filtered=?, jobs_gate_passed=?,
+               stage_a_scored=?, stage_b_scored=?,
                jobs_scored=?, total_llm_cost_usd=?, errors=?
            WHERE run_id=? AND status='running'""",
         (
@@ -139,6 +141,7 @@ async def _update_terminal_run(
             run.jobs_updated,
             run.jobs_filtered,
             run.jobs_ml_gated,
+            run.jobs_seniority_filtered,
             run.jobs_gate_passed,
             run.stage_a_scored,
             run.stage_b_scored,
@@ -164,6 +167,7 @@ def _run_values(run: PipelineRun) -> tuple[object, ...]:
         run.jobs_updated,
         run.jobs_filtered,
         run.jobs_ml_gated,
+        run.jobs_seniority_filtered,
         run.jobs_gate_passed,
         run.stage_a_scored,
         run.stage_b_scored,

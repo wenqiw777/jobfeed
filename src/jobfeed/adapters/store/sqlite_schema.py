@@ -19,6 +19,13 @@ _SEED_LEASE_SQL: Final = (
     "INSERT INTO run_leases(kind, generation) VALUES('scan', 0),('evaluate', 0)"
 )
 _CREATE_PREFIX = re.compile(r"^CREATE\s+(TABLE|INDEX|TRIGGER)\s+([^\s(]+)", re.I)
+_ADDITIVE_INDEXES = frozenset({("index", "idx_eval_verdict_job")})
+_ADDITIVE_COLUMNS: Final[dict[tuple[str, str], str]] = {
+    (
+        "pipeline_runs",
+        "jobs_seniority_filtered",
+    ): "INTEGER DEFAULT 0 NOT NULL",
+}
 
 
 async def ensure_sqlite_schema(connection: aiosqlite.Connection) -> None:
@@ -75,6 +82,8 @@ async def _repair_current_data(connection: aiosqlite.Connection) -> None:
         version = await _schema_version(connection)
         if version != SQLITE_SCHEMA_VERSION:
             raise ValueError(f"unsupported SQLite schema version: {version}")
+        await _install_additive_columns(connection)
+        await _install_additive_indexes(connection)
         await _validate_v1(connection)
         await _execute_data_migration_statement(
             connection,
@@ -136,6 +145,40 @@ async def _repair_current_data(connection: aiosqlite.Connection) -> None:
     except BaseException:
         await connection.rollback()
         raise
+
+
+async def _install_additive_indexes(connection: aiosqlite.Connection) -> None:
+    """Install known index-only additions when the prior schema is otherwise exact."""
+    expected = _expected_schema_objects()
+    live = await _live_schema_objects(connection)
+    missing = set(expected) - set(live)
+    if missing != _ADDITIVE_INDEXES or set(live) - set(expected):
+        return
+    if any(live[key] != expected[key] for key in set(live) & set(expected)):
+        return
+    statements = {
+        (match.group(1).lower(), match.group(2).strip('"`[]')): statement
+        for statement in schema_ddl_statements()
+        if (match := _CREATE_PREFIX.match(statement.lstrip())) is not None
+    }
+    for key in sorted(_ADDITIVE_INDEXES):
+        await _execute_schema_statement(connection, statements[key])
+
+
+async def _install_additive_columns(connection: aiosqlite.Connection) -> None:
+    """Add known backward-compatible columns before exact schema validation."""
+    for (table, column), definition in _ADDITIVE_COLUMNS.items():
+        cursor = await connection.execute(f'PRAGMA table_info("{table}")')
+        rows = await cursor.fetchall()
+        await cursor.close()
+        if not rows:
+            continue
+        if any(str(row[1]) == column for row in rows):
+            continue
+        await _execute_schema_statement(
+            connection,
+            f"ALTER TABLE {table} ADD COLUMN {column} {definition}",
+        )
 
 
 async def _schema_version(connection: aiosqlite.Connection) -> int:

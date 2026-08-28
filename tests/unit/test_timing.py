@@ -13,7 +13,7 @@ from jobfeed.services._timing import StepTimer
 from jobfeed.services.scan import ScanService
 from tests.support.run_leases import SuccessfulRunLeaseMixin
 
-EXPECTED_PROGRESS_CALLS = 2
+EXPECTED_PROGRESS_CALLS = 8
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +230,7 @@ async def test_step_timer_store_failure_keeps_block_exception() -> None:
 
 @pytest.mark.asyncio
 async def test_on_progress_callback_called_per_source() -> None:
-    """on_progress should be called once per source after it completes."""
+    """Scan progress reports source phases and per-item persistence updates."""
     store = ScanRecordingStore()
     logger = ScanRecordingLogger()
     calls: list[PipelineRun] = []

@@ -24,6 +24,7 @@ class RunSummary(BaseModel):
     jobs_updated: int
     jobs_filtered: int
     jobs_ml_gated: int
+    jobs_seniority_filtered: int
     stage_a_scored: int
     stage_b_scored: int
     jobs_scored: int
@@ -38,6 +39,11 @@ class RunSummary(BaseModel):
     stage_a_processed: int = 0
     stage_b_total: int | None = None
     stage_b_processed: int = 0
+    scan_source: str | None = None
+    scan_phase: str | None = None
+    scan_total: int | None = None
+    scan_processed: int = 0
+    scan_current_job_id: str | None = None
     progress_updated_at: datetime | None = None
 
 
@@ -67,6 +73,7 @@ def run_summary(run: PipelineRun) -> RunSummary:
         jobs_updated=run.jobs_updated,
         jobs_filtered=run.jobs_filtered,
         jobs_ml_gated=run.jobs_ml_gated,
+        jobs_seniority_filtered=run.jobs_seniority_filtered,
         stage_a_scored=run.stage_a_scored,
         stage_b_scored=run.stage_b_scored,
         jobs_scored=run.jobs_scored,
@@ -81,6 +88,11 @@ def run_summary(run: PipelineRun) -> RunSummary:
         stage_a_processed=run.stage_a_processed,
         stage_b_total=run.stage_b_total,
         stage_b_processed=run.stage_b_processed,
+        scan_source=run.scan_source,
+        scan_phase=run.scan_phase,
+        scan_total=run.scan_total,
+        scan_processed=run.scan_processed,
+        scan_current_job_id=run.scan_current_job_id,
         progress_updated_at=run.progress_updated_at,
     )
 

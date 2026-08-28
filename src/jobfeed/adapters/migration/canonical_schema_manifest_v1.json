@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "canonical_row_codec_version": "jobfeed-canonical-row-v1",
-  "alembic_revision": "0008",
+  "alembic_revision": "0009",
   "tables": [
     {
       "name": "jobs",
@@ -100,7 +100,8 @@
         {"name": "errors", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": true},
         {"name": "finished_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
         {"name": "status", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
-        {"name": "jobs_gate_passed", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false}
+        {"name": "jobs_gate_passed", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false},
+        {"name": "jobs_seniority_filtered", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false}
       ]
     },
     {

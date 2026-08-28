@@ -23,6 +23,7 @@ ProgressCallback = Callable[[PipelineRun], None]
 SourcePort = SimpleSource | SessionSource
 SourceSpec = tuple[str, SourcePort, dict[str, object]]
 SINGLE_SOURCE_COUNT = 1
+_SAVE_PROGRESS_INTERVAL = 100
 
 
 class ScanService:
@@ -105,6 +106,7 @@ class ScanService:
         config: dict[str, object],
     ) -> None:
         lease_session.ensure_active()
+        self._publish_scan_progress(run, source=name, phase="fetching")
         async with StepTimer(
             self._perf_store,
             run.run_id,
@@ -137,6 +139,13 @@ class ScanService:
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
             return
+        self._publish_scan_progress(
+            run,
+            source=name,
+            phase="saving",
+            total=len(jobs),
+            processed=0,
+        )
         await self._record_jobs(lease_session, run, name, jobs)
 
     async def _scan_session_source(
@@ -159,6 +168,13 @@ class ScanService:
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
             return
+        self._publish_scan_progress(
+            run,
+            source=name,
+            phase="saving",
+            total=len(jobs),
+            processed=0,
+        )
         await self._record_jobs(lease_session, run, name, jobs)
 
     async def _run_session(
@@ -208,7 +224,7 @@ class ScanService:
         name: str,
         jobs: list[JobPosting],
     ) -> None:
-        inserted, updated = await self._save_jobs(lease_session, jobs)
+        inserted, updated = await self._save_jobs(lease_session, run, name, jobs)
         run.jobs_discovered += len(jobs)
         run.jobs_inserted += inserted
         run.jobs_updated += updated
@@ -219,18 +235,58 @@ class ScanService:
             jobs_inserted=inserted,
             jobs_updated=updated,
         )
+        self._publish_scan_progress(
+            run,
+            source=name,
+            phase="completed",
+            total=len(jobs),
+            processed=len(jobs),
+        )
 
     async def _save_jobs(
-        self, lease_session: RunLeaseSession, jobs: list[JobPosting]
+        self,
+        lease_session: RunLeaseSession,
+        run: PipelineRun,
+        source: str,
+        jobs: list[JobPosting],
     ) -> tuple[int, int]:
         inserted = 0
         updated = 0
-        for job in jobs:
+        for processed, job in enumerate(jobs, start=1):
             lease_session.ensure_active()
             result = await self.store.save_job(job)
             inserted += int(result.inserted)
             updated += int(result.updated)
+            if result.inserted:
+                run.scan_inserted_job_ids.append(result.job_id)
+            if processed % _SAVE_PROGRESS_INTERVAL == 0:
+                self._publish_scan_progress(
+                    run,
+                    source=source,
+                    phase="saving",
+                    total=len(jobs),
+                    processed=processed,
+                )
         return inserted, updated
+
+    def _publish_scan_progress(
+        self,
+        run: PipelineRun,
+        *,
+        source: str,
+        phase: str,
+        total: int | None = None,
+        processed: int = 0,
+    ) -> None:
+        """Publish the active source and its bounded work when available."""
+        run.scan_source = source
+        run.scan_phase = phase
+        run.scan_total = total
+        run.scan_processed = processed
+        run.scan_current_job_id = None
+        run.progress_updated_at = datetime.now(UTC)
+        if self._on_progress is not None:
+            self._on_progress(run)
 
 
 def _merge_enrichment(posting: JobPosting, result: EnrichResult) -> JobPosting:
