@@ -37,6 +37,11 @@ _ENTRY_TITLE = re.compile(
     re.IGNORECASE,
 )
 _OWNERSHIP_TITLE = re.compile(r"\b(?:staff|principal|lead|manager)\b", re.IGNORECASE)
+_EXPLICIT_SENIORITY_TITLE = re.compile(
+    r"\b(?:senior|sr\.?|mid[\s-]?level|midlevel)\b"
+    r"|\b(?:engineer|developer|programmer)\s+(?:II|III|2|3)\b",
+    re.IGNORECASE,
+)
 _OWNERSHIP_SCOPE = re.compile(
     r"\b(?:own\s+(?:the\s+)?architecture\s+across\s+(?:teams|the\s+organization)"
     r"|set\s+(?:the\s+)?technical\s+direction"
@@ -77,7 +82,18 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
     Returns:
         High-confidence rule decision, or ``unclear`` for model review.
     """
-    if _OWNERSHIP_TITLE.search(title) or _OWNERSHIP_SCOPE.search(jd_text):
+    entry_title = _ENTRY_TITLE.search(title)
+    ownership_title = _OWNERSHIP_TITLE.search(title)
+    explicit_seniority_title = _EXPLICIT_SENIORITY_TITLE.search(title)
+    if entry_title and (ownership_title or explicit_seniority_title):
+        return SeniorityDecision(
+            result="in_scope",
+            reason="explicit entry band",
+            yoe_min=None,
+            confidence=1.0,
+        )
+
+    if ownership_title or _OWNERSHIP_SCOPE.search(jd_text):
         return SeniorityDecision(
             result="out_of_scope",
             reason="explicit senior ownership",
@@ -85,23 +101,31 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
             confidence=1.0,
         )
 
+    if explicit_seniority_title:
+        return SeniorityDecision(
+            result="out_of_scope",
+            reason="explicit seniority title",
+            yoe_min=_required_yoe_min(jd_text),
+            confidence=1.0,
+        )
+
     yoe_min = _required_yoe_min(jd_text)
     if yoe_min is not None:
-        if yoe_min >= SCOPE_EXPERIENCE_YEARS:
+        if yoe_min > SCOPE_EXPERIENCE_YEARS:
             return SeniorityDecision(
                 result="out_of_scope",
-                reason="minimum experience is 3 years or more",
+                reason="minimum experience is more than 3 years",
                 yoe_min=yoe_min,
                 confidence=1.0,
             )
         return SeniorityDecision(
             result="in_scope",
-            reason="minimum experience is below 3 years",
+            reason="minimum experience is 3 years or less",
             yoe_min=yoe_min,
             confidence=1.0,
         )
 
-    if _ENTRY_TITLE.search(title):
+    if entry_title:
         return SeniorityDecision(
             result="in_scope",
             reason="explicit entry band",
