@@ -48,6 +48,7 @@ _PLATFORM_RANK: dict[str, int] = {
     "speedyapply": 1,
     "linkedin": 2,
     "linkedin_guest": 3,
+    "jobright": 3,
     # Tombstone: the linkedin_jobspy SOURCE is removed, but rows persisted
     # before the removal keep their historical priority (shared tier with
     # linkedin_guest, like the ATS family shares rank 0). Do not delete this

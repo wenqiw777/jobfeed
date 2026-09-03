@@ -60,6 +60,9 @@ dependencies = [
     # >= 0.30: the uvicorn that runs `jobfeed serve`; a modern floor keeps the
     # loopback server's lifespan/shutdown behavior reproducible across installs.
     "uvicorn >= 0.30",
+    # Uvicorn's base install has no WebSocket transport. The Jobright Chrome
+    # bridge needs this at runtime; without it every Upgrade request returns 404.
+    "websockets >= 15, < 16",
     # Observability: OpenTelemetry SDK + exporters + auto-instrumentation
     # for httpx, asyncpg, and FastAPI; Sentry error tracking with FastAPI integration.
     "opentelemetry-api >= 1.25",

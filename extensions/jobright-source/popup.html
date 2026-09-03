@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jobfeed Jobright Source</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Jobright Source</h1>
+      <p id="status" class="status">Checking connection…</p>
+      <label for="base-url">Jobfeed URL</label>
+      <input id="base-url" type="url" spellcheck="false" />
+      <button id="save" type="button">Save and reconnect</button>
+      <p class="hint">Keep Jobfeed running. Scans reuse your Chrome Jobright login without reading cookies.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

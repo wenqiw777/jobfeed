@@ -25,6 +25,7 @@ from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ext import StageBThresholdSync
 from jobfeed.services.digest import DigestService, DigestStore
+from jobfeed.services.jobright_bridge import JobrightBridge
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator
 from jobfeed.services.scan import ScanService
 
@@ -44,6 +45,7 @@ class AppContext(TypedDict):
     digest_service: DigestService
     probe_company: ProbeVendorFn
     logger: JobfeedLogger
+    jobright_bridge: JobrightBridge
     verbose: bool
     provider_secrets: NotRequired[ProviderSecretStore]
 
@@ -78,6 +80,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
     project_root = config_path.resolve().parent if config_path else Path.cwd()
     provider_secrets = ProviderSecretStore(project_root / "data" / "secrets.toml")
     run_orchestrator = RunLeaseOrchestrator(store)
+    jobright_bridge = JobrightBridge()
     sources: dict[str, SimpleSource] = {"mock": MockSource()}
     return AppContext(
         settings=settings,
@@ -94,6 +97,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
         digest_service=DigestService(cast(DigestStore, store), logger),
         probe_company=build_probe_company(settings),
         logger=logger,
+        jobright_bridge=jobright_bridge,
         verbose=False,
         provider_secrets=provider_secrets,
     )

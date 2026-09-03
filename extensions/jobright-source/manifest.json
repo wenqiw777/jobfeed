@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Jobfeed Jobright Source",
+  "version": "0.2.0",
+  "description": "Streams authenticated Jobright recommendations into local Jobfeed scans.",
+  "permissions": ["alarms", "scripting", "storage", "tabs"],
+  "host_permissions": [
+    "https://jobright.ai/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Jobfeed Jobright Source",
+    "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*"
+  }
+}

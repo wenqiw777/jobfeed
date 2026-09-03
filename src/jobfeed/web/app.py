@@ -39,6 +39,7 @@ from jobfeed.web.routes.companies import router as companies_router
 from jobfeed.web.routes.configuration import router as configuration_router
 from jobfeed.web.routes.health import router as health_router
 from jobfeed.web.routes.insights import router as insights_router
+from jobfeed.web.routes.jobright_bridge import router as jobright_bridge_router
 from jobfeed.web.routes.jobs import router as jobs_router
 from jobfeed.web.routes.performance import router as performance_router
 from jobfeed.web.routes.run_sources import router as run_sources_router
@@ -127,6 +128,12 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
         scan_source_resolver=_make_scan_source_resolver(context),
         run_orchestrator=context.get("run_orchestrator"),
         post_scan_hook=_make_post_scan_hook(context),
+        auto_restart_allowed=lambda source: (
+            source not in {"all", "jobright"}
+            or bool(
+                context.get("jobright_bridge") and context["jobright_bridge"].connected
+            )
+        ),
     )
 
     app.state.jobs_view_service = JobsViewService(
@@ -157,6 +164,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.include_router(configuration_router, prefix="/api")
     _include_onboarding_routers(app)
     app.include_router(jobs_router, prefix="/api")
+    app.include_router(jobright_bridge_router, prefix="/api")
     app.include_router(workflow_router, prefix="/api")
     app.include_router(applications_router, prefix="/api")
     app.include_router(insights_router, prefix="/api")

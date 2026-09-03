@@ -36,8 +36,8 @@ from tests.support.run_leases import SuccessfulRunLeaseMixin
 scan_module = sys.modules["jobfeed.cli.scan"]
 sources_module = sys.modules["jobfeed.cli._scan_sources"]
 
-# ``--source all`` here disables ats + linkedin-guest + linkedin -> skips.
-_EXPECTED_SKIPS = 3
+# ``--source all`` here disables ats + linkedin-guest + linkedin + jobright.
+_EXPECTED_SKIPS = 4
 # ats + speedyapply both own an httpx client -> two clients created.
 _EXPECTED_CLIENTS = 2
 
@@ -350,13 +350,14 @@ def test_scan_all_runs_enabled_and_logs_skips(
     # folded in (it is explicit-only via --source mock).
     assert {"speedyapply", "indeed"} <= platforms
     assert "mock" not in platforms
-    # ats + linkedin_guest + linkedin were disabled -> structured skip
+    # ats + linkedin_guest + linkedin + jobright were disabled -> structured skip
     # events, no run.
     assert "linkedin_guest" not in platforms
     assert "linkedin" not in platforms
     assert '"source": "ats"' in result.output
     assert '"source": "linkedin-guest"' in result.output
     assert '"source": "linkedin"' in result.output
+    assert '"source": "jobright"' in result.output
     assert result.output.count("scan_source_skipped") == _EXPECTED_SKIPS
 
 

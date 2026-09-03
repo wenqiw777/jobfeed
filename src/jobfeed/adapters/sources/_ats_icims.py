@@ -71,14 +71,20 @@ async def fetch_jd(
     html_text = await fetch_text(
         client, iframe_url, slug=slug, vendor=_VENDOR, timeout=timeout
     )
-    return _extract_jsonld_jd(html_text)
+    return extract_jsonld_jd(html_text)
 
 
-def _extract_jsonld_jd(html_text: str) -> str:
+def extract_jsonld_jd(html_text: str) -> str:
     """Find the JSON-LD JobPosting and return its description as plain text.
 
     Returns '' when no JobPosting block exists (the iframe occasionally returns
     a marketing landing instead of the job, e.g. when the id has rolled off).
+
+    Args:
+        html_text: Employer-page HTML that may contain JobPosting JSON-LD.
+
+    Returns:
+        Plain-text job description, or an empty string when none is present.
     """
     for match in _JSONLD_RE.finditer(html_text):
         description = _description_from_blob(match.group(1))
@@ -113,4 +119,4 @@ def _job_posting_candidates(data: Any) -> list[dict[str, Any]]:
     return candidates
 
 
-__all__ = ["fetch_jd"]
+__all__ = ["extract_jsonld_jd", "fetch_jd"]

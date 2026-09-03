@@ -27,6 +27,7 @@ SOURCE_CHOICES = [
     "indeed",
     "linkedin-guest",
     "linkedin",
+    "jobright",
     "all",
 ]
 
@@ -41,7 +42,7 @@ _GUEST_SOURCE_NAME = "linkedin_guest"
     show_default=True,
     type=click.Choice(SOURCE_CHOICES),
     help="Source adapter to scan: mock, ats, speedyapply, indeed, "
-    "linkedin-guest, linkedin, or all (default: all enabled "
+    "linkedin-guest, linkedin, jobright, or all (default: all enabled "
     "real sources; mock is explicit-only).",
 )
 @click.pass_context

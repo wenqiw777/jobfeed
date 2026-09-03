@@ -17,6 +17,7 @@ import httpx
 from jobfeed.adapters.sources._http import create_http_client
 from jobfeed.adapters.sources.ats import ATSSource
 from jobfeed.adapters.sources.indeed_jobspy import IndeedSource
+from jobfeed.adapters.sources.jobright import JobrightSource
 from jobfeed.adapters.sources.linkedin import LinkedInSource
 from jobfeed.adapters.sources.linkedin_guest import (
     GuestSourceSettings,
@@ -36,6 +37,7 @@ _REAL_SOURCES = (
     "indeed",
     "linkedin-guest",
     "linkedin",
+    "jobright",
 )
 
 
@@ -225,6 +227,29 @@ async def _build_linkedin(
     )
 
 
+async def _build_jobright(
+    app: AppContext,
+    sources: list[SourceSpec],
+    stack: contextlib.AsyncExitStack,
+) -> None:
+    """Build the Chrome-extension-backed personalized recommendation source."""
+    config = app["settings"].sources.jobright
+    require_enabled(config.enabled, "jobright")
+    client = _register_client(stack, create_http_client(30.0))
+    sources.append(
+        (
+            "jobright",
+            JobrightSource(
+                config=config,
+                bridge=app["jobright_bridge"],
+                logger=app["logger"],
+                client=client,
+            ),
+            {},
+        )
+    )
+
+
 async def _noop_builder(
     app: AppContext,
     sources: list[SourceSpec],
@@ -251,6 +276,7 @@ _BUILDERS = {
     "indeed": _build_indeed,
     "linkedin-guest": _build_linkedin_guest,
     "linkedin": _build_linkedin,
+    "jobright": _build_jobright,
 }
 
 # Real source token -> its field name on ``settings.sources`` (the hyphenated
@@ -261,6 +287,7 @@ _CONFIG_FIELDS = {
     "indeed": "indeed",
     "linkedin-guest": "linkedin_guest",
     "linkedin": "linkedin",
+    "jobright": "jobright",
 }
 
 

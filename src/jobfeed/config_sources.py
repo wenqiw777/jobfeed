@@ -192,6 +192,18 @@ class SourcesLinkedInConfig(BaseModel):
         return self
 
 
+class SourcesJobrightConfig(BaseModel):
+    """Chrome-extension bridge limits for personalized Jobright scans."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    max_jobs: int = Field(default=1000, ge=1)
+    batch_size: int = Field(default=20, ge=1, le=50)
+    pacing_s: float = Field(default=1.0, gt=0)
+    timeout_s: float = Field(default=900.0, gt=0)
+
+
 class SourcesConfig(BaseModel):
     """Container for all job-data source configurations."""
 
@@ -206,6 +218,7 @@ class SourcesConfig(BaseModel):
         default_factory=SourcesLinkedInGuestConfig
     )
     linkedin: SourcesLinkedInConfig = Field(default_factory=SourcesLinkedInConfig)
+    jobright: SourcesJobrightConfig = Field(default_factory=SourcesJobrightConfig)
 
     @model_validator(mode="after")
     def _derive_ats_titles_from_searches(self) -> SourcesConfig:
@@ -243,6 +256,7 @@ __all__ = [
     "SourcesATSConfig",
     "SourcesConfig",
     "SourcesIndeedConfig",
+    "SourcesJobrightConfig",
     "SourcesLinkedInConfig",
     "SourcesLinkedInGuestConfig",
     "SourcesLinkedInSearchConfig",
