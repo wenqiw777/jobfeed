@@ -217,6 +217,45 @@ test("renders the real evaluate phase, denominators, cost, and errors", () => {
   expect(row).toHaveTextContent("1 error");
 });
 
+test("shows seniority as its own active phase after the SDE role filter", () => {
+  renderRow(vi.fn(), {
+    ...EVALUATE_RUN,
+    counters: runCounters({
+      progress_stage: "ml_gate",
+      ml_gate_total: 1290,
+      ml_gate_processed: 1290,
+      jobs_ml_gated: 320,
+      jobs_seniority_filtered: 0,
+    } as Partial<RunSummary>),
+  });
+
+  const row = screen.getByTestId("live-run-r-live-1");
+  expect(row).toHaveTextContent("Seniority filter");
+  expect(row).toHaveTextContent("Applying seniority filter");
+  expect(screen.getByRole("progressbar", {
+    name: "Seniority filter: Screening 970 candidates",
+  })).toBeVisible();
+});
+
+test("shows seniority progress complete when quick evaluation starts", () => {
+  renderRow(vi.fn(), {
+    ...EVALUATE_RUN,
+    counters: runCounters({
+      progress_stage: "stage_a",
+      ml_gate_total: 1290,
+      ml_gate_processed: 1290,
+      jobs_ml_gated: 320,
+      jobs_seniority_filtered: 481,
+      stage_a_total: 489,
+      stage_a_processed: 0,
+    } as Partial<RunSummary>),
+  });
+
+  expect(screen.getByRole("progressbar", {
+    name: "Seniority filter: 970 / 970",
+  })).toBeVisible();
+});
+
 test("merges a newer SSE update with polled active-run counters", () => {
   renderRow(vi.fn(), {
     ...EVALUATE_RUN,

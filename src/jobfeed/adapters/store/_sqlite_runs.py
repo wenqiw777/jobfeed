@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import aiosqlite
 
+from jobfeed.adapters.store._run_scan_stats import load_scan_stats
 from jobfeed.adapters.store._sqlite_capability_support import (
     _fetch_row,
     _parse_utc_timestamp,
@@ -28,6 +29,7 @@ async def _get_pipeline_run(
 def _pipeline_run_from_row(row: aiosqlite.Row) -> PipelineRun:
     """Hydrate one complete pipeline-run row."""
     finished_at = row["finished_at"]
+    last_progress_at = row["last_progress_at"]
     return PipelineRun(
         run_id=str(row["run_id"]),
         started_at=_parse_utc_timestamp(row["started_at"]),
@@ -48,4 +50,16 @@ def _pipeline_run_from_row(row: aiosqlite.Row) -> PipelineRun:
         finished_at=(
             _parse_utc_timestamp(finished_at) if finished_at is not None else None
         ),
+        failure_code=row["failure_code"],
+        failure_message=row["failure_message"],
+        failed_stage=row["failed_stage"],
+        failed_source=row["failed_source"],
+        last_progress_at=(
+            _parse_utc_timestamp(last_progress_at)
+            if last_progress_at is not None
+            else None
+        ),
+        restart_count=int(row["restart_count"]),
+        restarted_by_run_id=row["restarted_by_run_id"],
+        scan_stats=load_scan_stats(row["scan_stats_json"]),
     )

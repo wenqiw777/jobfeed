@@ -15,6 +15,7 @@ except ImportError as _exc:  # pragma: no cover
     ) from _exc
 
 from jobfeed.adapters.store._normalize import normalize, normalize_company
+from jobfeed.adapters.store._run_scan_stats import dump_scan_stats, load_scan_stats
 from jobfeed.adapters.store.legacy_import import (
     AppliedRow,
     CompanyRow,
@@ -665,6 +666,14 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         total_llm_cost_usd=r["total_llm_cost_usd"],
         errors=r["errors"],
         finished_at=r["finished_at"],
+        failure_code=r["failure_code"],
+        failure_message=r["failure_message"],
+        failed_stage=r["failed_stage"],
+        failed_source=r["failed_source"],
+        last_progress_at=r["last_progress_at"],
+        restart_count=r["restart_count"],
+        restarted_by_run_id=r["restarted_by_run_id"],
+        scan_stats=load_scan_stats(r["scan_stats_json"]),
     )
 
 
@@ -3445,9 +3454,13 @@ class PostgresStore:
                        jobs_inserted, jobs_updated, jobs_filtered,
                        jobs_ml_gated, jobs_seniority_filtered,
                        jobs_gate_passed, stage_a_scored, stage_b_scored,
-                       jobs_scored, total_llm_cost_usd, errors, finished_at
+                       jobs_scored, total_llm_cost_usd, errors, finished_at,
+                       failure_code, failure_message, failed_stage,
+                       failed_source, last_progress_at, restart_count,
+                       restarted_by_run_id, scan_stats_json
                    ) VALUES (
-                       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+                       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+                       $18,$19,$20,$21,$22,$23,$24,$25::jsonb
                    )""",
                 run.run_id,
                 run.started_at,
@@ -3466,6 +3479,14 @@ class PostgresStore:
                 run.total_llm_cost_usd,
                 run.errors,
                 run.finished_at,
+                run.failure_code,
+                run.failure_message,
+                run.failed_stage,
+                run.failed_source,
+                run.last_progress_at,
+                run.restart_count,
+                run.restarted_by_run_id,
+                dump_scan_stats(run.scan_stats),
             )
 
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
@@ -3528,6 +3549,38 @@ class PostgresStore:
             )
         return [_pipeline_run_from_record(r) for r in rows], total
 
+    async def get_stage_b_run_progress(
+        self, run_id: str, started_at: datetime
+    ) -> tuple[int, int]:
+        """Reconstruct live Stage B progress for a separately owned worker.
+
+        Args:
+            run_id: Active evaluation run identity.
+            started_at: Lower timestamp bound for claims owned by the run.
+
+        Returns:
+            Processed count and reconstructed total Stage B count.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT
+                    (SELECT COUNT(DISTINCT u.job_id)
+                       FROM llm_usage AS u
+                       JOIN evaluations AS done ON done.job_id=u.job_id
+                      WHERE u.run_id=$1 AND u.stage='b'
+                        AND done.stage_b_status IN ('completed','error')) AS processed,
+                    (SELECT COUNT(*)
+                       FROM evaluations AS pending
+                      WHERE pending.stage_b_status='in_progress'
+                        AND pending.stage_b_verdict IS NULL
+                        AND pending.updated_at >= $2) AS remaining""",
+                run_id,
+                started_at,
+            )
+        processed = int(row["processed"])
+        return processed, processed + int(row["remaining"])
+
     async def get_new_job_source_counts(self, run_id: str) -> dict[str, int]:
         """Count first inserts during a scan, grouped by configured source.
 
@@ -3557,6 +3610,39 @@ class PostgresStore:
             (str(row["platform"]), int(row["n"])) for row in rows
         )
 
+    async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:
+        """Return current retryable scoring errors attributable to one run.
+
+        Args:
+            run_id: Completed evaluation run identity.
+
+        Returns:
+            Current failed job IDs written during that run and below retry cap.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT e.job_id
+                   FROM pipeline_runs AS r
+                   JOIN evaluations AS e
+                     ON e.updated_at >= r.started_at
+                    AND e.updated_at <= r.finished_at
+                   WHERE r.run_id = $1
+                     AND r.source = 'evaluate'
+                     AND r.finished_at IS NOT NULL
+                     AND (
+                       (e.stage_a_status = 'error'
+                        AND e.stage_a_error_count < $2)
+                       OR
+                       (e.stage_b_status = 'error'
+                        AND e.stage_b_error_count < $2)
+                     )
+                   ORDER BY e.updated_at, e.job_id""",
+                run_id,
+                MAX_STAGE_RETRIES,
+            )
+        return [str(row["job_id"]) for row in rows]
+
     async def update_pipeline_run_status(
         self,
         run: PipelineRun,
@@ -3576,8 +3662,13 @@ class PostgresStore:
                        jobs_ml_gated = $7, jobs_seniority_filtered = $8,
                        jobs_gate_passed = $9, stage_a_scored = $10,
                        stage_b_scored = $11, jobs_scored = $12,
-                       total_llm_cost_usd = $13, errors = $14
-                   WHERE run_id = $15""",
+                       total_llm_cost_usd = $13, errors = $14,
+                       failure_code = $15, failure_message = $16,
+                       failed_stage = $17, failed_source = $18,
+                       last_progress_at = $19, restart_count = $20,
+                       restarted_by_run_id = $21,
+                       scan_stats_json = $22::jsonb
+                   WHERE run_id = $23""",
                 run.status,
                 run.finished_at,
                 run.jobs_discovered,
@@ -3592,6 +3683,14 @@ class PostgresStore:
                 run.jobs_scored,
                 run.total_llm_cost_usd,
                 run.errors,
+                run.failure_code,
+                run.failure_message,
+                run.failed_stage,
+                run.failed_source,
+                run.last_progress_at,
+                run.restart_count,
+                run.restarted_by_run_id,
+                dump_scan_stats(run.scan_stats),
                 run.run_id,
             )
 

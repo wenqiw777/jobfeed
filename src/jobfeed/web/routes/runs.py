@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Query
@@ -37,6 +38,7 @@ _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 1000
 _MAX_WINDOW_DAYS = 365
 _SSE_HEARTBEAT_SECONDS = 15
+_PERSISTED_PROGRESS_POLL_SECONDS = 3
 
 router = APIRouter()
 
@@ -107,27 +109,50 @@ async def list_runs(
 @router.get("/runs/active")
 async def get_active_runs(
     run_manager: _Manager,
+    store: _Store,
 ) -> dict[str, list[dict[str, object]]]:
     """Return all currently active (in-progress) runs.
 
     Args:
         run_manager: Shared run manager.
+        store: Persistent run store used for cross-process snapshots.
 
     Returns:
         Active runs keyed under ``runs``.
     """
+    await run_manager.recover_stale_runs()
     active = run_manager.get_active_runs()
-    return {
-        "runs": [
+    active_ids = {item.run_id for item in active}
+    persisted: list[PipelineRun] = []
+    if hasattr(store, "list_pipeline_runs"):
+        recent, _total = await cast(StoreViewsMixin, store).list_pipeline_runs(
+            limit=_MAX_LIMIT,
+            offset=0,
+        )
+        for run in recent:
+            if run.status == "running" and run.run_id not in active_ids:
+                persisted.append(await _persisted_live_snapshot(run, store))
+    runs: list[dict[str, object]] = [
+        {
+            "run_id": ar.run_id,
+            "source": ar.source,
+            "started_at": ar.started_at.isoformat(),
+            "counters": run_summary(ar.run).model_dump(),
+        }
+        for ar in active
+    ]
+    runs.extend(
+        [
             {
-                "run_id": ar.run_id,
-                "source": ar.source,
-                "started_at": ar.started_at.isoformat(),
-                "counters": run_summary(ar.run).model_dump(),
+                "run_id": run.run_id,
+                "source": run.source,
+                "started_at": run.started_at.isoformat(),
+                "counters": run_summary(run).model_dump(),
             }
-            for ar in active
+            for run in persisted
         ]
-    }
+    )
+    return {"runs": runs}
 
 
 @router.get("/runs/{run_id}")
@@ -285,11 +310,24 @@ async def retry_run(
             "Stop the run before retrying",
         )
     if run.source == "evaluate":
+        continue_failed = run.status == "succeeded" and run.errors > 0
+        retry_job_ids = (
+            await cast(StoreViewsMixin, store).list_retryable_run_error_job_ids(run_id)
+            if continue_failed
+            else None
+        )
+        if retry_job_ids == []:
+            raise ApiError(
+                _HTTP_CONFLICT,
+                "no_retryable_errors",
+                "No retryable errors remain for this run",
+            )
         new_run_id = await run_manager.trigger_evaluate(
             stage=run.evaluate_stage or "both",
-            scope="latest_scan",
-            corpus="unrated",
-            limit=None,
+            scope="backlog" if continue_failed else "latest_scan",
+            corpus="failed" if continue_failed else "unrated",
+            limit=len(retry_job_ids) if retry_job_ids is not None else None,
+            **({"job_ids": retry_job_ids} if retry_job_ids is not None else {}),
         )
         return _TriggerResponse(run_id=new_run_id)
     source = {"scan": "all", "linkedin_guest": "linkedin-guest"}.get(
@@ -332,6 +370,11 @@ async def stream_progress(
         finished = await store.get_pipeline_run(run_id)
         if finished is None:
             raise ApiError(_HTTP_NOT_FOUND, "not_found", f"run {run_id} not found")
+        if finished.status == "running":
+            return StreamingResponse(
+                _poll_persisted_progress(run_id, store),
+                media_type="text/event-stream",
+            )
         return StreamingResponse(
             _done_generator(finished), media_type="text/event-stream"
         )
@@ -345,6 +388,42 @@ async def _done_generator(run: PipelineRun) -> AsyncIterator[str]:
     """Yield a single ``event: done`` SSE frame for a finished run."""
     summary = run_summary(run).model_dump(mode="json")
     yield f"event: done\ndata: {json.dumps(summary)}\n\n"
+
+
+async def _persisted_live_snapshot(run: PipelineRun, store: JobStore) -> PipelineRun:
+    """Restore transient live fields from a durable checkpoint snapshot."""
+    live = replace(run)
+    live.progress_updated_at = run.last_progress_at
+    if run.source == "evaluate":
+        live.progress_stage = run.failed_stage or "preparing"
+        live.stage_a_processed = run.stage_a_scored
+        live.stage_b_processed = run.stage_b_scored
+        progress_reader = getattr(store, "get_stage_b_run_progress", None)
+        if live.progress_stage == "stage_b" and callable(progress_reader):
+            processed, total = await progress_reader(run.run_id, run.started_at)
+            live.stage_b_processed = processed
+            live.stage_b_total = total
+    else:
+        live.scan_phase = run.failed_stage
+        live.scan_source = run.failed_source
+        live.scan_processed = run.jobs_discovered
+    return live
+
+
+async def _poll_persisted_progress(run_id: str, store: JobStore) -> AsyncIterator[str]:
+    """Poll a live run owned by another process until it becomes terminal."""
+    while True:
+        run = await store.get_pipeline_run(run_id)
+        if run is None:
+            yield "event: done\ndata: {}\n\n"
+            return
+        live = await _persisted_live_snapshot(run, store)
+        summary = run_summary(live).model_dump(mode="json")
+        if run.status != "running":
+            yield f"event: done\ndata: {json.dumps(summary)}\n\n"
+            return
+        yield f"data: {json.dumps(summary)}\n\n"
+        await asyncio.sleep(_PERSISTED_PROGRESS_POLL_SECONDS)
 
 
 async def _stream_progress(

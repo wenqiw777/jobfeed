@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from jobfeed.adapters.ml.mock import MockGate
+from jobfeed.domain.errors import RunLeaseLostError
 from jobfeed.domain.models import (
     AutoDecayResult,
     JobPosting,
@@ -21,6 +22,7 @@ from jobfeed.domain.models import (
 from jobfeed.ports.prompts import PromptBundle
 from jobfeed.ports.store_claims import GateCandidate
 from jobfeed.services._evaluate_gate import gate_representatives, gate_unrated
+from jobfeed.services._evaluate_stage_b import _run_stage_b
 from jobfeed.services.evaluate import EvaluateService
 from jobfeed.services.evaluate_types import (
     EvaluateDependencies,
@@ -285,6 +287,161 @@ async def test_stage_b_progress_exposes_claimed_queue_and_processed_count() -> N
     stage_b = [call for call in calls if call.progress_stage == "stage_b"]
     assert stage_b[1].stage_b_total == 2  # noqa: PLR2004
     assert [call.stage_b_processed for call in stage_b[1:]] == [0, 1, 2]
+
+
+def test_progress_snapshot_keeps_completed_evaluation_count() -> None:
+    """A later run failure must not reset already completed evaluation work."""
+    store = FakeStore([])
+    service = EvaluateService(
+        deps=_deps(store),
+        config=_config(),
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+    snapshots: list[PipelineRun] = []
+    service._on_progress = lambda run: snapshots.append(replace(run))
+    run = PipelineRun(
+        run_id="run",
+        started_at=RUN_AT,
+        source="evaluate",
+        stage_a_scored=1808,
+        stage_b_scored=68,
+    )
+
+    service._emit_progress(run)
+
+    assert snapshots[0].jobs_scored == 1876  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_stage_b_exception_drains_workers_and_releases_owned_claims() -> None:  # noqa: C901
+    """Run finalization cannot race ahead of sibling workers after one escapes."""
+    first = _job("a")
+    second = _job("b")
+    second_started = asyncio.Event()
+    second_cancelled = asyncio.Event()
+
+    class StageBStore(FakeStore):
+        def __init__(self) -> None:
+            super().__init__([first, second])
+            self.released: list[str] = []
+
+        async def claim_pending_stage_b(self, **_kw: object) -> list[JobPosting]:
+            return [first, second]
+
+        async def get_stage_a_scores(self, _job_ids: list[str]) -> dict[str, int]:
+            return {"a": 90, "b": 80}
+
+        async def release_stage_b_claim(self, job_id: str) -> None:
+            self.released.append(job_id)
+
+    class CoordinatedBudget:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def has_budget(self) -> bool:
+            return True
+
+        async def reserve(self) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                await second_started.wait()
+                raise RuntimeError("database is locked")
+            return "2026-09-02"
+
+    class BlockingLLM(StageALLM):
+        async def complete(self, _request: object) -> LLMResponse:
+            second_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                second_cancelled.set()
+                raise
+            raise AssertionError("unreachable")
+
+    class ActiveLease:
+        lease_lost = False
+
+        def ensure_active(self) -> None:
+            return None
+
+    store = StageBStore()
+    deps = replace(_deps(store), llm_stage_b=BlockingLLM())
+    service = EvaluateService(
+        deps=deps,
+        config=_config(),
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+    service._budget = CoordinatedBudget()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="database is locked"):
+        await _run_stage_b(
+            service,
+            PipelineRun(run_id="run", started_at=RUN_AT, source="evaluate"),
+            10,
+            None,
+            ActiveLease(),  # type: ignore[arg-type]
+        )
+
+    assert second_cancelled.is_set()
+    assert sorted(store.released) == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_stage_b_lease_loss_does_not_release_claims_from_stale_owner() -> None:
+    """Cleanup must not mutate claims after the evaluation lease is lost."""
+    job = _job("a")
+
+    class StageBStore(FakeStore):
+        def __init__(self) -> None:
+            super().__init__([job])
+            self.released: list[str] = []
+
+        async def claim_pending_stage_b(self, **_kw: object) -> list[JobPosting]:
+            return [job]
+
+        async def get_stage_a_scores(self, _job_ids: list[str]) -> dict[str, int]:
+            return {"a": 90}
+
+        async def release_stage_b_claim(self, job_id: str) -> None:
+            self.released.append(job_id)
+
+    class LostLease:
+        lease_lost = False
+
+        def ensure_active(self) -> None:
+            if self.lease_lost:
+                raise RunLeaseLostError("test lease lost")
+
+    class LosingBudget:
+        def __init__(self, lease: LostLease) -> None:
+            self.lease = lease
+
+        async def has_budget(self) -> bool:
+            return True
+
+        async def reserve(self) -> str:
+            self.lease.lease_lost = True
+            return "2026-09-02"
+
+    store = StageBStore()
+    service = EvaluateService(
+        deps=_deps(store),
+        config=_config(),
+        logger=RecordingLogger(),  # type: ignore[arg-type]
+    )
+    lease = LostLease()
+    service._budget = LosingBudget(lease)  # type: ignore[assignment]
+
+    with pytest.raises(RunLeaseLostError, match="test lease lost"):
+        await _run_stage_b(
+            service,
+            PipelineRun(run_id="run", started_at=RUN_AT, source="evaluate"),
+            10,
+            None,
+            lease,  # type: ignore[arg-type]
+        )
+
+    assert store.released == []
 
 
 @pytest.mark.asyncio

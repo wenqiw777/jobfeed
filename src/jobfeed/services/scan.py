@@ -9,10 +9,18 @@ from datetime import UTC, datetime
 from typing import cast
 
 from jobfeed.domain.errors import RunLeaseLostError, SourceBusyError
-from jobfeed.domain.models import JobPosting, PipelineRun
+from jobfeed.domain.models import JobPosting, PipelineRun, SaveJobResult
+from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
 from jobfeed.ports.run_leases import RunLeaseStore
-from jobfeed.ports.source import EnrichResult, ScanSession, SessionSource, SimpleSource
+from jobfeed.ports.source import (
+    EnrichResult,
+    ProgressiveSimpleSource,
+    ScanSession,
+    SessionSource,
+    SimpleSource,
+    SourceFetchProgress,
+)
 from jobfeed.ports.store import JobStore
 from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.error_handler import ServiceErrorHandler
@@ -122,6 +130,7 @@ class ScanService:
                 await self._scan_simple_source(lease_session, run, name, source, config)
         if self._on_progress is not None:
             self._on_progress(run)
+        await self._run_orchestrator.checkpoint(lease_session)
 
     async def _scan_simple_source(
         self,
@@ -133,12 +142,20 @@ class ScanService:
     ) -> None:
         try:
             lease_session.ensure_active()
-            jobs = await source.fetch_jobs(config)
+            if isinstance(source, ProgressiveSimpleSource):
+                jobs = await source.fetch_jobs_with_progress(
+                    config,
+                    lambda progress: self._publish_fetch_progress(run, name, progress),
+                )
+            else:
+                jobs = await source.fetch_jobs(config)
         except RunLeaseLostError:
             raise
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
             return
+        _record_fetched_stats(run, name, len(jobs))
+        await self._run_orchestrator.checkpoint(lease_session)
         self._publish_scan_progress(
             run,
             source=name,
@@ -147,6 +164,21 @@ class ScanService:
             processed=0,
         )
         await self._record_jobs(lease_session, run, name, jobs)
+
+    def _publish_fetch_progress(
+        self,
+        run: PipelineRun,
+        source: str,
+        progress: SourceFetchProgress,
+    ) -> None:
+        run.scan_source = source
+        run.scan_phase = "fetching"
+        run.scan_total = progress.total
+        run.scan_processed = progress.processed
+        run.scan_current_job_id = progress.current_job_id
+        run.progress_updated_at = datetime.now(UTC)
+        if self._on_progress is not None:
+            self._on_progress(run)
 
     async def _scan_session_source(
         self,
@@ -168,6 +200,8 @@ class ScanService:
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
             return
+        _record_fetched_stats(run, name, len(jobs))
+        await self._run_orchestrator.checkpoint(lease_session)
         self._publish_scan_progress(
             run,
             source=name,
@@ -224,10 +258,11 @@ class ScanService:
         name: str,
         jobs: list[JobPosting],
     ) -> None:
-        inserted, updated = await self._save_jobs(lease_session, run, name, jobs)
-        run.jobs_discovered += len(jobs)
-        run.jobs_inserted += inserted
-        run.jobs_updated += updated
+        before_inserted = run.jobs_inserted
+        before_updated = run.jobs_updated
+        await self._save_jobs(lease_session, run, name, jobs)
+        inserted = run.jobs_inserted - before_inserted
+        updated = run.jobs_updated - before_updated
         self.logger.info(
             "scan_source_completed",
             source=name,
@@ -249,14 +284,14 @@ class ScanService:
         run: PipelineRun,
         source: str,
         jobs: list[JobPosting],
-    ) -> tuple[int, int]:
-        inserted = 0
-        updated = 0
+    ) -> None:
         for processed, job in enumerate(jobs, start=1):
             lease_session.ensure_active()
             result = await self.store.save_job(job)
-            inserted += int(result.inserted)
-            updated += int(result.updated)
+            run.jobs_discovered += 1
+            run.jobs_inserted += int(result.inserted)
+            run.jobs_updated += int(result.updated)
+            _record_scan_stats(run, source, job, result)
             if result.inserted:
                 run.scan_inserted_job_ids.append(result.job_id)
             if processed % _SAVE_PROGRESS_INTERVAL == 0:
@@ -267,7 +302,7 @@ class ScanService:
                     total=len(jobs),
                     processed=processed,
                 )
-        return inserted, updated
+                await self._run_orchestrator.checkpoint(lease_session)
 
     def _publish_scan_progress(
         self,
@@ -301,6 +336,47 @@ def _merge_enrichment(posting: JobPosting, result: EnrichResult) -> JobPosting:
         enriched_at=enriched_at,
         enrich_source=result.enrich_source,
     )
+
+
+def _record_scan_stats(
+    run: PipelineRun,
+    source: str,
+    job: JobPosting,
+    result: SaveJobResult,
+) -> None:
+    """Capture incoming scan quality before a later upsert can replace the job."""
+    stats = run.scan_stats.setdefault(
+        source,
+        {
+            "fetched": 0,
+            "discovered": 0,
+            "inserted": 0,
+            "updated": 0,
+            "has_jd": 0,
+        },
+    )
+    stats["discovered"] += 1
+    stats["inserted"] += int(result.inserted)
+    stats["updated"] += int(result.updated)
+    if job.jd_text is not None and job.jd_text.strip():
+        stats["has_jd"] += 1
+    quality = job.jd_quality or assess_quality(job.jd_text)
+    stats[quality.value] = stats.get(quality.value, 0) + 1
+
+
+def _record_fetched_stats(run: PipelineRun, source: str, fetched: int) -> None:
+    """Persist the source result size before individual job writes begin."""
+    stats = run.scan_stats.setdefault(
+        source,
+        {
+            "fetched": 0,
+            "discovered": 0,
+            "inserted": 0,
+            "updated": 0,
+            "has_jd": 0,
+        },
+    )
+    stats["fetched"] = fetched
 
 
 def run_source_name(sources: list[SourceSpec]) -> str:

@@ -243,7 +243,7 @@ async def test_startup_recovery_only_clears_expired_occupied_leases(
     )
 
     recovered_at = _NOW + timedelta(seconds=180)
-    assert await leases.recover_expired_run_leases(now=recovered_at) == 1
+    assert len(await leases.recover_expired_run_leases(now=recovered_at)) == 1
     assert await _run_state(lifecycle, expired_run.run_id) == (
         "failed",
         sqlite_timestamp(recovered_at),

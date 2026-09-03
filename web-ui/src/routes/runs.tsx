@@ -59,7 +59,11 @@ export default function RunsPage() {
                 <ul aria-label="Active runs">
                   <SpaceBetween size="s">
                     {activeRuns.data.runs.map((run) => (
-                      <LiveRunRow key={run.run_id} run={run} onDone={handleDone} />
+                      <LiveRunRow
+                        key={run.run_id}
+                        run={run}
+                        onDone={handleDone}
+                      />
                     ))}
                   </SpaceBetween>
                 </ul>

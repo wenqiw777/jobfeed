@@ -115,9 +115,13 @@ class RunControlFakeStore(FakeStore):
     def __init__(self, run: PipelineRun) -> None:
         super().__init__()
         self.run = run
+        self.retryable_error_job_ids = ["10", "11"]
 
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
         return self.run if run_id == self.run.run_id else None
+
+    async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:
+        return self.retryable_error_job_ids if run_id == self.run.run_id else []
 
 
 def _build_app(
@@ -146,6 +150,28 @@ async def test_run_new_job_sources_returns_exact_breakdown() -> None:
         "source_counts": {"ats": 124, "indeed": 320},
         "total": 444,
     }
+
+
+async def test_get_run_exposes_persisted_scan_quality_snapshot() -> None:
+    run = _make_run("audit-run", source="all")
+    run.scan_stats = {
+        "indeed": {
+            "discovered": 2,
+            "inserted": 1,
+            "updated": 1,
+            "has_jd": 2,
+            "full": 2,
+        }
+    }
+    store = RunControlFakeStore(run)
+    app = build_web_app(fake_context(store))
+    app.state.run_manager = FakeRunManager()
+
+    async with open_client(app) as client:
+        response = await client.get("/api/runs/audit-run")
+
+    assert response.status_code == HTTP_OK
+    assert response.json()["scan_stats"] == run.scan_stats
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +252,36 @@ async def test_retry_failed_scan_uses_original_source() -> None:
     assert response.status_code == HTTP_OK
     assert response.json() == {"run_id": "run-scan-1", "status": "running"}
     assert manager.scan_calls == ["all"]
+
+
+async def test_retry_completed_evaluate_continues_failed_corpus() -> None:
+    """Completed evaluations with row errors retry only failed scoring work."""
+    run = _make_run("completed-with-errors", source="evaluate")
+    run.status = "succeeded"
+    run.errors = 2
+    run.finished_at = datetime.now(UTC)
+    store = RunControlFakeStore(run)
+    app = build_web_app(fake_context(store))
+    manager = FakeRunManager()
+    app.state.run_manager = manager
+
+    async with open_client(app) as client:
+        response = await client.post(
+            "/api/runs/completed-with-errors/retry",
+            json={},
+        )
+
+    assert response.status_code == HTTP_OK
+    assert response.json() == {"run_id": "run-eval-1", "status": "running"}
+    assert manager.eval_calls == [
+        {
+            "stage": "both",
+            "scope": "backlog",
+            "corpus": "failed",
+            "limit": 2,
+            "job_ids": ["10", "11"],
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

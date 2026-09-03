@@ -36,6 +36,7 @@ _TABLE_ORDER = (
 _JSON_TEXT_COLUMNS = {
     ("jobs", "domain_tags"),
     ("jobs", "tech_required"),
+    ("pipeline_runs", "scan_stats_json"),
 }
 _INTEGER_BOOL_COLUMNS = {
     ("jobs", "clearance_required"),
@@ -134,6 +135,24 @@ def _create_table_columns() -> dict[str, list[dict[str, object]]]:
                 "nullable": False,
                 "primary_key": False,
             },
+            *[
+                {
+                    "name": name,
+                    "source_sql_type": source_type,
+                    "nullable": nullable,
+                    "primary_key": False,
+                }
+                for name, source_type, nullable in (
+                    ("failure_code", "text", True),
+                    ("failure_message", "text", True),
+                    ("failed_stage", "text", True),
+                    ("failed_source", "text", True),
+                    ("last_progress_at", "timestamp with time zone", True),
+                    ("restart_count", "integer", False),
+                    ("restarted_by_run_id", "text", True),
+                    ("scan_stats_json", "jsonb", True),
+                )
+            ],
         ]
     )
     return tables
@@ -161,12 +180,12 @@ def _target_type(kind: str) -> str:
     return "TEXT"
 
 
-def test_manifest_matches_every_alembic_0008_table_and_column() -> None:
-    """The registry exactly covers 0009 order, PK, type, kind, and nullability."""
+def test_manifest_matches_every_alembic_0011_table_and_column() -> None:
+    """The registry exactly covers 0011 order, PK, type, kind, and nullability."""
     alembic = _create_table_columns()
     manifest = CANONICAL_SCHEMA_MANIFEST_V1
 
-    assert manifest.alembic_revision == "0009"
+    assert manifest.alembic_revision == "0011"
     assert tuple(table.name for table in manifest.tables) == _TABLE_ORDER
     assert tuple(schema.name for schema in CANONICAL_ROW_SCHEMAS_V1) == tuple(
         f"{name}-v1" for name in _TABLE_ORDER

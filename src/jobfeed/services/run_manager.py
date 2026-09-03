@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from jobfeed.domain.errors import RunConflictError
+from jobfeed.domain.errors import RunConflictError, RunLeaseLostError
 from jobfeed.domain.models import PipelineRun
 from jobfeed.ports.run_leases import RecoverableRunLeaseStore, RunLeaseStore
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
 RUN_DONE = object()
 """Queue sentinel signalling that a subscribed run has finished."""
+
+_EVALUATION_CHECKPOINT_INTERVAL = 100
 
 SourceResolver = Callable[[str, contextlib.AsyncExitStack], Awaitable[list[SourceSpec]]]
 """Composition-injected resolver: source token -> SourceSpec entries; raises a
@@ -56,6 +58,7 @@ class RunManager:
         scan_source_resolver: SourceResolver | None = None,
         run_orchestrator: RunLeaseOrchestrator | None = None,
         post_scan_hook: PostScanHook | None = None,
+        auto_restart_allowed: Callable[[str], bool] | None = None,
     ) -> None:
         """Create a RunManager with injected factories and source resolver."""
         self._logger = logger
@@ -64,6 +67,7 @@ class RunManager:
         self._eval_factory = evaluate_service_factory
         self._source_resolver = scan_source_resolver
         self._post_scan_hook = post_scan_hook
+        self._auto_restart_allowed = auto_restart_allowed or (lambda _source: True)
         self._run_orchestrator = run_orchestrator or RunLeaseOrchestrator(
             cast(RunLeaseStore, store)
         )
@@ -72,8 +76,14 @@ class RunManager:
         self._active: dict[str, ActiveRun] = {}
         self._progress = RunProgressBroker(RUN_DONE)
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._checkpoint_tasks: dict[str, set[asyncio.Task[bool]]] = {}
 
-    async def trigger_scan(self, source_name_or_specs: str | list[SourceSpec]) -> str:
+    async def trigger_scan(
+        self,
+        source_name_or_specs: str | list[SourceSpec],
+        *,
+        restart_count: int = 0,
+    ) -> str:
         """Start a scan if none active.
 
         Args:
@@ -91,10 +101,12 @@ class RunManager:
         try:
             service = self._scan_factory()
             source = self._source_label_before_resolution(source_name_or_specs)
-            session = await self._run_orchestrator.start("scan", source)
+            session = await self._run_orchestrator.start(
+                "scan", source, restart_count=restart_count
+            )
             self._register(session.run, source)
             specs = await self._resolve_sources(source_name_or_specs, stack)
-            cb = self._make_progress(session.run.run_id)
+            cb = self._make_progress(session.run.run_id, session)
 
             async def _work(active_session: RunLeaseSession) -> None:
                 await service.run(
@@ -110,11 +122,11 @@ class RunManager:
                 self._execute_run(self._scan_lock, session, _work, stack)
             )
             return session.run.run_id
-        except Exception:
+        except Exception as exc:
             try:
                 if session is not None:
                     self._active.pop(session.run.run_id, None)
-                    await self._run_orchestrator.fail(session)
+                    await self._run_orchestrator.fail(session, exc)
             finally:
                 try:
                     await stack.aclose()
@@ -150,8 +162,13 @@ class RunManager:
             else:
                 session = await self._run_orchestrator.start("evaluate", "evaluate")
                 run = session.run
+            run.evaluation_scope = scope
+            scoped_job_ids = kwargs.get("job_ids")
+            run.evaluation_input_total = (
+                len(scoped_job_ids) if isinstance(scoped_job_ids, list) else None
+            )
             self._register(run, "evaluate")
-            cb = self._make_progress(run.run_id)
+            cb = self._make_progress(run.run_id, session)
 
             if session is None:
 
@@ -171,12 +188,12 @@ class RunManager:
                 task = self._execute_run(self._eval_lock, session, _work)
             self._tasks[run.run_id] = asyncio.create_task(task)
             return run.run_id
-        except Exception:
+        except Exception as exc:
             if run is not None:
                 self._active.pop(run.run_id, None)
             try:
                 if session is not None:
-                    await self._run_orchestrator.fail(session)
+                    await self._run_orchestrator.fail(session, exc)
             finally:
                 self._eval_lock.release()
             raise
@@ -215,8 +232,19 @@ class RunManager:
         stack: contextlib.AsyncExitStack | None = None,
     ) -> None:
         """Run work through fenced finalization, then release process state."""
+        lease_lost = False
+
+        async def _work_and_drain(active_session: RunLeaseSession) -> None:
+            try:
+                await work(active_session)
+            finally:
+                await self._drain_checkpoints(active_session.run.run_id)
+
         try:
-            await self._run_orchestrator.execute(session, work)
+            await self._run_orchestrator.execute(session, _work_and_drain)
+        except RunLeaseLostError as exc:
+            lease_lost = True
+            self._logger.error("run_failed", run_id=session.run.run_id, error=str(exc))
         except Exception as exc:
             self._logger.error("run_failed", run_id=session.run.run_id, error=str(exc))
         finally:
@@ -226,6 +254,8 @@ class RunManager:
                     await stack.aclose()
             finally:
                 lock.release()
+        if lease_lost and session.kind == "scan":
+            await self.recover_stale_runs()
 
     async def _execute_unpersisted_run(
         self,
@@ -320,9 +350,44 @@ class RunManager:
         """
         self._progress.unsubscribe(run_id, queue)
 
-    def _make_progress(self, run_id: str) -> Callable[[PipelineRun], None]:
-        """Create a progress callback that broadcasts to subscribers."""
-        return self._progress.callback(run_id)
+    def _make_progress(
+        self, run_id: str, session: RunLeaseSession | None = None
+    ) -> Callable[[PipelineRun], None]:
+        """Broadcast progress and checkpoint persisted runs."""
+        broadcast = self._progress.callback(run_id)
+
+        def _callback(run: PipelineRun) -> None:
+            broadcast(run)
+            if (
+                session is None
+                or session.lease_lost
+                or not _should_checkpoint_evaluation_progress(run)
+            ):
+                return
+            task = asyncio.create_task(self._run_orchestrator.checkpoint(session))
+            self._checkpoint_tasks.setdefault(run_id, set()).add(task)
+            task.add_done_callback(
+                lambda completed: self._checkpoint_done(run_id, completed)
+            )
+
+        return _callback
+
+    def _checkpoint_done(self, run_id: str, task: asyncio.Task[bool]) -> None:
+        tasks = self._checkpoint_tasks.get(run_id)
+        if tasks is not None:
+            tasks.discard(task)
+            if not tasks:
+                self._checkpoint_tasks.pop(run_id, None)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._logger.warning("run_checkpoint_failed", error=str(exc))
+
+    async def _drain_checkpoints(self, run_id: str) -> None:
+        tasks = tuple(self._checkpoint_tasks.get(run_id, ()))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def stop_run(self, run_id: str) -> bool:
         """Stop a local task or atomically clear a durable stale run.
@@ -350,8 +415,48 @@ class RunManager:
             Number of stale runs recovered.
         """
         if isinstance(self._store, RecoverableRunLeaseStore):
-            return await self._store.recover_expired_run_leases(now=datetime.now(UTC))
+            recovered = await self._store.recover_expired_run_leases(
+                now=datetime.now(UTC)
+            )
+            for old in recovered:
+                if (
+                    old.kind != "scan"
+                    or old.restart_count != 0
+                    or not self._auto_restart_allowed(old.source)
+                ):
+                    continue
+                try:
+                    replacement = await self.trigger_scan(
+                        old.source, restart_count=old.restart_count + 1
+                    )
+                except Exception as exc:
+                    self._logger.warning(
+                        "run_auto_restart_skipped",
+                        run_id=old.run_id,
+                        source=old.source,
+                        error=str(exc),
+                    )
+                    continue
+                await self._store.link_restarted_run(old.run_id, replacement)
+            return len(recovered)
         return 0
 
 
 __all__ = ["RUN_DONE", "ActiveRun", "RunConflictError", "RunManager", "SourceResolver"]
+
+
+def _should_checkpoint_evaluation_progress(run: PipelineRun) -> bool:
+    """Keep per-job SSE live while bounding durable evaluation writes."""
+    if run.source != "evaluate":
+        return True
+    if run.progress_stage == "stage_a":
+        processed, total = run.stage_a_processed, run.stage_a_total
+    elif run.progress_stage == "stage_b":
+        processed, total = run.stage_b_processed, run.stage_b_total
+    else:
+        return True
+    return (
+        processed == 0
+        or processed % _EVALUATION_CHECKPOINT_INTERVAL == 0
+        or (total is not None and processed == total)
+    )

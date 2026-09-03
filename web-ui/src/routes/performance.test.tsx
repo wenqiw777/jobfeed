@@ -101,6 +101,7 @@ function runRow(id: string, over: Partial<RunSummary> = {}): RunSummary {
     errors: 0,
     total_llm_cost_usd: 0,
     ...over,
+    restart_count: over.restart_count ?? 0,
   };
 }
 

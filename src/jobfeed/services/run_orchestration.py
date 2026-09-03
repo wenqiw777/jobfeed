@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +19,11 @@ RunIdFactory: TypeAlias = Callable[[], UUID]
 RunWork: TypeAlias = Callable[["RunLeaseSession"], Awaitable[None]]
 
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
+# A SQLite renewal can spend up to five seconds behind another writer. Keep
+# retrying transient store errors within the three-minute lease window instead
+# of declaring the fence lost after only a few busy timeouts.
+_HEARTBEAT_RENEW_ATTEMPTS = 20
+_HEARTBEAT_RETRY_DELAY_SECONDS = 1.0
 
 
 @dataclass
@@ -78,19 +84,37 @@ class RunLeaseSession:
                     self._stop.wait(), timeout=self._heartbeat_interval_seconds
                 )
             except TimeoutError:
-                try:
-                    renewed = await self._store.renew_run_lease(
-                        kind=self.kind,
-                        owner_id=self.owner_id,
-                        run_id=self.run.run_id,
-                        generation=self.generation,
-                        now=_aware_utc(self._clock()),
-                    )
-                except Exception:
-                    renewed = False
+                renewed = await self._renew_with_transient_retry()
+                if renewed is None:
+                    return
                 if not renewed:
                     self._lost.set()
                     return
+
+    async def _renew_with_transient_retry(self) -> bool | None:
+        """Renew once, retrying bounded store exceptions but not fence rejection."""
+        for attempt in range(_HEARTBEAT_RENEW_ATTEMPTS):
+            try:
+                return await self._store.renew_run_lease(
+                    kind=self.kind,
+                    owner_id=self.owner_id,
+                    run_id=self.run.run_id,
+                    generation=self.generation,
+                    now=_aware_utc(self._clock()),
+                )
+            except Exception:
+                if attempt + 1 == _HEARTBEAT_RENEW_ATTEMPTS:
+                    return False
+                retry_delay = min(
+                    _HEARTBEAT_RETRY_DELAY_SECONDS,
+                    self._heartbeat_interval_seconds,
+                )
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=retry_delay)
+                except TimeoutError:
+                    continue
+                return None
+        return False  # pragma: no cover
 
     async def _stop_heartbeat(self) -> None:
         self._stop.set()
@@ -144,7 +168,9 @@ class RunLeaseOrchestrator:
         run.status = status
         run.finished_at = _aware_utc(self._clock())
 
-    async def start(self, kind: RunKind, source: str) -> RunLeaseSession:
+    async def start(
+        self, kind: RunKind, source: str, *, restart_count: int = 0
+    ) -> RunLeaseSession:
         """Atomically start a persisted run and its heartbeat before returning.
 
         Args:
@@ -163,6 +189,7 @@ class RunLeaseOrchestrator:
             run_id=str(self._run_id_factory()),
             started_at=now,
             source=source,
+            restart_count=restart_count,
         )
         generation = await self._store.start_run_with_lease(
             run,
@@ -202,7 +229,8 @@ class RunLeaseOrchestrator:
             session.ensure_active()
             await work(session)
             session.ensure_active()
-        except BaseException:
+        except BaseException as exc:
+            _record_failure(session, exc)
             await self._finalize(session, "failed")
             raise
         finalized = await self._finalize(session, "succeeded")
@@ -231,16 +259,45 @@ class RunLeaseOrchestrator:
         session = await self.start(kind, source)
         return await self.execute(session, work)
 
-    async def fail(self, session: RunLeaseSession) -> bool:
+    async def fail(
+        self, session: RunLeaseSession, exc: BaseException | None = None
+    ) -> bool:
         """Fenced-finalize a started session that failed before work began.
 
         Args:
             session: Acquired session whose setup failed.
+            exc: Optional setup exception to classify for run history.
 
         Returns:
             True only when the session still owned its fence.
         """
+        if exc is not None:
+            _record_failure(session, exc)
         return await self._finalize(session, "failed")
+
+    async def checkpoint(self, session: RunLeaseSession) -> bool:
+        """Persist current counters without releasing the live lease.
+
+        Args:
+            session: Acquired run whose current snapshot should be saved.
+
+        Returns:
+            True when saved, or for a transition-only test/legacy store that
+            does not implement durable checkpoints.
+        """
+        session.ensure_active()
+        checkpoint = getattr(self._store, "checkpoint_run_with_lease", None)
+        if checkpoint is None:
+            return True
+        return bool(
+            await checkpoint(
+                session.run,
+                kind=session.kind,
+                owner_id=session.owner_id,
+                generation=session.generation,
+                now=_aware_utc(self._clock()),
+            )
+        )
 
     async def _finalize(self, session: RunLeaseSession, status: str) -> bool:
         await session._stop_heartbeat()
@@ -265,6 +322,25 @@ def _aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("run lease clock must return a timezone-aware datetime")
     return value.astimezone(UTC)
+
+
+_SECRET = re.compile(r"(?i)(authorization|api[_-]?key|token|password)(\s*[:=]\s*)\S+")
+
+
+def _record_failure(session: RunLeaseSession, exc: BaseException) -> None:
+    run = session.run
+    if isinstance(exc, asyncio.CancelledError):
+        run.failure_code = "user_stopped"
+        run.failure_message = "Run stopped by user"
+    elif isinstance(exc, RunLeaseLostError):
+        run.failure_code = "interrupted"
+        run.failure_message = "Run interrupted after its worker stopped responding"
+    else:
+        run.failure_code = "runtime_error"
+        message = " ".join(str(exc).split()) or type(exc).__name__
+        run.failure_message = _SECRET.sub(r"\1\2[redacted]", message)[:300]
+    run.failed_stage = run.progress_stage or run.scan_phase or session.kind
+    run.failed_source = run.scan_source or run.source
 
 
 __all__ = ["RunLeaseOrchestrator", "RunLeaseSession"]

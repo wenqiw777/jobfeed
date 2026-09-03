@@ -105,36 +105,72 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
 }
 
 function EvaluateProgress({ run }: { run: RunSummary }) {
+  const displayStage = evaluateDisplayStage(run);
+  const candidatePreparationDone = isAfter(displayStage, "preparing");
+  const seniorityTotal = seniorityCandidateTotal(run);
+  const seniorityIsDone = isAfter(displayStage, "seniority_gate");
+  const seniorityIsActive = isCurrent(displayStage, "seniority_gate");
+  const preparationExcluded = preparationExcludedCount(run);
   return (
     <SpaceBetween size="m">
-      <ProgressRail stage={run.progress_stage} />
+      <ProgressRail stage={displayStage} />
       <ColumnLayout columns={2} variant="text-grid">
         <SpaceBetween size="s">
+          <StageProgress
+            label="Candidate preparation"
+            processed={candidatePreparationDone ? (run.ml_gate_total ?? 0) : 0}
+            total={run.ml_gate_total}
+            isDone={candidatePreparationDone}
+            isActive={isCurrent(displayStage, "preparing")}
+            detail={candidatePreparationDetail(run, candidatePreparationDone)}
+          />
           <StageProgress
             label="SDE role filter"
             processed={run.ml_gate_processed}
             total={run.ml_gate_total}
-            isDone={isAfter(run.progress_stage, "ml_gate")}
-            isActive={isCurrent(run.progress_stage, "ml_gate")}
+            isDone={isAfter(displayStage, "ml_gate")}
+            isActive={isCurrent(displayStage, "ml_gate")}
+          />
+          <StageProgress
+            label="Seniority filter"
+            processed={seniorityIsDone ? (seniorityTotal ?? 0) : 0}
+            total={seniorityTotal}
+            isDone={seniorityIsDone}
+            isActive={seniorityIsActive}
+            detail={seniorityIsActive && seniorityTotal !== null
+              ? `Screening ${seniorityTotal} candidates`
+              : seniorityIsActive ? "Preparing candidates" : undefined}
           />
           <StageProgress
             label="Quick evaluation"
             processed={run.stage_a_processed}
             total={run.stage_a_total}
-            isDone={isAfter(run.progress_stage, "stage_a")}
-            isActive={isCurrent(run.progress_stage, "stage_a")}
+            isDone={isAfter(displayStage, "stage_a")}
+            isActive={isCurrent(displayStage, "stage_a")}
           />
           <StageProgress
             label="Detailed review"
             processed={run.stage_b_processed}
             total={run.stage_b_total}
-            isDone={isAfter(run.progress_stage, "stage_b")}
-            isActive={isCurrent(run.progress_stage, "stage_b")}
+            isDone={isAfter(displayStage, "stage_b")}
+            isActive={isCurrent(displayStage, "stage_b")}
           />
         </SpaceBetween>
         <SpaceBetween size="s">
           <Box variant="awsui-key-label">What is happening</Box>
-          <Box fontSize="heading-m" fontWeight="bold">{stageLabel(run.progress_stage)}</Box>
+          <Box fontSize="heading-m" fontWeight="bold">{stageLabel(displayStage)}</Box>
+          <SpaceBetween direction="horizontal" size="s">
+            {preparationExcluded !== null && preparationExcluded > 0 && (
+              <Badge color="severity-neutral">
+                {preparationExcluded} not eligible or duplicate
+              </Badge>
+            )}
+            {run.jobs_filtered > 0 && (
+              <Badge color="severity-neutral">
+                {run.jobs_filtered} excluded by job rules
+              </Badge>
+            )}
+          </SpaceBetween>
           <SpaceBetween direction="horizontal" size="s">
             <Badge color="severity-neutral">
               {run.jobs_ml_gated} excluded by SDE role filter
@@ -160,7 +196,9 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
 
 function ProgressRail({ stage }: { stage: string | null | undefined }) {
   const steps = [
+    ["preparing", "Candidate preparation"],
     ["ml_gate", "SDE role filter"],
+    ["seniority_gate", "Seniority filter"],
     ["stage_a", "Quick evaluation"],
     ["stage_b", "Detailed review"],
     ["finalizing", "Complete"],
@@ -184,28 +222,30 @@ function StageProgress({
   total,
   isDone,
   isActive,
+  detail,
 }: {
   label: string;
   processed: number | undefined;
   total: number | null | undefined;
   isDone: boolean;
   isActive: boolean;
+  detail?: string;
 }) {
   const value = processed ?? 0;
   const knownTotal = total ?? null;
   const percentage = knownTotal === null || knownTotal === 0
     ? (isDone ? 100 : 0)
     : Math.min(100, value / knownTotal * 100);
-  const detail = knownTotal === null
+  const additionalInfo = detail ?? (knownTotal === null
     ? (isActive ? "Preparing queue" : "Waiting")
-    : `${value} / ${knownTotal}`;
+    : `${value} / ${knownTotal}`);
   return (
     <ProgressBar
       value={percentage}
       variant="key-value"
       label={label}
-      additionalInfo={detail}
-      ariaLabel={`${label}: ${detail}`}
+      additionalInfo={additionalInfo}
+      ariaLabel={`${label}: ${additionalInfo}`}
     />
   );
 }
@@ -250,7 +290,10 @@ function ScanProgress({
 
 function scanActivity(run: RunSummary): string | null {
   if (!run.scan_source || !run.scan_phase) return null;
-  const source = run.scan_source === "linkedin_guest" ? "LinkedIn Guest" : run.scan_source;
+  const source = {
+    jobright: "Jobright",
+    linkedin_guest: "LinkedIn Guest",
+  }[run.scan_source] ?? run.scan_source;
   const phase = {
     fetching: "Fetching listings",
     saving: "Saving listings",
@@ -273,7 +316,73 @@ function mergeProgress(polled: RunSummary, streamed: RunSummary | null): RunSumm
   return streamed;
 }
 
-const STAGE_ORDER = ["preparing", "ml_gate", "stage_a", "stage_b", "finalizing"];
+const STAGE_ORDER = [
+  "preparing",
+  "ml_gate",
+  "seniority_gate",
+  "stage_a",
+  "stage_b",
+  "finalizing",
+];
+
+function evaluateDisplayStage(run: RunSummary): string | null | undefined {
+  if (
+    run.progress_stage === "ml_gate"
+    && run.ml_gate_total !== null
+    && run.ml_gate_total !== undefined
+    && (run.ml_gate_processed ?? 0) >= run.ml_gate_total
+  ) {
+    return "seniority_gate";
+  }
+  return run.progress_stage;
+}
+
+function seniorityCandidateTotal(run: RunSummary): number | null {
+  if (run.ml_gate_total === null || run.ml_gate_total === undefined) return null;
+  return Math.max(0, run.ml_gate_total - run.jobs_ml_gated);
+}
+
+function candidatePreparationDetail(
+  run: RunSummary,
+  isDone: boolean,
+): string {
+  const candidateTotal = run.ml_gate_total;
+  if (run.evaluation_scope === "latest_scan") {
+    const inputTotal = run.evaluation_input_total;
+    if (inputTotal !== null && inputTotal !== undefined) {
+      if (!isDone || candidateTotal === null || candidateTotal === undefined) {
+        return `Preparing ${inputTotal} latest-scan listings`;
+      }
+      return `Latest scan: ${inputTotal} listings → ${candidateTotal} candidates`;
+    }
+    return isDone && candidateTotal !== null && candidateTotal !== undefined
+      ? `Latest scan → ${candidateTotal} candidates`
+      : "Preparing latest scan";
+  }
+  const scopeLabel = run.evaluation_scope === "backlog"
+    ? "Historical backlog"
+    : "Evaluation candidates";
+  if (!isDone || candidateTotal === null || candidateTotal === undefined) {
+    return `Preparing ${scopeLabel.toLowerCase()}`;
+  }
+  return `${scopeLabel} → ${candidateTotal} candidates`;
+}
+
+function preparationExcludedCount(run: RunSummary): number | null {
+  if (
+    run.evaluation_scope !== "latest_scan"
+    || run.evaluation_input_total === null
+    || run.evaluation_input_total === undefined
+    || run.ml_gate_total === null
+    || run.ml_gate_total === undefined
+  ) {
+    return null;
+  }
+  return Math.max(
+    0,
+    run.evaluation_input_total - run.jobs_filtered - run.ml_gate_total,
+  );
+}
 
 function stageIndex(stage: string | null | undefined): number {
   const index = STAGE_ORDER.indexOf(stage ?? "preparing");
@@ -310,6 +419,7 @@ function stageLabel(stage: string | null | undefined): string {
   const labels: Record<string, string> = {
     preparing: "Preparing evaluation",
     ml_gate: "Applying local filters",
+    seniority_gate: "Applying seniority filter",
     stage_a: "Running quick evaluation",
     stage_b: "Running detailed review",
     finalizing: "Saving final results",

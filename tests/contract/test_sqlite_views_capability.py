@@ -390,3 +390,81 @@ async def test_pipeline_runs_filter_total_and_page_with_tie_break(
         assert total == 3
     finally:
         await lifecycle.close()
+
+
+async def test_retryable_run_errors_are_current_and_owned_by_that_run(
+    tmp_path: Path,
+) -> None:
+    """Retry lookup excludes resolved, exhausted, and other-run failures."""
+    lifecycle, store = await open_views_performance(tmp_path / "run-errors.db")
+    try:
+        run = PipelineRun(
+            run_id="completed-with-errors",
+            started_at=NOW - timedelta(minutes=10),
+            finished_at=NOW + timedelta(minutes=10),
+            source="evaluate",
+            status="succeeded",
+            errors=2,
+        )
+        await insert_run(lifecycle, run)
+        owned_a = await insert_job(lifecycle, "owned-a", discovered_at=utc_text(NOW))
+        owned_b = await insert_job(lifecycle, "owned-b", discovered_at=utc_text(NOW))
+        resolved = await insert_job(lifecycle, "resolved", discovered_at=utc_text(NOW))
+        other_run = await insert_job(
+            lifecycle, "other-run", discovered_at=utc_text(NOW)
+        )
+        exhausted = await insert_job(
+            lifecycle, "exhausted", discovered_at=utc_text(NOW)
+        )
+        now_text = utc_text(NOW)
+        async with lifecycle.connection() as connection:
+            await connection.executemany(
+                """INSERT INTO evaluations (
+                       job_id, stage_a_status, stage_a_error,
+                       stage_a_error_count, stage_b_status, stage_b_error,
+                       stage_b_error_count, created_at, updated_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?)""",
+                [
+                    (owned_a, "error", "timeout", 1, None, None, 0, now_text, now_text),
+                    (
+                        owned_b,
+                        "completed",
+                        None,
+                        0,
+                        "error",
+                        "timeout",
+                        1,
+                        now_text,
+                        now_text,
+                    ),
+                    (resolved, "completed", None, 1, None, None, 0, now_text, now_text),
+                    (
+                        other_run,
+                        "error",
+                        "timeout",
+                        1,
+                        None,
+                        None,
+                        0,
+                        now_text,
+                        utc_text(NOW + timedelta(hours=1)),
+                    ),
+                    (
+                        exhausted,
+                        "error",
+                        "timeout",
+                        3,
+                        None,
+                        None,
+                        0,
+                        now_text,
+                        now_text,
+                    ),
+                ],
+            )
+
+        retryable = await store.list_retryable_run_error_job_ids(run.run_id)
+
+        assert retryable == [str(owned_a), str(owned_b)]
+    finally:
+        await lifecycle.close()

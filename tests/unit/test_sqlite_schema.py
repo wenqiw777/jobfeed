@@ -309,9 +309,18 @@ async def test_v1_reopen_installs_the_additive_seniority_counter() -> None:
             "INSERT INTO pipeline_runs(run_id, started_at, source, status) "
             "VALUES('kept', '2026-08-27T00:00:00Z', 'evaluate', 'succeeded')"
         )
-        await connection.execute(
-            "ALTER TABLE pipeline_runs DROP COLUMN jobs_seniority_filtered"
-        )
+        for column in (
+            "scan_stats_json",
+            "restarted_by_run_id",
+            "restart_count",
+            "last_progress_at",
+            "failed_source",
+            "failed_stage",
+            "failure_message",
+            "failure_code",
+            "jobs_seniority_filtered",
+        ):
+            await connection.execute(f"ALTER TABLE pipeline_runs DROP COLUMN {column}")
         await connection.commit()
 
         await ensure_sqlite_schema(connection)

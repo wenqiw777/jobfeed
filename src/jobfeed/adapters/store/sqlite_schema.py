@@ -25,6 +25,14 @@ _ADDITIVE_COLUMNS: Final[dict[tuple[str, str], str]] = {
         "pipeline_runs",
         "jobs_seniority_filtered",
     ): "INTEGER DEFAULT 0 NOT NULL",
+    ("pipeline_runs", "failure_code"): "TEXT",
+    ("pipeline_runs", "failure_message"): "TEXT",
+    ("pipeline_runs", "failed_stage"): "TEXT",
+    ("pipeline_runs", "failed_source"): "TEXT",
+    ("pipeline_runs", "last_progress_at"): "TEXT",
+    ("pipeline_runs", "restart_count"): "INTEGER DEFAULT 0 NOT NULL",
+    ("pipeline_runs", "restarted_by_run_id"): "TEXT",
+    ("pipeline_runs", "scan_stats_json"): "TEXT",
 }
 
 

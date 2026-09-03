@@ -15,7 +15,7 @@ from jobfeed.adapters.migration.canonical_row import (
 )
 
 MANIFEST_VERSION_V1: Final = 1
-ALEMBIC_REVISION_V1: Final = "0009"
+ALEMBIC_REVISION_V1: Final = "0011"
 MIGRATED_TABLE_ORDER_V1: Final = (
     "jobs",
     "evaluations",

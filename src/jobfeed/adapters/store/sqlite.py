@@ -43,20 +43,10 @@ class SQLiteStore(
         self._application_clock = clock or _utc_now
 
     async def connect(self) -> None:
-        """Open the schema and recover only expired occupied run leases.
-
-        Raises:
-            Exception: Propagates lifecycle, schema, or lease-recovery failures
-                after closing any partially opened lifecycle.
-        """
+        """Open the schema; RunManager owns stale-run recovery policy."""
         if self._lifecycle.is_open:
             return
         await self._lifecycle.open()
-        try:
-            await self.recover_expired_run_leases(now=self._now())
-        except BaseException:
-            await self._lifecycle.close()
-            raise
 
     async def close(self) -> None:
         """Close the shared SQLite lifecycle idempotently."""

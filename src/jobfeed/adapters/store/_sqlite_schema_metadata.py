@@ -37,6 +37,7 @@ _DEFAULTS: Final[dict[tuple[str, str], str]] = {
     ("pipeline_runs", "total_llm_cost_usd"): "0.0",
     ("pipeline_runs", "errors"): "0",
     ("pipeline_runs", "jobs_gate_passed"): "0",
+    ("pipeline_runs", "restart_count"): "0",
     ("resume_variants", "created_at"): _UTC_TIMESTAMP_SQL,
     ("job_status", "status"): "'new'",
     ("job_status", "last_status_change_at"): _UTC_TIMESTAMP_SQL,

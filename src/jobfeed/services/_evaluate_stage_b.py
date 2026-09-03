@@ -69,6 +69,7 @@ async def _run_stage_b(  # noqa: PLR0913 - service context plus scoped run input
     lease_session.ensure_active()
     sem = asyncio.Semaphore(max(1, service._config.llm.max_concurrent))
     failed: list[JobPosting] = []
+    settled_job_ids: set[str] = set()
 
     async def _worker(job: JobPosting) -> None:
         async with sem:
@@ -84,36 +85,60 @@ async def _run_stage_b(  # noqa: PLR0913 - service context plus scoped run input
             )
             if outcome == "failed":
                 failed.append(job)
+            else:
+                settled_job_ids.add(require_job_id(job))
             run.stage_b_processed += 1
             service._emit_progress(run)
 
-    await asyncio.gather(*(_worker(job) for job in jobs))
-    lease_session.ensure_active()
+    workers = [asyncio.create_task(_worker(job)) for job in jobs]
+    try:
+        await asyncio.gather(*workers)
+        lease_session.ensure_active()
 
-    async def _score_sweep(
-        job: JobPosting,
-        sweep_run: PipelineRun,
-        llm: LLMClient,
-        *,
-        stage_a_score: int | None = None,
-        parse_attempts: int = 2,
-    ) -> str:
-        return await _score_stage_b(
-            service,
-            job,
-            sweep_run,
-            llm,
-            lease_session,
-            stage_a_score=stage_a_score,
-            parse_attempts=parse_attempts,
+        async def _score_sweep(
+            job: JobPosting,
+            sweep_run: PipelineRun,
+            llm: LLMClient,
+            *,
+            stage_a_score: int | None = None,
+            parse_attempts: int = 2,
+        ) -> str:
+            outcome = await _score_stage_b(
+                service,
+                job,
+                sweep_run,
+                llm,
+                lease_session,
+                stage_a_score=stage_a_score,
+                parse_attempts=parse_attempts,
+            )
+            if outcome != "failed":
+                settled_job_ids.add(require_job_id(job))
+            return outcome
+
+        await sweep_stage_b(
+            service._deps,
+            run,
+            failed,
+            score_stage_b=_score_sweep,
         )
-
-    await sweep_stage_b(
-        service._deps,
-        run,
-        failed,
-        score_stage_b=_score_sweep,
-    )
+        settled_job_ids.update(require_job_id(job) for job in failed)
+    except BaseException:
+        for worker in workers:
+            worker.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+        if not lease_session.lease_lost:
+            unfinished = [
+                job for job in jobs if require_job_id(job) not in settled_job_ids
+            ]
+            await asyncio.gather(
+                *(
+                    release_stage_b_for_run(service._deps.store, require_job_id(job))
+                    for job in unfinished
+                ),
+                return_exceptions=True,
+            )
+        raise
 
 
 async def _score_stage_b(  # noqa: PLR0913 - scorer inputs plus lease guard

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import PipelineRun
@@ -101,6 +102,20 @@ class StoreViewsMixin(Protocol):
         """
         ...
 
+    async def get_stage_b_run_progress(
+        self, run_id: str, started_at: datetime
+    ) -> tuple[int, int]:
+        """Return processed and total Stage B jobs for a live external run.
+
+        Args:
+            run_id: Active evaluation run identity.
+            started_at: Lower timestamp bound for claims owned by the run.
+
+        Returns:
+            Processed count and reconstructed total Stage B count.
+        """
+        ...
+
     async def get_new_job_source_counts(self, run_id: str) -> dict[str, int]:
         """Count first-time job inserts by configured source for one scan.
 
@@ -110,6 +125,18 @@ class StoreViewsMixin(Protocol):
         Returns:
             Configured source name to exact first-insert count. Evaluation
             runs and runs without attributable inserts return an empty map.
+        """
+        ...
+
+    async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:
+        """List unresolved, retryable scoring errors written by one run.
+
+        Args:
+            run_id: Completed evaluation run identity.
+
+        Returns:
+            Job identities whose current Stage A or B error was written inside
+            that run's time window and remains below the retry cap.
         """
         ...
 

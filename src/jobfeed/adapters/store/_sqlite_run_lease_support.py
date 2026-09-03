@@ -8,6 +8,7 @@ from typing import Final
 import aiosqlite
 import structlog
 
+from jobfeed.adapters.store._run_scan_stats import dump_scan_stats
 from jobfeed.adapters.store._sqlite_capability_support import (
     _fetch_row,
     _require_utc_timestamp,
@@ -112,8 +113,10 @@ async def _insert_run(
                jobs_inserted, jobs_updated, jobs_filtered, jobs_ml_gated,
                jobs_seniority_filtered, jobs_gate_passed, stage_a_scored,
                stage_b_scored, jobs_scored,
-               total_llm_cost_usd, errors, finished_at
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               total_llm_cost_usd, errors, finished_at, failure_code,
+               failure_message, failed_stage, failed_source, last_progress_at,
+               restart_count, restarted_by_run_id, scan_stats_json
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         _run_values(run),
     )
 
@@ -132,6 +135,9 @@ async def _update_terminal_run(
                jobs_seniority_filtered=?, jobs_gate_passed=?,
                stage_a_scored=?, stage_b_scored=?,
                jobs_scored=?, total_llm_cost_usd=?, errors=?
+               , failure_code=?, failure_message=?, failed_stage=?,
+               failed_source=?, last_progress_at=?, restart_count=?,
+               restarted_by_run_id=?, scan_stats_json=?
            WHERE run_id=? AND status='running'""",
         (
             run.status,
@@ -148,6 +154,16 @@ async def _update_terminal_run(
             run.jobs_scored,
             run.total_llm_cost_usd,
             run.errors,
+            run.failure_code,
+            run.failure_message,
+            run.failed_stage,
+            run.failed_source,
+            _require_utc_timestamp(run.last_progress_at, "run.last_progress_at")
+            if run.last_progress_at is not None
+            else None,
+            run.restart_count,
+            run.restarted_by_run_id,
+            dump_scan_stats(run.scan_stats),
             run.run_id,
         ),
     )
@@ -177,6 +193,16 @@ def _run_values(run: PipelineRun) -> tuple[object, ...]:
         _require_utc_timestamp(run.finished_at, "run.finished_at")
         if run.finished_at is not None
         else None,
+        run.failure_code,
+        run.failure_message,
+        run.failed_stage,
+        run.failed_source,
+        _require_utc_timestamp(run.last_progress_at, "run.last_progress_at")
+        if run.last_progress_at is not None
+        else None,
+        run.restart_count,
+        run.restarted_by_run_id,
+        dump_scan_stats(run.scan_stats),
     )
 
 
@@ -186,11 +212,15 @@ async def _fail_expired_run(
     run_id: str,
     finished_at: str,
     kind: str,
-) -> None:
+) -> bool:
     cursor = await connection.execute(
-        "UPDATE pipeline_runs SET status='failed', finished_at=? "
+        "UPDATE pipeline_runs SET status='failed', finished_at=?, "
+        "failure_code='interrupted', "
+        "failure_message='Run interrupted after its worker stopped responding', "
+        "failed_stage=COALESCE(failed_stage, ?), "
+        "failed_source=COALESCE(failed_source, source) "
         "WHERE run_id=? AND status='running'",
-        (finished_at, run_id),
+        (finished_at, kind, run_id),
     )
     changed = cursor.rowcount
     await cursor.close()
@@ -201,15 +231,16 @@ async def _fail_expired_run(
             kind=kind,
             run_id=run_id,
         )
+    return changed == 1
 
 
 async def _recover_lease(
     connection: aiosqlite.Connection,
     row: aiosqlite.Row,
     now_text: str,
-) -> None:
+) -> bool:
     run_id = str(row["run_id"])
-    await _fail_expired_run(
+    interrupted = await _fail_expired_run(
         connection,
         run_id=run_id,
         finished_at=now_text,
@@ -232,3 +263,4 @@ async def _recover_lease(
     await cursor.close()
     if changed != 1:
         raise RuntimeError("expired run lease changed inside transaction")
+    return interrupted

@@ -18,6 +18,7 @@ from tests.support.factories import make_job
 NOW = datetime(2026, 8, 12, 14, 30, tzinfo=UTC)
 OWNER_ID = UUID("11111111-1111-4111-8111-111111111111")
 RUN_ID = UUID("22222222-2222-4222-8222-222222222222")
+TRANSIENT_RENEW_CALLS = 2
 
 
 class LeaseStore:
@@ -26,6 +27,7 @@ class LeaseStore:
     def __init__(self, *, generation: int | None = 7) -> None:
         self.generation = generation
         self.renew_result = True
+        self.renew_errors_remaining = 0
         self.calls: list[tuple[str, object]] = []
 
     async def start_run_with_lease(
@@ -51,7 +53,22 @@ class LeaseStore:
     ) -> bool:
         """Record a fenced renewal request."""
         self.calls.append(("renew", (kind, owner_id, run_id, generation, now)))
+        if self.renew_errors_remaining:
+            self.renew_errors_remaining -= 1
+            raise RuntimeError("database is locked")
         return self.renew_result
+
+    async def checkpoint_run_with_lease(
+        self,
+        run: PipelineRun,
+        *,
+        kind: str,
+        owner_id: str,
+        generation: int,
+        now: datetime,
+    ) -> bool:
+        self.calls.append(("checkpoint", (run, kind, owner_id, generation, now)))
+        return True
 
     async def finalize_run_with_lease(
         self,
@@ -131,6 +148,7 @@ def test_lease_store_protocol_exposes_exact_fenced_operations() -> None:
     assert {name for name in RunLeaseStore.__dict__ if not name.startswith("_")} == {
         "start_run_with_lease",
         "renew_run_lease",
+        "checkpoint_run_with_lease",
         "finalize_run_with_lease",
     }
 
@@ -181,6 +199,70 @@ async def test_renewal_loss_blocks_new_work_and_never_uses_legacy_finalize() -> 
 
 
 @pytest.mark.asyncio
+async def test_transient_renewal_exception_is_retried_without_losing_lease() -> None:
+    """One SQLite busy failure must not misclassify a healthy run as interrupted."""
+    store = LeaseStore()
+    store.renew_errors_remaining = 1
+    orchestrator = _orchestrator(store, heartbeat_interval_seconds=0.001)
+
+    async def _work(session: object) -> None:
+        while (
+            len([name for name, _ in store.calls if name == "renew"])
+            < TRANSIENT_RENEW_CALLS
+            and not session.lease_lost  # type: ignore[attr-defined]
+        ):
+            await asyncio.sleep(0)
+        session.ensure_active()  # type: ignore[attr-defined]
+
+    run = await orchestrator.run("evaluate", "evaluate", _work)
+
+    assert run.status == "succeeded"
+    assert [name for name, _ in store.calls] == [
+        "start",
+        "renew",
+        "renew",
+        "finalize",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_repeated_renewal_exceptions_eventually_fail_closed() -> None:
+    """A persistently unavailable lease store cannot leave the worker unfenced."""
+    store = LeaseStore()
+    store.renew_errors_remaining = 100
+    orchestrator = _orchestrator(store, heartbeat_interval_seconds=0.001)
+
+    async def _work(session: object) -> None:
+        while not session.lease_lost:  # type: ignore[attr-defined]
+            await asyncio.sleep(0)
+        session.ensure_active()  # type: ignore[attr-defined]
+
+    with pytest.raises(RunLeaseLostError):
+        await orchestrator.run("evaluate", "evaluate", _work)
+
+
+@pytest.mark.asyncio
+async def test_escaped_exception_persists_sanitized_failure_details() -> None:
+    store = LeaseStore()
+    orchestrator = _orchestrator(store)
+
+    async def _work(_session: object) -> None:
+        raise RuntimeError("provider exploded token=secret-value")
+
+    with pytest.raises(RuntimeError, match="provider exploded"):
+        await orchestrator.run("scan", "indeed", _work)
+
+    _, (run, *_rest) = store.calls[-1]
+    assert run.status == "failed"
+    assert run.failure_code == "runtime_error"
+    assert run.failure_message is not None
+    assert "secret-value" not in run.failure_message
+    assert "[redacted]" in run.failure_message
+    assert run.failed_stage == "scan"
+    assert run.failed_source == "indeed"
+
+
+@pytest.mark.asyncio
 async def test_conflicting_atomic_start_never_runs_business_work() -> None:
     """A lease conflict leaves no pipeline work scheduled."""
     store = LeaseStore(generation=None)
@@ -228,7 +310,13 @@ async def test_scan_service_uses_shared_lease_path_without_legacy_run_writes() -
     run = await service.run([("indeed", StaticSource(store), {})])
 
     assert run.status == "succeeded"
-    assert [name for name, _ in store.calls] == ["start", "save_job", "finalize"]
+    assert [name for name, _ in store.calls] == [
+        "start",
+        "checkpoint",
+        "save_job",
+        "checkpoint",
+        "finalize",
+    ]
     assert not hasattr(store, "record_pipeline_run")
     assert not hasattr(store, "update_pipeline_run_status")
 

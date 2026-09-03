@@ -5,6 +5,7 @@ import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Header from "@cloudscape-design/components/header";
+import Link from "@cloudscape-design/components/link";
 import Pagination from "@cloudscape-design/components/pagination";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
@@ -35,7 +36,7 @@ const FULL_COUNTERS: {
   color: NonNullable<BadgeProps["color"]>;
 }[] = [
   { key: "jobs_discovered", label: "discovered", color: "blue" },
-  { key: "jobs_inserted", label: "new", color: "green" },
+  { key: "jobs_inserted", label: "new listings", color: "green" },
   { key: "jobs_updated", label: "updated", color: "grey" },
   {
     key: "jobs_filtered",
@@ -138,7 +139,10 @@ export function RunHistoryTable(props: RunHistoryTableProps) {
               if (isRunning) {
                 return <RunActionButton runId={run.run_id} isRunning />;
               }
-              if (run.status === "failed") {
+              if (
+                (run.status === "failed" && !run.restarted_by_run_id)
+                || (run.source === "evaluate" && run.errors > 0)
+              ) {
                 return <RunActionButton runId={run.run_id} isRunning={false} />;
               }
               return null;
@@ -179,7 +183,7 @@ export function RunHistoryTable(props: RunHistoryTableProps) {
 
 function StartedCell({ run, isExpanded, onToggle }: { run: RunSummary; isExpanded: boolean; onToggle: () => void }) {
   return (
-    <div data-testid={`run-row-${run.run_id}`}>
+    <div id={`run-${run.run_id}`} data-testid={`run-row-${run.run_id}`}>
       <Button
         variant="inline-link"
         iconName={isExpanded ? "angle-down" : "angle-right"}
@@ -203,6 +207,20 @@ function RunDetail({ run }: { run: RunSummary }) {
             <div key={key}><Box variant="awsui-key-label">{label}</Box><Box>{run[key]}</Box></div>
           ))}
           <div><Box variant="awsui-key-label">finished</Box><Box>{formatLocalDateTime(run.finished_at)}</Box></div>
+          {run.status === "failed" && (
+            <>
+              <div><Box variant="awsui-key-label">failure code</Box><Box>{run.failure_code ?? "—"}</Box></div>
+              <div><Box variant="awsui-key-label">failed stage</Box><Box>{run.failed_stage ?? "—"}</Box></div>
+              <div><Box variant="awsui-key-label">failed source</Box><Box>{run.failed_source ?? "—"}</Box></div>
+              <div><Box variant="awsui-key-label">last progress</Box><Box>{formatLocalDateTime(run.last_progress_at ?? null)}</Box></div>
+              {run.restarted_by_run_id && (
+                <div>
+                  <Box variant="awsui-key-label">replacement run</Box>
+                  <Link href={`#run-${run.restarted_by_run_id}`}>{run.restarted_by_run_id}</Link>
+                </div>
+              )}
+            </>
+          )}
         </ColumnLayout>
         {run.source !== "evaluate" && run.jobs_inserted > 0 && (
           <NewJobsBySource run={run} />
@@ -239,8 +257,8 @@ function NewJobsBySource({ run }: { run: RunSummary }) {
       {sources.data && (
         <Box color="text-body-secondary">
           {sources.data.total === run.jobs_inserted
-            ? `${sources.data.total} total new jobs`
-            : `${sources.data.total} of ${run.jobs_inserted} new jobs attributed`}
+            ? `${sources.data.total} total new listings`
+            : `${sources.data.total} of ${run.jobs_inserted} new listings attributed`}
         </Box>
       )}
     </SpaceBetween>
@@ -262,7 +280,13 @@ function Activity({ run }: { run: RunSummary }) {
 }
 
 function RunStatus({ run }: { run: RunSummary }) {
-  if (run.status === "failed") return <StatusIndicator type="error">Failed</StatusIndicator>;
+  if (run.status === "failed") {
+    return (
+      <StatusIndicator type="error">
+        Failed: {run.failure_message ?? "Failure reason was not recorded"}
+      </StatusIndicator>
+    );
+  }
   if (run.errors > 0) return <StatusIndicator type="warning">Completed with errors</StatusIndicator>;
   if (run.finished_at === null) return <StatusIndicator type="in-progress">Running</StatusIndicator>;
   return <StatusIndicator type="success">Succeeded</StatusIndicator>;
@@ -302,6 +326,7 @@ function sourceLabel(source: string): string {
   const labels: Record<string, string> = {
     ats: "Company career pages",
     indeed: "Indeed",
+    jobright: "Jobright",
     linkedin: "LinkedIn",
     linkedin_guest: "LinkedIn guest",
     speedyapply: "SpeedyApply",

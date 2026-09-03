@@ -46,6 +46,7 @@ function runRow(id: string, over: Partial<RunSummary> = {}): RunSummary {
     errors: 0,
     total_llm_cost_usd: 0,
     ...over,
+    restart_count: over.restart_count ?? 0,
   };
 }
 
@@ -196,6 +197,90 @@ test("separates job rules, SDE role, and seniority filter counters", async () =>
   expect(screen.getByText("3 excluded by seniority filter")).toBeVisible();
 });
 
+test("explains how the latest scan becomes the evaluation candidate set", async () => {
+  const activeEvaluation = runRow("eval-active", {
+    started_at: "2026-06-10T10:00:00Z",
+    finished_at: null,
+    source: "evaluate",
+    status: "running",
+    evaluation_scope: "latest_scan",
+    evaluation_input_total: 2141,
+    progress_stage: "stage_a",
+    jobs_filtered: 97,
+    jobs_ml_gated: 320,
+    jobs_seniority_filtered: 481,
+    ml_gate_total: 1290,
+    ml_gate_processed: 1290,
+    stage_a_total: 489,
+    stage_a_processed: 20,
+  });
+  state.runs = [
+    activeEvaluation,
+    runRow("scan-before-eval", {
+      started_at: "2026-06-10T09:00:00Z",
+      source: "all",
+      status: "succeeded",
+      jobs_inserted: 2141,
+    }),
+  ];
+  state.activeRuns = [{
+    run_id: activeEvaluation.run_id,
+    source: activeEvaluation.source,
+    started_at: activeEvaluation.started_at,
+    counters: activeEvaluation,
+  }];
+
+  renderRuns();
+
+  const active = await screen.findByTestId("live-run-eval-active");
+  expect(active).toHaveTextContent("Latest scan: 2141 listings → 1290 candidates");
+  expect(active).toHaveTextContent("754 not eligible or duplicate");
+  expect(active).toHaveTextContent("97 excluded by job rules");
+  expect(within(active).getByRole("progressbar", {
+    name: "Candidate preparation: Latest scan: 2141 listings → 1290 candidates",
+  })).toBeVisible();
+});
+
+test("labels a backlog evaluation from its own scope, not the preceding scan", async () => {
+  const activeEvaluation = runRow("eval-backlog", {
+    started_at: "2026-06-10T10:00:00Z",
+    finished_at: null,
+    source: "evaluate",
+    status: "running",
+    evaluation_scope: "backlog",
+    progress_stage: "stage_a",
+    ml_gate_total: 6583,
+    ml_gate_processed: 6583,
+    jobs_filtered: 1133,
+    jobs_ml_gated: 442,
+    jobs_seniority_filtered: 5237,
+    stage_a_total: 904,
+    stage_a_processed: 18,
+  });
+  state.runs = [
+    activeEvaluation,
+    runRow("scan-before-backlog", {
+      started_at: "2026-06-10T09:00:00Z",
+      source: "all",
+      status: "succeeded",
+      jobs_inserted: 2411,
+    }),
+  ];
+  state.activeRuns = [{
+    run_id: activeEvaluation.run_id,
+    source: activeEvaluation.source,
+    started_at: activeEvaluation.started_at,
+    counters: activeEvaluation,
+  }];
+
+  renderRuns();
+
+  const active = await screen.findByTestId("live-run-eval-backlog");
+  expect(active).toHaveTextContent("Historical backlog → 6583 candidates");
+  expect(active).not.toHaveTextContent("2411 new listings");
+  expect(active).not.toHaveTextContent("already evaluated or duplicate");
+});
+
 test("run history table follows the selected row density", async () => {
   window.localStorage.setItem("jobfeed:density", "comfortable");
   renderRuns();
@@ -232,7 +317,7 @@ test("activity badges use semantic colors and hide zero counters", async () => {
 
   // r2: discovered/inserted/stage A non-zero; the zero counters stay quiet.
   expect(within(activity2).getByText("12 discovered")).toBeInTheDocument();
-  expect(within(activity2).getByText("4 new")).toBeInTheDocument();
+  expect(within(activity2).getByText("4 new listings")).toBeInTheDocument();
   expect(within(activity2).getByText("3 updated")).toBeInTheDocument();
   expect(within(activity2).getByText("2 excluded by SDE role filter")).toBeInTheDocument();
   expect(within(activity2).getByText("8 quick evaluations")).toBeInTheDocument();
@@ -241,7 +326,9 @@ test("activity badges use semantic colors and hide zero counters", async () => {
   expect(screen.getByText("$0.42")).toBeInTheDocument();
 
   expect(within(activity2).getByText("12 discovered").className).toContain("badge-color-blue");
-  expect(within(activity2).getByText("4 new").className).toContain("badge-color-green");
+  expect(within(activity2).getByText("4 new listings").className).toContain(
+    "badge-color-green",
+  );
   expect(within(activity2).getByText("3 updated").className).toContain("badge-color-grey");
   expect(within(activity2).getByText("2 excluded by SDE role filter").className).toContain("badge-color-severity-neutral");
   expect(within(activity2).getByText("8 quick evaluations").className).toContain("badge-color-severity-low");
@@ -258,10 +345,34 @@ test("failed runs use an error indicator instead of a success check", async () =
   state.runs = [runRow("failed-run", { status: "failed" })];
   renderRuns();
 
-  const failed = await screen.findByText("Failed");
+  const failed = await screen.findByText(/^Failed:/);
   expect(failed.closest('[class*="status-error"]')).not.toBeNull();
   expect(screen.getByText("No activity recorded")).toBeVisible();
-  expect(screen.queryByText("No counters")).not.toBeInTheDocument();
+});
+
+test("interrupted runs show durable progress and their automatic replacement", async () => {
+  state.runs = [runRow("old-run", {
+    status: "failed",
+    jobs_discovered: 1666,
+    jobs_updated: 1653,
+    failure_code: "interrupted",
+    failure_message: "Run interrupted after its worker stopped responding",
+    failed_stage: "scan",
+    failed_source: "linkedin_guest",
+    last_progress_at: "2026-06-10T08:04:00Z",
+    restart_count: 0,
+    restarted_by_run_id: "replacement-run",
+  })];
+  renderRuns();
+
+  await screen.findByTestId("run-row-old-run");
+  expect(
+    (await screen.findByText(/^Failed:/)).closest('[class*="status-error"]'),
+  ).not.toBeNull();
+  expect(screen.getByText("1666 discovered")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Run started/ }));
+  expect(screen.getByText("replacement-run")).toBeVisible();
 });
 
 test("running rows can be stopped and failed rows can be retried", async () => {
@@ -283,6 +394,33 @@ test("running rows can be stopped and failed rows can be retried", async () => {
   });
 });
 
+test("completed evaluations with errors can continue their failed work", async () => {
+  state.runs = [
+    runRow("completed-with-errors", {
+      source: "evaluate",
+      status: "succeeded",
+      errors: 2,
+    }),
+    runRow("clean-evaluation", {
+      source: "evaluate",
+      status: "succeeded",
+      errors: 0,
+    }),
+  ];
+  renderRuns();
+
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+  fireEvent.click(retry);
+
+  await waitFor(() => {
+    expect(calls.some((call) =>
+      call.method === "POST"
+      && call.url === "/api/runs/completed-with-errors/retry"
+    )).toBe(true);
+  });
+});
+
 test("expanding a row reveals the full counter grid, run id, and finished time", async () => {
   renderRuns();
   const row = await screen.findByTestId("run-row-r2");
@@ -300,7 +438,7 @@ test("expanding a row reveals the full counter grid, run id, and finished time",
   expect(await within(row).findByTestId("run-source-ats")).toHaveTextContent("Company career pages 2");
   expect(within(row).getByTestId("run-source-indeed")).toHaveTextContent("Indeed 1");
   expect(within(row).getByTestId("run-source-linkedin_guest")).toHaveTextContent("LinkedIn guest 1");
-  expect(within(row).getByText("4 total new jobs")).toBeVisible();
+  expect(within(row).getByText("4 total new listings")).toBeVisible();
   expect(calls.some((call) => call.url === "/api/runs/r2/new-job-sources")).toBe(true);
 
   fireEvent.click(toggle);

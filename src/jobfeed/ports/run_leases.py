@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
 
 from jobfeed.domain.models import PipelineRun
 
 RunKind = Literal["scan", "evaluate"]
+
+
+@dataclass(frozen=True)
+class RecoveredRun:
+    """One running attempt changed to interrupted during lease recovery."""
+
+    run_id: str
+    kind: RunKind
+    source: str
+    restart_count: int
 
 
 @runtime_checkable
@@ -59,6 +70,29 @@ class RunLeaseStore(Protocol):
         """
         ...
 
+    async def checkpoint_run_with_lease(
+        self,
+        run: PipelineRun,
+        *,
+        kind: RunKind,
+        owner_id: str,
+        generation: int,
+        now: datetime,
+    ) -> bool:
+        """Persist current counters only while the exact lease is live.
+
+        Args:
+            run: Current pipeline snapshot.
+            kind: Exclusive pipeline kind.
+            owner_id: Worker identity from acquisition.
+            generation: Fencing generation from acquisition.
+            now: Aware UTC checkpoint timestamp.
+
+        Returns:
+            True only when the exact live token saved the snapshot.
+        """
+        ...
+
     async def finalize_run_with_lease(
         self,
         run: PipelineRun,
@@ -87,14 +121,26 @@ class RunLeaseStore(Protocol):
 class RecoverableRunLeaseStore(Protocol):
     """Optional lifecycle controls exposed by stores with durable run leases."""
 
-    async def recover_expired_run_leases(self, *, now: datetime) -> int:
+    async def recover_expired_run_leases(self, *, now: datetime) -> list[RecoveredRun]:
         """Fail expired running rows and release their leases.
 
         Args:
             now: Aware UTC recovery timestamp.
 
         Returns:
-            Number of expired leases recovered.
+            Newly interrupted attempts eligible for manager policy handling.
+        """
+        ...
+
+    async def link_restarted_run(self, run_id: str, replacement_run_id: str) -> bool:
+        """Link an interrupted attempt to its one automatic replacement.
+
+        Args:
+            run_id: Interrupted attempt identity.
+            replacement_run_id: Automatically started replacement identity.
+
+        Returns:
+            True only when the previously unlinked attempt was updated.
         """
         ...
 
@@ -111,4 +157,4 @@ class RecoverableRunLeaseStore(Protocol):
         ...
 
 
-__all__ = ["RecoverableRunLeaseStore", "RunKind", "RunLeaseStore"]
+__all__ = ["RecoverableRunLeaseStore", "RecoveredRun", "RunKind", "RunLeaseStore"]

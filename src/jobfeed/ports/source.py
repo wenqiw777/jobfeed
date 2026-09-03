@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
@@ -136,6 +137,39 @@ class SimpleSource(Protocol):
 
         Returns:
             Job postings discovered from the source.
+        """
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceFetchProgress:
+    """Incremental progress emitted while a source is still fetching."""
+
+    processed: int
+    total: int | None = None
+    current_job_id: str | None = None
+
+
+SourceFetchProgressCallback = Callable[[SourceFetchProgress], None]
+
+
+@runtime_checkable
+class ProgressiveSimpleSource(Protocol):
+    """Simple source variant that reports progress before returning all jobs."""
+
+    async def fetch_jobs_with_progress(
+        self,
+        config: dict[str, object],
+        on_progress: SourceFetchProgressCallback,
+    ) -> list[JobPosting]:
+        """Fetch complete postings while reporting bounded source progress.
+
+        Args:
+            config: Source-specific invocation settings.
+            on_progress: Callback receiving incremental fetch progress.
+
+        Returns:
+            Complete postings fetched by the source.
         """
         ...
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "canonical_row_codec_version": "jobfeed-canonical-row-v1",
-  "alembic_revision": "0009",
+  "alembic_revision": "0011",
   "tables": [
     {
       "name": "jobs",
@@ -101,7 +101,15 @@
         {"name": "finished_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
         {"name": "status", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": false},
         {"name": "jobs_gate_passed", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false},
-        {"name": "jobs_seniority_filtered", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false}
+        {"name": "jobs_seniority_filtered", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false},
+        {"name": "failure_code", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+        {"name": "failure_message", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+        {"name": "failed_stage", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+        {"name": "failed_source", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+        {"name": "last_progress_at", "source_sql_type": "timestamp with time zone", "target_sqlite_type": "TEXT", "codec_kind": "timestamp", "nullable": true},
+        {"name": "restart_count", "source_sql_type": "integer", "target_sqlite_type": "INTEGER", "codec_kind": "int", "nullable": false},
+        {"name": "restarted_by_run_id", "source_sql_type": "text", "target_sqlite_type": "TEXT", "codec_kind": "text", "nullable": true},
+        {"name": "scan_stats_json", "source_sql_type": "jsonb", "target_sqlite_type": "TEXT", "codec_kind": "json", "nullable": true}
       ]
     },
     {

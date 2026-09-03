@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import UTC, datetime
 
 import pytest
@@ -276,6 +277,83 @@ async def test_scan_records_step_timings() -> None:
     assert t.step_name == "mock_src"
     assert t.elapsed_ms > 0
     assert t.is_error is False
+
+
+@pytest.mark.asyncio
+async def test_scan_captures_per_source_incoming_jd_quality_snapshot() -> None:
+    """Run audit stats count incoming rows before later job upserts can replace them."""
+    store = ScanRecordingStore()
+    logger = ScanRecordingLogger()
+    full = _posting("full-1")
+    full.jd_text = "x" * 1200
+    full.jd_quality = QualityBand.FULL
+    partial = _posting("partial-1")
+    partial.jd_text = "summary only"
+    partial.jd_quality = QualityBand.PARTIAL
+
+    run = await ScanService(store, logger).run(
+        [
+            ("alpha", StaticSimpleSource([full, _posting("missing-1")]), {}),
+            ("beta", StaticSimpleSource([partial]), {}),
+        ]
+    )
+
+    assert run.scan_stats == {
+        "alpha": {
+            "fetched": 2,
+            "discovered": 2,
+            "inserted": 2,
+            "updated": 0,
+            "has_jd": 1,
+            "full": 1,
+            "missing": 1,
+        },
+        "beta": {
+            "fetched": 1,
+            "discovered": 1,
+            "inserted": 1,
+            "updated": 0,
+            "has_jd": 1,
+            "partial": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_scan_checkpoints_fetched_total_before_first_job_save() -> None:
+    """A save interruption must not erase the source's original row count."""
+
+    class _FailingSaveStore(ScanRecordingStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.checkpoints: list[dict[str, dict[str, int]]] = []
+
+        async def checkpoint_run_with_lease(
+            self, run: PipelineRun, **_kwargs: object
+        ) -> bool:
+            self.checkpoints.append(copy.deepcopy(run.scan_stats))
+            return True
+
+        async def save_job(self, _job: JobPosting) -> SaveJobResult:
+            raise RuntimeError("save interrupted")
+
+    store = _FailingSaveStore()
+    source = StaticSimpleSource([_posting("never-saved")])
+
+    with pytest.raises(RuntimeError, match="save interrupted"):
+        await ScanService(store, ScanRecordingLogger()).run([("alpha", source, {})])
+
+    assert store.checkpoints == [
+        {
+            "alpha": {
+                "fetched": 1,
+                "discovered": 0,
+                "inserted": 0,
+                "updated": 0,
+                "has_jd": 0,
+            }
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

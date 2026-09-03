@@ -74,6 +74,31 @@ class LegacyRunLeaseStore:
         del kind, owner_id, run_id, generation, now
         return True
 
+    async def checkpoint_run_with_lease(
+        self,
+        run: PipelineRun,
+        *,
+        kind: RunKind,
+        owner_id: str,
+        generation: int,
+        now: datetime,
+    ) -> bool:
+        """Persist a transition-era progress snapshot.
+
+        Args:
+            run: Current pipeline snapshot.
+            kind: Transition-only run kind.
+            owner_id: Unused owner identity.
+            generation: Unused transition generation.
+            now: Unused checkpoint timestamp.
+
+        Returns:
+            True after the legacy status update succeeds.
+        """
+        del kind, owner_id, generation, now
+        await self._store.update_pipeline_run_status(run)
+        return True
+
     async def finalize_run_with_lease(
         self,
         run: PipelineRun,

@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from datetime import UTC, datetime
 
 import pytest
 
 from jobfeed.domain.errors import RunConflictError, SourceConfigError
 from jobfeed.domain.models import PipelineRun
+from jobfeed.ports.run_leases import RecoveredRun
 from jobfeed.services.run_manager import RUN_DONE, ActiveRun, RunManager
 from jobfeed.services.scan import SourceSpec
+
+EXPECTED_EVALUATION_CHECKPOINTS = 3
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -53,6 +57,10 @@ class RecordingStore:
     async def renew_run_lease(self, **_kwargs: object) -> bool:
         """Keep a test run leased."""
         self.lease_calls.append("renew")
+        return True
+
+    async def checkpoint_run_with_lease(self, **_kwargs: object) -> bool:
+        """Accept progress snapshots without changing terminal call assertions."""
         return True
 
     async def finalize_run_with_lease(
@@ -300,6 +308,39 @@ async def test_trigger_evaluate_returns_run_id() -> None:
     run_id = await mgr.trigger_evaluate(stage="both", corpus="unrated")
     assert run_id
     await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_latest_scan_evaluate_exposes_exact_scope_metadata() -> None:
+    """Active progress carries the requested scope and its exact input size."""
+    gate = asyncio.Event()
+
+    class _ScopedStore(RecordingStore):
+        async def get_state(self, key: str) -> str | None:
+            assert key == "latest_scan_inserted_job_ids"
+            return json.dumps({"run_id": "scan-1", "job_ids": ["10", "11", "12"]})
+
+    class _BlockingEval:
+        async def run(self, **kwargs: object) -> PipelineRun:
+            await gate.wait()
+            lease_session = kwargs["lease_session"]
+            return lease_session.run  # type: ignore[attr-defined]
+
+    manager = RunManager(
+        store=_ScopedStore(),
+        logger=RecordingLogger(),
+        scan_service_factory=FakeScanService,
+        evaluate_service_factory=lambda **_kw: _BlockingEval(),  # type: ignore[arg-type]
+    )
+
+    run_id = await manager.trigger_evaluate(stage="both", scope="latest_scan")
+
+    active = manager.get_active_runs()[0].run
+    assert active.evaluation_scope == "latest_scan"
+    assert active.evaluation_input_total == 3  # noqa: PLR2004
+
+    gate.set()
+    await manager._tasks[run_id]
 
 
 @pytest.mark.asyncio
@@ -651,6 +692,58 @@ async def test_broadcast_snapshots_are_immutable() -> None:
     assert [r.jobs_discovered for r in received[:2]] == [1, 2]
 
 
+@pytest.mark.asyncio
+async def test_evaluation_checkpoints_are_bounded_while_progress_stays_live() -> None:
+    """Per-job SSE updates must not create one SQLite writer per evaluation."""
+    checkpoint_calls = 0
+    progress_ready = asyncio.Event()
+    release_service = asyncio.Event()
+
+    class _CheckpointStore(RecordingStore):
+        async def checkpoint_run_with_lease(
+            self, _run: PipelineRun, **_kwargs: object
+        ) -> bool:
+            nonlocal checkpoint_calls
+            checkpoint_calls += 1
+            return True
+
+        async def get_state(self, _key: str) -> None:
+            return None
+
+    class _BurstEvaluate:
+        async def run(self, **kwargs: object) -> PipelineRun:
+            run = kwargs["lease_session"].run  # type: ignore[attr-defined]
+            on_progress = kwargs["on_progress"]
+            run.progress_stage = "stage_a"
+            run.stage_a_total = 250
+            for processed in range(1, 251):
+                run.stage_a_processed = processed
+                on_progress(run)
+            progress_ready.set()
+            await release_service.wait()
+            return run
+
+    store = _CheckpointStore()
+    logger = RecordingLogger()
+    manager = RunManager(
+        store=store,
+        logger=logger,
+        scan_service_factory=FakeScanService,
+        evaluate_service_factory=lambda **_kw: _BurstEvaluate(),  # type: ignore[arg-type]
+    )
+    run_id = await manager.trigger_evaluate(stage="a", scope="latest_scan")
+    queue = manager.subscribe(run_id)
+
+    await progress_ready.wait()
+    await manager._drain_checkpoints(run_id)
+
+    assert queue.qsize() == 250  # noqa: PLR2004
+    assert checkpoint_calls == EXPECTED_EVALUATION_CHECKPOINTS
+
+    release_service.set()
+    await asyncio.wait_for(manager._tasks[run_id], timeout=1)
+
+
 # ---------------------------------------------------------------------------
 # recover_stale_runs tests
 # ---------------------------------------------------------------------------
@@ -690,6 +783,58 @@ async def test_recover_stale_runs_returns_zero_when_none_stale() -> None:
     store = RecordingStore()
     store._runs = []
     mgr = _build_manager(store=store)
+    assert await mgr.recover_stale_runs() == 0
+
+
+@pytest.mark.asyncio
+async def test_interrupted_scan_is_automatically_restarted_once() -> None:
+    class RecoveringStore(RecordingStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.recovered = False
+            self.link: tuple[str, str] | None = None
+
+        async def checkpoint_run_with_lease(self, **_kwargs: object) -> bool:
+            return True
+
+        async def recover_expired_run_leases(
+            self, **_kwargs: object
+        ) -> list[RecoveredRun]:
+            if self.recovered:
+                return []
+            self.recovered = True
+            return [RecoveredRun("old-run", "scan", "indeed", 0)]
+
+        async def link_restarted_run(
+            self, run_id: str, replacement_run_id: str
+        ) -> bool:
+            self.link = (run_id, replacement_run_id)
+            return True
+
+        async def stop_pipeline_run(self, _run_id: str, **_kwargs: object) -> bool:
+            return False
+
+    async def resolve(
+        _source: str, _stack: contextlib.AsyncExitStack
+    ) -> list[SourceSpec]:
+        return [("indeed", object(), {})]
+
+    store = RecoveringStore()
+    mgr = RunManager(
+        store=store,
+        logger=RecordingLogger(),
+        scan_service_factory=FakeScanService,
+        evaluate_service_factory=lambda **_kw: FakeEvaluateService(),
+        scan_source_resolver=resolve,
+    )
+
+    assert await mgr.recover_stale_runs() == 1
+    assert store.link is not None
+    replacement = await store.get_pipeline_run(store.link[1])
+    assert replacement is not None
+    assert replacement.source == "indeed"
+    assert replacement.restart_count == 1
+    await mgr._tasks[store.link[1]]
     assert await mgr.recover_stale_runs() == 0
 
 

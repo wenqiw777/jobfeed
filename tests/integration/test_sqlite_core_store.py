@@ -49,8 +49,8 @@ async def test_core_store_composes_jobs_claims_and_fenced_runs(tmp_path: Path) -
         await store.list_jobs()
 
 
-async def test_connect_recovers_only_expired_run_lease(tmp_path: Path) -> None:
-    """Facade startup performs the lifecycle's expired-only recovery once."""
+async def test_manager_recovery_recovers_only_expired_run_lease(tmp_path: Path) -> None:
+    """Explicit startup recovery preserves the interrupted run for policy."""
     path = tmp_path / "jobfeed.db"
     old_now = _NOW - timedelta(minutes=10)
     first = SQLiteStore(path, clock=lambda: old_now)
@@ -64,6 +64,8 @@ async def test_connect_recovers_only_expired_run_lease(tmp_path: Path) -> None:
 
     second = SQLiteStore(path, clock=lambda: _NOW)
     await second.connect()
+    recovered_runs = await second.recover_expired_run_leases(now=_NOW)
+    assert len(recovered_runs) == 1
     recovered = await second.get_pipeline_run(run_id)
     assert recovered is not None
     assert recovered.status == "failed"

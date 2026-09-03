@@ -24,6 +24,7 @@ from jobfeed.domain.models_views import (
     JobsViewRow,
     TwinStatusRow,
 )
+from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.domain.source_attribution import configured_source_counts
 
 _TAB_PREDICATES: dict[str, str] = {
@@ -307,6 +308,29 @@ class _SqliteViews:
         assert total is not None
         return [_pipeline_run_from_row(row) for row in records], int(total["n"])
 
+    async def get_stage_b_run_progress(
+        self, run_id: str, started_at: datetime
+    ) -> tuple[int, int]:
+        """Reconstruct live Stage B progress for a separately owned worker."""
+        async with self._lifecycle.connection() as connection:
+            row = await _fetch_row(
+                connection,
+                """SELECT
+                    (SELECT COUNT(DISTINCT u.job_id)
+                       FROM llm_usage AS u
+                       JOIN evaluations AS done ON done.job_id=u.job_id
+                      WHERE u.run_id=? AND u.stage='b'
+                        AND done.stage_b_status IN ('completed','error')) AS processed,
+                    (SELECT COUNT(*) FROM evaluations AS pending
+                      WHERE pending.stage_b_status='in_progress'
+                        AND pending.stage_b_verdict IS NULL
+                        AND pending.updated_at>=?) AS remaining""",
+                (run_id, _require_utc_timestamp(started_at)),
+            )
+        assert row is not None
+        processed = int(row["processed"])
+        return processed, processed + int(row["remaining"])
+
     async def get_new_job_source_counts(self, run_id: str) -> dict[str, int]:
         """Count first inserts during a scan, grouped by configured source.
 
@@ -338,3 +362,28 @@ class _SqliteViews:
         return configured_source_counts(
             (str(row["platform"]), int(row["n"])) for row in records
         )
+
+    async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:
+        """Return current retryable scoring errors attributable to one run."""
+        async with self._lifecycle.connection() as connection:
+            records = await _fetch_rows(
+                connection,
+                f"""SELECT e.job_id
+                    FROM pipeline_runs AS r
+                    JOIN evaluations AS e
+                      ON e.updated_at >= r.started_at
+                     AND e.updated_at <= r.finished_at
+                    WHERE r.run_id=?
+                      AND r.source='evaluate'
+                      AND r.finished_at IS NOT NULL
+                      AND (
+                        (e.stage_a_status='error'
+                         AND e.stage_a_error_count < {MAX_STAGE_RETRIES})
+                        OR
+                        (e.stage_b_status='error'
+                         AND e.stage_b_error_count < {MAX_STAGE_RETRIES})
+                      )
+                    ORDER BY e.updated_at, e.job_id""",
+                (run_id,),
+            )
+        return [str(row["job_id"]) for row in records]

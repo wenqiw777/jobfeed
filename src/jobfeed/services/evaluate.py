@@ -162,6 +162,7 @@ class EvaluateService:
         self._emit_progress(run)
 
     def _emit_progress(self, run: PipelineRun) -> None:
+        run.jobs_scored = run.stage_a_scored + run.stage_b_scored
         run.progress_updated_at = datetime.now(UTC)
         if self._on_progress is not None:
             self._on_progress(run)
