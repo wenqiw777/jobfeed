@@ -284,6 +284,30 @@ async def test_icims_uses_fetch_text_and_json_ld() -> None:
     assert "<p>" not in result.jd_text
 
 
+@respx.mock
+async def test_jobright_extracts_json_ld_description() -> None:
+    """Jobright routing reads its public JobPosting JSON-LD as plain text."""
+    apply_url = "https://jobright.ai/jobs/info/6a541bca8ef95364ead9484e"
+    html_body = (
+        '<html><head><script id="job-posting" type="application/ld+json">'
+        '{"@type":"JobPosting","title":"New Graduate Engineer, Software",'
+        f'"description":"<p>{_LONG_JD}</p><ul><li>C++</li></ul>"}}'
+        "</script></head><body></body></html>"
+    )
+    route = respx.get(apply_url).mock(return_value=httpx.Response(200, text=html_body))
+
+    async with create_http_client() as client:
+        result = await routing.route_and_fetch(
+            client, apply_url, slug_cache={}, timeout=TIMEOUT
+        )
+
+    assert route.called
+    assert result.enrich_source == "speedyapply-jobright"
+    assert "Engineering role" in result.jd_text
+    assert "C++" in result.jd_text
+    assert "<p>" not in result.jd_text
+
+
 # ---------------------------------------------------------------------------
 # unrouted
 # ---------------------------------------------------------------------------

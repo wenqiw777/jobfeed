@@ -142,3 +142,54 @@ def test_canonical_id_stable_and_distinct() -> None:
     assert a != c
     assert a.startswith("sa-")
     assert len(a) == len("sa-") + 16
+
+
+def test_parses_simplify_html_table_and_inherits_continuation_company() -> None:
+    """Simplify's HTML table uses the direct Apply link and ↳ company rows."""
+    document = """
+<table>
+<thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Application</th><th>Age</th></tr></thead>
+<tbody>
+<tr>
+<td><strong><a href="https://simplify.jobs/c/Stripe">🔥 Stripe</a></strong></td>
+<td>Software Engineer New Grad</td>
+<td>Toronto, ON, Canada</td>
+<td><a href="https://stripe.com/jobs/8157838"><img alt="Apply"></a> <a href="https://simplify.jobs/p/abc"><img alt="Simplify"></a></td>
+<td>0d</td>
+</tr>
+<tr>
+<td>↳</td>
+<td>Software Engineer New Grad</td>
+<td>Seattle, WA</td>
+<td><a href="https://stripe.com/jobs/8157839"><img alt="Apply"></a></td>
+<td>2d</td>
+</tr>
+</tbody>
+</table>
+"""
+
+    rows = parse_rows(document, now=_NOW)
+
+    assert [(row.company, row.location) for row in rows] == [
+        ("Stripe", "Toronto, ON, Canada"),
+        ("Stripe", "Seattle, WA"),
+    ]
+    assert rows[0].apply_url == "https://stripe.com/jobs/8157838"
+    assert rows[1].posted_at == datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
+
+
+def test_parses_jobright_markdown_table() -> None:
+    """Jobright puts the job URL in Job Title and uses a calendar date."""
+    document = """| Company | Job Title | Location | Work Model | Date Posted |
+|---|---|---|---|---|
+| **[SpaceX](https://www.spacex.com)** | **[New Graduate Engineer, Software](https://jobright.ai/jobs/info/abc)** | Hawthorne, CA, United States | On Site | May 09 |
+"""
+
+    rows = parse_rows(document, now=_NOW)
+
+    assert len(rows) == 1
+    assert rows[0].company == "SpaceX"
+    assert rows[0].title == "New Graduate Engineer, Software"
+    assert rows[0].location == "Hawthorne, CA, United States"
+    assert rows[0].apply_url == "https://jobright.ai/jobs/info/abc"
+    assert rows[0].posted_at == datetime(2026, 5, 9, tzinfo=UTC)

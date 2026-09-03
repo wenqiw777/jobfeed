@@ -25,12 +25,14 @@ postings that are definitively closed (``is_closed=True``).
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
+from bs4 import BeautifulSoup
 
 from jobfeed.adapters.sources import _ats_ashby as ashby
 from jobfeed.adapters.sources import _ats_greenhouse as greenhouse
@@ -38,6 +40,7 @@ from jobfeed.adapters.sources import _ats_icims as icims
 from jobfeed.adapters.sources import _ats_lever as lever
 from jobfeed.adapters.sources import _ats_smartrecruiters as smartrecruiters
 from jobfeed.adapters.sources import _ats_workday as workday
+from jobfeed.adapters.sources._http import fetch_text, html_to_text
 from jobfeed.domain.models import JobPosting
 
 # Slug-keyed cache of an IN-FLIGHT board fetch, shared across one fetch_jobs call
@@ -56,6 +59,9 @@ _LEVER_RE = re.compile(r"^https?://jobs\.lever\.co/([^/]+)/([0-9a-f-]{36})")
 _SMARTRECRUITERS_RE = re.compile(r"^https?://jobs\.smartrecruiters\.com/[^/]+/\d+")
 _ICIMS_RE = re.compile(r"^https?://[a-z0-9-]+\.icims\.com/jobs/\d+")
 _WORKDAY_RE = re.compile(r"^https?://[^/]+\.(?:myworkdayjobs|myworkdaysite)\.com/")
+_JOBRIGHT_RE = re.compile(
+    r"^https?://(?:www\.)?jobright\.ai/jobs/info/([a-zA-Z0-9_-]+)(?:[/?#]|$)"
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -148,6 +154,12 @@ async def route_and_fetch(
     if _WORKDAY_RE.match(apply_url):
         return await _fetch_workday_result(client, apply_url, timeout)
 
+    jobright_match = _JOBRIGHT_RE.match(apply_url)
+    if jobright_match:
+        return await _fetch_jobright_result(
+            client, apply_url, jobright_match.group(1), timeout
+        )
+
     jd_vendor = _match_jd_vendor(apply_url)
     if jd_vendor is not None:
         jd_text = await jd_vendor.fetch(client, apply_url, timeout)
@@ -156,6 +168,29 @@ async def route_and_fetch(
         )
 
     return RouteResult(jd_text="", enrich_source="speedyapply-unrouted")
+
+
+async def _fetch_jobright_result(
+    client: httpx.AsyncClient, apply_url: str, job_id: str, timeout: float
+) -> RouteResult:
+    """Read Jobright's public JobPosting JSON-LD without resolving applyLink."""
+    html_text = await fetch_text(
+        client,
+        apply_url,
+        slug=job_id,
+        vendor="jobright",
+        timeout=timeout,
+    )
+    script = BeautifulSoup(html_text, "html.parser").find("script", id="job-posting")
+    jd_text = ""
+    if script is not None:
+        try:
+            data = json.loads(script.get_text())
+        except ValueError:
+            data = {}
+        if data.get("@type") == "JobPosting" and data.get("description"):
+            jd_text = html_to_text(str(data["description"])).strip()
+    return RouteResult(jd_text=jd_text, enrich_source="speedyapply-jobright")
 
 
 async def _fetch_greenhouse(
