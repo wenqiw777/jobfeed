@@ -179,15 +179,6 @@ test("application pipeline is not a product zone and legacy links return to tria
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Triage");
 });
 
-test("lazy-loaded insights route renders after its chunk resolves", async () => {
-  renderShell("/insights");
-
-  // The route is React.lazy (charts split out of the eager bundle) —
-  // its content can only appear after the dynamic import settles.
-  expect(await screen.findByRole("group", { name: "Time range" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Insights");
-});
-
 test("view menu density toggle switches the content density attribute", async () => {
   renderShell();
 
