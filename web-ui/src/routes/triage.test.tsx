@@ -238,6 +238,80 @@ test("records Applied as a lightweight status without an application dialog", as
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
+test("hides a decided Result before the transition response finishes", async () => {
+  let releaseTransition: (() => void) | undefined;
+  const transitionBlocked = new Promise<void>((resolve) => {
+    releaseTransition = resolve;
+  });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (method === "GET" && url.startsWith("/api/jobs?")) {
+      return json({
+        jobs: [job()],
+        total: 1,
+        total_is_exact: !url.includes("fast=true"),
+        tab_counts: { queue: 1, pending_jd: 0, all: 1, scored: 1, shortlisted: 0, archived: 0 },
+      });
+    }
+    if (method === "GET" && url === "/api/jobs/1") return json(detail());
+    if (method === "POST" && url === "/api/jobs/1/transition") {
+      await transitionBlocked;
+      return json({ job_id: "1", status: "applied" });
+    }
+    throw new Error(`unexpected fetch: ${method} ${url}`);
+  }));
+
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  fireEvent.click(screen.getByRole("button", { name: "Mark as applied" }));
+
+  await waitFor(() => {
+    expect(screen.queryByTestId("job-row-1")).not.toBeInTheDocument();
+  });
+  expect(screen.getByText("0 postings")).toBeInTheDocument();
+  releaseTransition?.();
+});
+
+test("restores an optimistically hidden Result when the transition fails", async () => {
+  let releaseTransition: (() => void) | undefined;
+  const transitionBlocked = new Promise<void>((resolve) => {
+    releaseTransition = resolve;
+  });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (method === "GET" && url.startsWith("/api/jobs?")) {
+      return json({
+        jobs: [job()],
+        total: 1,
+        total_is_exact: !url.includes("fast=true"),
+        tab_counts: { queue: 1, pending_jd: 0, all: 1, scored: 1, shortlisted: 0, archived: 0 },
+      });
+    }
+    if (method === "GET" && url === "/api/jobs/1") return json(detail());
+    if (method === "POST" && url === "/api/jobs/1/transition") {
+      await transitionBlocked;
+      return new Response(JSON.stringify({ detail: "save failed" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${method} ${url}`);
+  }));
+
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  fireEvent.click(screen.getByRole("button", { name: "Mark as applied" }));
+  await waitFor(() => {
+    expect(screen.queryByTestId("job-row-1")).not.toBeInTheDocument();
+  });
+
+  releaseTransition?.();
+  expect(await screen.findByTestId("job-row-1")).toBeInTheDocument();
+  expect(screen.getByText("1 postings")).toBeInTheDocument();
+});
+
 test("Mark as applied removes the Result before the exact refresh finishes", async () => {
   let wasApplied = false;
   let releaseRefresh: (() => void) | undefined;

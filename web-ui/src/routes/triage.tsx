@@ -59,12 +59,25 @@ export default function TriagePage() {
   const [sort, setSort] = useState<TriageSort>("posted_desc");
   const [isSelectingAll, setIsSelectingAll] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [optimisticDecision, setOptimisticDecision] = useState<{
+    id: string;
+    filter: TriageFilter;
+  } | null>(null);
   const selection = useSelection();
   const queryClient = useQueryClient();
 
   const query = useMemo(() => triageQuery(filter, page, sort), [filter, page, sort]);
   const list = useJobsList(query, { keepPrevious: true });
-  const jobs = useMemo(() => list.data?.jobs ?? [], [list.data]);
+  const rawJobs = useMemo(() => list.data?.jobs ?? [], [list.data]);
+  const hidesCurrentRow = optimisticDecision?.filter === filter
+    && rawJobs.some((job) => job.id === optimisticDecision.id);
+  const jobs = useMemo(
+    () => hidesCurrentRow
+      ? rawJobs.filter((job) => job.id !== optimisticDecision?.id)
+      : rawJobs,
+    [hidesCurrentRow, optimisticDecision?.id, rawJobs],
+  );
+  const displayedTotal = Math.max(0, (list.data?.total ?? 0) - (hidesCurrentRow ? 1 : 0));
   const totalIsExact = list.data?.total_is_exact !== false;
   // Decide/advance handlers read the displayed order through a ref so a
   // setTimeout never closes over a stale list. Synced in an effect (refs
@@ -102,10 +115,6 @@ export default function TriagePage() {
     setSelectedId(next?.id ?? null);
   };
 
-  const handleDecided = (id: string) => {
-    advanceFrom(id);
-  };
-
   /** Remove completed decisions from both the provisional and exact current
    * page caches. The authoritative refetch still runs in the background to
    * refill the page and reconcile counts/dedupe. */
@@ -135,19 +144,25 @@ export default function TriagePage() {
     if (id === null || transition.isPending) {
       return;
     }
+    const sourceFilter = filter;
+    advanceFrom(id);
+    setOptimisticDecision({ id, filter: sourceFilter });
     transition.mutate(
       { id, to },
       {
         onSuccess: () => {
           removeCompletedFromCurrentPage([id]);
-          handleDecided(id);
+          setOptimisticDecision(null);
         },
-        onError: (error) =>
+        onError: (error) => {
+          setOptimisticDecision(null);
+          setSelectedId(id);
           toast({
             variant: "destructive",
             title: "Decision could not be saved",
             description: error.message,
-          }),
+          });
+        },
       },
     );
   };
@@ -220,7 +235,7 @@ export default function TriagePage() {
           actions={
             <Box variant="small" color="text-body-secondary">
               {list.data !== undefined
-                ? `${list.data.total}${totalIsExact ? "" : "+"} postings`
+                ? `${displayedTotal}${totalIsExact ? "" : "+"} postings`
                 : "Loading"}
             </Box>
           }
@@ -252,7 +267,7 @@ export default function TriagePage() {
         <BulkBar
           currentDecision={filter}
           selectedIds={selection.selectedIds}
-          total={list.data?.total ?? 0}
+          total={displayedTotal}
           totalIsExact={totalIsExact}
           onSelectPage={() => selection.selectMany(jobs.map((job) => job.id))}
           isSelectingAll={isSelectingAll}
@@ -274,11 +289,11 @@ export default function TriagePage() {
             setSelectedId(null);
           }}
         />
-        {totalIsExact && (list.data?.total ?? 0) > PAGE_LIMIT && (
+        {totalIsExact && displayedTotal > PAGE_LIMIT && (
           <SpaceBetween size="xs" alignItems="center">
             <Pagination
               currentPageIndex={page + 1}
-              pagesCount={Math.ceil((list.data?.total ?? 0) / PAGE_LIMIT)}
+              pagesCount={Math.ceil(displayedTotal / PAGE_LIMIT)}
               disabled={list.isFetching}
               ariaLabels={{
                 paginationLabel: "Results pagination",
