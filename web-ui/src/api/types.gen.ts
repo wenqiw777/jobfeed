@@ -1274,6 +1274,7 @@ export interface paths {
          *
          *     Args:
          *         run_manager: Shared run manager.
+         *         store: Persistent run store used for cross-process snapshots.
          *
          *     Returns:
          *         Active runs keyed under ``runs``.
@@ -1496,6 +1497,32 @@ export interface paths {
          *         ApiError: When the run is unknown, terminal, or cannot be stopped.
          */
         post: operations["stop_run_api_runs__run_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/jobright/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Bridge Status
+         * @description Return whether the Jobright extension is connected.
+         *
+         *     Args:
+         *         request: FastAPI request carrying the application context.
+         *
+         *     Returns:
+         *         Current in-process bridge connection state.
+         */
+        get: operations["bridge_status_api_sources_jobright_status_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2238,6 +2265,14 @@ export interface components {
             verdict: string | null;
         };
         /**
+         * JobrightBridgeStatus
+         * @description Current in-process extension connection state.
+         */
+        JobrightBridgeStatus: {
+            /** Connected */
+            connected: boolean;
+        };
+        /**
          * JobsListResponse
          * @description ``GET /api/jobs`` response: rows, true total, SQL tab counts.
          */
@@ -2758,6 +2793,18 @@ export interface components {
             errors: number;
             /** Evaluate Stage */
             evaluate_stage?: string | null;
+            /** Evaluation Input Total */
+            evaluation_input_total?: number | null;
+            /** Evaluation Scope */
+            evaluation_scope?: string | null;
+            /** Failed Source */
+            failed_source?: string | null;
+            /** Failed Stage */
+            failed_stage?: string | null;
+            /** Failure Code */
+            failure_code?: string | null;
+            /** Failure Message */
+            failure_message?: string | null;
             /** Finished At */
             finished_at: string | null;
             /** Jobs Discovered */
@@ -2774,6 +2821,8 @@ export interface components {
             jobs_seniority_filtered: number;
             /** Jobs Updated */
             jobs_updated: number;
+            /** Last Progress At */
+            last_progress_at?: string | null;
             /**
              * Ml Gate Processed
              * @default 0
@@ -2785,6 +2834,13 @@ export interface components {
             progress_stage?: string | null;
             /** Progress Updated At */
             progress_updated_at?: string | null;
+            /**
+             * Restart Count
+             * @default 0
+             */
+            restart_count: number;
+            /** Restarted By Run Id */
+            restarted_by_run_id?: string | null;
             /** Run Id */
             run_id: string;
             /** Scan Current Job Id */
@@ -2798,6 +2854,12 @@ export interface components {
             scan_processed: number;
             /** Scan Source */
             scan_source?: string | null;
+            /** Scan Stats */
+            scan_stats?: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
             /** Scan Total */
             scan_total?: number | null;
             /** Source */
@@ -2992,6 +3054,7 @@ export interface components {
         SourcesConfig: {
             ats?: components["schemas"]["SourcesATSConfig"];
             indeed?: components["schemas"]["SourcesIndeedConfig"];
+            jobright?: components["schemas"]["SourcesJobrightConfig"];
             linkedin?: components["schemas"]["SourcesLinkedInConfig"];
             linkedin_guest?: components["schemas"]["SourcesLinkedInGuestConfig"];
             speedyapply?: components["schemas"]["SourcesSpeedyApplyConfig"];
@@ -3033,6 +3096,37 @@ export interface components {
             /**
              * Timeout S
              * @default 60
+             */
+            timeout_s: number;
+        };
+        /**
+         * SourcesJobrightConfig
+         * @description Chrome-extension bridge limits for personalized Jobright scans.
+         */
+        SourcesJobrightConfig: {
+            /**
+             * Batch Size
+             * @default 20
+             */
+            batch_size: number;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Max Jobs
+             * @default 1000
+             */
+            max_jobs: number;
+            /**
+             * Pacing S
+             * @default 1
+             */
+            pacing_s: number;
+            /**
+             * Timeout S
+             * @default 900
              */
             timeout_s: number;
         };
@@ -5033,6 +5127,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bridge_status_api_sources_jobright_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobrightBridgeStatus"];
                 };
             };
         };

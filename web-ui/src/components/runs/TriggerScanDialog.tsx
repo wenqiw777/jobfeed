@@ -8,6 +8,7 @@ const SOURCES = [
   { id: "all", text: "All sources" },
   { id: "ats", text: "Company career pages" },
   { id: "indeed", text: "Indeed" },
+  { id: "jobright", text: "Jobright recommendations" },
   { id: "linkedin-guest", text: "LinkedIn guest search" },
   { id: "speedyapply", text: "SpeedyApply lists" },
 ] as const;

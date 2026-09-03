@@ -88,6 +88,13 @@ const CONFIG = {
       profile_dir: "~/.cache/jobfeed/linkedin",
       lock_path: "~/.cache/jobfeed/enrich.lock",
     },
+    jobright: {
+      enabled: false,
+      max_jobs: 1000,
+      batch_size: 20,
+      pacing_s: 1,
+      timeout_s: 900,
+    },
   },
   hard_filters: {
     title_blocklist: [],
@@ -1102,6 +1109,10 @@ test("configured workspace settings still save and return to triage", async () =
         enabled: true,
         search_urls: ["https://www.linkedin.com/jobs/search/?keywords=platform"],
       },
+      jobright: {
+        ...structuredClone(CONFIG.sources.jobright),
+        enabled: true,
+      },
     },
   } as unknown as typeof currentConfig;
   renderApp("/setup");
@@ -1125,6 +1136,9 @@ test("configured workspace settings still save and return to triage", async () =
   fireEvent.change(screen.getByLabelText("SpeedyApply maximum jobs per scan"), {
     target: { value: "300" },
   });
+  fireEvent.change(screen.getByLabelText("Jobright maximum jobs per scan"), {
+    target: { value: "250" },
+  });
   fireEvent.click(screen.getByRole("button", { name: /Advanced settings/ }));
   fireEvent.change(screen.getByLabelText("Authenticated LinkedIn maximum jobs per scan"), {
     target: { value: "200" },
@@ -1142,6 +1156,7 @@ test("configured workspace settings still save and return to triage", async () =
     expect((request?.body as typeof CONFIG).sources.linkedin_guest.max_jobs).toBe(500);
     expect((request?.body as typeof CONFIG).sources.indeed.max_jobs).toBe(400);
     expect((request?.body as typeof CONFIG).sources.speedyapply.max_jobs).toBe(300);
+    expect((request?.body as typeof CONFIG).sources.jobright.max_jobs).toBe(250);
     expect((request?.body as typeof CONFIG).sources.linkedin.max_jobs).toBe(200);
   });
   expect(await screen.findByRole("heading", { name: "Triage" })).toBeVisible();

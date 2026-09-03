@@ -1888,6 +1888,20 @@
         "title": "JobSummary",
         "type": "object"
       },
+      "JobrightBridgeStatus": {
+        "description": "Current in-process extension connection state.",
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connected"
+        ],
+        "title": "JobrightBridgeStatus",
+        "type": "object"
+      },
       "JobsListResponse": {
         "description": "``GET /api/jobs`` response: rows, true total, SQL tab counts.",
         "properties": {
@@ -3167,6 +3181,72 @@
             ],
             "title": "Evaluate Stage"
           },
+          "evaluation_input_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Input Total"
+          },
+          "evaluation_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Scope"
+          },
+          "failed_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Source"
+          },
+          "failed_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Stage"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Message"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -3207,6 +3287,18 @@
             "title": "Jobs Updated",
             "type": "integer"
           },
+          "last_progress_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Progress At"
+          },
           "ml_gate_processed": {
             "default": 0,
             "title": "Ml Gate Processed",
@@ -3245,6 +3337,22 @@
               }
             ],
             "title": "Progress Updated At"
+          },
+          "restart_count": {
+            "default": 0,
+            "title": "Restart Count",
+            "type": "integer"
+          },
+          "restarted_by_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restarted By Run Id"
           },
           "run_id": {
             "title": "Run Id",
@@ -3287,6 +3395,16 @@
               }
             ],
             "title": "Scan Source"
+          },
+          "scan_stats": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "title": "Scan Stats",
+            "type": "object"
           },
           "scan_total": {
             "anyOf": [
@@ -3631,6 +3749,9 @@
           "indeed": {
             "$ref": "#/components/schemas/SourcesIndeedConfig"
           },
+          "jobright": {
+            "$ref": "#/components/schemas/SourcesJobrightConfig"
+          },
           "linkedin": {
             "$ref": "#/components/schemas/SourcesLinkedInConfig"
           },
@@ -3702,6 +3823,44 @@
           }
         },
         "title": "SourcesIndeedConfig",
+        "type": "object"
+      },
+      "SourcesJobrightConfig": {
+        "additionalProperties": false,
+        "description": "Chrome-extension bridge limits for personalized Jobright scans.",
+        "properties": {
+          "batch_size": {
+            "default": 20,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Batch Size",
+            "type": "integer"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "max_jobs": {
+            "default": 1000,
+            "minimum": 1.0,
+            "title": "Max Jobs",
+            "type": "integer"
+          },
+          "pacing_s": {
+            "default": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Pacing S",
+            "type": "number"
+          },
+          "timeout_s": {
+            "default": 900.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout S",
+            "type": "number"
+          }
+        },
+        "title": "SourcesJobrightConfig",
         "type": "object"
       },
       "SourcesLinkedInConfig": {
@@ -6359,7 +6518,7 @@
     },
     "/api/runs/active": {
       "get": {
-        "description": "Return all currently active (in-progress) runs.\n\nArgs:\n    run_manager: Shared run manager.\n\nReturns:\n    Active runs keyed under ``runs``.",
+        "description": "Return all currently active (in-progress) runs.\n\nArgs:\n    run_manager: Shared run manager.\n    store: Persistent run store used for cross-process snapshots.\n\nReturns:\n    Active runs keyed under ``runs``.",
         "operationId": "get_active_runs_api_runs_active_get",
         "responses": {
           "200": {
@@ -6658,6 +6817,25 @@
           }
         },
         "summary": "Stop Run"
+      }
+    },
+    "/api/sources/jobright/status": {
+      "get": {
+        "description": "Return whether the Jobright extension is connected.\n\nArgs:\n    request: FastAPI request carrying the application context.\n\nReturns:\n    Current in-process bridge connection state.",
+        "operationId": "bridge_status_api_sources_jobright_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobrightBridgeStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bridge Status"
       }
     }
   }

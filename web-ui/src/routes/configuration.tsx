@@ -198,6 +198,13 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                     <ListField label="Indeed search URLs" value={sources.indeed!.search_urls} onChange={(value) => updateSource("indeed", { ...sources.indeed!, search_urls: value })} />
                   </SpaceBetween>
                 </SourceToggle>
+                <SourceToggle label="Jobright recommendations" detail="Uses your signed-in Chrome session through the Jobfeed extension" checked={sources.jobright!.enabled} onChange={(enabled) => updateSource("jobright", { ...sources.jobright!, enabled })}>
+                  <SpaceBetween size="m">
+                    <NumberField label="Jobright maximum jobs per scan" value={sources.jobright!.max_jobs} min={1} onChange={(value) => updateSource("jobright", { ...sources.jobright!, max_jobs: value })} />
+                    <NumberField label="Jobright request spacing (seconds)" value={sources.jobright!.pacing_s} min={0.25} step="0.5" onChange={(value) => updateSource("jobright", { ...sources.jobright!, pacing_s: value })} />
+                    <Box variant="small" color="text-body-secondary">Requires the local Jobfeed Jobright Source Chrome extension. The default one-second spacing is the verified safe operating rate.</Box>
+                  </SpaceBetween>
+                </SourceToggle>
                 <SourceToggle label="SpeedyApply lists" detail="Curated GitHub markdown feeds" checked={sources.speedyapply!.enabled} onChange={(enabled) => updateSource("speedyapply", { ...sources.speedyapply!, enabled })}>
                   <SpaceBetween size="m">
                     <NumberField label="SpeedyApply maximum jobs per scan" value={sources.speedyapply!.max_jobs} min={1} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, max_jobs: value })} />
