@@ -17,6 +17,11 @@ def test_sub_three_year_minimum_is_in_scope() -> None:
         "2+ years of professional experience",
         "1-3 years of software engineering experience",
         "2-4 years of professional experience",
+        "2\u20135 years of professional experience",
+        "0\u20135+ years of software engineering experience",
+        "Qualifications0\u20135+ years of software engineering experience",
+        "related field2\u20135 years of AI development experience",
+        "2 years to 8 years exp in software engineering",
         "minimum 2 years of professional experience",
     ):
         decision = classify_seniority_rule("Software Engineer", requirement)
@@ -51,6 +56,8 @@ def test_explicit_midlevel_and_senior_titles_are_out_of_scope() -> None:
         "Software Engineer II",
         "Software Engineer 2",
         "Software Engineer III",
+        "Software Engineer IV",
+        "Software Engineer 4",
         "Mid-Level Software Engineer",
         "Senior Software Engineer",
         "Sr. Backend Engineer",
@@ -106,6 +113,103 @@ def test_company_history_is_not_experience_requirement() -> None:
     assert decision.yoe_min is None
 
 
+@pytest.mark.parametrize(
+    ("title", "jd"),
+    [
+        (
+            "Associate Software Engineer",
+            "CoStar has served customers for over 35 years, giving us experience "
+            "in marketplaces. Build software with our team.",
+        ),
+        (
+            "Software Engineer",
+            "If you are under 18 years of age, you may need working papers. "
+            "Build software with our team.",
+        ),
+        (
+            "AI Engineer",
+            "Required Qualifications: 4\u20137 years of professional software "
+            "engineering experience preferred. Build AI systems.",
+        ),
+    ],
+)
+def test_non_required_years_do_not_block(title: str, jd: str) -> None:
+    assert classify_seniority_rule(title, jd).result != "out_of_scope"
+
+
+def test_education_alternative_uses_viable_zero_year_path() -> None:
+    jd = (
+        "Minimum Qualifications: Meet one of the following: "
+        "A Master's degree with 0 years of work experience; or "
+        "A Bachelor's degree with 3 years of work experience; or "
+        "A High school diploma with 4 years of work experience."
+    )
+    decision = classify_seniority_rule("Backend Engineer", jd)
+    assert decision.result == "in_scope"
+    assert decision.yoe_min == 0
+
+
+def test_degree_alternative_with_years_before_degree() -> None:
+    jd = (
+        "Education & Experience: 0-2 years with BS/BA, or "
+        "a High School diploma with 4 years of experience."
+    )
+    decision = classify_seniority_rule("Cobol Software Developer", jd)
+    assert decision.result == "in_scope"
+    assert decision.yoe_min == 0
+
+
+def test_or_inside_skill_description_does_not_join_two_requirements() -> None:
+    jd = (
+        "Required: 5+ years of overall engineering or technology experience."
+        "3+ years of hands-on cloud engineering experience."
+    )
+    decision = classify_seniority_rule("Cloud Engineer", jd)
+    assert decision.result == "out_of_scope"
+    assert decision.yoe_min == SCOPE_EXPERIENCE_YEARS + 2
+
+
+def test_alternative_degree_substitution_does_not_raise_minimum() -> None:
+    jd = (
+        "Bachelor's degree with 0 years of relevant experience; "
+        "an additional 4 years of relevant experience may be considered "
+        "in lieu of a degree."
+    )
+    assert classify_seniority_rule("Software Engineer", jd).result == "in_scope"
+
+
+def test_entry_title_overrides_unrelated_years_in_jd() -> None:
+    decision = classify_seniority_rule(
+        "Software Engineer I - Entry Level",
+        "For over 40 years we have built products. "
+        "Requires 1 year of software experience.",
+    )
+    assert decision.result == "in_scope"
+
+
+def test_entry_title_with_explicit_four_year_minimum_is_blocked() -> None:
+    decision = classify_seniority_rule(
+        "Software Engineer I", "Requires at least 4 years of software experience."
+    )
+    assert decision.result == "out_of_scope"
+
+
+def test_upper_bound_and_multiple_level_title_do_not_block() -> None:
+    assert (
+        classify_seniority_rule(
+            "Software Engineer", "Up to 5 years of professional experience"
+        ).result
+        != "out_of_scope"
+    )
+    assert (
+        classify_seniority_rule(
+            "Associate Software Engineer / Software Engineer",
+            "With 40+ years of experience in the Insurtech game, we build software.",
+        ).result
+        == "in_scope"
+    )
+
+
 def test_entry_band_without_years_is_in_scope() -> None:
     decision = classify_seniority_rule(
         "Software Engineer, New Graduate", "Build customer-facing software."
@@ -113,6 +217,26 @@ def test_entry_band_without_years_is_in_scope() -> None:
 
     assert decision.result == "in_scope"
     assert decision.reason == "explicit entry band"
+
+
+def test_college_hire_and_engineer_one_bypass_ambiguous_model() -> None:
+    for title in (
+        "Associate Software Engineer - Direct College Hire",
+        "Associate Data Scientist - Direct College Hire",
+        "AI DevOps Engineer 1",
+    ):
+        assert classify_seniority_rule(title, "Build and operate software.").result == (
+            "in_scope"
+        )
+
+
+def test_preferred_only_experience_bypasses_ambiguous_model() -> None:
+    decision = classify_seniority_rule(
+        "AI Engineer",
+        "Required Qualifications: 4-7 years of software engineering experience "
+        "preferred. Experience building AI systems.",
+    )
+    assert decision.result == "in_scope"
 
 
 @dataclass
