@@ -15,6 +15,12 @@
 - The 10 remaining model exclusions are ambiguous titles; none of the inspected direct-college-hire or preferred-only examples remains excluded.
 - `pytest` on seniority, evaluation funnel, eligibility, and priority behavior: 113 passed. `ruff check`, `ruff format --check`, and `git diff --check` passed for the touched code and tests.
 
-## Release boundary
+## Runtime boundary
 
-- Code and tests only. A running server must load the new code and a new evaluation must process the previously excluded jobs. Historical run counters remain historical.
+- The targeted rescore below loaded the repaired code in a new process and wrote its evaluations. The original run's counter remains historical. An already-running web process may still need a restart before future evaluations use the repaired rule.
+
+## Targeted rescore (2026-09-23 UTC)
+
+- User authorized rescoring. Reconstructed the original run's 295 unscored candidates, then applied the repaired gate to select exactly 92 newly eligible job IDs. A scoped Stage A dry run returned the same 92 IDs with zero hard-filter or seniority exclusions.
+- Evaluation run `247d86cf-09ce-4e2d-b8d6-09294ab324f9` succeeded with 92 Quick scores, 27 Detailed reviews, zero errors, and recorded LLM cost of $1.31591016. The run did not change the original historical counter.
+- Read-only DB verification found all 92 target IDs with completed Quick scores; 27 had completed Detailed reviews and 65 had `skipped_below_threshold`. Detailed verdicts were 22 `apply`, 4 `consider`, and 1 `skip`. The evaluation lease was released.
