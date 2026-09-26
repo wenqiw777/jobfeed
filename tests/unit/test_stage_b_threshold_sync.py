@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from jobfeed.adapters.store.legacy_stage_b_threshold import (
+from jobfeed.services._evaluate_claims import sync_stage_b_threshold
+from tests.support.legacy_stage_b_threshold import (
     LegacyPostgresStageBThresholdSync,
 )
-from jobfeed.services._evaluate_claims import sync_stage_b_threshold
 
 
 class _AtomicStore:

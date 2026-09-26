@@ -34,9 +34,6 @@ import pytest
 
 from jobfeed.adapters.llm.mock import MockLLM
 from jobfeed.adapters.ml.mock import MockGate
-from jobfeed.adapters.store.legacy_stage_b_threshold import (
-    LegacyPostgresStageBThresholdSync,
-)
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.config import Settings
 from jobfeed.domain.filtering import HardFilters
@@ -49,6 +46,9 @@ from jobfeed.services.evaluate_types import (
     EvaluateDependencies,
     EvaluateLLMConfig,
     EvaluateRuntimeConfig,
+)
+from tests.support.legacy_stage_b_threshold import (
+    LegacyPostgresStageBThresholdSync,
 )
 
 pytestmark = pytest.mark.postgres

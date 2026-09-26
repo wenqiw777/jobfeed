@@ -134,7 +134,6 @@ ignore = ["PLR0911", "PLR0912", "PLR0915"]
 # literals ARE the contract, so PLR2004 magic-value warnings are noise.
 "tests/unit/test_ml_vectorize.py" = ["PLR2004"]
 "tests/unit/test_xgboost_gate_load.py" = ["PLR2004"]
-"tests/unit/test_evidence_fit.py" = ["PLR2004"]
 "tests/unit/test_job_priority.py" = ["PLR2004"]
 # Interview round store tests assert sequential round_index values (1, 2, 3)
 # and scheduled date components; those literals ARE the contract.

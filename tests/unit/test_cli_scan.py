@@ -15,8 +15,9 @@ import pytest
 from click.testing import CliRunner
 
 from jobfeed.config import Settings
+from jobfeed.domain.models import PipelineRun
 from jobfeed.services.enrich import EnrichSummary
-from jobfeed.services.runs import start_pipeline_run
+from tests.support.factories import FIXED_TIME
 
 # ``jobfeed.cli/__init__`` rebinds the package attribute ``scan`` to the Click
 # command (``from jobfeed.cli.scan import scan``), so the MODULE must be
@@ -41,7 +42,11 @@ def _guest_settings(**overrides: Any) -> Settings:
 
 def _make_app(settings: Settings | None = None) -> dict[str, Any]:
     scan_service = MagicMock()
-    scan_service.run = AsyncMock(return_value=start_pipeline_run("test"))
+    scan_service.run = AsyncMock(
+        return_value=PipelineRun(
+            run_id="test-run", started_at=FIXED_TIME, source="test"
+        )
+    )
     return {
         "settings": settings or Settings.model_validate({}),
         "store": AsyncMock(),
@@ -132,6 +137,17 @@ class TestScanGuestEnrichDefault:
         assert result.exit_code == 0, result.output
         assert calls == []
         assert "LinkedIn guest enrich" not in result.output
+
+    def test_scan_finishes_without_priority_rebuild(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _stub_sources(monkeypatch, ["linkedin_guest"])
+        _stub_enrich_pass(monkeypatch, _summary())
+        app = _make_app(_guest_settings())
+
+        result = CliRunner().invoke(scan, [], obj=app)
+
+        assert result.exit_code == 0, result.output
 
     def test_enrich_failure_is_contained(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An enrich crash is logged; scan counters still print, exit 0."""

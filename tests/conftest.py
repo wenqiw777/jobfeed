@@ -24,9 +24,9 @@ import pytest
 import pytest_asyncio
 import structlog
 
-from jobfeed.adapters.store.legacy_run_leases import LegacyRunLeaseStore
 from jobfeed.adapters.store.postgres import PostgresStore
 from jobfeed.adapters.store.sqlite import SQLiteStore
+from tests.support.legacy_run_leases import LegacyRunLeaseStore
 from tests.support.store_contract_control import (
     PostgresStoreContractControl,
     SqliteStoreContractControl,
