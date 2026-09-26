@@ -33,6 +33,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from jobfeed.domain.display_content import fold_content_groups
+from jobfeed.domain.external_identity import external_identity
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.normalize import normalize, normalize_company
 from jobfeed.domain.quality import quality_rank
@@ -100,6 +102,9 @@ def twin_key(job: JobPosting) -> tuple[str, str]:
     Returns:
         Tuple of normalized company and normalized title.
     """
+    identity = job.external_identity or external_identity(job.url)
+    if identity:
+        return ("__external_identity__", identity)
     return (normalize_company(job.company), normalize(job.title))
 
 
@@ -246,11 +251,13 @@ def pick_display_representatives(
     jobs: Iterable[JobPosting],
     status_by_id: Mapping[str, str],
 ) -> list[JobPosting]:
-    """Return one status-aware display representative per twin cluster.
+    """Return one status-aware representative per identity/content display group.
 
     The Phase 8 display fold reserved by this module's header note: a
     status-priority class is layered AHEAD of ``_representative_sort_key``,
-    so an in-flight ``applied`` twin wins its cluster even when another twin
+    Content-equivalent groups may span different native posting IDs. Native
+    identity clustering used for evaluation/enrichment is unchanged.
+    An in-flight ``applied`` twin wins its cluster even when another twin
     has a better Decision 8 (quality/source/recency) key. Ties inside one
     status class fall through to the existing key unchanged.
 
@@ -269,7 +276,8 @@ def pick_display_representatives(
     ) -> tuple[int, tuple[int, int, float, str, str]]:
         return (_status_class(job, status_by_id), _representative_sort_key(job))
 
-    return [min(cluster.members, key=display_key) for cluster in cluster_twins(jobs)]
+    groups = fold_content_groups([cluster.members for cluster in cluster_twins(jobs)])
+    return [min(members, key=display_key) for members in groups]
 
 
 __all__ = [

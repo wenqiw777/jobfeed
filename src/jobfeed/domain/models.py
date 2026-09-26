@@ -49,7 +49,11 @@ class JobStatus(StrEnum):
 
 @dataclass(kw_only=True)
 class JobPosting:
-    """A source-specific job posting observed by the pipeline."""
+    """A source-specific posting; persisted discovered_at is first discovery.
+
+    Sources may supply their current observation time, but upserts retain the
+    initial stored value. Use effective_job_date for posting age.
+    """
 
     id: str | None = None
     platform: str
@@ -66,6 +70,17 @@ class JobPosting:
     enrich_source: str | None = None
     closed_at: datetime | None = None
     enrich_error: str | None = None
+    external_identity: str | None = None
+    apply_url: str | None = None
+    identity_evidence_url: str | None = None
+    enrich_attempted_at: datetime | None = None
+    enrich_error_code: str | None = None
+    # None means unobserved, not a confirmed original posting.
+    is_repost: bool | None = None
+    repost_evidence: str | None = None
+    repost_observed_at: datetime | None = None
+    enrich_retry_after: datetime | None = None
+    is_swe_role: bool | None = None
 
 
 @dataclass(kw_only=True)
@@ -198,6 +213,7 @@ def _validate_score(score: int) -> None:
 from jobfeed.domain.models_application import (  # noqa: E402
     ApplicationRecord,
     ApplicationStats,
+    RealJobApplicationEvent,
     ResumeSnapshot,
     ResumeSnapshotSummary,
     ResumeVariant,
@@ -212,6 +228,7 @@ from jobfeed.domain.models_llm import (  # noqa: E402
 from jobfeed.domain.models_ops import (  # noqa: E402
     AttentionItem,
     AttentionReport,
+    CompanyIntelligenceMatch,
     CompanyRecord,
     CostEntry,
     DigestStats,
@@ -237,6 +254,7 @@ __all__ = [
     "AutoDecayResult",
     "BulkResult",
     "BulkTransitionRequest",
+    "CompanyIntelligenceMatch",
     "CompanyRecord",
     "CostEntry",
     "DigestStats",
@@ -254,6 +272,7 @@ __all__ = [
     "Message",
     "PipelineRun",
     "QualityBand",
+    "RealJobApplicationEvent",
     "ResumeSnapshot",
     "ResumeSnapshotSummary",
     "ResumeVariant",
