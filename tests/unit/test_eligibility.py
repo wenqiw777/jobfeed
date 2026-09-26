@@ -308,7 +308,7 @@ def test_explicit_software_hardware_title_remains_in_scope() -> None:
     assert result.reason is None
 
 
-def test_evidence_fit_sde_label_overrides_ambiguous_engineer_title() -> None:
+def test_explicit_sde_label_overrides_ambiguous_engineer_title() -> None:
     result = evaluate_eligibility(
         _job(
             title="Entry-Level Water Resources Engineer",

@@ -68,7 +68,7 @@ def priority_for_job(
 
     Args:
         job: Posting to rank.
-        evidence_fit: Persisted Evidence Fit total, if evaluated.
+        evidence_fit: Persisted Stage B fit score, if evaluated.
         company: Verified company evidence, if matched.
         compensation_percentile: Pay percentile within the comparable cohort.
         now: Optional clock for deterministic freshness.

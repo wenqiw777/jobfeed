@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from jobfeed.adapters.store.legacy_run_leases import LegacyRunLeaseStore
 from jobfeed.domain.models import PipelineRun
+from tests.support.legacy_run_leases import LegacyRunLeaseStore
 
 
 class _LegacyStore:
