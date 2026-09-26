@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 
 
 @dataclass(kw_only=True)
@@ -18,6 +19,27 @@ class CompanyRecord:
     job_count_last_scan: int = 0
     consecutive_discover_failures: int = 0
     notes: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class CompanyIntelligenceMatch:
+    """Merged source evidence returned for an exact company match."""
+
+    name: str
+    domain: str | None
+    sources: tuple[str, ...]
+    accelerators: tuple[str, ...]
+    accelerator_batches: tuple[str, ...]
+    yc_top_company: bool
+    is_hiring: bool | None
+    team_size: int | None
+    claimed_unicorn: bool
+    exited: bool | None
+    categories: tuple[str, ...]
+    company_statuses: tuple[str, ...]
+    public_company: bool
+    confidence: Literal["medium", "low"]
+    watchlist_only: bool
 
 
 @dataclass(kw_only=True)
@@ -76,6 +98,7 @@ class AttentionReport:
 __all__ = [
     "AttentionItem",
     "AttentionReport",
+    "CompanyIntelligenceMatch",
     "CompanyRecord",
     "CostEntry",
     "DigestStats",
