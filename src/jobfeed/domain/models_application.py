@@ -22,6 +22,20 @@ class ApplicationRecord:
     notes: str | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class RealJobApplicationEvent:
+    """Submission provenance, independent of retained source audit rows."""
+
+    id: int
+    real_job_id: str
+    source_job_id: str | None
+    source_applied_job_id: str | None
+    apply_url: str | None
+    applied_at: datetime
+    application_method: str | None
+    notes: str | None
+
+
 @dataclass(kw_only=True)
 class ResumeSnapshot:
     """Content-addressed resume stored by sha256 hash."""
@@ -85,6 +99,7 @@ class ApplicationStats:
 __all__ = [
     "ApplicationRecord",
     "ApplicationStats",
+    "RealJobApplicationEvent",
     "ResumeSnapshot",
     "ResumeSnapshotSummary",
     "ResumeVariant",
