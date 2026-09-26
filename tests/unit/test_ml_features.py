@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import dataclasses
 
+import pytest
+
 from jobfeed.domain.ml_features import (
     DEGREE_LEVELS,
     DOMAIN_NAMES,
@@ -534,6 +536,61 @@ def test_clear_non_sde_titles_remain_rejected() -> None:
         features = extract_features(title, jd)
         assert features.is_swe_role is False, title
         assert hard_fail_reason(features) == "not software engineering role", title
+
+
+@pytest.mark.parametrize(
+    "title,jd_text",
+    [
+        (
+            "RN - Post Surgical/Stroke Part-time Day",
+            "Use hospital software. Recruiters support candidates. "
+            "Document patient care in a database and web application.",
+        ),
+        (
+            "In Home Healthcare LVN - Night Shifts",
+            "Use a tablet application for electronic clinical documentation. "
+            "The company develops healthcare technology and software.",
+        ),
+        (
+            "DashMart Team Member - University",
+            "Pick app orders, manage inventory in a database, and hand packages "
+            "to drivers at our technology company.",
+        ),
+        (
+            "Senior Technical Recruiter",
+            "Recruit software engineers who write Python, Java, APIs, and "
+            "distributed services.",
+        ),
+        (
+            "Senior Manager, Social Media",
+            "Market an AI software platform using YouTube, web analytics, SQL, "
+            "and automation tools.",
+        ),
+        (
+            "Freeway Services Dispatch/Operator - Call Center",
+            "Use web applications, databases, and traffic software to dispatch "
+            "roadside assistance.",
+        ),
+    ],
+)
+def test_clear_nonsoftware_title_is_not_rescued_by_incidental_jd_terms(
+    title: str, jd_text: str
+) -> None:
+    assert extract_features(title, jd_text).is_swe_role is False
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Software Engineer, Marketing Platform",
+        "Backend Engineer, Recruiting Systems",
+        "Data Engineer, Warehouse Analytics",
+        "AI Engineer for Clinical Applications",
+        "Quant Researcher, Power Dispatch Modeling",
+    ],
+)
+def test_strong_software_title_survives_business_domain_words(title: str) -> None:
+    assert extract_features(title, "Build and deploy production software.").is_swe_role
 
 
 def test_vocab_counts_and_structured_dim() -> None:
