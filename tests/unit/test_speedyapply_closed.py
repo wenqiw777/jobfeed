@@ -396,7 +396,8 @@ async def test_ats_fetch_error_403_no_closed_at() -> None:
     assert len(postings) == 1
     p = postings[0]
     assert p.closed_at is None
-    assert p.enrich_error is None
+    assert p.enrich_error == "HTTP 403 from greenhouse/gamma"
+    assert p.enrich_retry_after is not None
     assert p.enrich_source == "speedyapply-error"
 
 
@@ -434,7 +435,8 @@ async def test_ats_fetch_error_none_status_no_closed_at() -> None:
     assert len(postings) == 1
     p = postings[0]
     assert p.closed_at is None
-    assert p.enrich_error is None
+    assert p.enrich_error == "Timeout for greenhouse/delta"
+    assert p.enrich_error_code == "transient"
     assert p.enrich_source == "speedyapply-error"
 
 

@@ -20,6 +20,7 @@ from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.quality import assess_quality, quality_rank
 from jobfeed.ports.source import DiscoverResult
 
+from ._linkedin_company_filter import blocked_linkedin_company
 from ._linkedin_dom import (
     CARD_SELECTOR,
     COMPANY_SELECTORS,
@@ -107,7 +108,7 @@ async def _discover_spec(
             logger.error("linkedin_discover_reauth_required", url=search_url)
             return True
         new_jobs = await _read_cards(page, search_url)
-        if not new_jobs:
+        if not new_jobs and await page.locator(CARD_SELECTOR).count() == 0:
             return False
         accepted = _accept_jobs(spec, new_jobs, state, search_url, accepted)
     return False
@@ -136,6 +137,8 @@ async def _posting_from_card(
         return None
     title = await read_first_text(card, (JOB_LINK_SELECTOR,))
     company = await read_first_text(card, COMPANY_SELECTORS)
+    if blocked_linkedin_company(company):
+        return None
     location = await read_first_text(card, LOCATION_SELECTORS)
     await card.click()
     jd_text = await read_job_description(page)

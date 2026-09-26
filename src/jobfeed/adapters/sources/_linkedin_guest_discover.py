@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from jobfeed.adapters.sources._linkedin_company_filter import blocked_linkedin_company
 from jobfeed.adapters.sources._linkedin_guest_http import (
     SearchParams,
     parse_search_params,
@@ -155,6 +156,8 @@ class _GuestRun:
         for card in cards:
             if added >= limit:
                 break
+            if blocked_linkedin_company(card.company):
+                continue
             if card.job_id in self._unique:
                 continue
             self._unique[card.job_id] = _to_posting(card, now=self._now)

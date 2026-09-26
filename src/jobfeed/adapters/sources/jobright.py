@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -14,11 +14,18 @@ from jobfeed.adapters.sources import _speedyapply_routing as routing
 from jobfeed.adapters.sources._ats_icims import extract_jsonld_jd
 from jobfeed.adapters.sources._http import ATSFetchError, fetch_text
 from jobfeed.config import SourcesJobrightConfig
+from jobfeed.domain.external_identity import external_identity
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger
-from jobfeed.ports.source import SourceFetchProgressCallback
-from jobfeed.services.jobright_bridge import JobrightBridge
+from jobfeed.ports.source import (
+    EnrichmentLookup,
+    PartialSourceFetchError,
+    SourceFetchProgressCallback,
+    StoredEnrichment,
+)
+from jobfeed.services.jobright_bridge import JobrightBridge, JobrightBridgeError
+from jobfeed.services.pipeline_context import durable_posting
 
 _PLATFORM = "jobright"
 _MILLISECONDS_THRESHOLD = 10_000_000_000
@@ -36,11 +43,13 @@ class JobrightSource:
         bridge: JobrightBridge,
         logger: JobfeedLogger,
         client: httpx.AsyncClient | None = None,
+        enrichment_lookup: EnrichmentLookup | None = None,
     ) -> None:
         self._config = config
         self._bridge = bridge
         self._log = logger
         self._client = client
+        self._enrichment_lookup = enrichment_lookup
 
     async def fetch_jobs(self, config: dict[str, object]) -> list[JobPosting]:
         """Fetch without exposing incremental progress to the caller.
@@ -56,7 +65,7 @@ class JobrightSource:
         """
         return await self.fetch_jobs_with_progress(config, lambda _update: None)
 
-    async def fetch_jobs_with_progress(
+    async def fetch_jobs_with_progress(  # noqa: C901 - preserves partial scan work
         self,
         config: dict[str, object],  # noqa: ARG002
         on_progress: SourceFetchProgressCallback,
@@ -73,13 +82,18 @@ class JobrightSource:
         Raises:
             JobrightBridgeError: If the extension is unavailable or the scan fails.
         """
-        raw_jobs = await self._bridge.run_scan(
-            max_jobs=self._config.max_jobs,
-            batch_size=self._config.batch_size,
-            pacing_s=self._config.pacing_s,
-            timeout_s=self._config.timeout_s,
-            on_progress=on_progress,
-        )
+        partial_error = None
+        try:
+            raw_jobs = await self._bridge.run_scan(
+                max_jobs=self._config.max_jobs,
+                batch_size=self._config.batch_size,
+                pacing_s=self._config.pacing_s,
+                timeout_s=self._config.timeout_s,
+                on_progress=on_progress,
+            )
+        except JobrightBridgeError as exc:
+            partial_error = exc
+            raw_jobs = exc.partial_jobs
         discovered_at = datetime.now(UTC)
         slug_cache: routing.SlugCache = {}
         semaphore = asyncio.Semaphore(_OFFICIAL_MAX_CONCURRENT)
@@ -90,18 +104,114 @@ class JobrightSource:
             except ValueError as exc:
                 self._log.warning("jobright_row_skipped", error=str(exc))
                 return None
-            if self._client is None:
-                return summary
             async with semaphore:
-                return await self._enrich_official(
+                stored = await self._stored_enrichment(summary)
+                if stored:
+                    return replace(
+                        summary,
+                        jd_text=stored.jd_text or summary.jd_text,
+                        jd_quality=stored.quality or summary.jd_quality,
+                        enriched_at=stored.enriched_at,
+                        enrich_source=stored.enrich_source,
+                        external_identity=stored.external_identity
+                        or summary.external_identity,
+                        enrich_attempted_at=stored.enrich_attempted_at,
+                        enrich_error=stored.enrich_error,
+                        enrich_error_code=stored.enrich_error_code,
+                        enrich_retry_after=stored.enrich_retry_after,
+                    )
+                if self._client is None:
+                    return summary
+                result = await self._enrich_official(
                     raw,
                     summary,
                     discovered_at=discovered_at,
                     slug_cache=slug_cache,
                 )
+                if result.jd_quality not in {QualityBand.GOOD, QualityBand.FULL}:
+                    return replace(
+                        result,
+                        enrich_attempted_at=discovered_at,
+                        enrich_error="No complete official JD",
+                        enrich_error_code="no_complete_jd",
+                        enrich_retry_after=discovered_at + timedelta(days=7),
+                    )
+                return result
 
-        built = await asyncio.gather(*(build(raw) for raw in raw_jobs))
-        return [posting for posting in built if posting is not None]
+        async def durable_build(raw: dict[str, Any]) -> JobPosting | None:
+            try:
+                job = map_jobright_job(raw, discovered_at=discovered_at)
+            except ValueError:
+                return await build(raw)
+            return await durable_posting(
+                f"native:jobright:{job.canonical_id}", raw, build
+            )
+
+        unique: dict[str, dict[str, Any]] = {}
+        for raw in raw_jobs:
+            try:
+                job = map_jobright_job(raw, discovered_at=discovered_at)
+            except ValueError as exc:
+                self._log.warning("jobright_row_skipped", error=str(exc))
+                continue
+            unique.setdefault(job.canonical_id, raw)
+        built = await asyncio.gather(*(durable_build(raw) for raw in unique.values()))
+        postings = [posting for posting in built if posting is not None]
+        if partial_error is not None:
+            raise PartialSourceFetchError(
+                str(partial_error), postings, warning=partial_error.warning
+            )
+        return postings
+
+    async def _stored_enrichment(self, job: JobPosting) -> StoredEnrichment | None:
+        if self._enrichment_lookup is None:
+            return None
+        try:
+            stored = await self._enrichment_lookup.get_enrichment(
+                platform=job.platform, canonical_id=job.canonical_id
+            )
+            if (
+                stored
+                and stored.external_identity
+                and job.external_identity
+                and stored.external_identity != job.external_identity
+            ):
+                stored = None
+            if (
+                stored
+                and stored.quality in {QualityBand.GOOD, QualityBand.FULL}
+                and (stored.jd_text or "").strip()
+            ):
+                return stored
+            lookup = getattr(
+                self._enrichment_lookup, "get_enrichment_by_identity", None
+            )
+            if job.external_identity and lookup:
+                twin = await lookup(job.external_identity)
+                if isinstance(twin, StoredEnrichment):
+                    if (
+                        twin.quality in {QualityBand.GOOD, QualityBand.FULL}
+                        and (twin.jd_text or "").strip()
+                    ):
+                        return replace(
+                            twin,
+                            enrich_source=(
+                                f"reused:{twin.platform}:"
+                                f"{twin.enrich_source or 'stored'}"
+                            ),
+                        )
+                    if twin.enrich_retry_after:
+                        stored = twin
+            if (
+                stored
+                and stored.enrich_retry_after
+                and stored.enrich_retry_after > datetime.now(UTC)
+            ):
+                return stored
+        except Exception as exc:
+            self._log.warning("jobright_enrichment_lookup_failed", error=str(exc))
+            raise
+        return None
 
     async def _enrich_official(
         self,
@@ -207,12 +317,19 @@ def map_jobright_job(raw: dict[str, Any], *, discovered_at: datetime) -> JobPost
     location = _text(job.get("jobLocation")) or "Unknown"
     fallback_url = f"https://jobright.ai/jobs/info/{job_id}"
     url = _text(job.get("applyLink")) or _text(job.get("originalUrl")) or fallback_url
+    identity_url = next(
+        (official for official in _official_urls(raw) if external_identity(official)),
+        None,
+    )
     jd_text = _build_jd(job)
     return JobPosting(
         platform=_PLATFORM,
         canonical_id=job_id,
         url=url,
         title=title,
+        external_identity=external_identity(identity_url or url),
+        identity_evidence_url=identity_url or url,
+        apply_url=_text(job.get("applyLink")) or None,
         company=company_name,
         location=location,
         discovered_at=discovered_at,
