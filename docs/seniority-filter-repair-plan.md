@@ -24,3 +24,10 @@
 - User authorized rescoring. Reconstructed the original run's 295 unscored candidates, then applied the repaired gate to select exactly 92 newly eligible job IDs. A scoped Stage A dry run returned the same 92 IDs with zero hard-filter or seniority exclusions.
 - Evaluation run `247d86cf-09ce-4e2d-b8d6-09294ab324f9` succeeded with 92 Quick scores, 27 Detailed reviews, zero errors, and recorded LLM cost of $1.31591016. The run did not change the original historical counter.
 - Read-only DB verification found all 92 target IDs with completed Quick scores; 27 had completed Detailed reviews and 65 had `skipped_below_threshold`. Detailed verdicts were 22 `apply`, 4 `consider`, and 1 `skip`. The evaluation lease was released.
+
+## MTS and junior-path repair (2026-09-26)
+
+- Boundary: preserve MTS as a neutral title; keep explicit new-grad, co-op, entry-level, 0–3-year, and multi-level junior paths visible. Continue blocking clear required experience above three years and explicit senior ownership.
+- Before the code change, the targeted tests had 9 failures. The original `acc8e001-2714-42e0-b669-2c991d7331ef` cohort was reconstructed read-only at exactly 688 candidates; the configured gate reproduced 583 rule blocks, 54 model blocks, and 51 survivors.
+- After the change, read-only replay on the same cohort produced 456 rule blocks, 48 model blocks, and 184 survivors. Of 28 MTS-title roles, 26 now pass and 2 retain explicit over-three-year or senior-ownership evidence. The prior run remains unchanged.
+- Targeted unit and funnel tests passed (78 total); Ruff and diff checks passed. The revised rules have not been activated in a running web process or used for paid rescoring.

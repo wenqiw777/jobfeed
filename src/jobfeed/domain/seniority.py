@@ -53,8 +53,14 @@ _MULTILEVEL_TITLE = re.compile(
     r"\bopen\s+rank\b|\b(?:engineer|developer)\s+I\s*[-\u2013/]\s*III\b",
     re.IGNORECASE,
 )
+_MULTILEVEL_BANDS = re.compile(
+    r"\bE1\s*:.{0,100}\b[0-3]\s*[-\u2013]\s*[0-3](?:\.\d+)?\s+years?\s+of\s+exp"
+    r".{0,180}\b(?:E2|Sr\.?\s+Engineer)\s*:",
+    re.IGNORECASE | re.DOTALL,
+)
+_MTS_TITLE = re.compile(r"\bmember\s+of\s+technical\s+staff\b|\bMTS\b", re.IGNORECASE)
 _ENTRY_TITLE = re.compile(
-    r"\b(?:intern(?:ship)?|new[\s-]?grad(?:uate)?|entry[\s-]?level|"
+    r"\b(?:intern(?:ship)?|co[\s-]?op|new[\s-]?grads?(?:uates?)?|entry[\s-]?level|"
     r"junior|jr\.?|direct\s+college\s+hire)\b|"
     r"\b(?:engineer|developer)\s+(?:I|1)\b",
     re.IGNORECASE,
@@ -70,6 +76,14 @@ _OWNERSHIP_SCOPE = re.compile(
     r"|set\s+(?:the\s+)?technical\s+direction"
     r"|manage\s+(?:a\s+)?team\s+of\s+(?:engineers|developers)"
     r"|lead\s+(?:an?\s+)?engineering\s+team)\b",
+    re.IGNORECASE,
+)
+_JUNIOR_JD_PATH = re.compile(
+    r"\b(?:looking\s+for|hiring|seeking|open\s+to|consider(?:ed|ing)?)"
+    r".{0,55}\bnew[\s-]?grads?(?:uates?)?\b|"
+    r"\bnew[\s-]?grads?(?:uates?)?\b.{0,55}\b(?:considered|welcome)\b|"
+    r"\bentry[\s-]?level\s+experience\b|"
+    r"\b0\s*[-\u2013]\s*3\s+years?\s+of\s+(?:\w+\s+){0,3}experience\b",
     re.IGNORECASE,
 )
 
@@ -106,7 +120,8 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
         High-confidence rule decision, or ``unclear`` for model review.
     """
     entry_title = _ENTRY_TITLE.search(title)
-    ownership_title = _OWNERSHIP_TITLE.search(title)
+    mts_title = _MTS_TITLE.search(title)
+    ownership_title = _OWNERSHIP_TITLE.search(title) and not mts_title
     explicit_seniority_title = _EXPLICIT_SENIORITY_TITLE.search(title)
     if entry_title and (ownership_title or explicit_seniority_title):
         return SeniorityDecision(
@@ -116,7 +131,7 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
             confidence=1.0,
         )
 
-    if _MULTILEVEL_TITLE.search(title):
+    if _MULTILEVEL_TITLE.search(title) or _MULTILEVEL_BANDS.search(jd_text):
         return SeniorityDecision(
             result="in_scope",
             reason="multiple-level title",
@@ -125,24 +140,17 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
         )
 
     if entry_title:
-        required_years = _required_yoe_min(jd_text)
-        if (
-            required_years is not None
-            and required_years > SCOPE_EXPERIENCE_YEARS
-            and _has_explicit_required_years(jd_text)
-        ):
-            return SeniorityDecision(
-                result="out_of_scope",
-                reason="minimum experience is more than 3 years",
-                yoe_min=required_years,
-                confidence=1.0,
-            )
-        return SeniorityDecision(
-            result="in_scope",
-            reason="explicit entry band",
-            yoe_min=None,
-            confidence=1.0,
-        )
+        return _entry_title_decision(jd_text)
+
+    required_years = _required_yoe_min(jd_text)
+    protected = _junior_or_mts_decision(
+        jd_text,
+        required_years=required_years,
+        mts_title=bool(mts_title),
+        senior_title=bool(explicit_seniority_title),
+    )
+    if protected is not None:
+        return protected
 
     if ownership_title or _OWNERSHIP_SCOPE.search(jd_text):
         return SeniorityDecision(
@@ -160,7 +168,7 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
             confidence=1.0,
         )
 
-    yoe_min = _required_yoe_min(jd_text)
+    yoe_min = required_years
     if yoe_min is not None:
         if yoe_min > SCOPE_EXPERIENCE_YEARS:
             return SeniorityDecision(
@@ -189,6 +197,62 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
         reason="no explicit seniority boundary",
         yoe_min=None,
         confidence=0.0,
+    )
+
+
+def _entry_title_decision(jd_text: str) -> SeniorityDecision:
+    required_years = _required_yoe_min(jd_text)
+    if (
+        required_years is not None
+        and required_years > SCOPE_EXPERIENCE_YEARS
+        and _has_explicit_required_years(jd_text)
+    ):
+        return SeniorityDecision(
+            result="out_of_scope",
+            reason="minimum experience is more than 3 years",
+            yoe_min=required_years,
+            confidence=1.0,
+        )
+    return SeniorityDecision(
+        result="in_scope",
+        reason="explicit entry band",
+        yoe_min=None,
+        confidence=1.0,
+    )
+
+
+def _junior_or_mts_decision(
+    jd_text: str,
+    *,
+    required_years: int | None,
+    mts_title: bool,
+    senior_title: bool,
+) -> SeniorityDecision | None:
+    """Keep explicit junior paths and neutral MTS titles out of model ambiguity."""
+    junior_years = (
+        required_years is not None and required_years <= SCOPE_EXPERIENCE_YEARS
+    )
+    if _JUNIOR_JD_PATH.search(jd_text) or junior_years:
+        return SeniorityDecision(
+            result="in_scope",
+            reason="explicit junior path",
+            yoe_min=required_years if junior_years else None,
+            confidence=1.0,
+        )
+    if not mts_title or senior_title or _OWNERSHIP_SCOPE.search(jd_text):
+        return None
+    senior_years = (
+        required_years is not None and required_years > SCOPE_EXPERIENCE_YEARS
+    )
+    return SeniorityDecision(
+        result="out_of_scope" if senior_years else "in_scope",
+        reason=(
+            "minimum experience is more than 3 years"
+            if senior_years
+            else "neutral MTS title"
+        ),
+        yoe_min=required_years,
+        confidence=1.0,
     )
 
 
