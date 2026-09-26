@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from jobfeed.domain.job_age import effective_job_date
 from jobfeed.domain.models import JobPosting
 
 _UNITED_STATES_ALLOWLIST_VALUE = "united states"
@@ -183,9 +184,9 @@ def _freshness_reason(
 
     Hour precision is a strict global cutoff. Legacy day precision retains the
     big-company extension. Both prefer the source's posting time and fall back
-    to discovery time only when the source did not provide one.
+    to first discovery when the posting time is missing or in the future.
     """
-    timestamp = job.posted_at or job.discovered_at
+    timestamp = effective_job_date(job, now=now)
     if filters.posted_within_hours is not None:
         hours_limit = filters.posted_within_hours
         if job.platform.casefold() == "indeed":
@@ -213,6 +214,8 @@ def _is_stale(
 ) -> bool:
     """Return whether a posting timestamp exceeds the configured age."""
     reference = now or datetime.now(UTC)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=UTC)
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
     return timestamp < reference - maximum_age
