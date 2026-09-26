@@ -30,6 +30,7 @@ class EnrichResult:
     enrich_source: str
     error: str | None = None
     posted_at: datetime | None = None
+    apply_url: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -40,6 +41,12 @@ class StoredEnrichment:
     quality: QualityBand | None
     enriched_at: datetime | None
     enrich_source: str | None = None
+    platform: str | None = None
+    external_identity: str | None = None
+    enrich_attempted_at: datetime | None = None
+    enrich_error_code: str | None = None
+    enrich_retry_after: datetime | None = None
+    enrich_error: str | None = None
 
 
 @runtime_checkable
@@ -148,6 +155,7 @@ class SourceFetchProgress:
     processed: int
     total: int | None = None
     current_job_id: str | None = None
+    phase: str = "fetching"
 
 
 SourceFetchProgressCallback = Callable[[SourceFetchProgress], None]
@@ -186,3 +194,14 @@ class SessionSource(Protocol):
             any exclusive resource (lock, browser context) for both phases.
         """
         ...
+
+
+class PartialSourceFetchError(RuntimeError):
+    """A failed fetch whose already-received postings must still be saved."""
+
+    def __init__(
+        self, message: str, postings: list[JobPosting], *, warning: bool = False
+    ) -> None:
+        super().__init__(message)
+        self.postings = postings
+        self.warning = warning

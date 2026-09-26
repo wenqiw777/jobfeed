@@ -115,6 +115,30 @@ async def test_tier1_selects_job_via_current_job_id(
 
 
 @pytest.mark.asyncio
+async def test_tier1_captures_observed_external_apply_href(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _FakePage()
+
+    async def fake_read(_page: object) -> str:
+        return GOOD_JD
+
+    async def fake_apply(_page: object) -> str:
+        return "https://qualcomm.eightfold.ai/careers?pid=446721162271"
+
+    monkeypatch.setattr(enrich_module, "read_job_description", fake_read)
+    monkeypatch.setattr(enrich_module, "_read_apply_url", fake_apply)
+    session = _session(page)
+    session.source_search_urls["li-1"] = SEARCH_URL
+    result = await session.enrich(_posting("li-1"))
+    assert result.apply_url == fake_apply_url()
+
+
+def fake_apply_url() -> str:
+    return "https://qualcomm.eightfold.ai/careers?pid=446721162271"
+
+
+@pytest.mark.asyncio
 async def test_tier2_used_when_no_search_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -204,11 +204,88 @@ class SourcesJobrightConfig(BaseModel):
     timeout_s: float = Field(default=900.0, gt=0)
 
 
+class SourcesBoardExtensionConfig(BaseModel):
+    """Bounded authenticated job-board scans through the local Chrome bridge."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    queries: list[str] = Field(
+        default_factory=lambda: ["Software Engineer New Grad", "AI Engineer New Grad"],
+        min_length=1,
+    )
+    search_url: str | None = None
+    search_urls: list[str] = Field(default_factory=list)
+    max_jobs: int = Field(default=500, ge=1, le=1000)
+    batch_size: int = Field(default=25, ge=1, le=25)
+    pacing_s: float = Field(default=1.0, gt=0)
+    timeout_s: float = Field(default=900.0, gt=0)
+
+    @field_validator("search_urls")
+    @classmethod
+    def _valid_linkedin_urls(cls, values: list[str]) -> list[str]:
+        for value in values:
+            parsed = urlparse(value)
+            if (
+                parsed.scheme != "https"
+                or parsed.netloc != "www.linkedin.com"
+                or parsed.path != "/jobs/search-results/"
+                or not parse_qs(parsed.query).get("keywords")
+            ):
+                raise ValueError("Use LinkedIn search-results URLs with keywords")
+        return values
+
+    @field_validator("search_url")
+    @classmethod
+    def _valid_search_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlparse(value)
+        params = parse_qs(parsed.query)
+        allowed = {
+            "jobRoleGroups",
+            "employmentTypes",
+            "jobType",
+            "sort",
+            "page",
+            "per_page",
+        }
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "app.joinhandshake.com"
+            or not parsed.path.startswith("/job-search")
+            or set(params) - allowed
+            or params.get("sort") != ["posted_date_desc"]
+        ):
+            raise ValueError("Use a Handshake category search URL sorted by newest")
+        for key in ("jobRoleGroups", "employmentTypes", "jobType"):
+            if key not in params or any(
+                not part.isdigit() for item in params[key] for part in item.split(",")
+            ):
+                raise ValueError(f"Missing or invalid {key}")
+        return value
+
+    @field_validator("queries")
+    @classmethod
+    def _valid_queries(cls, value: list[str]) -> list[str]:
+        if any(
+            not q.strip() or len(q.strip()) > 200  # noqa: PLR2004
+            for q in value
+        ):
+            raise ValueError("Queries must contain 1 to 200 characters")
+        return list(dict.fromkeys(q.strip() for q in value))
+
+
 class SourcesConfig(BaseModel):
     """Container for all job-data source configurations."""
 
     model_config = ConfigDict(extra="forbid")
 
+    linkedin_extension: SourcesBoardExtensionConfig = Field(
+        default_factory=SourcesBoardExtensionConfig
+    )
+    handshake: SourcesBoardExtensionConfig = Field(
+        default_factory=SourcesBoardExtensionConfig
+    )
     ats: SourcesATSConfig = Field(default_factory=SourcesATSConfig)
     speedyapply: SourcesSpeedyApplyConfig = Field(
         default_factory=SourcesSpeedyApplyConfig

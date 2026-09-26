@@ -13,7 +13,7 @@ from jobfeed.domain.quality import assess_quality, is_jd_fresh, quality_rank
 from jobfeed.ports.source import DiscoverResult, EnrichmentLookup, EnrichResult
 
 from ._linkedin_discover import discover_linkedin_jobs
-from ._linkedin_dom import human_delay, read_job_description
+from ._linkedin_dom import human_delay, read_first_attr, read_job_description
 
 Sleeper = Callable[[float], Awaitable[None]]
 _GOOD_RANK = quality_rank(QualityBand.GOOD)
@@ -140,6 +140,7 @@ class LinkedInScanSession:
             quality=assess_quality(jd_text),
             enrich_source="linkedin_search_pane",
             posted_at=posting.posted_at,
+            apply_url=await _read_apply_url(self.page),
         )
 
     async def _try_tier2(
@@ -160,7 +161,27 @@ class LinkedInScanSession:
             quality=assess_quality(jd_text),
             enrich_source="linkedin_detail",
             posted_at=posting.posted_at,
+            apply_url=await _read_apply_url(self.page),
         )
+
+
+async def _read_apply_url(page: Any) -> str | None:
+    """Read a displayed external href without clicking or submitting Apply."""
+    href = await read_first_attr(
+        page,
+        ("a.jobs-apply-button[href]", "a.jobs-s-apply[href]"),
+        "href",
+        timeout_ms=250,
+    )
+    if not href:
+        return None
+    parsed = urlsplit(href)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").lower()
+    if host == "linkedin.com" or host.endswith(".linkedin.com"):
+        return None
+    return href
 
 
 def _with_current_job(search_url: str, job_id: str) -> str:

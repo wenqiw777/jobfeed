@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import pytest
 import respx
 
 from jobfeed.adapters.sources._http import create_http_client
@@ -11,7 +14,27 @@ from jobfeed.adapters.sources.jobright import JobrightSource, map_jobright_job
 from jobfeed.config import SourcesJobrightConfig
 from jobfeed.domain.models import QualityBand
 from jobfeed.observability import get_logger
-from jobfeed.services.jobright_bridge import JobrightBridge
+from jobfeed.ports.source import PartialSourceFetchError, StoredEnrichment
+from jobfeed.services.jobright_bridge import JobrightBridge, JobrightBridgeError
+
+
+@pytest.mark.parametrize("warning", [True, False])
+async def test_bridge_partial_jobs_are_mapped_and_retained(warning):
+    source = JobrightSource(
+        config=SourcesJobrightConfig(),
+        logger=MagicMock(),
+        bridge=SimpleNamespace(
+            run_scan=AsyncMock(
+                side_effect=JobrightBridgeError(
+                    "pagination stopped", [_job()], warning=warning
+                )
+            )
+        ),
+    )
+    with pytest.raises(PartialSourceFetchError) as caught:
+        await source.fetch_jobs({})
+    assert caught.value.warning is warning
+    assert caught.value.postings[0].canonical_id == "job-123"
 
 
 def _job(job_id: str = "job-123") -> dict[str, object]:
@@ -43,6 +66,7 @@ def test_maps_jobright_payload_to_job_posting() -> None:
     assert posting.company == "Example Systems"
     assert posting.location == "Detroit, MI"
     assert posting.url == "https://example.com/apply/job-123"
+    assert posting.apply_url == "https://example.com/apply/job-123"
     assert posting.posted_at == datetime(2026, 9, 1, 18, 30, tzinfo=UTC)
     assert posting.discovered_at == discovered_at
     assert posting.enrich_source == "jobright_summary"
@@ -50,6 +74,68 @@ def test_maps_jobright_payload_to_job_posting() -> None:
     assert posting.jd_text is not None
     assert "0-2 years" in posting.jd_text
     assert "Develop backend services" in posting.jd_text
+
+
+async def test_jobright_reuses_complete_stored_jd_before_official_fetch():
+    old = StoredEnrichment(
+        jd_text="Complete JD", quality=QualityBand.FULL, enriched_at=datetime.now(UTC)
+    )
+    source = JobrightSource(
+        config=SourcesJobrightConfig(),
+        logger=MagicMock(),
+        bridge=SimpleNamespace(run_scan=AsyncMock(return_value=[_job()])),
+        client=MagicMock(),
+        enrichment_lookup=SimpleNamespace(get_enrichment=AsyncMock(return_value=old)),
+    )
+    source._enrich_official = AsyncMock(side_effect=AssertionError("must reuse"))
+    jobs = await source.fetch_jobs({})
+    assert jobs[0].jd_text == old.jd_text
+    source._enrich_official.assert_not_awaited()
+
+
+async def test_jobright_deduplicates_native_ids_before_official_requests():
+    source = JobrightSource(
+        config=SourcesJobrightConfig(),
+        logger=MagicMock(),
+        client=MagicMock(),
+        bridge=SimpleNamespace(run_scan=AsyncMock(return_value=[_job(), _job()])),
+    )
+    result = map_jobright_job(_job(), discovered_at=datetime.now(UTC))
+    source._enrich_official = AsyncMock(return_value=result)
+    jobs = await source.fetch_jobs({})
+    assert len(jobs) == 1
+    source._enrich_official.assert_awaited_once()
+
+
+async def test_jobright_checks_saved_jd_even_without_official_http_client():
+    old = StoredEnrichment(
+        jd_text="Saved complete JD",
+        quality=QualityBand.FULL,
+        enriched_at=datetime.now(UTC),
+    )
+    source = JobrightSource(
+        config=SourcesJobrightConfig(),
+        logger=MagicMock(),
+        bridge=SimpleNamespace(run_scan=AsyncMock(return_value=[_job()])),
+        enrichment_lookup=SimpleNamespace(get_enrichment=AsyncMock(return_value=old)),
+    )
+    assert (await source.fetch_jobs({}))[0].jd_text == old.jd_text
+
+
+async def test_jobright_lookup_failure_does_not_request_official_details():
+    source = JobrightSource(
+        config=SourcesJobrightConfig(),
+        logger=MagicMock(),
+        client=MagicMock(),
+        bridge=SimpleNamespace(run_scan=AsyncMock(return_value=[_job()])),
+        enrichment_lookup=SimpleNamespace(
+            get_enrichment=AsyncMock(side_effect=RuntimeError("DB unavailable"))
+        ),
+    )
+    source._enrich_official = AsyncMock()
+    with pytest.raises(RuntimeError, match="DB unavailable"):
+        await source.fetch_jobs({})
+    source._enrich_official.assert_not_awaited()
 
 
 async def test_bridge_batch_completes_source_and_reports_progress() -> None:
