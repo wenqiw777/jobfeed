@@ -67,6 +67,56 @@ def test_explicit_midlevel_and_senior_titles_are_out_of_scope() -> None:
         assert decision.reason == "explicit seniority title"
 
 
+@pytest.mark.parametrize(
+    ("title", "jd"),
+    [
+        ("Member of Technical Staff, Backend", "Build backend services."),
+        ("Member of Technical Staff, New Graduates", "Build ML systems."),
+        (
+            "Member of Technical Staff, Backend",
+            "We are looking for exceptional new grads.",
+        ),
+        ("Software Engineer 2", "0-3 years of software development experience."),
+        (
+            "Senior Software Engineer",
+            "This position is open to new graduates, at lower job levels.",
+        ),
+        (
+            "Member of Technical Staff",
+            "New grads with strong internships are considered.",
+        ),
+        ("Software Engineering Co-Op", "Full time students may apply."),
+        (
+            "Associate Business Solution Developer",
+            "Entry level experience developing software.",
+        ),
+    ],
+)
+def test_explicit_junior_paths_and_neutral_mts_are_not_blocked(
+    title: str, jd: str
+) -> None:
+    assert classify_seniority_rule(title, jd).result == "in_scope"
+
+
+def test_mts_with_explicit_senior_requirement_is_blocked() -> None:
+    assert (
+        classify_seniority_rule(
+            "Member of Technical Staff",
+            "Requires 5+ years of software engineering experience.",
+        ).result
+        == "out_of_scope"
+    )
+
+
+def test_multilevel_experience_bands_preserve_junior_path() -> None:
+    jd = (
+        "Pay Range E1: $110,000 (1-1.5 years of exp); "
+        "E2: $120,000 (1-3 years of exp); "
+        "Sr. Engineer: $140,000 (3-6 years of exp)."
+    )
+    assert classify_seniority_rule("Applications Engineer", jd).result == "in_scope"
+
+
 def test_entry_title_wins_over_conflicting_seniority_word() -> None:
     for title in (
         "IT Developer Intern (Senior-Level)",
