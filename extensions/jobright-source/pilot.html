@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Jobfeed batch scan test</title>
+<link rel="stylesheet" href="popup.css"></head><body><main>
+<h1>Batch scan test</h1>
+<p>Uses your signed-in Chrome session. Saves job descriptions locally for export.</p>
+<label for="source">Source</label><select id="source"><option value="handshake">Handshake</option><option value="linkedin">LinkedIn — United States, past 24 hours</option></select>
+<label for="query">Search</label><input id="query" value="Software Engineer New Grad">
+<label for="limit">Maximum jobs</label><input id="limit" type="number" min="1" max="500" value="50">
+<button id="start">Start batch test</button><p id="progress" role="status">Ready</p>
+<button id="download" disabled>Download last result (JSON)</button><pre id="result"></pre>
+</main><script src="pilot.js"></script></body></html>

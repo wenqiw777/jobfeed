@@ -1,3 +1,4 @@
+importScripts("jobboard-batch.js", "github-jd-worker.js", "pilot-worker.js");
 const DEFAULT_BASE_URL = "http://127.0.0.1:7654";
 const PROTOCOL_VERSION = 1;
 const RECONNECT_DELAY_MS = 3000;
@@ -52,26 +53,35 @@ async function connect() {
   clearTimeout(reconnectTimer);
   connectionState = "connecting";
   const baseUrl = await getBaseUrl();
+  // Storage yields: startup, installation and reconnect callbacks may overlap.
+  if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
   const wsUrl = `${baseUrl.replace(/^http/, "ws")}/api/sources/jobright/bridge`;
   const nextSocket = new WebSocket(wsUrl);
   socket = nextSocket;
   nextSocket.addEventListener("open", () => {
+    if (socket !== nextSocket) return;
     connectionState = "handshaking";
-    send({ type: "hello", protocol: PROTOCOL_VERSION });
+    send({ type: "hello", protocol: PROTOCOL_VERSION, sources: ["jobright", "linkedin", "handshake", "linkedin-search-results", "tiktok", "github-jd", "discovery-gate-v1"] });
   });
   nextSocket.addEventListener("message", (event) => {
-    void handleMessage(event.data);
+    if (socket === nextSocket) void handleMessage(event.data);
   });
   nextSocket.addEventListener("close", () => {
     if (socket === nextSocket) {
       socket = null;
       connectionState = "disconnected";
+      for (const [taskId,task] of activeTasks) {
+        cancelDiscovery(taskId);
+        task.cancelled = true;
+        if (task.tabId != null) void chrome.tabs.remove(task.tabId).catch(() => {});
+        for (const tabId of task.tabIds || []) void chrome.tabs.remove(tabId).catch(() => {});
+      }
       stopHeartbeat();
       scheduleReconnect();
     }
   });
   nextSocket.addEventListener("error", () => {
-    connectionState = "error";
+    if (socket === nextSocket) connectionState = "error";
   });
 }
 
@@ -90,31 +100,45 @@ async function handleMessage(raw) {
   if (message.type === "pong") {
     return;
   }
-  if (message.type === "cancel" && typeof message.task_id === "string") {
-    const task = activeTasks.get(message.task_id);
-    if (task) task.cancelled = true;
+  if (message.type === "discovery_result") {
+    resolveDiscovery(message);
     return;
   }
-  if (message.type === "start_scan" && typeof message.task_id === "string") {
-    if (activeTasks.size > 0) {
+  if (message.type === "cancel" && typeof message.task_id === "string") {
+    const task = activeTasks.get(message.task_id);
+    if (task) {
+      cancelDiscovery(message.task_id);
+      task.cancelled = true;
+      if (task.tabId != null) await chrome.tabs.remove(task.tabId).catch(() => {});
+      await Promise.all([...task.tabIds || []].map(tabId => chrome.tabs.remove(tabId).catch(() => {})));
+    }
+    return;
+  }
+  if (["start_scan", "start_board_scan"].includes(message.type) && typeof message.task_id === "string") {
+    const source = message.type === "start_scan" ? "jobright" : message.source;
+    const lane = ["github-jd", "tiktok"].includes(source) ? "enrichment" : source;
+    if (activeTasks.has(message.task_id) || [...activeTasks.values()].some(task => task.lane === lane) || pilotRunning) {
       send({
         type: "error",
         task_id: message.task_id,
-        error: "A Jobright browser scan is already running",
+        error: `${lane} browser lane is busy`,
       });
       return;
     }
-    const task = { cancelled: false };
+    const task = { cancelled: false, lane };
     activeTasks.set(message.task_id, task);
     try {
-      await runScan(message, task);
+      if (message.type === "start_board_scan") await runBoardScan(message, task);
+      else await runScan(message, task);
     } catch (error) {
+      if (task.cancelled) return;
       send({
         type: "error",
         task_id: message.task_id,
         error: error instanceof Error ? error.message : String(error),
       });
     } finally {
+      cancelDiscovery(message.task_id);
       activeTasks.delete(message.task_id);
     }
   }
@@ -130,11 +154,13 @@ async function runScan(command, task) {
   });
   if (typeof tab.id !== "number") throw new Error("Chrome did not create a Jobright tab");
   const tabId = tab.id;
+  task.tabId = tabId;
   const seen = new Set();
   let position = 0;
+  let duplicatePages = 0, warning = null;
   let lastRequestStartedAt = 0;
   try {
-    await waitForTabComplete(tabId);
+    await waitForTabComplete(tabId, "https://jobright.ai");
     while (!task.cancelled && seen.size < maxJobs) {
       const remainingDelay = Math.max(0, pacingMs - (Date.now() - lastRequestStartedAt));
       if (remainingDelay > 0) await wait(remainingDelay);
@@ -155,20 +181,27 @@ async function runScan(command, task) {
         await waitForSocketCapacity();
         send({ type: "batch", task_id: command.task_id, jobs: fresh });
       }
-      if (jobs.length === 0 || jobs.length < batchSize || fresh.length === 0) break;
+      if (jobs.length === 0 || jobs.length < batchSize) break;
+      duplicatePages=fresh.length?0:duplicatePages+1;
+      if(duplicatePages>=3){warning=`Jobright pagination repeated 3 pages at position ${position}; more results may exist`;break;}
       position += jobs.length;
     }
-    if (!task.cancelled) send({ type: "complete", task_id: command.task_id });
   } finally {
     await chrome.tabs.remove(tabId).catch(() => undefined);
   }
+  if (!task.cancelled) send({ type: "complete", task_id: command.task_id, warning });
 }
 
 async function fetchPageWithBackoff(tabId, position, count, task) {
   let backoffMs = 2000;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     if (task.cancelled) throw new Error("Jobright scan cancelled");
-    const page = await fetchPage(tabId, position, count);
+    let page;
+    try {page = await fetchPage(tabId, position, count);}
+    catch(error){
+      if(!/frame.*removed|frame.*detached|document.*unloaded/i.test(String(error)) || attempt>=2)throw error;
+      await waitForTabComplete(tabId, "https://jobright.ai");await wait(1000);continue;
+    }
     if (page.status === 200 && page.success === true) return page;
     if (page.status === 401) {
       throw new Error("Jobright login expired; sign in in Chrome and retry");
@@ -236,21 +269,40 @@ async function fetchPage(tabId, position, count) {
   return result;
 }
 
-async function waitForTabComplete(tabId) {
-  const current = await chrome.tabs.get(tabId);
-  if (current.status === "complete") return;
+async function waitForTabComplete(tabId, sourceOrigin = null, allowInteractive = false) {
+  // Register before checking status: onUpdated can fire while tabs.get resolves.
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    let finished = false, timer, poll;
+    const finish = error => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer); clearTimeout(poll);
       chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error("Jobright page did not finish loading"));
-    }, 30000);
-    const listener = (updatedTabId, changeInfo) => {
-      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
-      clearTimeout(timeout);
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
+      error ? reject(error) : resolve();
+    };
+    const listener = (id, change) => {
+      if (id === tabId && change.status === "complete") void check();
+    };
+    const check = async () => {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (finished) return;
+        if (!sourceOrigin && tab.status === "complete") return finish();
+        if (sourceOrigin || allowInteractive) {
+          // API work needs a usable source document, not all advertising resources.
+          const rows = await chrome.scripting.executeScript({target:{tabId},world:"MAIN",
+            func:() => ({readyState:document.readyState,origin:location.origin})});
+          const page = rows[0]?.result;
+          if ((!sourceOrigin || page?.origin === sourceOrigin) && ["interactive","complete"].includes(page.readyState)) return finish();
+        }
+      } catch (error) {
+        if (/No tab|Invalid tab|closed/i.test(error.message || "")) return finish(error);
+      }
+      if (!finished) { clearTimeout(poll); poll = setTimeout(check, 250); }
     };
     chrome.tabs.onUpdated.addListener(listener);
+    timer = setTimeout(() => finish(new Error("Source page did not finish loading within 30000 ms")), 30000);
+    void check();
   });
 }
 
