@@ -276,6 +276,14 @@ _SWE_TITLE_POS = re.compile(
     r"|web developer|mobile developer|android|ios developer)\b",
     _IC,
 )
+_SWE_TITLE_CLEAR_NEG = re.compile(
+    r"\b(registered nurse|nurse|rn|lpn|lvn"
+    r"|recruiter|talent acquisition"
+    r"|social media"
+    r"|dashmart team member|warehouse (?:team )?member"
+    r"|dispatcher|dispatch[ /-]+operator|call[ -]?center operator)\b",
+    _IC,
+)
 _SWE_TITLE_NEG = re.compile(
     r"\b(sales|marketing|recruiter|hr |human resource|account executive"
     r"|business development|product manager|product management"
@@ -497,6 +505,38 @@ def classify_role_type(title: str, jd_text: str) -> str:
     return "fte"
 
 
+def classify_clearance_status(jd_text: str) -> str:
+    """Return the clearance requirement without extracting unrelated features.
+
+    Args:
+        jd_text: Full job-description text.
+
+    Returns:
+        Normalized clearance requirement.
+    """
+    return _clearance_status(jd_text)
+
+
+def clearly_nonsoftware_title(title: str) -> bool:
+    """Identify narrow nonsoftware occupations without broad legacy rules."""
+    return bool(_SWE_TITLE_CLEAR_NEG.search(title)) and not bool(
+        _SWE_TITLE_STRONG.search(title)
+    )
+
+
+def classify_swe_role(title: str, jd_text: str) -> bool:
+    """Return the high-recall software-role decision used by eligibility.
+
+    Args:
+        title: Posting title.
+        jd_text: Full job-description text.
+
+    Returns:
+        Whether the posting is plausibly software-related.
+    """
+    return _is_swe_role(title, jd_text)
+
+
 def _yoe_min(jd_text: str) -> int | None:
     values = _extract_yoe_values(jd_text)
     return values[0] if values else None
@@ -512,6 +552,8 @@ def _is_swe_role(title: str, jd_text: str) -> bool:
     title_lower = title.lower()
     if _SWE_TITLE_STRONG.search(title_lower):
         return True
+    if _SWE_TITLE_CLEAR_NEG.search(title_lower):
+        return False
     if _SWE_TITLE_POS.search(title_lower):
         return True
     if not _SWE_TITLE_NEG.search(title_lower):
@@ -579,7 +621,9 @@ __all__ = [
     "STRUCTURED_DIM",
     "TECH_NAMES",
     "MLGateFeatures",
+    "classify_clearance_status",
     "classify_role_type",
+    "classify_swe_role",
     "extract_features",
     "hard_fail_reason",
 ]
