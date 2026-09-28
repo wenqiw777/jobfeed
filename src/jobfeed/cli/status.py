@@ -16,6 +16,7 @@ from jobfeed.domain.models_status import (
     TransitionRequest,
 )
 from jobfeed.domain.status import STATUS_VALUES
+from jobfeed.ports.store_canonical import CanonicalWorkflowStore
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
 
 _STATUS_CHOICES = sorted(STATUS_VALUES)
@@ -29,7 +30,7 @@ def _build_workflow(app: AppContext) -> WorkflowService:
 
 async def _real_id(app: AppContext, source_id: str) -> str | None:
     resolver = (
-        app["store"].resolve_real_job_id
+        cast(CanonicalWorkflowStore, app["store"]).resolve_real_job_id
         if hasattr(type(app["store"]), "resolve_real_job_id")
         else None
     )
@@ -99,7 +100,9 @@ async def _run_mark(app: AppContext, opts: dict[str, object]) -> None:
             for jid in ids:
                 real_id = await _real_id(app, jid)
                 result = (
-                    await app["store"].restore_real_job(real_id)
+                    await cast(CanonicalWorkflowStore, app["store"]).restore_real_job(
+                        real_id
+                    )
                     if real_id is not None
                     else await svc.restore(jid)
                 )
@@ -142,7 +145,9 @@ async def _mark_bulk(  # noqa: PLR0913
     if any(parent is not None for parent in parents):
         if any(parent is None for parent in parents):
             raise click.ClickException("bulk contains an unresolved source ID")
-        return await app["store"].transition_real_jobs_bulk(
+        return await cast(
+            CanonicalWorkflowStore, app["store"]
+        ).transition_real_jobs_bulk(
             BulkTransitionRequest(
                 items=[(parent, status) for parent in parents if parent],
                 reason_selected="bulk_selected",
@@ -177,10 +182,16 @@ async def _mark_one(  # noqa: PLR0913
     if real_id is None:
         return await svc.transition(req, note=note_text)
     if resume_variant is not None:
-        await app["store"].register_resume_variant(name=resume_variant)
-    result = await app["store"].transition_real_job_status(req)
+        await cast(WorkflowStore, app["store"]).register_resume_variant(
+            name=resume_variant
+        )
+    result = await cast(
+        CanonicalWorkflowStore, app["store"]
+    ).transition_real_job_status(req)
     if note_text is not None:
-        await app["store"].append_real_job_note(real_job_id=real_id, text=note_text)
+        await cast(CanonicalWorkflowStore, app["store"]).append_real_job_note(
+            real_job_id=real_id, text=note_text
+        )
     return result
 
 
@@ -224,7 +235,9 @@ async def _run_archive(
                 job_id=real_id or jid, new_status="archived", force=force
             )
             result = (
-                await app["store"].transition_real_job_status(req)
+                await cast(
+                    CanonicalWorkflowStore, app["store"]
+                ).transition_real_job_status(req)
                 if real_id is not None
                 else await svc.transition(req)
             )
@@ -257,7 +270,9 @@ async def _run_note(app: AppContext, *, job_id: str, text: str) -> None:
         svc = _build_workflow(app)
         real_id = await _real_id(app, job_id)
         if real_id is not None:
-            await app["store"].append_real_job_note(real_job_id=real_id, text=text)
+            await cast(CanonicalWorkflowStore, app["store"]).append_real_job_note(
+                real_job_id=real_id, text=text
+            )
         else:
             await svc.note(job_id, text)
         click.echo(f"Note added to {job_id}")
@@ -296,7 +311,9 @@ async def _run_followup(app: AppContext, *, job_id: str, at: datetime) -> None:
         svc = _build_workflow(app)
         real_id = await _real_id(app, job_id)
         was_set = (
-            await app["store"].set_real_job_followup(real_job_id=real_id, at=at)
+            await cast(CanonicalWorkflowStore, app["store"]).set_real_job_followup(
+                real_job_id=real_id, at=at
+            )
             if real_id is not None
             else await svc.set_followup(job_id=job_id, at=at)
         )

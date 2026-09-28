@@ -21,7 +21,14 @@ class StoreViewsMixin(Protocol):
     """Read-only jobs view for the web API."""
 
     async def load_display_bodies(self, job_ids: Sequence[str]) -> dict[str, str]:
-        """Load JD bodies for the bounded set of display match candidates."""
+        """Load JD bodies for the bounded set of display match candidates.
+
+        Args:
+            job_ids: Source posting IDs whose description bodies are required.
+
+        Returns:
+            Available nonempty description bodies keyed by source posting ID.
+        """
         ...
 
     async def query_jobs_view(self, query: JobsViewQuery) -> JobsViewPage:
@@ -139,7 +146,15 @@ class StoreViewsMixin(Protocol):
     async def get_historical_run_verdict_counts(
         self, run_id: str
     ) -> dict[str, int] | None:
-        """Reconstruct an old run only when every detailed review is unchanged."""
+        """Reconstruct an old run only when every detailed review is unchanged.
+
+        Args:
+            run_id: Run identifier used to bound historical completed reviews.
+
+        Returns:
+            Reconstructed verdict counts, or None when the run cannot be reconstructed
+                safely.
+        """
         ...
 
     async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:

@@ -135,31 +135,51 @@ async def test_representative_change_keeps_canonical_dates_sqlite(
     middle = now - timedelta(days=5)
     try:
         linkedin = JobPosting(
-            platform="linkedin", canonical_id="date-old",
+            platform="linkedin",
+            canonical_id="date-old",
             url="https://www.linkedin.com/jobs/view/4469009469/",
             apply_url=_REPRESENTATIVE_ATS,
-            title="Backend SWE", company="Qualcomm", location="San Diego, CA",
-            discovered_at=old, posted_at=old,
-            jd_text=_REPRESENTATIVE_JD, jd_quality=QualityBand.FULL,
+            title="Backend SWE",
+            company="Qualcomm",
+            location="San Diego, CA",
+            discovered_at=old,
+            posted_at=old,
+            jd_text=_REPRESENTATIVE_JD,
+            jd_quality=QualityBand.FULL,
         )
         first = await store.save_job(linkedin)
         parent = await store.resolve_real_job_id(first.job_id)
-        await store.save_job(replace(
-            linkedin, platform="jobright", canonical_id="date-official",
-            url=_REPRESENTATIVE_ATS, apply_url=None,
-            discovered_at=now, posted_at=now,
-        ))
-        middle_result = await store.save_job(replace(
-            linkedin, platform="linkedin", canonical_id="date-middle",
-            url="https://www.linkedin.com/jobs/view/4469009470/",
-            apply_url=None, company="Another Company",
-            discovered_at=middle, posted_at=middle,
-        ))
+        await store.save_job(
+            replace(
+                linkedin,
+                platform="jobright",
+                canonical_id="date-official",
+                url=_REPRESENTATIVE_ATS,
+                apply_url=None,
+                discovered_at=now,
+                posted_at=now,
+            )
+        )
+        middle_result = await store.save_job(
+            replace(
+                linkedin,
+                platform="linkedin",
+                canonical_id="date-middle",
+                url="https://www.linkedin.com/jobs/view/4469009470/",
+                apply_url=None,
+                company="Another Company",
+                discovered_at=middle,
+                posted_at=middle,
+            )
+        )
         page = await store.query_real_jobs_view(
-            decision="results", sort="triage_posted_desc", now=now,
+            decision="results",
+            sort="triage_posted_desc",
+            now=now,
         )
         assert [row["real_job_id"] for row in page["jobs"]] == [
-            int(await store.resolve_real_job_id(middle_result.job_id)), int(parent),
+            int(await store.resolve_real_job_id(middle_result.job_id)),
+            int(parent),
         ]
         old_row = page["jobs"][1]
         assert datetime.fromisoformat(old_row["posted_at"]) == old
@@ -169,7 +189,8 @@ async def test_representative_change_keeps_canonical_dates_sqlite(
         assert datetime.fromisoformat(detail["row"]["posted_at"]) == old
         assert datetime.fromisoformat(detail["row"]["discovered_at"]) == old
         filtered = await store.query_real_jobs_view(
-            decision="results", now=now,
+            decision="results",
+            now=now,
             hard_filters=HardFilters(posted_within_days=7),
         )
         assert filtered["total"] == filtered["tab_counts"]["results"] == 1

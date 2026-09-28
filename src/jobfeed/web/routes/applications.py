@@ -141,7 +141,22 @@ async def apply_to_real_job(
     service: _Applications,
     store: _Store,
 ) -> ApplyResponse:
-    """Record a submission against a canonical job with explicit source."""
+    """Record a submission against a canonical job with explicit source.
+
+    Args:
+        real_job_id: Canonical job receiving the application.
+        request: HTTP request used for API error context.
+        form: Submitted source selection, resume content, and application metadata.
+        service: Injected application or job-view service.
+        store: Store providing the state or posting reads required by this operation.
+
+    Returns:
+        Application result with the canonical job identity.
+
+    Raises:
+        ApiError: If the source is missing, invalid, or inconsistent with the canonical
+            job.
+    """
     if form.source_job_id is None:
         raise ApiError(
             _HTTP_VALIDATION_ERROR,
@@ -217,7 +232,15 @@ async def list_real_job_applications(
     service: _Applications,
     limit: Annotated[int, Query(ge=1, le=_MAX_HISTORY_LIMIT)] = _DEFAULT_HISTORY_LIMIT,
 ) -> RealJobApplicationsListResponse:
-    """List canonical submission events, including their source provenance."""
+    """List canonical submission events, including their source provenance.
+
+    Args:
+        service: Injected application or job-view service.
+        limit: Maximum number of records to select.
+
+    Returns:
+        Serialized canonical application history.
+    """
     return real_job_applications_response(
         await service.real_job_apply_history(limit=limit)
     )

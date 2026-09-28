@@ -54,14 +54,17 @@ async def test_recovery_clears_empty_claims_only_after_evaluation_lease_ends(
             "(real_job_id,source_job_id,input_jd_text,input_facts_json,"
             "stage_a_status,updated_at) VALUES (?,?,?,?,?,?)",
             (
-                real_job_id, empty, "Full JD", "{}", "in_progress",
+                real_job_id,
+                empty,
+                "Full JD",
+                "{}",
+                "in_progress",
                 sqlite_timestamp(_NOW),
             ),
         )
 
     assert (
-        await leases.recover_expired_run_leases(now=_NOW + timedelta(seconds=1))
-        == []
+        await leases.recover_expired_run_leases(now=_NOW + timedelta(seconds=1)) == []
     )
     assert await _claim_states(lifecycle) == [
         ("empty", "in_progress"),
@@ -121,7 +124,10 @@ async def test_evaluation_finish_and_stop_release_empty_claims(tmp_path: Path) -
     finished_at = _NOW + timedelta(seconds=1)
     assert await leases.finalize_run_with_lease(
         terminal_run(finished, finished_at),
-        kind="evaluate", owner_id=_OWNER_A, generation=1, now=finished_at,
+        kind="evaluate",
+        owner_id=_OWNER_A,
+        generation=1,
+        now=finished_at,
     )
     assert await _claim_states(lifecycle) == [("first", None)]
 

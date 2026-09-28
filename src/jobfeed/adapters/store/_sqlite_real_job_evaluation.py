@@ -52,6 +52,10 @@ class SqliteRealJobEvaluation:
 
     _lifecycle: SqliteLifecycle
 
+    def _now(self) -> datetime:
+        """Require the concrete store to provide its UTC clock."""
+        raise NotImplementedError
+
     async def claim_real_job_stage_a_by_ids(  # noqa: C901 - atomic claim state machine
         self,
         real_job_ids: list[str],
@@ -223,7 +227,7 @@ class SqliteRealJobEvaluation:
                 ) or (
                     current["stage_a_status"] == "in_progress"
                     and (
-                        _datetime_from_text(current["updated_at"])
+                        _required_updated_at(current["updated_at"])
                         >= now - timedelta(hours=1)
                     )
                 ):
@@ -489,6 +493,7 @@ class SqliteRealJobEvaluation:
                         "SELECT * FROM real_job_evaluations WHERE real_job_id=?",
                         (real_id,),
                     )
+                assert current is not None
                 if (
                     current["stage_b_status"] == "completed"
                     or (
@@ -497,7 +502,7 @@ class SqliteRealJobEvaluation:
                     )
                     or (
                         current["stage_b_status"] == "in_progress"
-                        and _datetime_from_text(current["updated_at"])
+                        and _required_updated_at(current["updated_at"])
                         >= now - timedelta(hours=1)
                     )
                 ):
@@ -930,12 +935,14 @@ async def _release_unreturned_claims(
         yield
     except BaseException:
         release = (
-            store.release_real_job_stage_a_claim if stage == "a"
+            store.release_real_job_stage_a_claim
+            if stage == "a"
             else store.release_real_job_stage_b_claim
         )
         for item in claimed:
             await release(
-                item.real_job_id, expected_revision=item.input_revision,
+                item.real_job_id,
+                expected_revision=item.input_revision,
                 expected_generation=item.claim_generation,
             )
         raise
@@ -1222,9 +1229,7 @@ async def _select_sqlite_real_job_input(
         return select_real_job_input(str(real_id), jobs, now=now)
     first_discovery = min(job.discovered_at for job in jobs)
     original_dates = [
-        job.posted_at
-        for job in jobs
-        if job.posted_at is not None and not job.is_repost
+        job.posted_at for job in jobs if job.posted_at is not None and not job.is_repost
     ]
     canonical = replace(
         override,
@@ -1278,7 +1283,7 @@ async def _all(
 ) -> list[aiosqlite.Row]:
     cursor = await connection.execute(sql, params)
     try:
-        return await cursor.fetchall()
+        return list(await cursor.fetchall())
     finally:
         await cursor.close()
 
@@ -1309,3 +1314,10 @@ def _legacy_stage_b_json(row: aiosqlite.Row) -> str | None:
             },
         }
     )
+
+
+def _required_updated_at(value: str) -> datetime:
+    """Read the non-null claim timestamp enforced by the evaluation schema."""
+    timestamp = _datetime_from_text(value)
+    assert timestamp is not None
+    return timestamp

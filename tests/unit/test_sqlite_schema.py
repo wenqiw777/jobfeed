@@ -129,8 +129,7 @@ async def test_explicit_reconcile_preserves_child_history() -> None:
         assert parent is not None
         assert await _scalar(connection, "SELECT COUNT(*) FROM real_jobs") == 1
         assert (
-            await _scalar(connection, "SELECT COUNT(*) FROM real_job_identifiers")
-            == 1
+            await _scalar(connection, "SELECT COUNT(*) FROM real_job_identifiers") == 1
         )
         assert (
             await _scalar(connection, "SELECT COUNT(*) FROM job_status_history")
@@ -171,9 +170,7 @@ async def test_existing_v1_schema_requires_explicit_real_job_migration() -> None
                 legacy_statement = legacy_statement.replace(
                     "\treal_job_id INTEGER, \n", ""
                 )
-                legacy_statement = legacy_statement.replace(
-                    "\tapply_url TEXT, \n", ""
-                )
+                legacy_statement = legacy_statement.replace("\tapply_url TEXT, \n", "")
                 legacy_statement = legacy_statement.replace(
                     "\tFOREIGN KEY(real_job_id) REFERENCES real_jobs (id), \n", ""
                 )
@@ -192,24 +189,33 @@ async def test_existing_v1_schema_requires_explicit_real_job_migration() -> None
         before = await _scalar(connection, "SELECT COUNT(*) FROM job_status_history")
 
         await ensure_sqlite_schema(connection)
-        assert await _scalar(
-            connection,
-            "SELECT COUNT(*) FROM sqlite_schema WHERE name='real_jobs'",
-        ) == 0
-        assert await _scalar(
-            connection,
-            "SELECT COUNT(*) FROM pragma_table_info('jobs') "
-            "WHERE name='real_job_id'",
-        ) == 0
+        assert (
+            await _scalar(
+                connection,
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name='real_jobs'",
+            )
+            == 0
+        )
+        assert (
+            await _scalar(
+                connection,
+                "SELECT COUNT(*) FROM pragma_table_info('jobs') "
+                "WHERE name='real_job_id'",
+            )
+            == 0
+        )
         connection.row_factory = aiosqlite.Row
         await connection.execute("BEGIN IMMEDIATE")
         saved = await _save_job_on_connection(connection, make_job("new-source"))
         await connection.commit()
         assert saved.inserted
-        assert await _scalar(
-            connection,
-            "SELECT COUNT(*) FROM sqlite_schema WHERE name='real_jobs'",
-        ) == 0
+        assert (
+            await _scalar(
+                connection,
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name='real_jobs'",
+            )
+            == 0
+        )
         await sqlite_schema.migrate_real_jobs_schema(connection)
         assert (
             await _scalar(connection, "SELECT COUNT(*) FROM real_jobs")

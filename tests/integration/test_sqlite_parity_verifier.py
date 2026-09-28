@@ -27,7 +27,7 @@ from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
 
 _AS_OF = "2026-08-12T00:00:00.000000Z"
-_EXPECTED_SEEDED_ROWS = 3
+_EXPECTED_SEEDED_ROWS = 4  # includes the schema data-repair marker
 
 
 async def test_exact_fourteen_table_and_aggregate_parity_returns_typed_report(

@@ -29,8 +29,16 @@ async def test_legacy_breakdown_requires_complete_unchanged_results(
                     discovered_at)
                    VALUES (?,?,?,?,?,?,?,?)""",
                 [
-                    (i, "test", str(i), f"https://example.test/{i}",
-                     "Engineer", "Example", "Remote", _START)
+                    (
+                        i,
+                        "test",
+                        str(i),
+                        f"https://example.test/{i}",
+                        "Engineer",
+                        "Example",
+                        "Remote",
+                        _START,
+                    )
                     for i in range(1, 4)
                 ],
             )
@@ -38,13 +46,17 @@ async def test_legacy_breakdown_requires_complete_unchanged_results(
                 """INSERT INTO evaluations
                    (job_id, stage_b_verdict, stage_b_status, stage_b_at, updated_at)
                    VALUES (?,?,'completed',?,?)""",
-                [(1, "apply", _REVIEWED, _REVIEWED),
-                 (2, "consider", _REVIEWED, _REVIEWED),
-                 (3, "skip", _REVIEWED, _REVIEWED)],
+                [
+                    (1, "apply", _REVIEWED, _REVIEWED),
+                    (2, "consider", _REVIEWED, _REVIEWED),
+                    (3, "skip", _REVIEWED, _REVIEWED),
+                ],
             )
 
         assert await store.get_historical_run_verdict_counts("old-eval") == {
-            "apply": 1, "consider": 1, "skip": 1,
+            "apply": 1,
+            "consider": 1,
+            "skip": 1,
         }
 
         async with store._lifecycle.connection() as connection:

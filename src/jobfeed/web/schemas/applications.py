@@ -52,12 +52,22 @@ class RealJobApplicationRow(BaseModel):
 
 
 class RealJobApplicationsListResponse(BaseModel):
+    """Canonical application history returned by the list endpoint."""
+
     applications: list[RealJobApplicationRow]
 
 
 def real_job_applications_response(
     events: list[RealJobApplicationEvent],
 ) -> RealJobApplicationsListResponse:
+    """Serialize canonical application events for the API.
+
+    Args:
+        events: Canonical application events to serialize.
+
+    Returns:
+        API response containing the serialized application events.
+    """
     return RealJobApplicationsListResponse(
         applications=[RealJobApplicationRow(**vars(event)) for event in events]
     )

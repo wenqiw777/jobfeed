@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]
 
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.normalize import normalize, normalize_company
@@ -141,9 +141,12 @@ async def _merge(
     # Lock both identities in a stable order before reading any child state.
     # A concurrent A<-B merge may delete B while this transaction waits.
     for parent_id in (winner, loser):
-        if await conn.fetchval(
-            "SELECT id FROM real_jobs WHERE id=$1 FOR UPDATE", parent_id
-        ) is None:
+        if (
+            await conn.fetchval(
+                "SELECT id FROM real_jobs WHERE id=$1 FOR UPDATE", parent_id
+            )
+            is None
+        ):
             raise IdentityParentChanged("real-job parent changed during merge")
     if source_id is not None and other_source_id is not None:
         rows = await conn.fetch(
@@ -174,13 +177,14 @@ async def _merge(
                 [winner, loser],
             )
             by_parent = {
-                int(row["real_job_id"]): int(row["source_id"])
-                for row in sources
+                int(row["real_job_id"]): int(row["source_id"]) for row in sources
             }
             source_id = by_parent[winner]
             other_source_id = by_parent[loser]
         await _review(
-            conn, (source_parent, other_parent), (source_id, other_source_id),
+            conn,
+            (source_parent, other_parent),
+            (source_id, other_source_id),
             "explicit_status_conflict",
         )
         return False
@@ -269,9 +273,12 @@ async def _merge(
     )
     await _rehome_reviews(conn, winner, loser)
     await conn.execute("DELETE FROM real_jobs WHERE id=$1", loser)
-    jobs = [_posting(row) for row in await conn.fetch(
-        "SELECT * FROM jobs WHERE real_job_id=$1 ORDER BY id", winner
-    )]
+    jobs = [
+        _posting(row)
+        for row in await conn.fetch(
+            "SELECT * FROM jobs WHERE real_job_id=$1 ORDER BY id", winner
+        )
+    ]
     await conn.execute(
         "UPDATE real_jobs SET representative_job_id=$1,official_closed_at=$2 "
         "WHERE id=$3",

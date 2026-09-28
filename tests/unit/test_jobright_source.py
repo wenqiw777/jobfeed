@@ -164,6 +164,7 @@ async def test_bridge_batch_completes_source_and_reports_progress() -> None:
         "max_jobs": 40,
         "batch_size": 20,
         "pacing_ms": 1000,
+        "progress_events": True,
     }
 
     await bridge.receive(

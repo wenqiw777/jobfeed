@@ -160,7 +160,7 @@ async def _content_candidates(
             _CANDIDATE_LIMIT + 1,
         ),
     )
-    rows = await cursor.fetchall()
+    rows = list(await cursor.fetchall())
     await cursor.close()
     if len(rows) > _CANDIDATE_LIMIT:
         return {}
@@ -266,7 +266,9 @@ async def _merge(connection: aiosqlite.Connection, left: int, right: int) -> Non
         "WHERE real_job_id=?",
         (winner,),
     )
-    offset = int((await cursor.fetchone())[0])
+    offset_row = await cursor.fetchone()
+    assert offset_row is not None
+    offset = int(offset_row[0])
     await cursor.close()
     await connection.execute(
         "UPDATE real_job_interview_rounds SET real_job_id=?,"

@@ -21,7 +21,7 @@ from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
 
 _AS_OF = datetime(2026, 8, 12, tzinfo=UTC)
-_INITIAL_STATE_ROWS = 2
+_INITIAL_STATE_ROWS = 3
 
 
 async def test_snapshot_gates_and_streams_exact_v1_source(tmp_path: Path) -> None:
@@ -35,14 +35,18 @@ async def test_snapshot_gates_and_streams_exact_v1_source(tmp_path: Path) -> Non
         assert snapshot.source.journal_mode == "delete"
         assert snapshot.source.has_wal is False
         assert snapshot.manifest.manifest_version == 1
-        assert snapshot.manifest.schema_registry["alembic_revision"] == "0013"
+        assert snapshot.manifest.schema_registry["alembic_revision"] == "0015"
         assert tuple(item.table_name for item in snapshot.table_metrics) == (
             MIGRATED_TABLE_ORDER_V1
         )
         jobs = [row async for row in snapshot.stream_table("jobs", chunk_size=1)]
         state = [row async for row in snapshot.stream_table("state", chunk_size=1)]
         assert jobs[0]["canonical_id"] == "one"
-        assert [row["key"] for row in state] == ["Z", "é"]
+        assert [row["key"] for row in state] == [
+            "Z",
+            "sqlite_schema_data_repair_version",
+            "é",
+        ]
         assert snapshot.manifest.aggregates.pending_stage_a == 1
 
     with pytest.raises(SqliteRollbackSourceError, match="closed"):
@@ -69,7 +73,11 @@ async def test_open_read_snapshot_is_stable_against_later_commits(
         state_metric = next(
             item for item in snapshot.table_metrics if item.table_name == "state"
         )
-        assert [row["key"] for row in rows] == ["Z", "é"]
+        assert [row["key"] for row in rows] == [
+            "Z",
+            "sqlite_schema_data_repair_version",
+            "é",
+        ]
         assert state_metric.row_count == _INITIAL_STATE_ROWS
     finally:
         with pytest.raises(SqliteRollbackSourceError, match="bytes changed"):

@@ -109,16 +109,21 @@ class RunLeaseSession:
                 )
                 if not renewed:
                     _LOG.warning(
-                        "run_lease_fence_rejected", run_id=self.run.run_id,
-                        kind=self.kind, generation=self.generation,
+                        "run_lease_fence_rejected",
+                        run_id=self.run.run_id,
+                        kind=self.kind,
+                        generation=self.generation,
                         attempt=attempt + 1,
                     )
                 return renewed
             except Exception as exc:
                 _LOG.warning(
-                    "run_lease_renewal_error", run_id=self.run.run_id,
-                    kind=self.kind, generation=self.generation,
-                    attempt=attempt + 1, error_type=type(exc).__name__,
+                    "run_lease_renewal_error",
+                    run_id=self.run.run_id,
+                    kind=self.kind,
+                    generation=self.generation,
+                    attempt=attempt + 1,
+                    error_type=type(exc).__name__,
                     error=_SECRET.sub(r"\1\2[redacted]", str(exc))[:300],
                     duration_seconds=round(time.monotonic() - started, 3),
                 )
@@ -352,7 +357,8 @@ def _record_failure(session: RunLeaseSession, exc: BaseException) -> None:
         shutting_down = exc.args == ("service_shutdown",)
         run.failure_code = "interrupted" if shutting_down else "user_stopped"
         run.failure_message = (
-            "Run interrupted by service shutdown" if shutting_down
+            "Run interrupted by service shutdown"
+            if shutting_down
             else "Run stopped by user"
         )
     elif isinstance(exc, RunLeaseLostError):

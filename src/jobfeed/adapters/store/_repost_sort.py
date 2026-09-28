@@ -4,6 +4,17 @@
 def triage_sorts(
     *, job: str, score: str, postgres: bool = False, date_expr: str | None = None
 ) -> dict[str, str]:
+    """Build stable SQL sort expressions for Triage pagination.
+
+    Args:
+        job: SQL alias of the source posting table.
+        score: SQL expression yielding the evaluation score.
+        postgres: Whether to emit PostgreSQL date and numeric expressions.
+        date_expr: Optional SQL posting-date expression; otherwise use discovery time.
+
+    Returns:
+        Supported sort names mapped to complete SQL ordering expressions.
+    """
     date = date_expr or f"{job}.discovered_at"
     day = (
         f"({date} AT TIME ZONE 'America/Detroit')::date"

@@ -24,18 +24,18 @@ from jobfeed.domain.models import (
 )
 from jobfeed.domain.real_job_evaluation import RealJobEvaluationInput
 from jobfeed.domain.seniority import SeniorityDecision
+from jobfeed.evaluation_config import (
+    current_policy_for_settings,
+    evaluation_runtime_config,
+)
 from jobfeed.personal_ml_learning import PersonalMLLearningService
 from jobfeed.services._evaluate_canonical import (
     _policy_for_run,
     _release_stage_a_claims,
     _release_stage_b_claims,
-    current_policy_for_settings,
 )
 from jobfeed.services.evaluate import EvaluateService
-from jobfeed.services.evaluate_types import (
-    EvaluateDependencies,
-    evaluation_runtime_config,
-)
+from jobfeed.services.evaluate_types import EvaluateDependencies
 from tests.unit.test_evaluate_lease_scheduling import _LeaseProbe, _service
 from tests.unit.test_scoring import make_stage_b_payload
 
@@ -160,11 +160,15 @@ async def test_stage_b_only_run_keeps_configured_stage_a_gate_policy(
 
 
 async def test_canonical_runner_discovers_candidates_before_concurrent_scoring(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "queued.db"
     monkeypatch.setattr(
-        canonical_evaluate, "_ML_GATE_PROGRESS_BATCH_SIZE", 1, raising=False,
+        canonical_evaluate,
+        "_ML_GATE_PROGRESS_BATCH_SIZE",
+        1,
+        raising=False,
     )
     store = SQLiteStore(path)
     await store.connect()
@@ -236,7 +240,9 @@ async def test_canonical_runner_discovers_candidates_before_concurrent_scoring(
                 pipeline_order.append("seniority")
                 return [
                     SeniorityDecision(
-                        result="in_scope", reason="test", yoe_min=2,
+                        result="in_scope",
+                        reason="test",
+                        yoe_min=2,
                         confidence=0.99,
                     )
                     for _ in jobs
@@ -266,7 +272,10 @@ async def test_canonical_runner_discovers_candidates_before_concurrent_scoring(
             logger=template._logger,
         )
         await service.run(
-            stage="both", limit=2, job_ids=ids, canonical=True,
+            stage="both",
+            limit=2,
+            job_ids=ids,
+            canonical=True,
             on_progress=lambda run: progress.append(
                 (run.progress_stage, run.stage_a_total, run.ml_gate_processed)
             ),
@@ -297,27 +306,43 @@ async def test_canonical_runner_reaches_claimable_job_after_twenty_pages(
     await store.connect()
     try:
         now = datetime.now(UTC)
-        valid = await store.save_job(JobPosting(
-            platform="linkedin", canonical_id="deep-valid",
-            url="https://example.test/deep-valid", title="Engineer",
-            company="Acme", location="Remote", discovered_at=now,
-            jd_text="Build production software services and APIs. " * 10,
-            jd_quality=QualityBand.FULL,
-        ))
+        valid = await store.save_job(
+            JobPosting(
+                platform="linkedin",
+                canonical_id="deep-valid",
+                url="https://example.test/deep-valid",
+                title="Engineer",
+                company="Acme",
+                location="Remote",
+                discovered_at=now,
+                jd_text="Build production software services and APIs. " * 10,
+                jd_quality=QualityBand.FULL,
+            )
+        )
         for index in range(20):
-            await store.save_job(JobPosting(
-                platform="linkedin", canonical_id=f"deep-unclaimable-{index}",
-                url=f"https://example.test/deep-unclaimable-{index}",
-                title="Engineer", company="Acme", location="Remote",
-                discovered_at=now, jd_text="", jd_quality=QualityBand.PARTIAL,
-            ))
+            await store.save_job(
+                JobPosting(
+                    platform="linkedin",
+                    canonical_id=f"deep-unclaimable-{index}",
+                    url=f"https://example.test/deep-unclaimable-{index}",
+                    title="Engineer",
+                    company="Acme",
+                    location="Remote",
+                    discovered_at=now,
+                    jd_text="",
+                    jd_quality=QualityBand.PARTIAL,
+                )
+            )
         template, _, _ = _service(_LeaseProbe())
         llm = _PaidFake()
         service = EvaluateService(
             deps=EvaluateDependencies(
-                store=store, store_ops=store, store_status=store,
+                store=store,
+                store_ops=store,
+                store_status=store,
                 prompt_renderer=JinjaPromptRenderer(Path("src/jobfeed/templates")),
-                llm_stage_a=llm, llm_stage_b=llm,
+                llm_stage_a=llm,
+                llm_stage_b=llm,
             ),
             config=replace(template._config, ml_gate_max_candidates=1),
             logger=template._logger,
@@ -338,13 +363,19 @@ async def test_canonical_runner_reclaims_when_model_or_gate_policy_changes(
     store = SQLiteStore(tmp_path / "policy-service.db")
     await store.connect()
     try:
-        saved = await store.save_job(JobPosting(
-            platform="linkedin", canonical_id="policy-service",
-            url="https://example.test/policy-service", title="Engineer",
-            company="Acme", location="Remote", discovered_at=datetime.now(UTC),
-            jd_text="Build production software services and APIs. " * 10,
-            jd_quality=QualityBand.FULL,
-        ))
+        saved = await store.save_job(
+            JobPosting(
+                platform="linkedin",
+                canonical_id="policy-service",
+                url="https://example.test/policy-service",
+                title="Engineer",
+                company="Acme",
+                location="Remote",
+                discovered_at=datetime.now(UTC),
+                jd_text="Build production software services and APIs. " * 10,
+                jd_quality=QualityBand.FULL,
+            )
+        )
 
         class PassGate:
             async def predict_batch(self, jobs):
@@ -353,26 +384,33 @@ async def test_canonical_runner_reclaims_when_model_or_gate_policy_changes(
         template, _, _ = _service(_LeaseProbe())
         llm = _PaidFake()
         config = replace(
-            template._config, ml_gate_enabled=True,
+            template._config,
+            ml_gate_enabled=True,
             ml_gate_model_version="gate-v1",
         )
         service = EvaluateService(
             deps=EvaluateDependencies(
-                store=store, store_ops=store, store_status=store,
+                store=store,
+                store_ops=store,
+                store_status=store,
                 prompt_renderer=JinjaPromptRenderer(Path("src/jobfeed/templates")),
-                llm_stage_a=llm, llm_stage_b=llm, ml_gate=PassGate(),
+                llm_stage_a=llm,
+                llm_stage_b=llm,
+                ml_gate=PassGate(),
             ),
-            config=config, logger=template._logger,
+            config=config,
+            logger=template._logger,
         )
         await service.run(stage="a", limit=1, job_ids=[saved.job_id], canonical=True)
         await service.run(stage="a", limit=1, job_ids=[saved.job_id], canonical=True)
         assert llm.calls == 1
-        service._config = replace(
-            config, llm=replace(config.llm, stage_a="mock-a-v2")
-        )
+        service._config = replace(config, llm=replace(config.llm, stage_a="mock-a-v2"))
         stale_preview = await service.run(
-            stage="a", limit=1, job_ids=[saved.job_id],
-            canonical=True, dry_run=True,
+            stage="a",
+            limit=1,
+            job_ids=[saved.job_id],
+            canonical=True,
+            dry_run=True,
         )
         assert [item.job_id for item in stale_preview.dry_run_preview] == [
             await store.resolve_real_job_id(saved.job_id)
@@ -380,18 +418,19 @@ async def test_canonical_runner_reclaims_when_model_or_gate_policy_changes(
         await service.run(stage="a", limit=1, job_ids=[saved.job_id], canonical=True)
         expected_after_model_change = 2
         assert llm.calls == expected_after_model_change
-        service._config = replace(
-            service._config, ml_gate_model_version="gate-v2"
-        )
+        service._config = replace(service._config, ml_gate_model_version="gate-v2")
         await service.run(stage="a", limit=1, job_ids=[saved.job_id], canonical=True)
         expected_after_gate_change = 3
         assert llm.calls == expected_after_gate_change
         real_id = await store.resolve_real_job_id(saved.job_id)
         async with aiosqlite.connect(tmp_path / "policy-service.db") as db:
-            reasons = (await (await db.execute(
-                "SELECT reason FROM real_job_evaluation_history "
-                "WHERE real_job_id=? ORDER BY id", (int(real_id),)
-            )).fetchall())
+            reasons = await (
+                await db.execute(
+                    "SELECT reason FROM real_job_evaluation_history "
+                    "WHERE real_job_id=? ORDER BY id",
+                    (int(real_id),),
+                )
+            ).fetchall()
         assert reasons == [("policy_changed",), ("policy_changed",)]
     finally:
         await store.close()

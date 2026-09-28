@@ -182,7 +182,8 @@ async def test_source_preserves_detail_and_rate_limit_phases():
     progress = []
     await source.fetch_jobs_with_progress({}, progress.append)
     assert [p.phase for p in progress] == ["details", "rate_limited", "fetched"]
-    assert progress[0].total == 25
+    expected_total = 25
+    assert progress[0].total == expected_total
 
 
 async def test_old_extension_rejects_board_scan_before_dispatch():

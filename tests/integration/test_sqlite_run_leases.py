@@ -61,8 +61,11 @@ async def test_evaluation_verdict_counts_survive_checkpoint_and_finish(
     assert persisted is not None and persisted.verdict_counts == run.verdict_counts
     finished = _terminal(run, later)
     assert await leases.finalize_run_with_lease(
-        finished, kind="evaluate", owner_id=_OWNER_A,
-        generation=generation, now=later,
+        finished,
+        kind="evaluate",
+        owner_id=_OWNER_A,
+        generation=generation,
+        now=later,
     )
     async with lifecycle.connection() as connection:
         persisted = await _get_pipeline_run(connection, run.run_id)

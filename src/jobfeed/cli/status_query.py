@@ -13,6 +13,7 @@ from jobfeed.cli import AppContext, require_app, run_with_store
 from jobfeed.cli._window import parse_window_back
 from jobfeed.domain.models_status import StatusFilter, StatusInfo
 from jobfeed.domain.status import LIST_DEFAULT_STATUSES
+from jobfeed.ports.store_canonical import CanonicalWorkflowStore
 from jobfeed.services.application import ApplicationService, ApplicationStore
 from jobfeed.services.workflow import WorkflowStore
 
@@ -126,7 +127,9 @@ async def _run_list(app: AppContext, filters: StatusFilter) -> list[StatusInfo]:
     async def action() -> list[StatusInfo]:
         store = cast(WorkflowStore, app["store"])
         if hasattr(type(store), "list_real_job_statuses"):
-            return await store.list_real_job_statuses(filters)
+            return await cast(CanonicalWorkflowStore, store).list_real_job_statuses(
+                filters
+            )
         return await store.list_statuses(filters)
 
     return await run_with_store(app, action)

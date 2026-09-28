@@ -195,7 +195,16 @@ class JobPageExtractor:
     def needs_interpretation(
         row: dict[str, Any], target: dict[str, Any], *, need_description: bool
     ) -> bool:
-        """Count interpretation candidates, excluding local evidence and skips."""
+        """Count interpretation candidates, excluding local evidence and skips.
+
+        Args:
+            row: Collected page payload to inspect.
+            target: Expected source identity, title, company, and URL.
+            need_description: Whether the caller still needs a complete job description.
+
+        Returns:
+            Whether model interpretation is needed after local evidence and skip checks.
+        """
         snapshot = row.get("page_snapshot")
         if not isinstance(snapshot, dict) or not snapshot.get("blocks"):
             return False

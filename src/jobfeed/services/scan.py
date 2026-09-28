@@ -7,16 +7,12 @@ from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from typing import Any, cast
-from urllib.parse import quote
 
-from redis.asyncio import Redis
-
-from jobfeed.adapters.queue.redis_pipeline import RedisPipeline
 from jobfeed.domain.errors import RunLeaseLostError, SourceBusyError
 from jobfeed.domain.models import JobPosting, PipelineRun, SaveJobResult
 from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
-from jobfeed.ports.pipeline import PipelineStore
+from jobfeed.ports.pipeline import PipelineStep, PipelineStore, ScanJournal
 from jobfeed.ports.run_leases import RunLeaseStore
 from jobfeed.ports.source import (
     EnrichResult,
@@ -39,8 +35,6 @@ SourcePort = SimpleSource | SessionSource
 SourceSpec = tuple[str, SourcePort, dict[str, object]]
 SINGLE_SOURCE_COUNT = 1
 _SAVE_PROGRESS_INTERVAL = 100
-_UNFINISHED_RETENTION_SECONDS = 24 * 60 * 60
-_FINISHED_MAPPING_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 
 class ScanService:
@@ -52,8 +46,7 @@ class ScanService:
         logger: JobfeedLogger,
         run_orchestrator: RunLeaseOrchestrator | None = None,
         *,
-        redis_url: str | None = None,
-        redis_namespace: str = "jobfeed",
+        journal: ScanJournal | None = None,
     ) -> None:
         """Create a scan service with injected ports.
 
@@ -62,8 +55,7 @@ class ScanService:
             logger: Structured logger for scan events.
         """
         self.store = store
-        self._redis_url = redis_url
-        self._redis_namespace = redis_namespace
+        self._journal = journal
         self._source_write_generations: dict[str, str | None] = {}
         self.logger = logger
         self.error_handler = ServiceErrorHandler(store=store, logger=logger)
@@ -105,53 +97,13 @@ class ScanService:
         return lease_session.run
 
     async def release_completed_pipeline(self, run: PipelineRun) -> None:
-        """Release drained journals and bound unfinished ones to a retry window.
+        """Apply terminal journal retention after persisted finalization.
 
-        Incomplete work remains recoverable for one day after a terminal run.
-        Cleanup failure must not change committed scan success.
+        Args:
+            run: Run whose journal may be released.
         """
-        if not self._redis_url:
-            return
-        try:
-            store = cast(PipelineStore, self.store)
-            saved = await self.store.get_pipeline_run(run.run_id)
-            if saved is None or saved.status not in {"succeeded", "failed"}:
-                return
-            async with Redis.from_url(
-                self._redis_url,
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=10,
-            ) as client:
-                mapping = f"{self._redis_namespace}:run:{run.run_id}"
-                root = await client.get(mapping)
-                if not root:
-                    return
-                prefix = f"{self._redis_namespace}:pipeline:{quote(root, safe='')}:"
-                drained = bool(
-                    await store.get_state(f"redis-pipeline-drained:{run.run_id}")
-                )
-                release = drained and not await client.xlen(prefix + "tasks")
-                async with client.pipeline(transaction=False) as commands:
-                    count = 0
-                    async for key in client.scan_iter(match=prefix + "*", count=500):
-                        if release:
-                            commands.unlink(key)
-                        else:
-                            commands.expire(key, _UNFINISHED_RETENTION_SECONDS, nx=True)
-                        count += 1
-                        if count % 500 == 0:
-                            await commands.execute()
-                    commands.expire(
-                        mapping,
-                        _FINISHED_MAPPING_RETENTION_SECONDS
-                        if release
-                        else _UNFINISHED_RETENTION_SECONDS,
-                        nx=True,
-                    )
-                    await commands.execute()
-        except Exception as exc:
-            self.logger.warning("redis_completed_retention_deferred", error=str(exc))
+        if self._journal is not None:
+            await self._journal.release(run)
 
     async def _run_leased(
         self,
@@ -160,49 +112,19 @@ class ScanService:
         *,
         on_progress: ProgressCallback | None,
     ) -> None:
-        if self._redis_url is None:
+        async def work() -> None:
             await self._run_leased_work(lease_session, sources, on_progress=on_progress)
-            if lease_session.run.errors:
-                raise RuntimeError(
-                    "Scan has failed source work; inspect source progress"
-                )
-            return
-        async with Redis.from_url(
-            self._redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=10,
-        ) as client:
-            pipeline = RedisPipeline(client, namespace=self._redis_namespace)
-            pipeline_store = cast(PipelineStore, self.store)
-            old = lease_session.run.resume_from_run_id
-            if old and not await pipeline_store.get_state(f"redis-pipeline-run:{old}"):
-                old = None  # This run predates Redis; no accepted Redis work exists.
-            if old and await pipeline_store.get_state(f"redis-pipeline-drained:{old}"):
-                old = None  # Terminal errors retry via normal incremental discovery.
-            await pipeline.start(
-                lease_session.run.run_id,
+
+        if self._journal is None:
+            await work()
+        else:
+            await self._journal.run(
+                lease_session.run,
+                work,
                 generation=lease_session.generation,
-                resume_from=old,
             )
-            await pipeline_store.set_state(
-                f"redis-pipeline-run:{lease_session.run.run_id}", pipeline.root
-            )
-            token = current_pipeline.set(pipeline)
-            try:
-                await self._run_leased_work(
-                    lease_session, sources, on_progress=on_progress
-                )
-                await pipeline.assert_drained()
-                await pipeline_store.set_state(
-                    f"redis-pipeline-drained:{lease_session.run.run_id}", "1"
-                )
-                if lease_session.run.errors:
-                    raise RuntimeError(
-                        "Scan has failed source work; inspect source progress"
-                    )
-            finally:
-                current_pipeline.reset(token)
+        if lease_session.run.errors:
+            raise RuntimeError("Scan has failed source work; inspect source progress")
 
     async def _run_leased_work(
         self,
@@ -533,7 +455,7 @@ class ScanService:
         run: PipelineRun,
         source: str,
         jobs: list[JobPosting],
-        pipeline: RedisPipeline,
+        pipeline: PipelineStep,
     ) -> None:
         for offset in range(0, len(jobs), 100):
             batch = jobs[offset : offset + 100]
@@ -557,14 +479,7 @@ class ScanService:
             outcomes = await pipeline.step(
                 name, POSTINGS.dump_python(batch, mode="json"), write
             )
-            for job, item in zip(batch, outcomes, strict=True):
-                result = SaveJobResult(**item)
-                run.jobs_discovered += 1
-                run.jobs_inserted += int(result.inserted)
-                run.jobs_updated += int(result.updated)
-                _record_scan_stats(run, source, job, result)
-                if result.inserted:
-                    run.scan_inserted_job_ids.append(result.job_id)
+            _record_batch_outcomes(run, source, batch, outcomes)
             self._publish_scan_progress(
                 run,
                 source=source,
@@ -673,3 +588,20 @@ def run_source_name(sources: list[SourceSpec]) -> str:
 
 
 __all__ = ["ScanService", "SourceSpec", "run_source_name"]
+
+
+def _record_batch_outcomes(
+    run: PipelineRun,
+    source: str,
+    batch: list[JobPosting],
+    outcomes: list[dict[str, Any]],
+) -> None:
+    """Fold persisted batch receipts into counters without repeating writes."""
+    for job, item in zip(batch, outcomes, strict=True):
+        result = SaveJobResult(**item)
+        run.jobs_discovered += 1
+        run.jobs_inserted += int(result.inserted)
+        run.jobs_updated += int(result.updated)
+        _record_scan_stats(run, source, job, result)
+        if result.inserted:
+            run.scan_inserted_job_ids.append(result.job_id)

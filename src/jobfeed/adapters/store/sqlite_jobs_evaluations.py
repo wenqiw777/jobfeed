@@ -69,6 +69,19 @@ class SqliteJobsEvaluations:
         owner_id: str,
         generation: int,
     ) -> list[SaveJobResult]:
+        """Save a leased scan batch with durable receipt replay.
+
+        Args:
+            jobs: Source postings in input order.
+            receipt_key: Durable receipt key making a repeated batch idempotent.
+            run_id: Run identifier used to bound historical completed reviews.
+            owner_id: Worker owning the active run lease.
+            generation: Lease generation that must still own the batch.
+
+        Returns:
+            Save results in input order, including outcomes replayed from an existing
+                receipt.
+        """
         return await _sqlite_jobs._save_job_batch(
             self._lifecycle,
             jobs,

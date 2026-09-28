@@ -16,11 +16,40 @@ TODAY_SCAN_KEY = "today_scan_inserted_job_ids"
 class EvaluationScopeStore(Protocol):
     """Small state-store surface needed by evaluation scopes."""
 
-    async def get_state(self, key: str) -> str | None: ...
+    async def get_state(self, key: str) -> str | None:
+        """Read a persisted evaluation-scope state value.
 
-    async def set_state(self, key: str, value: str) -> None: ...
+        Args:
+            key: Persistent state key.
 
-    async def resolve_real_job_ids(self, source_ids: list[str]) -> list[str]: ...
+        Returns:
+            Stored state value, or None when the key is absent.
+        """
+        ...
+
+    async def set_state(self, key: str, value: str) -> None:
+        """Write a persisted evaluation-scope state value.
+
+        Args:
+            key: Persistent state key.
+            value: State value to write.
+        """
+        ...
+
+    async def resolve_real_job_ids(self, source_ids: list[str]) -> list[str]:
+        """Resolve source posting IDs to their distinct canonical parents.
+
+        Args:
+            source_ids: Source posting IDs whose canonical parents are required.
+
+        Returns:
+            Distinct canonical IDs in first-source order.
+
+        Raises:
+            ValueError: If an ID is invalid or a requested source lacks a canonical
+                parent.
+        """
+        ...
 
 
 class EvaluationScopeCounts(TypedDict):
@@ -35,7 +64,12 @@ async def persist_scan_insertions(
     store: EvaluationScopeStore,
     run: PipelineRun,
 ) -> None:
-    """Record both the latest scan and today's accumulated insertions."""
+    """Record both the latest scan and today's accumulated insertions.
+
+    Args:
+        store: Store providing the state or posting reads required by this operation.
+        run: Scan run containing newly inserted source IDs.
+    """
     job_ids = _unique_strings(run.scan_inserted_job_ids)
     await store.set_state(
         LATEST_SCAN_KEY,
@@ -61,7 +95,19 @@ async def load_evaluation_scope_ids(
     *,
     today: date | None = None,
 ) -> list[str]:
-    """Load exact IDs for a bounded evaluation scope."""
+    """Load exact IDs for a bounded evaluation scope.
+
+    Args:
+        store: Store providing the state or posting reads required by this operation.
+        scope: Bounded scope name: today or latest_scan.
+        today: Local calendar date override; defaults to the current local date.
+
+    Returns:
+        Distinct inserted source IDs belonging to the selected scope.
+
+    Raises:
+        ValueError: If scope is neither today nor latest_scan.
+    """
     if scope == "latest_scan":
         return _job_ids(_decode(await store.get_state(LATEST_SCAN_KEY)))
     if scope == "today":
@@ -79,7 +125,16 @@ async def load_real_job_scope_ids(
     *,
     today: date | None = None,
 ) -> list[str]:
-    """Resolve source insertions to distinct real jobs before paid claims."""
+    """Resolve source insertions to distinct real jobs before paid claims.
+
+    Args:
+        store: Store providing the state or posting reads required by this operation.
+        scope: Bounded scope name: today or latest_scan.
+        today: Local calendar date override; defaults to the current local date.
+
+    Returns:
+        Distinct canonical IDs corresponding to the selected source scope.
+    """
     source_ids = await load_evaluation_scope_ids(store, scope, today=today)
     return await store.resolve_real_job_ids(source_ids)
 
@@ -89,7 +144,15 @@ async def evaluation_scope_counts(
     *,
     today: date | None = None,
 ) -> EvaluationScopeCounts:
-    """Return exact bounded-scope counts for the evaluation dialog."""
+    """Return exact bounded-scope counts for the evaluation dialog.
+
+    Args:
+        store: Store providing the state or posting reads required by this operation.
+        today: Local calendar date override; defaults to the current local date.
+
+    Returns:
+        Local date and source insertion counts for today and the latest scan.
+    """
     local_today = today or datetime.now().astimezone().date()
     today_ids = await load_evaluation_scope_ids(store, "today", today=local_today)
     latest_ids = await load_evaluation_scope_ids(

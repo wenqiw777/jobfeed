@@ -120,9 +120,7 @@ async def run_auto_decay(
         getattr(deps.store_status, "auto_decay_real_jobs", None) if canonical else None
     )
     sweep = (
-        canonical_sweep
-        if canonical_sweep is not None
-        else deps.store_status.auto_decay
+        canonical_sweep if canonical_sweep is not None else deps.store_status.auto_decay
     )
     decay = await sweep(
         ghost_days=config.ghost_days,

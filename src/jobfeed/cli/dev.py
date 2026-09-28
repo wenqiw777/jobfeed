@@ -25,7 +25,8 @@ _PORT_RELEASE_SECONDS = 3.0
 @click.option("--api-port", default=_DEFAULT_API_PORT, show_default=True, type=int)
 @click.option("--web-port", default=_DEFAULT_WEB_PORT, show_default=True, type=int)
 @click.option(
-    "--reload-api", is_flag=True,
+    "--reload-api",
+    is_flag=True,
     help="Reload API on source edits; interrupts active scans.",
 )
 @click.pass_context
@@ -88,7 +89,8 @@ def run_dev(
                     "--factory",
                     *(
                         ["--reload", "--reload-dir", str(repo / "src")]
-                        if reload_api else []
+                        if reload_api
+                        else []
                     ),
                     "--host",
                     "127.0.0.1",
@@ -142,17 +144,14 @@ def _command(name: str) -> str:
 
 def _release_dev_ports(repo: Path, ports: list[int]) -> None:
     """Stop stale Jobfeed development process groups holding requested ports."""
-    listeners: dict[int, set[int]] = {
-        port: _listener_pids(port) for port in ports
-    }
+    listeners: dict[int, set[int]] = {port: _listener_pids(port) for port in ports}
     listeners = {port: pids for port, pids in listeners.items() if pids}
     if not listeners:
         return
 
     groups: dict[int, set[int]] = {}
-    for pids in listeners.values():
-        for pid in pids:
-            groups.setdefault(_process_group(pid), set()).add(pid)
+    for pid in set().union(*listeners.values()):
+        groups.setdefault(_process_group(pid), set()).add(pid)
 
     repo_text = str(repo)
     stale_groups: set[int] = set()
@@ -207,11 +206,7 @@ def _listener_pids(port: int) -> set[int]:
         check=False,
         text=True,
     )
-    return {
-        int(line)
-        for line in result.stdout.splitlines()
-        if line.strip().isdigit()
-    }
+    return {int(line) for line in result.stdout.splitlines() if line.strip().isdigit()}
 
 
 def _process_group(pid: int) -> int:

@@ -152,7 +152,7 @@ async def test_ignored_requisition_hides_formatted_and_summary_copies(tmp_path):
     store = SQLiteStore(tmp_path / "commure-copies.sqlite")
     await store.connect()
     try:
-        shared = ("Build clinical APIs and reliable data pipelines. " * 8)
+        shared = "Build clinical APIs and reliable data pipelines. " * 8
         full = shared + "\nAI & Agents:\nOwn monitoring and deployment."
         formatted = shared + "\nAI & Agents: Own monitoring and deployment."
         summary = "Build clinical APIs and reliable data pipelines. " * 5

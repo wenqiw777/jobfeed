@@ -107,7 +107,9 @@ def _key_company_asc(row: JobsViewRow) -> tuple[str, float, int]:
     return (row.job.company.casefold(), *_tiebreak(row))
 
 
-def _triage_time(row: JobsViewRow, *, direction: int) -> tuple:
+def _triage_time(
+    row: JobsViewRow, *, direction: int
+) -> tuple[int, bool, float, float, int]:
     return (
         direction * discovery_day(row.job.discovered_at),
         row.job.is_repost is True,
@@ -116,7 +118,9 @@ def _triage_time(row: JobsViewRow, *, direction: int) -> tuple:
     )
 
 
-def _triage_score(row: JobsViewRow, *, direction: int) -> tuple:
+def _triage_score(
+    row: JobsViewRow, *, direction: int
+) -> tuple[int, int, bool, int, float, int]:
     score = (
         row.stage_b_fit_score
         if row.stage_b_fit_score is not None

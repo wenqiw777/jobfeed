@@ -193,7 +193,11 @@ async def _hydrate_view_rows(
     *,
     include_jd_text: bool,
 ) -> list[JobsViewRow]:
-    """Fetch fold bodies by selected IDs after the lightweight SQL sort."""
+    """Fetch fold bodies by selected IDs after the lightweight SQL sort.
+
+    Time complexity: O(N + B) Python work for N selected rows and B fetched
+    bodies. Fixed-size batches partition the rows rather than comparing pairs.
+    """
     result = [_view_row(record) for record in records]
     if include_jd_text:
         batch_size = 500

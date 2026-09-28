@@ -533,43 +533,79 @@ async def test_postgres_reclaimed_stage_b_rejects_old_worker_same_input(
     ],
 )
 async def test_postgres_unverifiable_legacy_score_is_held(
-    fresh_pg_dsn: str, case: str, expected_hold: str,
+    fresh_pg_dsn: str,
+    case: str,
+    expected_hold: str,
 ) -> None:
     store = PostgresStore(fresh_pg_dsn)
     await store.connect()
     try:
         now = datetime.now(UTC)
         ats = "https://boards.greenhouse.io/acme/jobs/1234567"
-        first = await store.save_job(JobPosting(
-            platform="linkedin", canonical_id=f"{case}-one",
-            url=f"https://www.linkedin.com/jobs/view/{case}-one/",
-            apply_url=ats, title="Engineer", company="Acme", location="Remote",
-            discovered_at=now, enriched_at=now - timedelta(days=1),
-            jd_text=("" if case in {"empty_jd", "scored_empty_alias"}
-                     else "Build Java services and APIs. " * 15),
-            jd_quality=QualityBand.GOOD if case in {"empty_jd", "scored_empty_alias"}
-                       else QualityBand.FULL,
-        ))
-        await store.save_stage_a(first.job_id, StageAResult(
-            score=84, one_line="Existing fit", timing_eligible="yes",
-            model="legacy", prompt_hash="existing", resume_hash="existing",
-        ))
+        first = await store.save_job(
+            JobPosting(
+                platform="linkedin",
+                canonical_id=f"{case}-one",
+                url=f"https://www.linkedin.com/jobs/view/{case}-one/",
+                apply_url=ats,
+                title="Engineer",
+                company="Acme",
+                location="Remote",
+                discovered_at=now,
+                enriched_at=now - timedelta(days=1),
+                jd_text=(
+                    ""
+                    if case in {"empty_jd", "scored_empty_alias"}
+                    else "Build Java services and APIs. " * 15
+                ),
+                jd_quality=QualityBand.GOOD
+                if case in {"empty_jd", "scored_empty_alias"}
+                else QualityBand.FULL,
+            )
+        )
+        await store.save_stage_a(
+            first.job_id,
+            StageAResult(
+                score=84,
+                one_line="Existing fit",
+                timing_eligible="yes",
+                model="legacy",
+                prompt_hash="existing",
+                resume_hash="existing",
+            ),
+        )
         second = None
         if case in {"different_jd", "different_scores", "scored_empty_alias"}:
-            second = await store.save_job(JobPosting(
-                platform="jobright", canonical_id=f"{case}-two", url=ats,
-                title="Engineer", company="Acme", location="Remote",
-                discovered_at=now, enriched_at=now - timedelta(days=1),
-                jd_text=("Build Java services and APIs. " * 15
-                         if case == "scored_empty_alias"
-                         else "Build Python services and APIs. " * 15),
-                jd_quality=QualityBand.FULL,
-            ))
+            second = await store.save_job(
+                JobPosting(
+                    platform="jobright",
+                    canonical_id=f"{case}-two",
+                    url=ats,
+                    title="Engineer",
+                    company="Acme",
+                    location="Remote",
+                    discovered_at=now,
+                    enriched_at=now - timedelta(days=1),
+                    jd_text=(
+                        "Build Java services and APIs. " * 15
+                        if case == "scored_empty_alias"
+                        else "Build Python services and APIs. " * 15
+                    ),
+                    jd_quality=QualityBand.FULL,
+                )
+            )
         if case == "different_scores":
-            await store.save_stage_a(second.job_id, StageAResult(
-                score=30, one_line="Different fit", timing_eligible="no",
-                model="legacy", prompt_hash="existing", resume_hash="existing",
-            ))
+            await store.save_stage_a(
+                second.job_id,
+                StageAResult(
+                    score=30,
+                    one_line="Different fit",
+                    timing_eligible="no",
+                    model="legacy",
+                    prompt_hash="existing",
+                    resume_hash="existing",
+                ),
+            )
         if case == "jd_changed_after_score":
             async with store._get_pool().acquire() as db:
                 await db.execute(
@@ -590,9 +626,10 @@ async def test_postgres_unverifiable_legacy_score_is_held(
         assert (await store.backfill_real_job_evaluations(limit=100))[1] == 0
         assert await store.canonical_evaluation_ready()
         assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
-        assert await store.claim_real_job_stage_b_by_ids(
-            [real_id], stage_a_threshold=80
-        ) == []
+        assert (
+            await store.claim_real_job_stage_b_by_ids([real_id], stage_a_threshold=80)
+            == []
+        )
         detail = await store.get_real_job_view(real_id)
         assert detail is not None
         assert detail["row"]["identity_review_state"] == expected_hold
@@ -624,19 +661,31 @@ async def test_postgres_stage_b_does_not_claim_existing_score_on_hold(
     store = PostgresStore(fresh_pg_dsn)
     await store.connect()
     try:
-        saved = await store.save_job(JobPosting(
-            platform="linkedin", canonical_id="stage-b-hold",
-            url="https://example.test/stage-b-hold", title="Engineer",
-            company="Acme", location="Remote", discovered_at=datetime.now(UTC),
-            jd_text="Build production services and APIs. " * 12,
-            jd_quality=QualityBand.FULL,
-        ))
+        saved = await store.save_job(
+            JobPosting(
+                platform="linkedin",
+                canonical_id="stage-b-hold",
+                url="https://example.test/stage-b-hold",
+                title="Engineer",
+                company="Acme",
+                location="Remote",
+                discovered_at=datetime.now(UTC),
+                jd_text="Build production services and APIs. " * 12,
+                jd_quality=QualityBand.FULL,
+            )
+        )
         real_id = await store.resolve_real_job_id(saved.job_id)
         claim = (await store.claim_real_job_stage_a_by_ids([real_id]))[0]
         assert await store.save_real_job_stage_a(
             real_id,
-            StageAResult(score=84, one_line="Fit", timing_eligible="yes",
-                         model="test", prompt_hash="existing", resume_hash="existing"),
+            StageAResult(
+                score=84,
+                one_line="Fit",
+                timing_eligible="yes",
+                model="test",
+                prompt_hash="existing",
+                resume_hash="existing",
+            ),
             expected_revision=claim.input_revision,
             expected_generation=claim.claim_generation,
         )
@@ -644,11 +693,13 @@ async def test_postgres_stage_b_does_not_claim_existing_score_on_hold(
             await db.execute(
                 "UPDATE real_jobs SET "
                 "identity_review_state='evaluation_input_conflict' "
-                "WHERE id=$1", int(real_id)
+                "WHERE id=$1",
+                int(real_id),
             )
-        assert await store.claim_real_job_stage_b_by_ids(
-            [real_id], stage_a_threshold=80
-        ) == []
+        assert (
+            await store.claim_real_job_stage_b_by_ids([real_id], stage_a_threshold=80)
+            == []
+        )
     finally:
         await store.close()
 
@@ -662,16 +713,26 @@ async def test_postgres_corrected_source_jd_clears_requirements_hold(
         now = datetime.now(UTC)
         ats = "https://boards.greenhouse.io/acme/jobs/1234567"
         first = JobPosting(
-            platform="linkedin", canonical_id="corrected-first",
-            url="https://example.test/corrected-first", apply_url=ats,
-            title="Engineer", company="Acme", location="Remote",
-            discovered_at=now, jd_text="Build Java services and APIs. " * 15,
+            platform="linkedin",
+            canonical_id="corrected-first",
+            url="https://example.test/corrected-first",
+            apply_url=ats,
+            title="Engineer",
+            company="Acme",
+            location="Remote",
+            discovered_at=now,
+            jd_text="Build Java services and APIs. " * 15,
             jd_quality=QualityBand.FULL,
         )
         second = JobPosting(
-            platform="jobright", canonical_id="corrected-second", url=ats,
-            title="Engineer", company="Acme", location="Remote",
-            discovered_at=now, jd_text="Build Python services and APIs. " * 15,
+            platform="jobright",
+            canonical_id="corrected-second",
+            url=ats,
+            title="Engineer",
+            company="Acme",
+            location="Remote",
+            discovered_at=now,
+            jd_text="Build Python services and APIs. " * 15,
             jd_quality=QualityBand.FULL,
         )
         saved = await store.save_job(first)
@@ -693,51 +754,82 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
     store = PostgresStore(fresh_pg_dsn)
     await store.connect()
     try:
-        saved = await store.save_job(JobPosting(
-            platform="linkedin", canonical_id="policy-change",
-            url="https://example.test/policy-change", title="Engineer",
-            company="Acme", location="Remote", discovered_at=datetime.now(UTC),
-            jd_text="Build production services and APIs. " * 12,
-            jd_quality=QualityBand.FULL,
-        ))
+        saved = await store.save_job(
+            JobPosting(
+                platform="linkedin",
+                canonical_id="policy-change",
+                url="https://example.test/policy-change",
+                title="Engineer",
+                company="Acme",
+                location="Remote",
+                discovered_at=datetime.now(UTC),
+                jd_text="Build production services and APIs. " * 12,
+                jd_quality=QualityBand.FULL,
+            )
+        )
         real_id = await store.resolve_real_job_id(saved.job_id)
         a1 = {"model": "quick-v1", "gate_model": "gate-v1"}
         a2 = {"model": "quick-v1", "gate_model": "gate-v2"}
         b1 = {"model": "detail-v1"}
         b2 = {"model": "detail-v2"}
-        first = (await store.claim_real_job_stage_a_by_ids(
-            [real_id], stage_a_policy=a1, stage_b_policy=b1
-        ))[0]
+        first = (
+            await store.claim_real_job_stage_a_by_ids(
+                [real_id], stage_a_policy=a1, stage_b_policy=b1
+            )
+        )[0]
         assert await store.save_real_job_stage_a(
-            real_id, StageAResult(score=88, one_line="Fit", timing_eligible="yes",
-                                      model="quick-v1", prompt_hash="existing",
-                                      resume_hash="existing"),
+            real_id,
+            StageAResult(
+                score=88,
+                one_line="Fit",
+                timing_eligible="yes",
+                model="quick-v1",
+                prompt_hash="existing",
+                resume_hash="existing",
+            ),
             expected_revision=first.input_revision,
             expected_generation=first.claim_generation,
         )
-        assert await store.claim_real_job_stage_a_by_ids(
-            [real_id], stage_a_policy=a1, stage_b_policy=b1
-        ) == []
+        assert (
+            await store.claim_real_job_stage_a_by_ids(
+                [real_id], stage_a_policy=a1, stage_b_policy=b1
+            )
+            == []
+        )
         assert await store.list_real_job_ids_for_evaluation(
             limit=10, stage="a", stage_a_policy=a2
         ) == [real_id]
-        detailed = (await store.claim_real_job_stage_b_by_ids(
-            [real_id], stage_a_threshold=80, stage_a_policy=a1,
-            stage_b_policy=b1,
-        ))[0]
+        detailed = (
+            await store.claim_real_job_stage_b_by_ids(
+                [real_id],
+                stage_a_threshold=80,
+                stage_a_policy=a1,
+                stage_b_policy=b1,
+            )
+        )[0]
         assert await store.save_real_job_stage_b(
-            real_id, StageBResult(
-                verdict=Verdict.APPLY, jd_summary="Fit",
+            real_id,
+            StageBResult(
+                verdict=Verdict.APPLY,
+                jd_summary="Fit",
                 fit_analysis=FitAnalysis(score=90, strengths=[], gaps=[]),
-                resume_hooks=[], model="detail-v1", prompt_hash="existing",
+                resume_hooks=[],
+                model="detail-v1",
+                prompt_hash="existing",
                 resume_hash="existing",
-            ), expected_revision=detailed.input_revision,
+            ),
+            expected_revision=detailed.input_revision,
             expected_generation=detailed.claim_generation,
         )
-        assert await store.claim_real_job_stage_b_by_ids(
-            [real_id], stage_a_threshold=80, stage_a_policy=a1,
-            stage_b_policy=b1,
-        ) == []
+        assert (
+            await store.claim_real_job_stage_b_by_ids(
+                [real_id],
+                stage_a_threshold=80,
+                stage_a_policy=a1,
+                stage_b_policy=b1,
+            )
+            == []
+        )
         stale_b = await store.get_real_job_view(
             real_id, stage_a_policy=a1, stage_b_policy=b2
         )
@@ -759,19 +851,28 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
             "stage_a_policy_changed"
         )
         pending_results = await store.query_real_jobs_view(
-            decision="results", require_verdict=True,
-            stage_a_policy=a2, stage_b_policy=b1,
+            decision="results",
+            require_verdict=True,
+            stage_a_policy=a2,
+            stage_b_policy=b1,
         )
         assert pending_results["total"] == 1
         searched = await store.query_real_jobs_view(
-            decision="results", search="Acme", stage_a_policy=a2,
+            decision="results",
+            search="Acme",
+            stage_a_policy=a2,
             stage_b_policy=b1,
         )
         assert searched["total"] == 1
         assert searched["jobs"][0]["stage_a_score"] is None
         stale_library = await store.query_source_library(
-            decision=None, sort="score_desc", search=None, limit=25, offset=0,
-            stage_a_policy=a2, stage_b_policy=b1,
+            decision=None,
+            sort="score_desc",
+            search=None,
+            limit=25,
+            offset=0,
+            stage_a_policy=a2,
+            stage_b_policy=b1,
         )
         assert stale_library["jobs"][0]["score"] is None
         stale_priority = await store.load_real_job_priority_inputs(
@@ -790,69 +891,96 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
         async with store._get_pool().acquire() as db:
             previous_facts = await db.fetchval(
                 "SELECT input_facts_json FROM real_job_evaluations "
-                "WHERE real_job_id=$1", int(real_id),
+                "WHERE real_job_id=$1",
+                int(real_id),
             )
             await db.execute(
                 "UPDATE real_job_evaluations SET input_facts_json='{}' "
-                "WHERE real_job_id=$1", int(real_id),
+                "WHERE real_job_id=$1",
+                int(real_id),
             )
         legacy_page = await store.query_real_jobs_view(
-            decision="results", require_verdict=True,
-            stage_a_policy=a2, stage_b_policy=b1,
+            decision="results",
+            require_verdict=True,
+            stage_a_policy=a2,
+            stage_b_policy=b1,
         )
         assert legacy_page["total"] == 1
         assert legacy_page["jobs"][0]["evaluation_stale_reason"] is None
         assert legacy_page["jobs"][0]["stage_a_score"] == BACKFILL_SCORE
         assert legacy_page["jobs"][0]["stage_b_verdict"] == "apply"
         legacy_detail = await store.get_real_job_view(
-            real_id, stage_a_policy=a2, stage_b_policy=b1,
+            real_id,
+            stage_a_policy=a2,
+            stage_b_policy=b1,
         )
         assert legacy_detail["row"]["evaluation_stale_reason"] is None
         assert legacy_detail["row"]["stage_a_score"] == BACKFILL_SCORE
         legacy = await store.canonical_policy_pending_counts(
-            stage_a_policy=a2, stage_b_policy=b1,
+            stage_a_policy=a2,
+            stage_b_policy=b1,
         )
         assert legacy == {
-            "stage_a_pending": 1, "stage_b_pending": 0,
-            "legacy_stage_a": 1, "legacy_stage_b": 1,
+            "stage_a_pending": 1,
+            "stage_b_pending": 0,
+            "legacy_stage_a": 1,
+            "legacy_stage_b": 1,
         }
         async with store._get_pool().acquire() as db:
             await db.execute(
                 "UPDATE real_job_evaluations SET input_facts_json=$1 "
-                "WHERE real_job_id=$2", previous_facts, int(real_id),
+                "WHERE real_job_id=$2",
+                previous_facts,
+                int(real_id),
             )
-        next_b = (await store.claim_real_job_stage_b_by_ids(
-            [real_id], stage_a_threshold=80, stage_a_policy=a1,
-            stage_b_policy=b2,
-        ))[0]
+        next_b = (
+            await store.claim_real_job_stage_b_by_ids(
+                [real_id],
+                stage_a_threshold=80,
+                stage_a_policy=a1,
+                stage_b_policy=b2,
+            )
+        )[0]
         assert next_b.input_revision == first.input_revision
         async with store._get_pool().acquire() as db:
             history = await db.fetch(
                 "SELECT stage_b_verdict,reason,input_facts_json "
                 "FROM real_job_evaluation_history "
-                "WHERE real_job_id=$1 ORDER BY id", int(real_id)
+                "WHERE real_job_id=$1 ORDER BY id",
+                int(real_id),
             )
         assert [(row["stage_b_verdict"], row["reason"]) for row in history] == [
             ("apply", "policy_changed")
         ]
         assert json.loads(history[0]["input_facts_json"])["stage_b_policy"] == b1
         assert await store.release_real_job_stage_b_claim(
-            real_id, expected_revision=next_b.input_revision,
+            real_id,
+            expected_revision=next_b.input_revision,
             expected_generation=next_b.claim_generation,
         )
-        next_a = (await store.claim_real_job_stage_a_by_ids(
-            [real_id], stage_a_policy=a2, stage_b_policy=b2
-        ))[0]
+        next_a = (
+            await store.claim_real_job_stage_a_by_ids(
+                [real_id], stage_a_policy=a2, stage_b_policy=b2
+            )
+        )[0]
         assert next_a.input_revision == first.input_revision + 1
         assert await store.save_real_job_stage_a(
-            real_id, StageAResult(
-                score=EXPECTED_SCORE, one_line="Updated fit", timing_eligible="yes",
-                model="quick-v2", prompt_hash="existing", resume_hash="existing",
-            ), expected_revision=next_a.input_revision,
+            real_id,
+            StageAResult(
+                score=EXPECTED_SCORE,
+                one_line="Updated fit",
+                timing_eligible="yes",
+                model="quick-v2",
+                prompt_hash="existing",
+                resume_hash="existing",
+            ),
+            expected_revision=next_a.input_revision,
             expected_generation=next_a.claim_generation,
         )
         refreshed = await store.get_real_job_view(
-            real_id, stage_a_policy=a2, stage_b_policy=b2,
+            real_id,
+            stage_a_policy=a2,
+            stage_b_policy=b2,
         )
         assert refreshed is not None
         assert refreshed["row"]["stage_a_score"] == EXPECTED_SCORE

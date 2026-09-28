@@ -169,7 +169,14 @@ class SqliteOps:
     async def get_enrichment_by_identity(
         self, identity: str
     ) -> StoredEnrichment | None:
-        """Find a complete cross-source JD or the latest deferred exact twin."""
+        """Find a complete cross-source JD or the latest deferred exact twin.
+
+        Args:
+            identity: Existing exact cross-source identity to match.
+
+        Returns:
+            Reusable enriched posting, latest deferred twin, or None when absent.
+        """
         return await _sqlite_ops_enrichment._get_enrichment_by_identity(
             self._lifecycle, identity
         )

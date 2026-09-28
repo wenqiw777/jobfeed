@@ -116,6 +116,12 @@ async def migrate_real_jobs_schema(connection: aiosqlite.Connection) -> None:
 
     Existing v1 databases never invoke this from normal startup. Callers must
     arrange backup and activation outside the application process.
+
+    Args:
+        connection: Open SQLite connection to the backed-up migration target.
+
+    Raises:
+        RuntimeError: If the connection already has an active transaction.
     """
     if connection.in_transaction:
         raise RuntimeError("real-job migration requires no active transaction")
@@ -256,20 +262,20 @@ async def _repair_legacy_data(
     if identity_enabled:
         await _backfill_real_job_dates(connection)
     await _execute_data_migration_statement(
-            connection,
-            """UPDATE evaluations
+        connection,
+        """UPDATE evaluations
                SET stage_a_at=created_at
                WHERE stage_a_status='completed' AND stage_a_at IS NULL""",
     )
     await _execute_data_migration_statement(
-            connection,
-            """UPDATE evaluations
+        connection,
+        """UPDATE evaluations
                SET stage_b_at=updated_at
                WHERE stage_b_status='completed' AND stage_b_at IS NULL""",
     )
     await _execute_data_migration_statement(
-            connection,
-            """INSERT INTO job_status_history(
+        connection,
+        """INSERT INTO job_status_history(
                    job_id, from_status, to_status, changed_at, reason
                )
                SELECT s.job_id, 'new', 'scored',
@@ -278,8 +284,8 @@ async def _repair_legacy_data(
                WHERE s.status='new' AND e.stage_a_status='completed'""",
     )
     await _execute_data_migration_statement(
-            connection,
-            """UPDATE job_status
+        connection,
+        """UPDATE job_status
                SET status='scored',
                    last_status_change_at=(
                      SELECT COALESCE(e.stage_a_at, e.created_at)
@@ -292,8 +298,8 @@ async def _repair_legacy_data(
                )""",
     )
     await _execute_data_migration_statement(
-            connection,
-            """INSERT INTO job_status_history(
+        connection,
+        """INSERT INTO job_status_history(
                    job_id, from_status, to_status, changed_at, reason
                )
                SELECT s.job_id, 'scored', 'new', s.last_status_change_at,
@@ -302,8 +308,8 @@ async def _repair_legacy_data(
                WHERE s.status='scored' AND e.job_id IS NULL""",
     )
     await _execute_data_migration_statement(
-            connection,
-            """UPDATE job_status
+        connection,
+        """UPDATE job_status
                SET status='new'
                WHERE status='scored' AND NOT EXISTS (
                  SELECT 1 FROM evaluations e WHERE e.job_id=job_status.job_id
@@ -370,7 +376,7 @@ async def _install_additive_tables(
     missing = set(expected) - set(live)
     allowed_tables = _ADDITIVE_TABLES
     if not identity_enabled:
-        allowed_tables = {("table", "job_priority_snapshot")}
+        allowed_tables = frozenset({("table", "job_priority_snapshot")})
     allowed_missing = allowed_tables | _ADDITIVE_INDEXES
     unexpected = set(live) - set(expected) - _TOLERATED_EXTERNAL_OBJECTS
     if not missing.issubset(allowed_missing) or unexpected:
@@ -392,14 +398,15 @@ async def _install_additive_columns(
     for (table, column), definition in _ADDITIVE_COLUMNS.items():
         if not identity_enabled and (
             table == "real_jobs"
-            or (table, column) in {
+            or (table, column)
+            in {
                 ("jobs", "real_job_id"),
                 ("jobs", "apply_url"),
             }
         ):
             continue
         cursor = await connection.execute(f'PRAGMA table_info("{table}")')
-        rows = await cursor.fetchall()
+        rows = list(await cursor.fetchall())
         await cursor.close()
         if not rows:
             continue
@@ -433,7 +440,7 @@ async def _backfill_missing_role_types(connection: aiosqlite.Connection) -> None
     cursor = await connection.execute(
         "SELECT id,title,COALESCE(jd_text,'') FROM jobs WHERE role_type IS NULL"
     )
-    rows = await cursor.fetchall()
+    rows = list(await cursor.fetchall())
     await cursor.close()
     if not rows:
         return
@@ -451,7 +458,7 @@ async def _backfill_external_identities(connection: aiosqlite.Connection) -> Non
     cursor = await connection.execute(
         "SELECT id,url FROM jobs WHERE external_identity IS NULL"
     )
-    rows = await cursor.fetchall()
+    rows = list(await cursor.fetchall())
     await cursor.close()
     updates = [
         (identity, row[0]) for row in rows if (identity := external_identity(row[1]))
@@ -543,7 +550,7 @@ async def _backfill_real_job_workflow(connection: aiosqlite.Connection) -> None:
             "WHERE j.real_job_id=? ORDER BY s.last_status_change_at DESC,j.id DESC",
             (real_job_id,),
         )
-        rows = await cursor.fetchall()
+        rows = list(await cursor.fetchall())
         await cursor.close()
         explicit = {str(row[1]) for row in rows if str(row[1]) not in neutral}
         if len(explicit) > 1:
@@ -673,7 +680,7 @@ async def _live_schema_objects(
         "SELECT type, name, sql FROM sqlite_schema "
         "WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL"
     )
-    rows = await cursor.fetchall()
+    rows = list(await cursor.fetchall())
     await cursor.close()
     return {
         (str(kind), str(name)): _normalize_sql(
@@ -687,7 +694,7 @@ async def _user_objects(connection: aiosqlite.Connection) -> tuple[str, ...]:
     cursor = await connection.execute(
         "SELECT name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'"
     )
-    rows = await cursor.fetchall()
+    rows = list(await cursor.fetchall())
     await cursor.close()
     return tuple(str(row[0]) for row in rows)
 
@@ -716,11 +723,13 @@ def _normalize_sql(sql: str, *, identity_enabled: bool = True) -> str:
             normalized,
         )
         normalized = re.sub(r", apply_url TEXT(?=\s*[,\)])", "", normalized)
-    if normalized.startswith((
-        "CREATE TABLE jobs (",
-        "CREATE TABLE pipeline_runs (",
-        "CREATE TABLE real_jobs (",
-    )):
+    if normalized.startswith(
+        (
+            "CREATE TABLE jobs (",
+            "CREATE TABLE pipeline_runs (",
+            "CREATE TABLE real_jobs (",
+        )
+    ):
         # ALTER TABLE appends nullable metadata after whichever columns were
         # present at that deployment. Compare known additive definitions in a
         # stable order while retaining strict types, constraints and base DDL.

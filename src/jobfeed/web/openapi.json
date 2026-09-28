@@ -3384,6 +3384,7 @@
         "type": "object"
       },
       "RealJobApplicationsListResponse": {
+        "description": "Canonical application history returned by the list endpoint.",
         "properties": {
           "applications": {
             "items": {
@@ -6351,7 +6352,7 @@
     },
     "/api/jobs/{job_id}/audit": {
       "get": {
-        "description": "Read the retained source evaluation and workflow audit by source ID.",
+        "description": "Read the retained source evaluation and workflow audit by source ID.\n\nArgs:\n    job_id: Source posting identifier.\n    service: Injected application or job-view service.\n\nReturns:\n    Retained source evaluation and workflow audit response.\n\nRaises:\n    HTTPException: If the source posting does not exist.",
         "operationId": "get_source_job_audit_api_jobs__job_id__audit_get",
         "parameters": [
           {
@@ -7610,7 +7611,7 @@
     },
     "/api/real-jobs/applications": {
       "get": {
-        "description": "List canonical submission events, including their source provenance.",
+        "description": "List canonical submission events, including their source provenance.\n\nArgs:\n    service: Injected application or job-view service.\n    limit: Maximum number of records to select.\n\nReturns:\n    Serialized canonical application history.",
         "operationId": "list_real_job_applications_api_real_jobs_applications_get",
         "parameters": [
           {
@@ -7822,7 +7823,7 @@
     },
     "/api/real-jobs/{real_job_id}/apply": {
       "post": {
-        "description": "Record a submission against a canonical job with explicit source.",
+        "description": "Record a submission against a canonical job with explicit source.\n\nArgs:\n    real_job_id: Canonical job receiving the application.\n    request: HTTP request used for API error context.\n    form: Submitted source selection, resume content, and application metadata.\n    service: Injected application or job-view service.\n    store: Store providing the state or posting reads required by this operation.\n\nReturns:\n    Application result with the canonical job identity.\n\nRaises:\n    ApiError: If the source is missing, invalid, or inconsistent with the canonical\n        job.",
         "operationId": "apply_to_real_job_api_real_jobs__real_job_id__apply_post",
         "parameters": [
           {

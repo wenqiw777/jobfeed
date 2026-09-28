@@ -134,9 +134,7 @@ async def resolve_gate_mode(
         quick_pass_threshold=config.stage_a_threshold,
         enabled=config.ml_gate_enabled,
     )
-    return gate_mode_for_state(
-        config.ml_gate_enabled, status.state, dry_run=dry_run
-    )
+    return gate_mode_for_state(config.ml_gate_enabled, status.state, dry_run=dry_run)
 
 
 def gate_mode_for_state(

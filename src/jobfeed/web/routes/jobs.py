@@ -52,7 +52,18 @@ async def get_source_job_audit(
     job_id: int,
     service: Annotated[JobsViewService, Depends(get_jobs_view_service)],
 ) -> JobDetailResponse:
-    """Read the retained source evaluation and workflow audit by source ID."""
+    """Read the retained source evaluation and workflow audit by source ID.
+
+    Args:
+        job_id: Source posting identifier.
+        service: Injected application or job-view service.
+
+    Returns:
+        Retained source evaluation and workflow audit response.
+
+    Raises:
+        HTTPException: If the source posting does not exist.
+    """
     detail = await service.get_job_detail(str(job_id))
     if detail is None:
         raise HTTPException(
@@ -89,7 +100,8 @@ async def list_jobs(
             search=params.search,
             limit=params.limit,
             offset=params.offset,
-            stage_a_policy=policy.stage_a(), stage_b_policy=policy.stage_b(),
+            stage_a_policy=policy.stage_a(),
+            stage_b_policy=policy.stage_b(),
         )
         return source_library_response(payload)
     page = await service.list_jobs(
@@ -149,7 +161,8 @@ async def get_job_detail(
                 real_id
             )
         parent_view = await canonical.get_real_job_view(
-            real_id, stage_a_policy=policy.stage_a(),
+            real_id,
+            stage_a_policy=policy.stage_a(),
             stage_b_policy=policy.stage_b(),
         )
         if parent_view is not None:
@@ -157,9 +170,7 @@ async def get_job_detail(
                 parent_view, history=[], interviews=[]
             )
             response.evaluation = canonical_detail.evaluation
-            response.evaluation_stale_reason = (
-                canonical_detail.evaluation_stale_reason
-            )
+            response.evaluation_stale_reason = canonical_detail.evaluation_stale_reason
     return response
 
 

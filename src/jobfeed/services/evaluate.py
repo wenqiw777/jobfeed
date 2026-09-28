@@ -97,8 +97,13 @@ class EvaluateService:
             bind_run_id(run.run_id)
             if canonical:
                 await build_canonical_dry_run_preview(
-                    self, run, stage=stage, limit=lim,
-                    source_job_ids=job_ids, corpus=corpus, max_days=max_days,
+                    self,
+                    run,
+                    stage=stage,
+                    limit=lim,
+                    source_job_ids=job_ids,
+                    corpus=corpus,
+                    max_days=max_days,
                 )
             else:
                 request = DryRunRequest(

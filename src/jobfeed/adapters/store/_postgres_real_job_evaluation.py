@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]
 
 from jobfeed.domain.models import JobPosting, MLGateResult, StageAResult, StageBResult
 from jobfeed.domain.real_job_evaluation import (
@@ -34,7 +34,11 @@ class PostgresRealJobEvaluation:
         raise NotImplementedError
 
     async def claim_real_job_stage_a_by_ids(  # noqa: C901 - atomic claim state machine
-        self, real_job_ids: list[str], *, limit: int = 100, max_days: int | None = None,
+        self,
+        real_job_ids: list[str],
+        *,
+        limit: int = 100,
+        max_days: int | None = None,
         stage_a_policy: dict[str, object] | None = None,
         stage_b_policy: dict[str, object] | None = None,
     ) -> list[RealJobEvaluationInput]:
@@ -89,7 +93,8 @@ class PostgresRealJobEvaluation:
                 ):
                     continue
                 facts = input_facts_json(
-                    selected, stage_a_policy=stage_a_policy,
+                    selected,
+                    stage_a_policy=stage_a_policy,
                     stage_b_policy=stage_b_policy,
                 )
                 current = await db.fetchrow(
@@ -114,7 +119,9 @@ class PostgresRealJobEvaluation:
                         now,
                     )
                 elif not same_evaluation_input(
-                    current["input_jd_text"], current["input_facts_json"], selected,
+                    current["input_jd_text"],
+                    current["input_facts_json"],
+                    selected,
                     stage_a_policy=stage_a_policy,
                 ):
                     revision = int(current["input_revision"]) + 1
@@ -122,9 +129,11 @@ class PostgresRealJobEvaluation:
                     reason = (
                         "policy_changed"
                         if same_evaluation_input(
-                            current["input_jd_text"], current["input_facts_json"],
+                            current["input_jd_text"],
+                            current["input_facts_json"],
                             selected,
-                        ) else "input_changed"
+                        )
+                        else "input_changed"
                     )
                     await db.execute(
                         """INSERT INTO real_job_evaluation_history(
@@ -380,7 +389,9 @@ class PostgresRealJobEvaluation:
                 ):
                     continue
                 if not same_evaluation_input(
-                    current["input_jd_text"], current["input_facts_json"], selected,
+                    current["input_jd_text"],
+                    current["input_facts_json"],
+                    selected,
                     stage_a_policy=stage_a_policy,
                 ):
                     continue
@@ -396,11 +407,16 @@ class PostgresRealJobEvaluation:
                                    stage_a_status,stage_a_score,stage_b_status,
                                    stage_b_verdict,stage_b_json,archived_at,reason)
                                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'policy_changed')""",
-                            real_id, current["source_job_id"],
-                            current["input_revision"], current["input_facts_json"],
+                            real_id,
+                            current["source_job_id"],
+                            current["input_revision"],
+                            current["input_facts_json"],
                             current["stage_a_status"],
-                            current["stage_a_score"], current["stage_b_status"],
-                            current["stage_b_verdict"], current["stage_b_json"], now,
+                            current["stage_a_score"],
+                            current["stage_b_status"],
+                            current["stage_b_verdict"],
+                            current["stage_b_json"],
+                            now,
                         )
                     await db.execute(
                         "UPDATE real_job_evaluations SET input_facts_json=$1,"
@@ -410,7 +426,9 @@ class PostgresRealJobEvaluation:
                         "WHERE real_job_id=$3",
                         replace_evaluation_policies(
                             current["input_facts_json"], stage_b_policy=stage_b_policy
-                        ), now, real_id,
+                        ),
+                        now,
+                        real_id,
                     )
                     current = await db.fetchrow(
                         "SELECT * FROM real_job_evaluations WHERE real_job_id=$1",
@@ -418,10 +436,14 @@ class PostgresRealJobEvaluation:
                     )
                 if (
                     current["stage_b_status"] == "completed"
-                    or (current["stage_b_status"] == "error" and
-                        current["stage_b_error_count"] >= MAX_STAGE_RETRIES)
-                    or (current["stage_b_status"] == "in_progress" and
-                        current["updated_at"] >= now - timedelta(hours=1))
+                    or (
+                        current["stage_b_status"] == "error"
+                        and current["stage_b_error_count"] >= MAX_STAGE_RETRIES
+                    )
+                    or (
+                        current["stage_b_status"] == "in_progress"
+                        and current["updated_at"] >= now - timedelta(hours=1)
+                    )
                 ):
                     continue
                 await db.execute(
@@ -858,13 +880,13 @@ async def _resolve_postgres_requirements_hold(
     if len(answers) > 1:
         await db.execute(
             "UPDATE real_jobs SET identity_review_state='evaluation_conflict' "
-            "WHERE id=$1", real_id,
+            "WHERE id=$1",
+            real_id,
         )
     elif (
         other_review is None
         and status_count <= 1
-        and select_real_job_input(str(real_id), jobs, now=datetime.now(UTC))
-        is not None
+        and select_real_job_input(str(real_id), jobs, now=datetime.now(UTC)) is not None
     ):
         await db.execute(
             "UPDATE real_jobs SET identity_review_state='clear' WHERE id=$1",
@@ -936,9 +958,7 @@ async def sync_postgres_real_job_input(
     )
     if current is None:
         return
-    selected = select_real_job_input(
-        str(real_id), jobs, now=datetime.now(UTC)
-    )
+    selected = select_real_job_input(str(real_id), jobs, now=datetime.now(UTC))
     if selected is not None:
         stored_policy = json.loads(current["input_facts_json"])
         facts = input_facts_json(

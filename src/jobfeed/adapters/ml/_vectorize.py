@@ -131,6 +131,18 @@ def featurize_sde_batch(
     normalized sparse lexical block follows it and covers every JD character;
     title character n-grams and title words receive extra weight so occupation
     wording is not diluted by long company boilerplate.
+
+    Args:
+        features: Legacy feature records in batch order.
+        embeddings: Embedding rows aligned with the feature records.
+        titles: Posting titles aligned with the feature records.
+        jd_texts: Full job descriptions aligned with the feature records.
+
+    Returns:
+        CSR feature matrix with the legacy dense block followed by lexical features.
+
+    Raises:
+        ValueError: If input row counts differ or the batch is empty.
     """
     size = len(features)
     if len(titles) != size or len(jd_texts) != size or len(embeddings) != size:
@@ -139,10 +151,16 @@ def featurize_sde_batch(
         [featurize(row, embeddings[index]) for index, row in enumerate(features)]
     )
     lexical = _lexical_matrix(titles, jd_texts)
-    return sp.hstack([sp.csr_matrix(dense), lexical], format="csr")
+    return sp.hstack([sp.csr_matrix(dense), lexical], format="csr").tocsr()
 
 
 def _lexical_matrix(titles: list[str], jd_texts: list[str]) -> sp.csr_matrix:
+    """Build normalized sparse lexical rows.
+
+    Time complexity: O(C + T), where C is the total JD character count and T
+    is the total bounded title length; n-gram widths and feature dimensions
+    are fixed. Each accumulated nonzero column is normalized once.
+    """
     row_indices: list[int] = []
     column_indices: list[int] = []
     values: list[float] = []

@@ -15,8 +15,7 @@ async def test_results_dto_carries_location():
     assert jobs_list_response(page).model_dump()["jobs"][0]["location"] == "Seattle, WA"
 
 
-async def test_results_fold_locations_of_same_requisition_but_keep_distinct_ids(
-):
+async def test_results_fold_locations_of_same_requisition_but_keep_distinct_ids():
     rows = [_row(str(index)) for index in range(3)]
     for row in rows:
         row.job.jd_text = "Identical responsibilities and qualifications."
