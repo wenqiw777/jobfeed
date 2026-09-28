@@ -11,8 +11,10 @@ then rebase merge and main CI. Never weaken checks to hide failures.
 - [x] Restore port typing, service boundaries and production documentation.
 - [x] Format and repair tracked offline tooling.
 - [x] Verify clean exported source without local data or excluded experiments.
-- [ ] Browser screenshot and independent review.
-- [ ] Push, watch CI, rebase merge, watch main CI.
+- [x] Capture browser screenshots and complete independent review.
+- [ ] Obtain user screenshot approval.
+- [x] Push and watch CI.
+- [ ] Rebase merge after screenshot approval, then watch main CI.
 
 Baseline: combined tree 2659 passed / 13 failed; tracked Ruff 331 findings
 (the earlier 507 included held files); mypy 135 errors. Runtime SDE hash
@@ -30,7 +32,7 @@ implementation is explicitly grandfathered; no new hash logic is authorized.
   and verifies extension/frontend alongside backend quality.
 - Independent review found no release blocker in journal extraction or canonical casts.
 - Screenshots remain local in artifacts/migration-release-20260928/.
-- Pending: screenshot approval, remote CI and rebase merge.
+- Pending: screenshot approval, rebase merge and main CI.
 
 Remote CI initially failed in optype 0.17.1 because its type-alias syntax conflicts
 with the configured Python 3.11 mypy target. Pin optype 0.9.3, matching the locally
@@ -40,3 +42,15 @@ CI mypy 2.3.1 additionally reproduced four count-comprehension inference errors
 not emitted by local mypy 2.1.0. Explicitly type the decision tuple and remove
 now-redundant casts. Mypy 2.3.1 now passes all 352 source files; focused workflow,
 route and query-shape regressions pass.
+
+## Remote verification
+
+Code head 71fc693 passed both push and PR CI, including quality-gate and browser-tests:
+- https://github.com/wenqiw777/jobfeed/actions/runs/36492043034
+- https://github.com/wenqiw777/jobfeed/actions/runs/36492048705
+
+PR: https://github.com/wenqiw777/jobfeed/pull/26
+Screenshot approval was requested; no response received yet. Rebase merge remains
+explicitly authorized but must wait for the standing UI screenshot approval gate.
+CodeRabbit skipped automatic review because the diff exceeds its 150-file limit;
+this is not counted as review evidence. Independent focused review is recorded above.
