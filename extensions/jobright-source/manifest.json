@@ -492,6 +492,7 @@
     "https://enterpriseplatform.dell.com/*",
     "https://study.com/*",
     "*://prizepicks.com/*",
+    "https://www.prizepicks.com/*",
     "https://careers.cisco.com/*",
     "https://careers.pnnl.gov/*",
     "https://careers.upstart.com/*",
@@ -503,6 +504,7 @@
     "https://seatgeek.com/*",
     "https://talent.goldbelt.com/*",
     "https://udig.com/*",
+    "https://www.udig.com/*",
     "https://www.alixpartners.com/*",
     "https://www.williamblair.com/*"
   ],

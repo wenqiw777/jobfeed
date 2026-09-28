@@ -3,6 +3,69 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { scan } = require('../../extensions/jobright-source/jobboard-batch.js');
 const reply = data => ({ok:true,status:200,json:async()=>data});
+test('LinkedIn detail workers are bounded and report completed jobs before a slow peer',async()=>{
+ let active=0,peak=0;const updates=[];
+ const result=await scan({source:'linkedin',maxJobs:6,pacingMs:0,discoveredRows:Array.from({length:6},(_,i)=>({id:String(i)}))},async url=>{
+  active++;peak=Math.max(peak,active);
+  await new Promise(r=>setTimeout(r,url.endsWith('/0')?40:5));active--;
+  return reply({title:'SWE',employer:{name:'ACME'},description:'JD'});
+ },update=>updates.push(update));
+ assert.equal(peak,2);
+ assert.equal(updates.filter(u=>u.phase==='details').length,6);
+ assert.notEqual(updates.find(u=>u.phase==='details').currentJobId,'0');
+ assert.deepEqual(result.jobs.map(j=>j.id),['0','1','2','3','4','5']);
+});
+test('LinkedIn retains in-flight successes when one detail fails',async()=>{
+ const result=await scan({source:'linkedin',maxJobs:5,pacingMs:0,discoveredRows:['1','2','3','4','5'].map(id=>({id}))},async url=>{
+  if(url.endsWith('/1'))return {ok:false,status:401};
+  await new Promise(r=>setTimeout(r,5));return reply({title:'SWE',employer:{name:'ACME'},description:'JD'});
+ });
+ assert.match(result.error,/401/);assert.deepEqual(result.jobs.map(j=>j.id),['2']);
+});
+test('LinkedIn detail 429 shares Retry-After delay with all workers',async()=>{
+ let limitedAt;const starts=[],attempts=new Map(),updates=[];
+ const result=await scan({source:'linkedin',maxJobs:5,pacingMs:0,discoveredRows:['1','2','3','4','5'].map(id=>({id}))},async url=>{
+  const id=url.split('/').at(-1);const n=(attempts.get(id)||0)+1;attempts.set(id,n);starts.push({id,n,at:Date.now()});
+  if(id==='1'&&n===1){limitedAt=Date.now();return {ok:false,status:429,headers:{get:()=> '0.05'}};}
+  await new Promise(r=>setTimeout(r,5));return reply({title:'SWE',employer:{name:'ACME'},description:'JD'});
+ },u=>updates.push(u));
+ assert.equal(result.error,null);assert.equal(result.jobs.length,5);assert.equal(attempts.get('1'),2);
+ assert.ok(starts.filter(s=>s.n>1||['3','4','5'].includes(s.id)).every(s=>s.at-limitedAt>=45));
+ assert.ok(updates.some(u=>u.phase==='rate_limited'&&u.retryAfterMs>=45));
+});
+test('a fatal peer failure prevents a waiting detail retry from dispatching',async()=>{
+ const starts=[];
+ const result=await scan({source:'linkedin',maxJobs:3,pacingMs:0,discoveredRows:['1','2','3'].map(id=>({id}))},async url=>{
+  const id=url.split('/').at(-1);starts.push(id);
+  if(id==='1'&&starts.filter(x=>x==='1').length===1)return {ok:false,status:429,headers:{get:()=>'.03'}};
+  if(id==='2'){await new Promise(r=>setTimeout(r,5));return {ok:false,status:401};}
+  return reply({employer:{name:'ACME'},description:'JD'});
+ });
+ assert.match(result.error,/401/);assert.deepEqual(starts,['1','2']);assert.equal(result.jobs.length,0);
+});
+test('a second worker extends the shared deadline and repeated 429 stops after three attempts',async()=>{
+ const starts=[],attempts=new Map();let lastLimitAt=0,terminal=false;
+ const result=await scan({source:'linkedin',maxJobs:4,pacingMs:0,discoveredRows:['1','2','3','4'].map(id=>({id}))},async url=>{
+  const id=url.split('/').at(-1),n=(attempts.get(id)||0)+1;attempts.set(id,n);starts.push({id,n,at:Date.now(),afterTerminal:terminal});
+  if(id==='1'){if(n===3)terminal=true;return {ok:false,status:429,headers:{get:()=>'.01'}};}
+  if(id==='2'&&n===1){await new Promise(r=>setTimeout(r,3));lastLimitAt=Date.now();return {ok:false,status:429,headers:{get:()=>'.04'}};}
+  return reply({employer:{name:'ACME'},description:'JD'});
+ });
+ assert.match(result.error,/429/);assert.equal(attempts.get('1'),3);
+ assert.ok(starts.filter(s=>s.n>1).every(s=>s.at-lastLimitAt>=35));
+ assert.ok(starts.every(s=>!s.afterTerminal));
+});
+test('company-page 429 also delays subsequent API details while preserving fetched JDs',async()=>{
+ let limitedAt=0,lookups=0;const newDetails=[];
+ const result=await scan({source:'linkedin',maxJobs:4,pacingMs:0,discoveredRows:['1','2','3','4'].map(id=>({id}))},async url=>{
+  if(url.includes('/jobs/view/')){lookups++;limitedAt=Date.now();return {ok:false,status:429,headers:{get:()=>'.04'}};}
+  const id=url.split('/').at(-1);if(['3','4'].includes(id))newDetails.push(Date.now());
+  if(id==='2')await new Promise(r=>setTimeout(r,5));
+  return reply({description:'JD'});
+ });
+ assert.equal(result.error,null);assert.equal(result.jobs.length,4);assert.equal(lookups,1);
+ assert.ok(newDetails.length===2&&newDetails.every(at=>at-limitedAt>=35));
+});
 test('unrecognized empty semantic page is uncertain, never claimed exhausted',async()=>{
  let calls=0;
  const result=await scan({source:'linkedin',searchUrl:'https://www.linkedin.com/jobs/search-results/?keywords=SWE',discoverOnly:true,pacingMs:0},async()=>{calls++;return {ok:true,text:async()=> '1:{"children":[]}'};});
