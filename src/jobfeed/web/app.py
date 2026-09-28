@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
@@ -42,6 +43,8 @@ from jobfeed.web.routes.insights import router as insights_router
 from jobfeed.web.routes.jobright_bridge import router as jobright_bridge_router
 from jobfeed.web.routes.jobs import router as jobs_router
 from jobfeed.web.routes.performance import router as performance_router
+from jobfeed.web.routes.real_jobs_workflow import router as real_jobs_workflow_router
+from jobfeed.web.routes.real_jobs import router as real_jobs_router
 from jobfeed.web.routes.run_sources import router as run_sources_router
 from jobfeed.web.routes.runs import router as runs_router
 from jobfeed.web.routes.workflow import router as workflow_router
@@ -93,9 +96,27 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
                 await _app.state.run_manager.recover_stale_runs()
         except Exception:
             get_logger().warning("run_recovery_skipped")
+
+        async def recover_durable_scans() -> None:
+            while True:
+                await asyncio.sleep(10)
+                try:
+                    await _app.state.run_manager.recover_stale_runs()
+                    if context["settings"].redis_pipeline.enabled:
+                        await _app.state.run_manager.resume_interrupted_redis_scan()
+                except Exception:
+                    get_logger().warning("redis_run_recovery_deferred")
+
+        recovery = asyncio.create_task(recover_durable_scans())
         try:
             yield
         finally:
+            recovery.cancel()
+            await asyncio.gather(recovery, return_exceptions=True)
+            manager = getattr(_app.state, "run_manager", None)
+            shutdown = getattr(manager, "shutdown", None)
+            if shutdown is not None:
+                await shutdown()
             await context["store"].close()
 
     init_otel(context["settings"].observability)
@@ -115,6 +136,10 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
             store,
             logger,
             context.get("run_orchestrator"),
+            redis_url=context["settings"].redis_pipeline.url
+            if context["settings"].redis_pipeline.enabled
+            else None,
+            redis_namespace=context["settings"].redis_pipeline.namespace,
         ),
         evaluate_service_factory=lambda **kw: build_evaluate_service(
             context,
@@ -129,7 +154,8 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
         run_orchestrator=context.get("run_orchestrator"),
         post_scan_hook=_make_post_scan_hook(context),
         auto_restart_allowed=lambda source: (
-            source not in {"all", "jobright"}
+            source
+            not in {"all", "jobright", "speedyapply", "linkedin-extension", "handshake"}
             or bool(
                 context.get("jobright_bridge") and context["jobright_bridge"].connected
             )
@@ -166,7 +192,9 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.include_router(jobs_router, prefix="/api")
     app.include_router(jobright_bridge_router, prefix="/api")
     app.include_router(workflow_router, prefix="/api")
+    app.include_router(real_jobs_workflow_router, prefix="/api")
     app.include_router(applications_router, prefix="/api")
+    app.include_router(real_jobs_router, prefix="/api")
     app.include_router(insights_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
     app.include_router(run_sources_router, prefix="/api")

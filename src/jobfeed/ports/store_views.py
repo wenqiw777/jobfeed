@@ -20,6 +20,10 @@ from jobfeed.domain.models_views import (
 class StoreViewsMixin(Protocol):
     """Read-only jobs view for the web API."""
 
+    async def load_display_bodies(self, job_ids: Sequence[str]) -> dict[str, str]:
+        """Load JD bodies for the bounded set of display match candidates."""
+        ...
+
     async def query_jobs_view(self, query: JobsViewQuery) -> JobsViewPage:
         """Run the filtered, paginated jobs view query.
 
@@ -46,6 +50,7 @@ class StoreViewsMixin(Protocol):
         *,
         statuses: Sequence[str],
         limit: int,
+        include_jd_text: bool = True,
     ) -> list[JobsViewRow]:
         """List view rows in the given statuses for the given twin keys.
 
@@ -54,9 +59,12 @@ class StoreViewsMixin(Protocol):
         (e.g. the in-flight ``applied`` twin of a queue row).
 
         Args:
-            keys: Non-blank ``(company_norm, title_norm)`` cluster keys.
+            keys: Company/title or native-identity cluster keys. The internal
+                ``__display_title__`` key fetches same-title content candidates
+                across native IDs; callers must compare their full JD bodies.
             statuses: Workflow statuses to keep.
             limit: Maximum rows returned.
+            include_jd_text: Load bodies only for consumers that need them.
 
         Returns:
             Matching view rows, newest discovered first. Blank-norm rows
@@ -126,6 +134,12 @@ class StoreViewsMixin(Protocol):
             Configured source name to exact first-insert count. Evaluation
             runs and runs without attributable inserts return an empty map.
         """
+        ...
+
+    async def get_historical_run_verdict_counts(
+        self, run_id: str
+    ) -> dict[str, int] | None:
+        """Reconstruct an old run only when every detailed review is unchanged."""
         ...
 
     async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:

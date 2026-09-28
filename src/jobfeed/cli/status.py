@@ -10,7 +10,11 @@ import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
 from jobfeed.cli._window import parse_window
-from jobfeed.domain.models_status import BulkResult, TransitionRequest
+from jobfeed.domain.models_status import (
+    BulkResult,
+    BulkTransitionRequest,
+    TransitionRequest,
+)
 from jobfeed.domain.status import STATUS_VALUES
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
 
@@ -21,6 +25,15 @@ def _build_workflow(app: AppContext) -> WorkflowService:
     """Build WorkflowService from the app context store."""
     store = cast(WorkflowStore, app["store"])
     return WorkflowService(store, app["logger"])
+
+
+async def _real_id(app: AppContext, source_id: str) -> str | None:
+    resolver = (
+        app["store"].resolve_real_job_id
+        if hasattr(type(app["store"]), "resolve_real_job_id")
+        else None
+    )
+    return await resolver(source_id) if resolver is not None else None
 
 
 # ── mark ──────────────────────────────────────────────────────────────
@@ -84,7 +97,12 @@ async def _run_mark(app: AppContext, opts: dict[str, object]) -> None:
         svc = _build_workflow(app)
         if restore:
             for jid in ids:
-                result = await svc.restore(jid)
+                real_id = await _real_id(app, jid)
+                result = (
+                    await app["store"].restore_real_job(real_id)
+                    if real_id is not None
+                    else await svc.restore(jid)
+                )
                 click.echo(f"{jid} restored to {result}")
             return
 
@@ -96,10 +114,7 @@ async def _run_mark(app: AppContext, opts: dict[str, object]) -> None:
                 raise click.UsageError(
                     "--note and --resume are not supported with --bulk"
                 )
-            items = [(jid, status) for jid in ids]
-            br: BulkResult = await svc.transition_bulk(
-                items, force=force, i_mean_it=i_mean_it
-            )
+            br = await _mark_bulk(app, svc, ids, status, force, i_mean_it)
             click.echo(
                 f"Bulk: {br.succeeded} succeeded, "
                 f"{len(br.failed)} failed, {br.skipped} skipped"
@@ -107,17 +122,66 @@ async def _run_mark(app: AppContext, opts: dict[str, object]) -> None:
             return
 
         for jid in ids:
-            req = TransitionRequest(
-                job_id=jid,
-                new_status=status,
-                force=force,
-                i_mean_it=i_mean_it,
-                resume_variant=resume_variant,
+            result = await _mark_one(
+                app, svc, jid, status, force, i_mean_it, resume_variant, note_text
             )
-            result = await svc.transition(req, note=note_text)
             click.echo(f"{jid} -> {result}")
 
     await run_with_store(app, action)
+
+
+async def _mark_bulk(  # noqa: PLR0913
+    app: AppContext,
+    svc: WorkflowService,
+    ids: tuple[str, ...],
+    status: str,
+    force: bool,
+    i_mean_it: bool,
+) -> BulkResult:
+    parents = [await _real_id(app, jid) for jid in ids]
+    if any(parent is not None for parent in parents):
+        if any(parent is None for parent in parents):
+            raise click.ClickException("bulk contains an unresolved source ID")
+        return await app["store"].transition_real_jobs_bulk(
+            BulkTransitionRequest(
+                items=[(parent, status) for parent in parents if parent],
+                reason_selected="bulk_selected",
+                reason_cascade="bulk_cascade",
+                force=force,
+                i_mean_it=i_mean_it,
+            )
+        )
+    return await svc.transition_bulk(
+        [(jid, status) for jid in ids], force=force, i_mean_it=i_mean_it
+    )
+
+
+async def _mark_one(  # noqa: PLR0913
+    app: AppContext,
+    svc: WorkflowService,
+    jid: str,
+    status: str,
+    force: bool,
+    i_mean_it: bool,
+    resume_variant: str | None,
+    note_text: str | None,
+) -> str:
+    real_id = await _real_id(app, jid)
+    req = TransitionRequest(
+        job_id=real_id or jid,
+        new_status=status,
+        force=force,
+        i_mean_it=i_mean_it,
+        resume_variant=resume_variant,
+    )
+    if real_id is None:
+        return await svc.transition(req, note=note_text)
+    if resume_variant is not None:
+        await app["store"].register_resume_variant(name=resume_variant)
+    result = await app["store"].transition_real_job_status(req)
+    if note_text is not None:
+        await app["store"].append_real_job_note(real_job_id=real_id, text=note_text)
+    return result
 
 
 # ── archive ───────────────────────────────────────────────────────────
@@ -155,8 +219,15 @@ async def _run_archive(
     async def action() -> None:
         svc = _build_workflow(app)
         for jid in ids:
-            req = TransitionRequest(job_id=jid, new_status="archived", force=force)
-            result = await svc.transition(req)
+            real_id = await _real_id(app, jid)
+            req = TransitionRequest(
+                job_id=real_id or jid, new_status="archived", force=force
+            )
+            result = (
+                await app["store"].transition_real_job_status(req)
+                if real_id is not None
+                else await svc.transition(req)
+            )
             click.echo(f"{jid} -> {result}")
 
     await run_with_store(app, action)
@@ -184,7 +255,11 @@ def note(ctx: click.Context, job_id: str, text: str) -> None:
 async def _run_note(app: AppContext, *, job_id: str, text: str) -> None:
     async def action() -> None:
         svc = _build_workflow(app)
-        await svc.note(job_id, text)
+        real_id = await _real_id(app, job_id)
+        if real_id is not None:
+            await app["store"].append_real_job_note(real_job_id=real_id, text=text)
+        else:
+            await svc.note(job_id, text)
         click.echo(f"Note added to {job_id}")
 
     await run_with_store(app, action)
@@ -219,7 +294,12 @@ def followup(ctx: click.Context, job_id: str, window: str) -> None:
 async def _run_followup(app: AppContext, *, job_id: str, at: datetime) -> None:
     async def action() -> None:
         svc = _build_workflow(app)
-        was_set = await svc.set_followup(job_id=job_id, at=at)
+        real_id = await _real_id(app, job_id)
+        was_set = (
+            await app["store"].set_real_job_followup(real_job_id=real_id, at=at)
+            if real_id is not None
+            else await svc.set_followup(job_id=job_id, at=at)
+        )
         if not was_set:
             raise click.ClickException(f"job not found: {job_id}")
         click.echo(f"Follow-up for {job_id} set to {at.date().isoformat()}")

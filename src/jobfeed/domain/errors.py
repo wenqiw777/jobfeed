@@ -65,11 +65,16 @@ class RunConflictError(Exception):
     """A pipeline run of the requested type is already active."""
 
 
+class CanonicalEvaluationNotReadyError(ValueError):
+    """Canonical evaluation is active but its persisted data is incomplete."""
+
+
 class RunLeaseLostError(JobfeedError):
     """The current worker no longer owns its pipeline-run fencing token."""
 
 
 __all__ = [
+    "CanonicalEvaluationNotReadyError",
     "JobfeedError",
     "LLMRuntimeUnavailable",
     "ResumeNotConfiguredError",

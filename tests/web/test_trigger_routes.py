@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from jobfeed.domain.errors import (
+    CanonicalEvaluationNotReadyError,
     LLMRuntimeUnavailable,
     ResumeNotConfiguredError,
     RunConflictError,
@@ -24,6 +25,8 @@ HTTP_BAD_REQUEST = 400
 HTTP_CONFLICT = 409
 HTTP_SERVICE_UNAVAILABLE = 503
 _EVAL_LIMIT = 10
+_EVALUATION_MAX_DAYS = 30
+_SAVED_FRESHNESS_DAYS = 14
 
 
 def _make_run(run_id: str = "run-1", source: str = "mock") -> PipelineRun:
@@ -38,7 +41,7 @@ def _make_run(run_id: str = "run-1", source: str = "mock") -> PipelineRun:
 class FakeRunManager:
     """In-memory RunManager stand-in for route-level testing."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - independent route failure controls
         self,
         *,
         should_conflict_scan: bool = False,
@@ -46,19 +49,24 @@ class FakeRunManager:
         disabled_source: str | None = None,
         missing_resume: bool = False,
         unavailable_llm: bool = False,
+        canonical_not_ready: bool = False,
     ) -> None:
         self._should_conflict_scan = should_conflict_scan
         self._should_conflict_eval = should_conflict_eval
         self._disabled_source = disabled_source
         self._missing_resume = missing_resume
         self._unavailable_llm = unavailable_llm
+        self._canonical_not_ready = canonical_not_ready
         self._active: list[ActiveRun] = []
         self.scan_calls: list[object] = []
         self.eval_calls: list[dict[str, object]] = []
         self.stop_calls: list[str] = []
 
-    async def trigger_scan(self, source_name_or_specs: object) -> str:
+    async def trigger_scan(
+        self, source_name_or_specs: object, *, resume_from_run_id: str | None = None
+    ) -> str:
         """Record the call and return a run id, or raise on conflict/config."""
+        del resume_from_run_id
         if self._should_conflict_scan:
             raise RunConflictError("A scan is already running")
         if source_name_or_specs == self._disabled_source:
@@ -75,6 +83,10 @@ class FakeRunManager:
         if self._unavailable_llm:
             raise LLMRuntimeUnavailable(
                 "codex-cli backend requires 'codex' to be installed and on PATH"
+            )
+        if self._canonical_not_ready:
+            raise CanonicalEvaluationNotReadyError(
+                "canonical evaluation activation has evaluation backfill"
             )
         self.eval_calls.append(kwargs)
         return "run-eval-1"
@@ -122,6 +134,13 @@ class RunControlFakeStore(FakeStore):
 
     async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:
         return self.retryable_error_job_ids if run_id == self.run.run_id else []
+
+    async def get_historical_run_verdict_counts(
+        self, run_id: str
+    ) -> dict[str, int] | None:
+        if run_id == self.run.run_id:
+            return {"apply": 97, "consider": 40, "skip": 12}
+        return None
 
 
 def _build_app(
@@ -172,6 +191,26 @@ async def test_get_run_exposes_persisted_scan_quality_snapshot() -> None:
 
     assert response.status_code == HTTP_OK
     assert response.json()["scan_stats"] == run.scan_stats
+
+
+async def test_get_run_reconstructs_legacy_evaluation_counts_on_demand() -> None:
+    run = _make_run("old-evaluation", source="evaluate")
+    run.status = "succeeded"
+    run.finished_at = datetime.now(UTC)
+    run.stage_b_scored = 149
+    store = RunControlFakeStore(run)
+    app = build_web_app(fake_context(store))
+    app.state.run_manager = FakeRunManager()
+
+    async with open_client(app) as client:
+        response = await client.get("/api/runs/old-evaluation")
+
+    assert response.status_code == HTTP_OK
+    assert response.json()["verdict_counts"] == {
+        "apply": 97,
+        "consider": 40,
+        "skip": 12,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -279,9 +318,30 @@ async def test_retry_completed_evaluate_continues_failed_corpus() -> None:
             "scope": "backlog",
             "corpus": "failed",
             "limit": 2,
+            "max_days": _EVALUATION_MAX_DAYS,
             "job_ids": ["10", "11"],
         }
     ]
+
+
+async def test_retry_evaluate_uses_saved_freshness_when_stricter() -> None:
+    """Retry uses current saved posting-age rule for Detailed claims too."""
+    run = _make_run("completed-with-errors", source="evaluate")
+    run.status = "succeeded"
+    run.errors = 2
+    run.finished_at = datetime.now(UTC)
+    app = build_web_app(fake_context(RunControlFakeStore(run)))
+    app.state.context[
+        "settings"
+    ].hard_filters.posted_within_days = _SAVED_FRESHNESS_DAYS
+    manager = FakeRunManager()
+    app.state.run_manager = manager
+
+    async with open_client(app) as client:
+        response = await client.post("/api/runs/completed-with-errors/retry", json={})
+
+    assert response.status_code == HTTP_OK
+    assert manager.eval_calls[0]["max_days"] == _SAVED_FRESHNESS_DAYS
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +377,20 @@ async def test_trigger_evaluate_defaults() -> None:
     assert mgr.eval_calls[0]["stage"] == "both"
     assert mgr.eval_calls[0]["corpus"] == "unrated"
     assert mgr.eval_calls[0]["limit"] is None
+    assert mgr.eval_calls[0]["max_days"] == _EVALUATION_MAX_DAYS
+
+
+async def test_trigger_evaluate_uses_saved_freshness_when_stricter() -> None:
+    """All web evaluation stages honor the saved 14-day job rule."""
+    app, mgr = _build_app()
+    app.state.context[
+        "settings"
+    ].hard_filters.posted_within_days = _SAVED_FRESHNESS_DAYS
+    async with open_client(app) as client:
+        resp = await client.post("/api/runs/evaluate", json={"stage": "b"})
+
+    assert resp.status_code == HTTP_OK
+    assert mgr.eval_calls[0]["max_days"] == _SAVED_FRESHNESS_DAYS
 
 
 async def test_trigger_evaluate_missing_resume_returns_400() -> None:
@@ -339,6 +413,17 @@ async def test_trigger_evaluate_conflict_returns_409() -> None:
 
     assert resp.status_code == HTTP_CONFLICT
     assert resp.json()["error"]["code"] == "evaluate_already_running"
+
+
+async def test_trigger_evaluate_incomplete_activation_returns_409() -> None:
+    app, _mgr = _build_app(FakeRunManager(canonical_not_ready=True))
+    async with open_client(app) as client:
+        resp = await client.post("/api/runs/evaluate", json={})
+
+    assert resp.status_code == HTTP_CONFLICT
+    body = resp.json()["error"]
+    assert body["code"] == "canonical_evaluation_not_ready"
+    assert "evaluation backfill" in body["message"]
 
 
 async def test_trigger_evaluate_unavailable_llm_returns_503() -> None:

@@ -16,6 +16,7 @@ from jobfeed.adapters.store._sqlite_capability_support import (
     _placeholders,
     _require_utc_timestamp,
 )
+from jobfeed.domain.display_posting import posting_location
 from jobfeed.domain.models import (
     AutoDecayResult,
     BulkResult,
@@ -259,24 +260,33 @@ class _SqliteStatus:
         )
 
     async def _expand_twin_ids(self, job_ids: list[int]) -> dict[int, list[int]]:
-        """Expand job ids through nonblank normalized company and title keys."""
+        """Expand only known posting aliases at the same nonblank location."""
         result: dict[int, list[int]] = {}
         async with self._lifecycle.connection() as connection:
             for job_id in job_ids:
                 row = await _fetch_row(
                     connection,
-                    "SELECT company_norm,title_norm FROM jobs WHERE id=?",
+                    "SELECT location,external_identity FROM jobs WHERE id=?",
                     (job_id,),
                 )
-                if row is None or not row["company_norm"] or not row["title_norm"]:
-                    result[job_id] = [job_id]
+                if (
+                    row is not None
+                    and row["external_identity"]
+                    and posting_location(row["location"])
+                ):
+                    twins = await _fetch_rows(
+                        connection,
+                        "SELECT id,location FROM jobs WHERE external_identity=?",
+                        (row["external_identity"],),
+                    )
+                    result[job_id] = [
+                        int(twin["id"])
+                        for twin in twins
+                        if posting_location(twin["location"])
+                        == posting_location(row["location"])
+                    ]
                     continue
-                twins = await _fetch_rows(
-                    connection,
-                    "SELECT id FROM jobs WHERE company_norm=? AND title_norm=?",
-                    (row["company_norm"], row["title_norm"]),
-                )
-                result[job_id] = [int(twin["id"]) for twin in twins]
+                result[job_id] = [job_id]
         return result
 
     async def transition_status_bulk(

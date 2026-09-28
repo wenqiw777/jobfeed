@@ -6,7 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from jobfeed.domain.models import ApplicationRecord
+from jobfeed.domain.models import ApplicationRecord, RealJobApplicationEvent
 
 
 class ApplyResponse(BaseModel):
@@ -36,6 +36,31 @@ class ApplicationsListResponse(BaseModel):
     """``GET /api/applications`` response."""
 
     applications: list[ApplicationRow]
+
+
+class RealJobApplicationRow(BaseModel):
+    """Canonical submission event with source and target provenance."""
+
+    id: int
+    real_job_id: str
+    source_job_id: str | None
+    source_applied_job_id: str | None
+    apply_url: str | None
+    applied_at: datetime
+    application_method: str | None
+    notes: str | None
+
+
+class RealJobApplicationsListResponse(BaseModel):
+    applications: list[RealJobApplicationRow]
+
+
+def real_job_applications_response(
+    events: list[RealJobApplicationEvent],
+) -> RealJobApplicationsListResponse:
+    return RealJobApplicationsListResponse(
+        applications=[RealJobApplicationRow(**vars(event)) for event in events]
+    )
 
 
 def applications_list_response(
@@ -70,5 +95,8 @@ __all__ = [
     "ApplicationRow",
     "ApplicationsListResponse",
     "ApplyResponse",
+    "RealJobApplicationRow",
+    "RealJobApplicationsListResponse",
     "applications_list_response",
+    "real_job_applications_response",
 ]

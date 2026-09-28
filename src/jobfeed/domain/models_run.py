@@ -33,6 +33,7 @@ class PipelineRun:
     jobs_gate_passed: int = 0
     stage_a_scored: int = 0
     stage_b_scored: int = 0
+    verdict_counts: dict[str, int] | None = None
     jobs_scored: int = 0
     total_llm_cost_usd: float = 0.0
     errors: int = 0
@@ -44,6 +45,7 @@ class PipelineRun:
     last_progress_at: datetime | None = None
     restart_count: int = 0
     restarted_by_run_id: str | None = None
+    resume_from_run_id: str | None = None
     progress_stage: str | None = None
     evaluate_stage: str | None = None
     evaluation_scope: str | None = None
@@ -61,5 +63,6 @@ class PipelineRun:
     scan_current_job_id: str | None = None
     scan_inserted_job_ids: list[str] = field(default_factory=list)
     scan_stats: dict[str, dict[str, int]] = field(default_factory=dict)
+    scan_progress: dict[str, dict[str, str | int | None]] = field(default_factory=dict)
     progress_updated_at: datetime | None = None
     dry_run_preview: list[DryRunPreviewItem] = field(default_factory=list)

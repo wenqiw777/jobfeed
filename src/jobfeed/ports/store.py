@@ -121,6 +121,14 @@ class JobStore(Protocol):
         """
         ...
 
+    async def mark_stage_b_ineligible(self, job_id: str) -> None:
+        """Persist a hard-eligibility skip so the job is not reclaimed.
+
+        Args:
+            job_id: Store-assigned identity.
+        """
+        ...
+
     async def load_pending_stage_a(
         self,
         *,
@@ -148,6 +156,7 @@ class JobStore(Protocol):
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        require_stage_a: bool = True,
     ) -> list[JobPosting]:
         """Load Stage A-completed, Stage B-pending jobs.
 

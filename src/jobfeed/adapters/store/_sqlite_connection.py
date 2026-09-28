@@ -7,6 +7,8 @@ from pathlib import Path
 import aiosqlite
 
 from jobfeed.adapters.store._sqlite_errors import UnsupportedSqliteVersionError
+from jobfeed.domain.filtering import _matches_location_allowlist
+from jobfeed.domain.repost import discovery_day
 
 _MINIMUM_SQLITE_VERSION = (3, 35, 0)
 _BUSY_TIMEOUT_MS = 5_000
@@ -69,9 +71,20 @@ async def _register_connection_features(connection: aiosqlite.Connection) -> Non
         msg = f"SQLite {required} or newer is required; found {actual}"
         raise UnsupportedSqliteVersionError(msg)
     await connection.create_function(
+        "jobfeed_discovery_day", 1, discovery_day, deterministic=True
+    )
+    await connection.create_function(
         "unicode_casefold",
         1,
         _unicode_casefold,
+        deterministic=True,
+    )
+    await connection.create_function(
+        "jobfeed_us_location",
+        1,
+        lambda value: int(
+            bool(value) and _matches_location_allowlist(value, ["United States"])
+        ),
         deterministic=True,
     )
 

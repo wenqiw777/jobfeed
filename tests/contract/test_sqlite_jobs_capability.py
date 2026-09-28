@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import multiprocessing
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,66 @@ from jobfeed.domain.models import MLGateResult, QualityBand
 from tests.support.sqlite_jobs_evaluations import make_job, open_sqlite_store
 
 _CANONICAL_TIMESTAMP_LENGTH = 27
+
+
+async def test_rescan_preserves_first_discovered_time(tmp_path: Path) -> None:
+    lifecycle, store = await open_sqlite_store(tmp_path / "first-seen.db")
+    try:
+        first = datetime(2026, 8, 1, tzinfo=UTC)
+        job = replace(make_job("repeat", discovered_at=first), posted_at=None)
+        saved = await store.save_job(job)
+        await store.save_job(
+            replace(
+                job, discovered_at=first + timedelta(days=40), title="Updated title"
+            )
+        )
+        loaded = await store.get_job(saved.job_id)
+        assert loaded.discovered_at == first
+        assert loaded.title == "Updated title"
+    finally:
+        await lifecycle.close()
+
+
+async def test_source_writer_assigns_one_stable_real_job(tmp_path: Path) -> None:
+    lifecycle, store = await open_sqlite_store(tmp_path / "real-job.db")
+    try:
+        posting = replace(
+            make_job("same-source"),
+            apply_url="https://qualcomm.eightfold.ai/careers?pid=446721162271",
+        )
+        saved = await store.save_job(posting)
+        await store.save_job(posting)
+        async with lifecycle.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT real_job_id FROM jobs WHERE id=?", (int(saved.job_id),)
+            )
+            parent = (await cursor.fetchone())[0]
+            await cursor.close()
+            assert parent is not None
+            cursor = await connection.execute(
+                "SELECT apply_url FROM jobs WHERE id=?", (int(saved.job_id),)
+            )
+            assert (await cursor.fetchone())[0] == posting.apply_url
+            await cursor.close()
+            cursor = await connection.execute("SELECT COUNT(*) FROM real_jobs")
+            assert (await cursor.fetchone())[0] == 1
+            await cursor.close()
+    finally:
+        await lifecycle.close()
+
+
+async def test_linkedin_unknown_cannot_erase_verified_company(tmp_path: Path) -> None:
+    """A partial rescan keeps the known company but accepts a later real name."""
+    lifecycle, store = await open_sqlite_store(tmp_path / "company.db")
+    try:
+        job = replace(make_job("123"), platform="linkedin", company="Capital One")
+        saved = await store.save_job(job)
+        await store.save_job(replace(job, company="Unknown"))
+        assert (await store.get_job(saved.job_id)).company == "Capital One"
+        await store.save_job(replace(job, company="Verified new name"))
+        assert (await store.get_job(saved.job_id)).company == "Verified new name"
+    finally:
+        await lifecycle.close()
 
 
 async def test_save_get_list_and_exact_exists_round_trip(tmp_path: Path) -> None:

@@ -38,7 +38,10 @@ from jobfeed.domain.models_views import (
     TwinStatusRow,
 )
 from jobfeed.ports.store_views import StoreViewsMixin
-from jobfeed.services._jobs_view_fold import fold_with_inflight_twins
+from jobfeed.services._jobs_view_fold import (
+    fold_provisional,
+    fold_with_inflight_twins,
+)
 from jobfeed.services._jobs_view_sort import (
     DEFAULT_SORT,
     LIBRARY_SORT_KEYS,
@@ -192,7 +195,7 @@ class JobsViewService:
             return await self._store.query_jobs_view(
                 replace(query, sort=effective_sort)
             )
-        if fast and query.offset == 0:
+        if fast and query.offset == 0 and not effective_sort.startswith("triage_"):
             candidate_limit = min(
                 JOBS_VIEW_CORPUS_LIMIT,
                 max(query.limit, query.limit * _FAST_PAGE_MULTIPLIER),
@@ -207,11 +210,14 @@ class JobsViewService:
                     # sort across every matching row.
                     sort=DEFAULT_SORT,
                     include_counts=False,
+                    include_jd_text=False,
                 )
             )
             rows = corpus.rows
             if apply_hard_filters:
                 rows = self._drop_hard_filtered(rows)
+            if dedupe:
+                rows = await fold_provisional(self._store, rows)
             # Exact cross-status dedupe is deliberately deferred to the
             # background request; its twin lookup would block first paint.
             sort_key = (
@@ -235,6 +241,7 @@ class JobsViewService:
                 offset=0,
                 sort=effective_sort,
                 include_total=False,
+                include_jd_text=False,
             )
         )
         rows = corpus.rows
@@ -242,7 +249,9 @@ class JobsViewService:
             rows = self._drop_hard_filtered(rows)
         if dedupe:
             rows = await fold_with_inflight_twins(
-                self._store, rows, twin_limit=JOBS_VIEW_CORPUS_LIMIT
+                self._store,
+                rows,
+                twin_limit=JOBS_VIEW_CORPUS_LIMIT,
             )
         sort_key = (
             verdict_group_sort_key

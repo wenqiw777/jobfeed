@@ -34,9 +34,13 @@ async def test_limited_scan_saves_received_body_and_records_error(tmp_path):
     store = SQLiteStore(tmp_path / "partial.db")
     await store.connect()
     try:
+        phases = []
         with pytest.raises(RuntimeError, match="failed source work"):
             await ScanService(store, structlog.get_logger("test")).run(
-                [("handshake", LimitedSource(), {})]
+                [("handshake", LimitedSource(), {})],
+                on_progress=lambda run: phases.append(
+                    run.scan_progress.get("handshake", {}).get("phase")
+                ),
             )
         run = (await store.list_pipeline_runs())[0][0]
         assert run.status == "failed"
@@ -46,6 +50,8 @@ async def test_limited_scan_saves_received_body_and_records_error(tmp_path):
         assert jobs[0].jd_text == body
         assert run.jobs_inserted == 1
         assert run.errors
+        assert run.scan_progress["handshake"]["total"] is None
+        assert "completed" not in phases
     finally:
         await store.close()
 

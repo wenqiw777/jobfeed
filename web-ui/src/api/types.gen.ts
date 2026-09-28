@@ -424,6 +424,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/{job_id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Source Job Audit
+         * @description Read the retained source evaluation and workflow audit by source ID.
+         */
+        get: operations["get_source_job_audit_api_jobs__job_id__audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}/followup": {
         parameters: {
             query?: never;
@@ -1232,6 +1252,362 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/real-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Real Jobs
+         * @description Return the Triage page with canonical priority projections.
+         *
+         *     Args:
+         *         params: Validated Triage query filters and page window.
+         *         store: Canonical store resolved from the request context.
+         *         context: Application settings and store context.
+         *         policy: Current scoring-policy snapshot for stale-score projection.
+         *
+         *     Returns:
+         *         Triage cards with canonical priority and exact counts.
+         */
+        get: operations["list_real_jobs_api_real_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Real Job Applications
+         * @description List canonical submission events, including their source provenance.
+         */
+        get: operations["list_real_job_applications_api_real_jobs_applications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/bulk/transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk Transition
+         * @description Apply a bulk decision to distinct canonical IDs.
+         *
+         *     Args:
+         *         body: Validated HTTP request body.
+         *         store: Canonical store resolved from the request context.
+         *
+         *     Returns:
+         *         HTTP response with canonical bulk transition outcomes.
+         */
+        post: operations["bulk_transition_api_real_jobs_bulk_transition_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Select Real Jobs
+         * @description Return all currently matching canonical IDs for bulk selection.
+         *
+         *     Args:
+         *         params: Validated Triage query filters and page window.
+         *         store: Canonical store resolved from the request context.
+         *         context: Application settings and store context.
+         *         policy: Current scoring-policy snapshot for stale-score projection.
+         *
+         *     Returns:
+         *         All matching canonical IDs with the exact snapshot count.
+         */
+        get: operations["select_real_jobs_api_real_jobs_selection_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/{real_job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Real Job
+         * @description Return canonical detail with source postings and status history.
+         *
+         *     Args:
+         *         real_job_id: Canonical parent ID, never a source posting ID.
+         *         store: Canonical store resolved from the request context.
+         *         policy: Current scoring-policy snapshot for stale-score projection.
+         *
+         *     Returns:
+         *         Canonical detail including sources, history, and interviews.
+         *
+         *     Raises:
+         *         ApiError: The canonical parent does not exist.
+         */
+        get: operations["get_real_job_api_real_jobs__real_job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/{real_job_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply To Real Job
+         * @description Record a submission against a canonical job with explicit source.
+         */
+        post: operations["apply_to_real_job_api_real_jobs__real_job_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/{real_job_id}/followup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Followup
+         * @description Schedule the next follow-up for one canonical job.
+         *
+         *     Args:
+         *         real_job_id: Canonical parent ID, never a source posting ID.
+         *         body: Validated HTTP request body.
+         *         store: Canonical store resolved from the request context.
+         *
+         *     Returns:
+         *         Success response after the schedule is saved.
+         *
+         *     Raises:
+         *         ApiError: The canonical parent is absent.
+         */
+        post: operations["followup_api_real_jobs__real_job_id__followup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/{real_job_id}/interviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Interviews
+         * @description List interview rounds for one canonical job.
+         *
+         *     Args:
+         *         real_job_id: Canonical parent ID, never a source posting ID.
+         *         store: Canonical store resolved from the request context.
+         *
+         *     Returns:
+         *         HTTP response containing canonical interview rounds.
+         *
+         *     Raises:
+         *         ApiError: The canonical parent is absent.
+         */
+        get: operations["list_interviews_api_real_jobs__real_job_id__interviews_get"];
+        put?: never;
+        /**
+         * Add Interview
+         * @description Add an interview round for one canonical job.
+         *
+         *     Args:
+         *         real_job_id: Canonical parent ID, never a source posting ID.
+         *         body: Validated HTTP request body.
+         *         store: Canonical store resolved from the request context.
+         *
+         *     Returns:
+         *         The newly created interview round.
+         *
+         *     Raises:
+         *         ApiError: The parent is absent or the round is invalid.
+         */
+        post: operations["add_interview_api_real_jobs__real_job_id__interviews_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/{real_job_id}/interviews/{round_index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Complete Interview
+         * @description Mark one canonical interview round complete.
+         *
+         *     Args:
+         *         real_job_id: Canonical parent ID, never a source posting ID.
+         *         round_index: Optional exact round; otherwise choose the latest open round.
+         *         body: Validated HTTP request body.
+         *         store: Canonical store resolved from the request context.
+         *
+         *     Returns:
+         *         The completed interview round.
+         *
+         *     Raises:
+         *         ApiError: No matching open round exists.
+         */
+        patch: operations["complete_interview_api_real_jobs__real_job_id__interviews__round_index__patch"];
+        trace?: never;
+    };
+    "/api/real-jobs/{real_job_id}/note": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Note
+         * @description Append a note to one canonical job.
+         *
+         *     Args:
+         *         real_job_id: Canonical parent ID, never a source posting ID.
+         *         body: Validated HTTP request body.
+         *         store: Canonical store resolved from the request context.
+         *
+         *     Returns:
+         *         Success response after the note is saved.
+         *
+         *     Raises:
+         *         ApiError: The canonical parent is absent.
+         */
+        post: operations["note_api_real_jobs__real_job_id__note_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/{real_job_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore
+         * @description Restore one archived or ghosted canonical job.
+         *
+         *     Args:
+         *         real_job_id: Canonical parent ID, never a source posting ID.
+         *         store: Canonical store resolved from the request context.
+         *
+         *     Returns:
+         *         HTTP response with the canonical ID and restored status.
+         *
+         *     Raises:
+         *         ApiError: The parent is absent or cannot be restored.
+         */
+        post: operations["restore_api_real_jobs__real_job_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/real-jobs/{real_job_id}/transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transition
+         * @description Update one canonical status and optionally append a note.
+         *
+         *     Args:
+         *         real_job_id: Canonical parent ID, never a source posting ID.
+         *         body: Validated HTTP request body.
+         *         store: Canonical store resolved from the request context.
+         *
+         *     Returns:
+         *         HTTP response with the canonical ID and saved status.
+         *
+         *     Raises:
+         *         ApiError: The parent is absent or transition is invalid.
+         */
+        post: operations["transition_api_real_jobs__real_job_id__transition_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs": {
         parameters: {
             query?: never;
@@ -1652,12 +2028,33 @@ export interface components {
         };
         /** Body_apply_to_job_api_jobs__job_id__apply_post */
         Body_apply_to_job_api_jobs__job_id__apply_post: {
+            /** Apply Url */
+            apply_url?: string | null;
             /** Cover Letter */
             cover_letter?: string | null;
             /** Method */
             method?: string | null;
             /** Notes */
             notes?: string | null;
+            /** Source Job Id */
+            source_job_id?: number | null;
+            /** Tailored */
+            tailored?: string | null;
+            /** Variant */
+            variant?: string | null;
+        };
+        /** Body_apply_to_real_job_api_real_jobs__real_job_id__apply_post */
+        Body_apply_to_real_job_api_real_jobs__real_job_id__apply_post: {
+            /** Apply Url */
+            apply_url?: string | null;
+            /** Cover Letter */
+            cover_letter?: string | null;
+            /** Method */
+            method?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Source Job Id */
+            source_job_id?: number | null;
             /** Tailored */
             tailored?: string | null;
             /** Variant */
@@ -2009,6 +2406,22 @@ export interface components {
             title_blocklist?: string[];
         };
         /**
+         * IdentityEvidence
+         * @description Observed external identifier linking a source to its parent.
+         */
+        IdentityEvidence: {
+            /** Evidence Job Id */
+            evidence_job_id: string;
+            /** Native Id */
+            native_id: string;
+            /** Observed Url */
+            observed_url: string | null;
+            /** Provider */
+            provider: string;
+            /** Scope */
+            scope: string;
+        };
+        /**
          * InsightsDayEntry
          * @description One UTC day of the windowed series (only days having data appear).
          */
@@ -2173,9 +2586,13 @@ export interface components {
         JobDetailResponse: {
             application: components["schemas"]["ApplicationDetail"] | null;
             evaluation: components["schemas"]["EvaluationDetail"];
+            /** Evaluation Stale Reason */
+            evaluation_stale_reason?: string | null;
             /** Interviews */
             interviews: components["schemas"]["InterviewRoundDetail"][];
             job: components["schemas"]["JobDetailJob"];
+            /** Real Job Id */
+            real_job_id?: string | null;
             status: components["schemas"]["StatusDetail"];
             /** Twins */
             twins: components["schemas"]["TwinDetail"][];
@@ -2239,14 +2656,29 @@ export interface components {
              * Format: date-time
              */
             discovered_at: string;
+            /** Evaluation Stale Reason */
+            evaluation_stale_reason?: string | null;
             /** Id */
             id: string;
+            /** Is Repost */
+            is_repost?: boolean | null;
             /** Jd Quality */
             jd_quality: string | null;
+            /**
+             * Location
+             * @default
+             */
+            location: string;
             /** Platform */
             platform: string;
             /** Posted At */
             posted_at: string | null;
+            /** Real Job Id */
+            real_job_id?: string | null;
+            /** Repost Evidence */
+            repost_evidence?: string | null;
+            /** Repost Observed At */
+            repost_observed_at?: string | null;
             /** Stage A Score */
             stage_a_score: number | null;
             /** Stage B Fit Score */
@@ -2271,6 +2703,8 @@ export interface components {
         JobrightBridgeStatus: {
             /** Connected */
             connected: boolean;
+            /** Supported Sources */
+            supported_sources: string[];
         };
         /**
          * JobsListResponse
@@ -2458,6 +2892,11 @@ export interface components {
              * @default v20260601T170453Z
              */
             model_version: string;
+            /**
+             * Policy Version
+             * @default v1
+             */
+            policy_version: string;
             /** Threshold Override */
             threshold_override?: number | null;
         };
@@ -2509,6 +2948,8 @@ export interface components {
              * @default true
              */
             ok: boolean;
+            /** Real Job Id */
+            real_job_id?: string | null;
         };
         /**
          * OnboardingFinishBody
@@ -2731,12 +3172,195 @@ export interface components {
             region?: string | null;
         };
         /**
+         * RealJobApplicationRow
+         * @description Canonical submission event with source and target provenance.
+         */
+        RealJobApplicationRow: {
+            /** Application Method */
+            application_method: string | null;
+            /**
+             * Applied At
+             * Format: date-time
+             */
+            applied_at: string;
+            /** Apply Url */
+            apply_url: string | null;
+            /** Id */
+            id: number;
+            /** Notes */
+            notes: string | null;
+            /** Real Job Id */
+            real_job_id: string;
+            /** Source Applied Job Id */
+            source_applied_job_id: string | null;
+            /** Source Job Id */
+            source_job_id: string | null;
+        };
+        /** RealJobApplicationsListResponse */
+        RealJobApplicationsListResponse: {
+            /** Applications */
+            applications: components["schemas"]["RealJobApplicationRow"][];
+        };
+        /**
+         * RealJobDetailResponse
+         * @description Canonical detail with current decision and all source evidence.
+         */
+        RealJobDetailResponse: {
+            /** Application */
+            application?: null;
+            evaluation: components["schemas"]["EvaluationDetail"];
+            /** Evaluation Stale Reason */
+            evaluation_stale_reason?: string | null;
+            /** Identity Evidence */
+            identity_evidence: components["schemas"]["IdentityEvidence"][];
+            /** Identity Review State */
+            identity_review_state: string;
+            /** Interviews */
+            interviews: components["schemas"]["InterviewRoundDetail"][];
+            job: components["schemas"]["JobDetailJob"];
+            /** Real Job Id */
+            real_job_id: string;
+            /** Sources */
+            sources: components["schemas"]["RealJobSource"][];
+            /** Stale Stage A Score */
+            stale_stage_a_score?: number | null;
+            status: components["schemas"]["StatusDetail"];
+            /** Twins */
+            twins: {
+                [key: string]: string;
+            }[];
+        };
+        /**
+         * RealJobSource
+         * @description One source posting attached to a canonical parent.
+         */
+        RealJobSource: {
+            /** Apply Url */
+            apply_url: string | null;
+            /** Closed At */
+            closed_at: string | null;
+            /**
+             * Discovered At
+             * Format: date-time
+             */
+            discovered_at: string;
+            /** Is Repost */
+            is_repost: boolean | null;
+            /** Job Id */
+            job_id: string;
+            /** Platform */
+            platform: string;
+            /** Posted At */
+            posted_at: string | null;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+        };
+        /**
+         * RealJobSummary
+         * @description One canonical Triage card with explicit representative source ID.
+         */
+        RealJobSummary: {
+            /** Closed At */
+            closed_at: string | null;
+            /** Company */
+            company: string;
+            /** Company Norm */
+            company_norm: string | null;
+            /** Decision */
+            decision: ("results" | "wait" | "applied" | "ignored") | null;
+            /**
+             * Discovered At
+             * Format: date-time
+             */
+            discovered_at: string;
+            /** Evaluation Stale Reason */
+            evaluation_stale_reason?: string | null;
+            /** Id */
+            id: string;
+            /** Identity Review State */
+            identity_review_state: string;
+            /** Is Repost */
+            is_repost?: boolean | null;
+            /** Jd Quality */
+            jd_quality: string | null;
+            /**
+             * Location
+             * @default
+             */
+            location: string;
+            /** Platform */
+            platform: string;
+            /** Posted At */
+            posted_at: string | null;
+            /** Priority Score */
+            priority_score?: number | null;
+            /** Queue Tier */
+            queue_tier?: number | null;
+            /** Real Job Id */
+            real_job_id: string;
+            /** Repost Evidence */
+            repost_evidence?: string | null;
+            /** Repost Observed At */
+            repost_observed_at?: string | null;
+            /** Source Job Id */
+            source_job_id: string;
+            /** Stage A Score */
+            stage_a_score: number | null;
+            /** Stage B Fit Score */
+            stage_b_fit_score: number | null;
+            /** Stage B Status */
+            stage_b_status: string | null;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+            /** Title Norm */
+            title_norm: string | null;
+            /** Url */
+            url: string;
+            /** Verdict */
+            verdict: string | null;
+        };
+        /**
+         * RealJobsListResponse
+         * @description Canonical page, exact total, and decision-tab counts.
+         */
+        RealJobsListResponse: {
+            /** Jobs */
+            jobs: components["schemas"]["RealJobSummary"][];
+            /** Tab Counts */
+            tab_counts: {
+                [key: string]: number;
+            };
+            /** Total */
+            total: number;
+            /**
+             * Total Is Exact
+             * @default true
+             */
+            total_is_exact: boolean;
+        };
+        /**
+         * RealJobsSelectionResponse
+         * @description Canonical IDs and exact total captured in one selection snapshot.
+         */
+        RealJobsSelectionResponse: {
+            /** Real Job Ids */
+            real_job_ids: string[];
+            /** Total */
+            total: number;
+        };
+        /**
          * RestoreResponse
          * @description ``POST /api/jobs/{id}/restore`` response: where the job landed.
          */
         RestoreResponse: {
             /** Job Id */
             job_id: string;
+            /** Real Job Id */
+            real_job_id?: string | null;
             /** Status */
             status: string;
         };
@@ -2852,6 +3476,12 @@ export interface components {
              * @default 0
              */
             scan_processed: number;
+            /** Scan Progress */
+            scan_progress?: {
+                [key: string]: {
+                    [key: string]: string | number | null;
+                };
+            };
             /** Scan Source */
             scan_source?: string | null;
             /** Scan Stats */
@@ -2891,6 +3521,10 @@ export interface components {
             status: string;
             /** Total Llm Cost Usd */
             total_llm_cost_usd: number;
+            /** Verdict Counts */
+            verdict_counts?: {
+                [key: string]: number;
+            } | null;
         };
         /**
          * RunsListResponse
@@ -2918,10 +3552,25 @@ export interface components {
              */
             ml_gate_enabled: boolean;
             /**
+             * Resume Version
+             * @default v1
+             */
+            resume_version: string;
+            /**
+             * Stage A Prompt Version
+             * @default v1
+             */
+            stage_a_prompt_version: string;
+            /**
              * Stage A Threshold
              * @default 60
              */
             stage_a_threshold: number;
+            /**
+             * Stage B Prompt Version
+             * @default v1
+             */
+            stage_b_prompt_version: string;
         };
         /**
          * SearchDraftState
@@ -3001,6 +3650,11 @@ export interface components {
              * @default 0.9210827946662903
              */
             out_of_scope_threshold: number;
+            /**
+             * Policy Version
+             * @default v1
+             */
+            policy_version: string;
         };
         /**
          * SourcesATSConfig
@@ -3419,6 +4073,8 @@ export interface components {
         TransitionResponse: {
             /** Job Id */
             job_id: string;
+            /** Real Job Id */
+            real_job_id?: string | null;
             /** Status */
             status: string;
         };
@@ -3878,7 +4534,8 @@ export interface operations {
                 apply_hard_filters?: boolean;
                 dedupe?: boolean;
                 fast?: boolean;
-                sort?: "discovered_desc" | "posted_asc" | "posted_desc" | "score_asc" | "score_desc" | "company_asc";
+                canonical?: boolean;
+                sort?: "discovered_desc" | "posted_asc" | "posted_desc" | "score_asc" | "score_desc" | "company_asc" | "triage_posted_asc" | "triage_posted_desc" | "triage_score_asc" | "triage_score_desc";
                 limit?: number;
                 offset?: number;
             };
@@ -3994,6 +4651,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_source_job_audit_api_jobs__job_id__audit_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDetailResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4888,6 +5576,444 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonalMLStatusResponse"];
+                };
+            };
+        };
+    };
+    list_real_jobs_api_real_jobs_get: {
+        parameters: {
+            query?: {
+                decision?: "results" | "wait" | "applied" | "ignored";
+                sort?: "triage_posted_asc" | "triage_posted_desc" | "triage_score_asc" | "triage_score_desc" | "discovered_desc";
+                search?: string | null;
+                require_verdict?: boolean;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealJobsListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_real_job_applications_api_real_jobs_applications_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealJobApplicationsListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bulk_transition_api_real_jobs_bulk_transition_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkTransitionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkTransitionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    select_real_jobs_api_real_jobs_selection_get: {
+        parameters: {
+            query?: {
+                decision?: "results" | "wait" | "applied" | "ignored";
+                sort?: "triage_posted_asc" | "triage_posted_desc" | "triage_score_asc" | "triage_score_desc" | "discovered_desc";
+                search?: string | null;
+                require_verdict?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealJobsSelectionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_real_job_api_real_jobs__real_job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealJobDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_to_real_job_api_real_jobs__real_job_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_apply_to_real_job_api_real_jobs__real_job_id__apply_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    followup_api_real_jobs__real_job_id__followup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FollowupBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_interviews_api_real_jobs__real_job_id__interviews_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewsListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_interview_api_real_jobs__real_job_id__interviews_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InterviewAddBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewRoundDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_interview_api_real_jobs__real_job_id__interviews__round_index__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+                round_index: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InterviewCompleteBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterviewRoundDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    note_api_real_jobs__real_job_id__note_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_api_real_jobs__real_job_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transition_api_real_jobs__real_job_id__transition_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                real_job_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransitionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransitionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

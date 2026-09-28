@@ -125,6 +125,8 @@ def _parse_statuses(raw: str | None) -> frozenset[str] | None:
 async def _run_list(app: AppContext, filters: StatusFilter) -> list[StatusInfo]:
     async def action() -> list[StatusInfo]:
         store = cast(WorkflowStore, app["store"])
+        if hasattr(type(store), "list_real_job_statuses"):
+            return await store.list_real_job_statuses(filters)
         return await store.list_statuses(filters)
 
     return await run_with_store(app, action)

@@ -111,6 +111,8 @@ class ApplicationDetail(BaseModel):
 class JobDetailResponse(BaseModel):
     """``GET /api/jobs/{id}`` response."""
 
+    real_job_id: str | None = None
+    evaluation_stale_reason: str | None = None
     job: JobDetailJob
     evaluation: EvaluationDetail
     status: StatusDetail

@@ -10,7 +10,6 @@ from jobfeed.adapters.store._sqlite_capability_support import (
     _fetch_rows,
     _hydrate_job,
     _immediate_transaction,
-    _placeholders,
     _require_utc_timestamp,
 )
 from jobfeed.adapters.store._sqlite_claim_filters import (
@@ -126,13 +125,14 @@ class _SqliteEvaluationClaims:
         )
         return await self._claim_stage_a(query)
 
-    async def claim_pending_stage_b(
+    async def claim_pending_stage_b(  # noqa: PLR0913 - claim filters
         self,
         *,
         now: datetime | None = None,
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        require_stage_a: bool = True,
         job_ids: list[str] | None = None,
     ) -> list[JobPosting]:
         """Claim ordered Stage B work using strict one-hour stale recovery."""
@@ -142,6 +142,7 @@ class _SqliteEvaluationClaims:
             limit=limit,
             max_days=max_days,
             stage_a_threshold=stage_a_threshold,
+            require_stage_a=require_stage_a,
             job_ids=None if job_ids is None else _numeric_ids(job_ids),
         )
         sql, params = _build_stage_b_select(query)
@@ -153,10 +154,14 @@ class _SqliteEvaluationClaims:
             rows = await _fetch_rows(connection, sql, params)
             claimed_job_ids = tuple(int(row["id"]) for row in rows)
             if claimed_job_ids:
-                await connection.execute(
-                    "UPDATE evaluations SET stage_b_status='in_progress', "
-                    f"updated_at=? WHERE job_id IN ({_placeholders(claimed_job_ids)})",
-                    (timestamp, *claimed_job_ids),
+                await connection.executemany(
+                    """INSERT INTO evaluations (
+                           job_id, stage_b_status, created_at, updated_at
+                       ) VALUES (?, 'in_progress', ?, ?)
+                       ON CONFLICT(job_id) DO UPDATE SET
+                           stage_b_status='in_progress',
+                           updated_at=excluded.updated_at""",
+                    [(job_id, timestamp, timestamp) for job_id in claimed_job_ids],
                 )
             await self._after_claim_selection("stage_b", connection)
         return [_hydrate_job(row) for row in rows]

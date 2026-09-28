@@ -518,22 +518,13 @@ async def test_claim_stage_a_by_ids_honors_corpus_eligibility(
     assert await _stage_a_status(store, fresh.job_id) == "in_progress"
 
 
-async def test_load_gate_candidates_suppresses_twin_of_completed_cluster(
+async def test_load_gate_candidates_retains_pending_post_with_completed_sibling(
     store: PostgresStore,
 ) -> None:
-    """A pending twin is excluded once any cluster member is Stage-A completed.
-
-    Dedupe scores each ``(company_norm, title_norm)`` cluster ONCE. When run 1
-    completes the cluster's representative (T1), the completed-exclusion drops T1
-    from run 2's load — but the still-pending twin T2 would otherwise re-enter,
-    re-elect itself as a new representative, and be re-scored (duplicate LLM
-    cost). Under the default incremental ``corpus='unrated'`` flow the gate-
-    candidates query also excludes any candidate whose non-blank twin key already
-    has a Stage-A ``completed`` member, so T2 stays out of the funnel.
-    """
+    """Unrated excludes only the completed post, never its same-title sibling."""
     t1 = await store.save_job(_make_twin("twin-1"))
     await store.save_job(_make_twin("twin-2"))
-    # Run 1 scored the cluster via its representative T1.
+    # Scoring one post does not complete another post's independent record.
     await store.save_stage_a(t1.job_id, _stage_a())
 
     candidates = await store.load_gate_candidates(
@@ -545,10 +536,7 @@ async def test_load_gate_candidates_suppresses_twin_of_completed_cluster(
     )
     ids = {c.job.canonical_id for c in candidates}
 
-    # T1 dropped (completed); T2 suppressed (cluster already scored).
-    assert "twin-1" not in ids
-    assert "twin-2" not in ids
-    assert ids == set()
+    assert ids == {"twin-2"}
 
 
 async def test_load_gate_candidates_blank_norm_twins_do_not_suppress(
@@ -679,15 +667,7 @@ async def test_load_gate_candidates_all_corpus_readmits_completed_row(
 async def test_load_gate_candidates_all_corpus_readmits_completed_cluster_twin(
     store: PostgresStore,
 ) -> None:
-    """``corpus='all'`` re-admits BOTH members of an already-scored twin cluster.
-
-    Under the incremental ``unrated`` flow a completed cluster member suppresses
-    its still-pending twin (score-each-cluster-once). An explicit full
-    re-evaluation (``corpus='all'``) must instead surface the WHOLE cluster — the
-    completed rep AND its twin — so the run can re-score the cluster; the twin-
-    suppression is scoped to ``unrated`` only. (Dedupe still elects one rep
-    downstream, so re-scoring stays once-per-cluster.)
-    """
+    """All re-admits completed posts; unrated retains their pending siblings."""
     t1 = await store.save_job(_make_twin("twin-1"))
     await store.save_job(_make_twin("twin-2"))
     await store.save_stage_a(t1.job_id, _stage_a())
@@ -709,8 +689,7 @@ async def test_load_gate_candidates_all_corpus_readmits_completed_cluster_twin(
 
     # corpus='all' surfaces both twins (completed rep + pending twin).
     assert {c.job.canonical_id for c in under_all} == {"twin-1", "twin-2"}
-    # The default flow still suppresses the whole completed cluster.
-    assert {c.job.canonical_id for c in under_unrated} == set()
+    assert {c.job.canonical_id for c in under_unrated} == {"twin-2"}
 
 
 async def test_load_gate_candidates_failed_corpus_keeps_error_twin_of_completed(

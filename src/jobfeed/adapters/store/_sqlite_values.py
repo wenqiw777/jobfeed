@@ -75,6 +75,7 @@ def _job_from_row(row: aiosqlite.Row) -> JobPosting:
         external_identity=row["external_identity"]
         if "external_identity" in row_keys
         else None,
+        apply_url=row["apply_url"] if "apply_url" in row_keys else None,
         enrich_attempted_at=_datetime_from_text(row["enrich_attempted_at"])
         if "enrich_attempted_at" in row_keys
         else None,
@@ -84,6 +85,20 @@ def _job_from_row(row: aiosqlite.Row) -> JobPosting:
         enrich_retry_after=_datetime_from_text(row["enrich_retry_after"])
         if "enrich_retry_after" in row_keys
         else None,
+        is_repost=bool(row["is_repost"])
+        if "is_repost" in row_keys and row["is_repost"] is not None
+        else None,
+        repost_evidence=row["repost_evidence"]
+        if "repost_evidence" in row_keys
+        else None,
+        repost_observed_at=_datetime_from_text(row["repost_observed_at"])
+        if "repost_observed_at" in row_keys
+        else None,
+        is_swe_role=(
+            bool(row["is_swe_role"])
+            if "is_swe_role" in row_keys and row["is_swe_role"] is not None
+            else None
+        ),
     )
 
 

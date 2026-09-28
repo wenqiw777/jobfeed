@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
+
+from jobfeed.adapters.store._repost_sort import triage_sorts
+from jobfeed.domain.display_posting import posting_location
 
 try:
     import asyncpg  # type: ignore[import-untyped]
@@ -15,6 +19,16 @@ except ImportError as _exc:  # pragma: no cover
     ) from _exc
 
 from jobfeed.adapters.store._normalize import normalize, normalize_company
+from jobfeed.adapters.store._postgres_real_job_evaluation import (
+    PostgresRealJobEvaluation,
+    sync_postgres_real_job_input,
+)
+from jobfeed.adapters.store._postgres_real_job_identity import (
+    IdentityParentChanged,
+    resolve_postgres_real_job,
+)
+from jobfeed.adapters.store._postgres_real_job_views import PostgresRealJobViews
+from jobfeed.adapters.store._postgres_real_job_workflow import PostgresRealJobWorkflow
 from jobfeed.adapters.store._run_scan_stats import dump_scan_stats, load_scan_stats
 from jobfeed.adapters.store.legacy_import import (
     AppliedRow,
@@ -28,7 +42,12 @@ from jobfeed.adapters.store.legacy_import import (
     StateRow,
     StatusHistoryRow,
 )
-from jobfeed.domain.errors import SnapshotAmbiguousError, SnapshotNotFoundError
+from jobfeed.domain.errors import (
+    CanonicalEvaluationNotReadyError,
+    SnapshotAmbiguousError,
+    SnapshotNotFoundError,
+)
+from jobfeed.domain.external_identity import external_identity
 from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models import (
     ApplicationRecord,
@@ -81,6 +100,12 @@ from jobfeed.domain.models_views import (
     TwinStatusRow,
 )
 from jobfeed.domain.quality import assess_quality, quality_rank
+from jobfeed.domain.real_job_evaluation import (
+    EVALUATION_ACTIVATION_KEY,
+    official_closed_at,
+    policy_visibility,
+    representative_source_id,
+)
 from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.domain.source_attribution import configured_source_counts
 from jobfeed.domain.status import (
@@ -97,6 +122,10 @@ from jobfeed.domain.status import (
 from jobfeed.domain.types import VALID_SEVERITIES, Severity
 from jobfeed.ports.source import StoredEnrichment
 from jobfeed.ports.store_claims import GateCandidate
+from jobfeed.services.canonical_priority import (
+    CanonicalPriorityInput,
+    priority_input_for_sources,
+)
 
 # ---------------------------------------------------------------------------
 # Row mapping helpers
@@ -153,6 +182,49 @@ def _job_from_record(r: asyncpg.Record) -> JobPosting:
         enrich_source=r["enrich_source"],
         closed_at=r["closed_at"],
         enrich_error=r["enrich_error"],
+        external_identity=r.get("external_identity"),
+        apply_url=r.get("apply_url"),
+        enrich_attempted_at=r.get("enrich_attempted_at"),
+        enrich_error_code=r.get("enrich_error_code"),
+        enrich_retry_after=r.get("enrich_retry_after"),
+        is_repost=bool(r["is_repost"]) if r.get("is_repost") is not None else None,
+        repost_evidence=r.get("repost_evidence"),
+        repost_observed_at=r.get("repost_observed_at"),
+        is_swe_role=r["is_swe_role"],
+    )
+
+
+async def _refresh_backfilled_real_job_display(
+    conn: asyncpg.Connection, source_ids: list[int]
+) -> None:
+    """Project canonical card source and official closure for one source page."""
+    parents = [
+        int(row[0])
+        for row in await conn.fetch(
+            "SELECT DISTINCT real_job_id FROM jobs WHERE id=ANY($1::int[])",
+            source_ids,
+        )
+    ]
+    if not parents:
+        return
+    grouped: dict[int, list[JobPosting]] = defaultdict(list)
+    for row in await conn.fetch(
+        "SELECT * FROM jobs WHERE real_job_id=ANY($1::bigint[]) "
+        "ORDER BY real_job_id,id",
+        parents,
+    ):
+        grouped[int(row["real_job_id"])].append(_job_from_record(row))
+    await conn.executemany(
+        "UPDATE real_jobs SET representative_job_id=$1,official_closed_at=$2 "
+        "WHERE id=$3",
+        [
+            (
+                representative_source_id(str(parent_id), jobs),
+                official_closed_at(jobs),
+                parent_id,
+            )
+            for parent_id, jobs in grouped.items()
+        ],
     )
 
 
@@ -200,11 +272,47 @@ _JOBS_VIEW_COLUMNS = (
     " AS stage_b_fit_score"
 )
 
+
+def _jobs_view_columns(*, include_jd_text: bool) -> str:
+    """Exclude large bodies from metadata-only Results reads."""
+    if include_jd_text:
+        return _JOBS_VIEW_COLUMNS
+    fields = (
+        "id",
+        "platform",
+        "canonical_id",
+        "url",
+        "title",
+        "company",
+        "location",
+        "discovered_at",
+        "jd_quality",
+        "posted_at",
+        "enriched_at",
+        "enrich_source",
+        "closed_at",
+        "enrich_error",
+        "external_identity",
+        "enrich_attempted_at",
+        "enrich_error_code",
+        "enrich_retry_after",
+        "is_repost",
+        "repost_evidence",
+        "repost_observed_at",
+        "is_swe_role",
+        "company_norm",
+        "title_norm",
+    )
+    metadata = ", ".join(f"jobs.{field}" for field in fields)
+    return _JOBS_VIEW_COLUMNS.replace("jobs.*", metadata + ", NULL AS jd_text")
+
+
 # SQL ORDER BY per JobsViewQuery.sort, mirroring the in-memory keys in
 # services/_jobs_view_sort.py (score = Stage B fit with Stage A fallback,
 # NULLS LAST; every sort ends in the discovered_at DESC, id DESC tiebreak)
 # so plain Library requests paginate in SQL beyond the corpus cap (D10).
 _JOBS_VIEW_SORT_SQL: dict[str, str] = {
+    "priority_desc": "jobs.discovered_at DESC, jobs.id DESC",
     "discovered_desc": "jobs.discovered_at DESC, jobs.id DESC",
     "posted_desc": (
         "COALESCE(jobs.posted_at, jobs.discovered_at) DESC, jobs.discovered_at DESC, "
@@ -228,6 +336,16 @@ _JOBS_VIEW_SORT_SQL: dict[str, str] = {
         "jobs.company_norm ASC NULLS LAST, jobs.discovered_at DESC, jobs.id DESC"
     ),
 }
+_JOBS_VIEW_SORT_SQL.update(
+    triage_sorts(
+        job="jobs",
+        score="COALESCE((evaluations.stage_b_fit_json->>'score_0_100')::integer, evaluations.stage_a_score)",
+        postgres=True,
+    )
+)
+
+
+MAX_REAL_JOB_BACKFILL_PAGE = 1000
 
 
 def _jobs_view_filters(query: JobsViewQuery) -> tuple[list[str], list[object]]:
@@ -393,13 +511,20 @@ def _stage_b_strengths(fit_json: dict[str, Any]) -> list[MatchItem]:
     """
     strong_match = fit_json.get("strong_match")
     if not isinstance(strong_match, list):
-        return []
+        strong_match = _evidence_items(fit_json)
     return [
         MatchItem(
-            requirement=m["requirement"],
-            evidence=m.get("evidence_from_resume", m.get("evidence", "")),
+            requirement=str(m.get("requirement", m.get("jd_need", "")) or ""),
+            evidence=str(
+                m.get(
+                    "evidence_from_resume",
+                    m.get("resume_evidence", m.get("evidence", "")),
+                )
+                or ""
+            ),
         )
         for m in strong_match
+        if isinstance(m, dict)
     ]
 
 
@@ -412,7 +537,7 @@ def _stage_b_gaps(fit_json: dict[str, Any]) -> list[GapItem]:
     """
     gaps = fit_json.get("gaps")
     if not isinstance(gaps, list):
-        return []
+        return _evidence_gaps(fit_json)
     return [
         GapItem(
             requirement=g["requirement"],
@@ -421,6 +546,44 @@ def _stage_b_gaps(fit_json: dict[str, Any]) -> list[GapItem]:
         )
         for g in gaps
     ]
+
+
+def _evidence_items(fit_json: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten unique dimension evidence. Complexity: O(D * E)."""
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for dimension in _evidence_dimensions(fit_json):
+        for item in dimension.get("evidence", []):
+            if not isinstance(item, dict):
+                continue
+            key = (str(item.get("jd_need", "")), str(item.get("resume_evidence", "")))
+            if key not in seen and all(key):
+                seen.add(key)
+                items.append(item)
+    return items
+
+
+def _evidence_gaps(fit_json: dict[str, Any]) -> list[GapItem]:
+    """Flatten unique dimension gaps. Complexity: O(D * G)."""
+    values: list[GapItem] = []
+    seen: set[str] = set()
+    for dimension in _evidence_dimensions(fit_json):
+        for raw in dimension.get("gaps", []):
+            gap = str(raw).strip()
+            if gap and gap not in seen:
+                seen.add(gap)
+                values.append(GapItem(requirement=gap, severity="major", mitigation=""))
+    return values
+
+
+def _evidence_dimensions(fit_json: dict[str, Any]) -> list[dict[str, Any]]:
+    names = (
+        "similar_work",
+        "core_technical_evidence",
+        "work_type_similarity",
+        "additional_relevant_evidence",
+    )
+    return [value for name in names if isinstance((value := fit_json.get(name)), dict)]
 
 
 def _stage_b_fit_analysis(fit_json: dict[str, Any]) -> FitAnalysis:
@@ -662,6 +825,9 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         jobs_gate_passed=r["jobs_gate_passed"],
         stage_a_scored=r["stage_a_scored"],
         stage_b_scored=r["stage_b_scored"],
+        verdict_counts=json.loads(r["verdict_counts_json"])
+        if isinstance(r["verdict_counts_json"], str)
+        else r["verdict_counts_json"],
         jobs_scored=r["jobs_scored"],
         total_llm_cost_usd=r["total_llm_cost_usd"],
         errors=r["errors"],
@@ -674,6 +840,9 @@ def _pipeline_run_from_record(r: asyncpg.Record) -> PipelineRun:
         restart_count=r["restart_count"],
         restarted_by_run_id=r["restarted_by_run_id"],
         scan_stats=load_scan_stats(r["scan_stats_json"]),
+        scan_progress=json.loads(r["scan_progress_json"] or "{}")
+        if isinstance(r["scan_progress_json"], str)
+        else (r["scan_progress_json"] or {}),
     )
 
 
@@ -1145,6 +1314,7 @@ def _stage_a_pending_filters(
     # predicate is shared, so it covers load_gate_candidates AND every claim
     # path (claim_pending_stage_a, claim_stage_a_by_ids).
     conditions.append("jobs.closed_at IS NULL")
+    conditions.append("jobs.is_repost IS DISTINCT FROM 1")
     conditions.append("COALESCE(jobs.hard_filter, '') = ''")
     if quality_bands:
         params.append(sorted(quality_bands))
@@ -1198,6 +1368,7 @@ def _stage_b_pending_filters(
     max_days: int | None,
     stage_a_threshold: int | None,
     now: datetime,
+    require_stage_a: bool = True,
 ) -> tuple[list[str], list[Any]]:
     """Build shared Stage B pending filters.
 
@@ -1210,10 +1381,12 @@ def _stage_b_pending_filters(
         WHERE conditions and positional (asyncpg) parameters.
     """
     conditions = [
-        "evaluations.stage_a_status = 'completed'",
+        "jobs.is_repost IS DISTINCT FROM 1",
         "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status = 'error')",
         _PG_STAGE_B_UNDER_CAP,
     ]
+    if require_stage_a:
+        conditions.append("evaluations.stage_a_status = 'completed'")
     params: list[Any] = []
     if max_days is not None:
         params.append(now - timedelta(days=max_days))
@@ -1230,6 +1403,7 @@ def _build_pending_stage_b_query(
     max_days: int | None,
     stage_a_threshold: int | None,
     now: datetime,
+    require_stage_a: bool = True,
 ) -> tuple[str, list[Any]]:
     """Build the Stage B pending query (Stage A completed, Stage B pending).
 
@@ -1246,12 +1420,13 @@ def _build_pending_stage_b_query(
         max_days=max_days,
         stage_a_threshold=stage_a_threshold,
         now=now,
+        require_stage_a=require_stage_a,
     )
     params.append(limit)
     where = " AND ".join(conditions)
     sql = (
         "SELECT jobs.* FROM jobs "
-        "JOIN evaluations ON evaluations.job_id = jobs.id "
+        "LEFT JOIN evaluations ON evaluations.job_id = jobs.id "
         f"WHERE {where} "
         "ORDER BY jobs.discovered_at DESC, jobs.id DESC "
         f"LIMIT ${len(params)}"
@@ -1434,37 +1609,10 @@ def _build_claim_stage_a_by_ids_query(
 
 
 def _append_unrated_completed_suppression(conditions: list[str]) -> None:
-    """Append the unrated-only completed-exclusion + twin-suppression predicates.
-
-    Scoped to the incremental ``corpus='unrated'`` flow (the caller gates on
-    corpus). Two predicates, neither parameterized:
-
-    1. Completed-exclusion — a row already Stage-A ``completed`` (or whose
-       cluster was) is done, so drop it from the default incremental load.
-    2. Twin-cluster cross-run suppression — once ANY member of a row's twin
-       cluster (shared ``(company_norm, title_norm)``) is Stage-A ``completed``
-       the cluster has been scored, so drop every still-pending sibling; else the
-       survivors re-elect a new representative next run and incur duplicate LLM
-       cost, violating dedupe's "score each cluster once". Only fires when BOTH
-       norms are non-blank, mirroring dedupe's blank-norm singleton rule (a blank
-       company_norm OR title_norm forms its own cluster and must never suppress
-       another blank-norm row).
-
-    Args:
-        conditions: WHERE-clause fragment list, appended in place.
-    """
+    """Exclude this post's completed result, never another post's result."""
     conditions.append(
         "(evaluations.job_id IS NULL "
         "OR evaluations.stage_a_status IS DISTINCT FROM 'completed')"
-    )
-    conditions.append(
-        "(NOT (COALESCE(jobs.company_norm,'') <> '' "
-        "AND COALESCE(jobs.title_norm,'') <> '') "
-        "OR NOT EXISTS (SELECT 1 FROM jobs twin "
-        "JOIN evaluations twin_eval ON twin_eval.job_id = twin.id "
-        "WHERE twin.company_norm = jobs.company_norm "
-        "AND twin.title_norm = jobs.title_norm "
-        "AND twin_eval.stage_a_status = 'completed'))"
     )
 
 
@@ -1485,20 +1633,20 @@ def _build_gate_candidates_query(
     ``discovered_at`` / retry-cap) and the SAME stale-takeover corpus predicate
     the claim builders use (``_stage_a_claim_status_condition``). For the
     incremental DEFAULT corpus (``'unrated'``) it ALSO adds the
-    not-yet-Stage-A-scored exclusion (status IS DISTINCT FROM 'completed') plus a
-    twin-cluster cross-run suppression; both are scoped to ``'unrated'`` ONLY (see
+    current-row not-yet-scored exclusion (status IS DISTINCT FROM 'completed'),
+    scoped to ``'unrated'`` ONLY (see
     ``_append_unrated_completed_suppression``). When ``exclude_gate_failed`` is
     set, ``jobs.ml_gate_result IS DISTINCT FROM 'fail'`` is appended for every
     corpus.
 
     Corpus-scoped completed handling — because the funnel is the sole path to
-    survivor ids, the completed-exclusion / twin-suppression must AGREE with each
+    survivor ids, the current-row completed exclusion must agree with each
     corpus's claim semantics or rows get filtered before
     ``claim_stage_a_by_ids`` can claim them:
-      * ``'unrated'`` — completed rows + completed-cluster twins are dropped
+      * ``'unrated'`` — only this post's completed result is dropped
         (incremental "score new work once").
-      * ``'all'`` — explicit full re-evaluation: completed rows AND completed-
-        cluster twins are RE-ADMITTED, mirroring the claim's stale-takeover that
+      * ``'all'`` — explicit full re-evaluation: completed rows are re-admitted,
+        mirroring the claim's stale-takeover that
         permits non-locked completed rows.
       * ``'failed'`` — targets ``'error'`` rows (the claim status predicate
         already restricts the set); a failed twin whose cluster sibling completed
@@ -1555,7 +1703,7 @@ def _build_gate_candidates_query(
         conditions.append(
             f"(jobs.discovered_at, jobs.id) < (${len(params) - 1}, ${len(params)})"
         )
-    # Completed-exclusion + twin-cluster suppression are scoped to the
+    # Current-row completed exclusion is scoped to the
     # incremental DEFAULT flow (corpus='unrated') ONLY. The funnel is now the
     # sole path to survivor ids, so applying them to every corpus would silently
     # filter completed rows BEFORE claim_stage_a_by_ids could re-claim them,
@@ -1618,12 +1766,12 @@ def _build_claim_stage_b_query(
     stage_a_threshold: int | None,
     now: datetime,
     job_ids: list[int] | None = None,
+    require_stage_a: bool = True,
 ) -> tuple[str, list[Any]]:
     """Build the Stage B atomic claim query."""
-    conditions = [
-        "evaluations.stage_a_status = 'completed'",
-        _PG_STAGE_B_UNDER_CAP,
-    ]
+    conditions = ["jobs.is_repost IS DISTINCT FROM 1", _PG_STAGE_B_UNDER_CAP]
+    if require_stage_a:
+        conditions.append("evaluations.stage_a_status = 'completed'")
     params: list[Any] = []
     if max_days is not None:
         params.append(now - timedelta(days=max_days))
@@ -1651,18 +1799,18 @@ def _build_claim_stage_b_query(
     return (
         f"""WITH candidates AS (
                 SELECT jobs.id FROM jobs
-                JOIN evaluations ON evaluations.job_id = jobs.id
+                LEFT JOIN evaluations ON evaluations.job_id = jobs.id
                 WHERE {where}
                 ORDER BY jobs.discovered_at DESC, jobs.id DESC
                 LIMIT ${len(params)}
-                FOR UPDATE OF evaluations SKIP LOCKED
+                FOR UPDATE OF jobs SKIP LOCKED
             ),
             claimed AS (
-                UPDATE evaluations
-                SET stage_b_status = 'in_progress', updated_at = now()
-                FROM candidates
-                WHERE evaluations.job_id = candidates.id
-                  AND (
+                INSERT INTO evaluations (job_id, stage_b_status, updated_at)
+                SELECT id, 'in_progress', now() FROM candidates
+                ON CONFLICT (job_id) DO UPDATE SET
+                    stage_b_status = 'in_progress', updated_at = now()
+                WHERE (
                     evaluations.stage_b_status IS NULL
                     OR evaluations.stage_b_status = 'error'
                     OR (
@@ -1671,7 +1819,7 @@ def _build_claim_stage_b_query(
                         AND evaluations.stage_b_verdict IS NULL
                     )
                   )
-                RETURNING evaluations.job_id
+                RETURNING job_id
             )
             SELECT jobs.* FROM jobs
             JOIN claimed ON claimed.job_id = jobs.id
@@ -1689,6 +1837,7 @@ def _build_stage_b_preview_query(
 ) -> tuple[str, list[Any]]:
     """Build the read-only Stage B queue preview query."""
     conditions = [
+        "jobs.is_repost IS DISTINCT FROM 1",
         "evaluations.stage_a_status = 'completed'",
         "evaluations.stage_a_score >= $1",
         _PG_STAGE_B_UNDER_CAP,
@@ -1746,12 +1895,255 @@ def _row_to_interview_round(row: asyncpg.Record) -> InterviewRound:
 # ---------------------------------------------------------------------------
 
 
-class PostgresStore:
+class PostgresStore(
+    PostgresRealJobEvaluation, PostgresRealJobWorkflow, PostgresRealJobViews
+):
     """PostgreSQL-backed JobStore implementation using asyncpg connection pool.
 
     All methods use asyncpg's native ``$1, $2, ...`` parameter placeholders
     and JSONB columns. Transactions use ``async with conn.transaction():``.
     """
+
+    async def resolve_real_job_ids(self, source_ids: list[str]) -> list[str]:
+        """Resolve source insertions to distinct canonical IDs in input order."""
+        if not source_ids:
+            return []
+        ids = [int(value) for value in dict.fromkeys(source_ids)]
+        async with self._get_pool().acquire() as db:
+            rows = await db.fetch(
+                "SELECT id,real_job_id FROM jobs WHERE id=ANY($1::int[])", ids
+            )
+        mapping = {
+            int(row["id"]): str(row["real_job_id"])
+            for row in rows
+            if row["real_job_id"] is not None
+        }
+        if len(mapping) != len(ids):
+            raise ValueError("evaluation scope contains a missing real-job parent")
+        return list(dict.fromkeys(mapping[value] for value in ids))
+
+    async def list_real_job_ids_for_evaluation(
+        self,
+        *,
+        limit: int,
+        stage: str = "both",
+        threshold: int = 0,
+        before_id: int | None = None,
+        stage_a_policy: dict[str, object] | None = None,
+        stage_b_policy: dict[str, object] | None = None,
+    ) -> list[str]:
+        if limit <= 0:
+            return []
+        if stage not in {"a", "b", "both"}:
+            raise ValueError("unknown canonical evaluation stage")
+        stage_a = (
+            "(e.real_job_id IS NULL OR e.stage_a_status IS DISTINCT FROM 'completed' "
+            "OR (p.a IS NOT NULL AND "
+            "e.input_facts_json::jsonb->'stage_a_policy' IS DISTINCT FROM p.a))"
+        )
+        stage_b = (
+            "(e.stage_a_status='completed' AND e.stage_a_score>=p.threshold "
+            "AND (e.stage_b_status IS DISTINCT FROM 'completed' OR "
+            "(p.b IS NOT NULL AND "
+            "e.input_facts_json::jsonb->'stage_b_policy' IS DISTINCT FROM p.b)))"
+        )
+        predicate = {
+            "a": stage_a,
+            "b": stage_b,
+            "both": f"({stage_a} OR {stage_b})",
+        }[stage]
+        args = (
+            json.dumps(stage_a_policy, sort_keys=True)
+            if stage_a_policy is not None
+            else None,
+            threshold,
+            json.dumps(stage_b_policy, sort_keys=True)
+            if stage_b_policy is not None
+            else None,
+            before_id,
+            limit,
+        )
+        async with self._get_pool().acquire() as db:
+            rows = await db.fetch(
+                "WITH p AS (SELECT $1::jsonb AS a,$2::int AS threshold,"
+                "$3::jsonb AS b,$4::bigint AS before,$5::int AS lim) "
+                "SELECT r.id FROM real_jobs r LEFT JOIN real_job_evaluations e "
+                "ON e.real_job_id=r.id CROSS JOIN p "
+                "WHERE r.identity_review_state='clear' "
+                f"AND {predicate} AND (p.before IS NULL "
+                "OR r.id < p.before) ORDER BY r.id DESC LIMIT (SELECT lim FROM p)",
+                *args,
+            )
+        return [str(row["id"]) for row in rows]
+
+    async def canonical_evaluation_ready(self) -> bool:
+        if await self.get_state(EVALUATION_ACTIVATION_KEY) != "enabled":
+            return False
+        async with self._get_pool().acquire() as db:
+            if not await db.fetchval(
+                "SELECT to_regclass('public.real_job_evaluations') IS NOT NULL"
+            ):
+                raise CanonicalEvaluationNotReadyError(
+                    "canonical evaluation activation lacks schema"
+                )
+            for label, sql in (
+                (
+                    "orphan source",
+                    "SELECT 1 FROM jobs WHERE real_job_id IS NULL LIMIT 1",
+                ),
+                (
+                    "workflow backfill",
+                    "SELECT 1 FROM real_jobs r LEFT JOIN real_job_status s "
+                    "ON s.real_job_id=r.id WHERE r.identity_review_state='clear' "
+                    "AND s.real_job_id IS NULL LIMIT 1",
+                ),
+                (
+                    "application backfill",
+                    "SELECT 1 FROM applied a LEFT JOIN real_job_applications ra "
+                    "ON ra.source_applied_job_id=a.job_id WHERE ra.id IS NULL LIMIT 1",
+                ),
+                (
+                    "evaluation backfill",
+                    "SELECT 1 FROM evaluations e JOIN jobs j ON j.id=e.job_id "
+                    "JOIN real_jobs r ON r.id=j.real_job_id "
+                    "LEFT JOIN real_job_evaluations re ON re.real_job_id=j.real_job_id "
+                    "WHERE e.stage_a_status='completed' AND re.real_job_id IS NULL "
+                    "AND r.identity_review_state NOT IN "
+                    "('evaluation_conflict','evaluation_input_conflict',"
+                    "'evaluation_input_missing','requirements_conflict') LIMIT 1",
+                ),
+            ):
+                if await db.fetchval(sql):
+                    raise CanonicalEvaluationNotReadyError(
+                        f"canonical evaluation activation has {label}"
+                    )
+        return True
+
+    async def canonical_policy_pending_counts(
+        self,
+        *,
+        stage_a_policy: dict[str, object],
+        stage_b_policy: dict[str, object],
+    ) -> dict[str, int]:
+        """Count completed canonical scores with unverified policy versions."""
+        a = json.dumps(stage_a_policy, sort_keys=True, separators=(",", ":"))
+        b = json.dumps(stage_b_policy, sort_keys=True, separators=(",", ":"))
+        async with self._get_pool().acquire() as db:
+            row = await db.fetchrow(
+                "WITH p AS (SELECT $1::jsonb AS a,$2::jsonb AS b) "
+                "SELECT "
+                "COUNT(*) FILTER (WHERE e.stage_a_status='completed' AND "
+                "e.input_facts_json::jsonb->'stage_a_policy' IS DISTINCT FROM p.a) "
+                "AS stage_a_pending,"
+                "COUNT(*) FILTER (WHERE e.stage_b_status='completed' AND "
+                "e.input_facts_json::jsonb->'stage_a_policy'=p.a AND "
+                "e.input_facts_json::jsonb->'stage_b_policy' IS DISTINCT FROM p.b) "
+                "AS stage_b_pending,"
+                "COUNT(*) FILTER (WHERE e.stage_a_status='completed' AND "
+                "e.input_facts_json::jsonb->'stage_a_policy' IS NULL) "
+                "AS legacy_stage_a,"
+                "COUNT(*) FILTER (WHERE e.stage_b_status='completed' AND "
+                "e.input_facts_json::jsonb->'stage_b_policy' IS NULL) "
+                "AS legacy_stage_b "
+                "FROM real_job_evaluations e JOIN real_jobs r "
+                "ON r.id=e.real_job_id CROSS JOIN p "
+                "WHERE r.identity_review_state='clear'",
+                a,
+                b,
+            )
+        return {
+            key: int(row[key])
+            for key in (
+                "stage_a_pending",
+                "stage_b_pending",
+                "legacy_stage_a",
+                "legacy_stage_b",
+            )
+        }
+
+    async def canonical_policy_cutover_ready(
+        self,
+        *,
+        stage_a_policy: dict[str, object],
+        stage_b_policy: dict[str, object],
+    ) -> bool:
+        """Fail closed when completed scores lack configured policy proof."""
+        counts = await self.canonical_policy_pending_counts(
+            stage_a_policy=stage_a_policy,
+            stage_b_policy=stage_b_policy,
+        )
+        if counts["stage_a_pending"] or counts["stage_b_pending"]:
+            detail = ", ".join(f"{key}={value}" for key, value in counts.items())
+            raise ValueError(f"canonical policy cutover pending: {detail}")
+        return True
+
+    async def load_real_job_priority_inputs(
+        self,
+        real_job_ids: list[str],
+        *,
+        stage_a_policy: dict[str, object] | None = None,
+        stage_b_policy: dict[str, object] | None = None,
+    ) -> list[CanonicalPriorityInput]:
+        """Load canonical score/status and source evidence once per parent."""
+        if not real_job_ids:
+            return []
+        ids = list(dict.fromkeys(int(value) for value in real_job_ids))
+        async with self._get_pool().acquire() as db:
+            rows = await db.fetch(
+                "SELECT j.*,r.representative_job_id,s.status AS real_status,"
+                "e.stage_a_status AS real_a_status,"
+                "e.stage_a_score AS real_a_score,e.stage_b_json AS real_b_json,"
+                "e.stage_b_status AS real_b_status,"
+                "e.input_facts_json AS real_input_facts_json "
+                "FROM jobs j JOIN real_jobs r ON r.id=j.real_job_id "
+                "LEFT JOIN real_job_status s ON s.real_job_id=r.id "
+                "LEFT JOIN real_job_evaluations e ON e.real_job_id=r.id "
+                "WHERE r.id=ANY($1::bigint[]) ORDER BY r.id,j.id",
+                ids,
+            )
+        grouped: dict[int, list[JobPosting]] = {value: [] for value in ids}
+        metadata: dict[int, asyncpg.Record] = {}
+        for row in rows:
+            real_id = int(row["real_job_id"])
+            grouped[real_id].append(_job_from_record(row))
+            metadata[real_id] = row
+        output: list[CanonicalPriorityInput] = []
+        for real_id in ids:
+            row = metadata.get(real_id)
+            if row is None:
+                continue
+            stage_b = json.loads(row["real_b_json"]) if row["real_b_json"] else {}
+            fit = stage_b.get("fit_analysis", {}).get("score")
+            a_visible, b_visible, _ = policy_visibility(
+                row["real_input_facts_json"],
+                stage_a_policy=stage_a_policy,
+                stage_b_policy=stage_b_policy,
+            )
+            item = priority_input_for_sources(
+                str(real_id),
+                grouped[real_id],
+                representative_source_id=(
+                    str(row["representative_job_id"])
+                    if row["representative_job_id"] is not None
+                    else None
+                ),
+                status=str(row["real_status"] or "new"),
+                stage_a_score=(
+                    int(row["real_a_score"])
+                    if a_visible
+                    and row["real_a_status"] == "completed"
+                    and row["real_a_score"] is not None
+                    else None
+                ),
+                stage_b_fit_score=int(fit) if b_visible and fit is not None else None,
+                stage_a_status=row["real_a_status"] if a_visible else None,
+                stage_b_status=row["real_b_status"] if b_visible else None,
+                input_facts_json=row["real_input_facts_json"],
+                now=datetime.now(UTC),
+            )
+            if item is not None:
+                output.append(item)
+        return output
 
     def __init__(self, dsn: str, **pool_kwargs: Any) -> None:
         """Create a store for a PostgreSQL connection string.
@@ -2284,6 +2676,17 @@ class PostgresStore:
     # ------------------------------------------------------------------
 
     async def save_job(self, job: JobPosting) -> SaveJobResult:
+        """Persist one source, retrying a bounded concurrent identity move."""
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                return await self._save_job_once(job)
+            except (IdentityParentChanged, asyncpg.DeadlockDetectedError):
+                if attempt == max_attempts - 1:
+                    raise
+        raise AssertionError("unreachable identity retry state")
+
+    async def _save_job_once(self, job: JobPosting) -> SaveJobResult:
         """Insert or upsert a job by (platform, canonical_id).
 
         Uses ``INSERT ... ON CONFLICT DO UPDATE ... RETURNING id, (xmax = 0) AS inserted``
@@ -2296,16 +2699,24 @@ class PostgresStore:
             Upsert result with store-assigned identity.
         """
         pool = self._get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 f"""INSERT INTO jobs (
                        platform, canonical_id, url, title, company, location,
                        jd_text, jd_quality, posted_at, discovered_at,
                        enriched_at, enrich_source,
                        company_norm, title_norm, location_norm,
-                       closed_at, enrich_error
-                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                       closed_at, enrich_error, external_identity, enrich_attempted_at,
+                       enrich_error_code, enrich_retry_after, is_repost, repost_evidence, repost_observed_at
+                   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$19,$20,$21,$22,$23,$24,$25)
                    ON CONFLICT (platform, canonical_id) DO UPDATE SET
+                       is_repost = CASE WHEN jobs.is_repost=1 THEN 1 ELSE COALESCE(EXCLUDED.is_repost,jobs.is_repost) END,
+                       repost_evidence = CASE WHEN EXCLUDED.is_repost IS NULL OR (jobs.is_repost=1 AND EXCLUDED.is_repost<>1) THEN jobs.repost_evidence ELSE EXCLUDED.repost_evidence END,
+                       repost_observed_at = CASE WHEN EXCLUDED.is_repost IS NULL OR (jobs.is_repost=1 AND EXCLUDED.is_repost<>1) THEN jobs.repost_observed_at ELSE EXCLUDED.repost_observed_at END,
+                       external_identity = EXCLUDED.external_identity,
+                       enrich_attempted_at = COALESCE(EXCLUDED.enrich_attempted_at, jobs.enrich_attempted_at),
+                       enrich_error_code = EXCLUDED.enrich_error_code,
+                       enrich_retry_after = EXCLUDED.enrich_retry_after,
                        url = EXCLUDED.url,
                        title = EXCLUDED.title,
                        company = EXCLUDED.company,
@@ -2327,7 +2738,7 @@ class PostgresStore:
                            THEN COALESCE(EXCLUDED.jd_quality, jobs.jd_quality)
                            ELSE jobs.jd_quality END,
                        posted_at = COALESCE(EXCLUDED.posted_at, jobs.posted_at),
-                       discovered_at = EXCLUDED.discovered_at,
+                       discovered_at = jobs.discovered_at,
                        enriched_at = COALESCE(EXCLUDED.enriched_at, jobs.enriched_at),
                        -- enrich_source must track whichever jd_text actually
                        -- wins above: only adopt the incoming provenance when the
@@ -2347,15 +2758,13 @@ class PostgresStore:
                        location_norm = EXCLUDED.location_norm,
                        closed_at = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
                                         ELSE COALESCE(jobs.closed_at, EXCLUDED.closed_at) END,
-                       enrich_error = CASE WHEN EXCLUDED.jd_text IS NOT NULL THEN NULL
+                       enrich_error = CASE WHEN EXCLUDED.jd_text IS NOT NULL AND EXCLUDED.jd_quality IN ('good','full') THEN NULL
                                            ELSE COALESCE(EXCLUDED.enrich_error, jobs.enrich_error) END,
                        hard_filter = CASE
                            WHEN jobs.company IS DISTINCT FROM EXCLUDED.company
                              OR jobs.location IS DISTINCT FROM EXCLUDED.location
                              OR (EXCLUDED.posted_at IS NOT NULL
                                  AND jobs.posted_at IS DISTINCT FROM EXCLUDED.posted_at)
-                             OR (EXCLUDED.posted_at IS NULL
-                                 AND jobs.discovered_at IS DISTINCT FROM EXCLUDED.discovered_at)
                            THEN NULL ELSE jobs.hard_filter END,
                        -- Reset the stale ML-gate verdict iff a gate INPUT
                        -- feature (title, or the JD that actually WINS this
@@ -2389,14 +2798,124 @@ class PostgresStore:
                 job.closed_at,
                 job.enrich_error,
                 quality_rank(job.jd_quality),
+                job.external_identity or external_identity(job.url),
+                job.enrich_attempted_at,
+                job.enrich_error_code,
+                job.enrich_retry_after,
+                None if job.is_repost is None else int(job.is_repost),
+                job.repost_evidence,
+                job.repost_observed_at,
             )
             assert row is not None  # RETURNING always produces a row
+            source_id = int(row["id"])
+            if job.apply_url:
+                await conn.execute(
+                    "UPDATE jobs SET apply_url=$1 WHERE id=$2", job.apply_url, source_id
+                )
+            parent_id = await conn.fetchval(
+                "SELECT real_job_id FROM jobs WHERE id=$1 FOR UPDATE", source_id
+            )
+            if parent_id is None:
+                parent_id = await conn.fetchval(
+                    "INSERT INTO real_jobs(representative_job_id) VALUES($1) RETURNING id",
+                    source_id,
+                )
+                await conn.execute(
+                    "UPDATE jobs SET real_job_id=$1 WHERE id=$2", parent_id, source_id
+                )
+            await conn.execute(
+                "INSERT INTO real_job_status(real_job_id,status,next_followup_at,"
+                "resume_variant,notes,last_status_change_at) "
+                "SELECT $1,status,next_followup_at,resume_variant,notes,"
+                "last_status_change_at FROM job_status WHERE job_id=$2 "
+                "ON CONFLICT(real_job_id) DO NOTHING",
+                parent_id,
+                source_id,
+            )
+            await conn.execute(
+                "INSERT INTO real_job_status_history(real_job_id,source_history_id,"
+                "from_status,to_status,changed_at,reason,resume_variant_at_change) "
+                "SELECT $1,id,from_status,to_status,changed_at,reason,"
+                "resume_variant_at_change FROM job_status_history WHERE job_id=$2 "
+                "ON CONFLICT(source_history_id) DO NOTHING",
+                parent_id,
+                source_id,
+            )
+            await conn.execute(
+                "INSERT INTO real_job_identifiers("
+                "real_job_id,provider,scope,native_id,evidence_job_id,observed_url) "
+                "VALUES($1,$2,'',$3,$4,$5) ON CONFLICT(provider,scope,native_id) DO NOTHING",
+                parent_id,
+                job.platform,
+                job.canonical_id,
+                source_id,
+                job.url,
+            )
+            await resolve_postgres_real_job(conn, source_id, job)
+            await sync_postgres_real_job_input(conn, source_id, _job_from_record)
             inserted = bool(row["inserted"])
             return SaveJobResult(
                 job_id=str(row["id"]),
                 inserted=inserted,
                 updated=not inserted,
             )
+
+    async def reconcile_real_jobs(self) -> int:
+        """Idempotently parent legacy sources that predate the live source writer.
+
+        Run this after the nullable-FK migration and repeat it while old scan
+        workers may still be writing. It preserves all source child rows.
+        """
+        async with self._get_pool().acquire() as conn, conn.transaction():
+            await conn.execute(
+                "INSERT INTO real_jobs(representative_job_id) "
+                "SELECT id FROM jobs WHERE real_job_id IS NULL "
+                "ON CONFLICT (representative_job_id) DO NOTHING"
+            )
+            await conn.execute(
+                "UPDATE jobs AS j SET real_job_id=r.id FROM real_jobs AS r "
+                "WHERE j.real_job_id IS NULL AND r.representative_job_id=j.id"
+            )
+            await conn.execute(
+                "INSERT INTO real_job_identifiers("
+                "real_job_id,provider,scope,native_id,evidence_job_id,observed_url) "
+                "SELECT real_job_id,platform,'',canonical_id,id,url FROM jobs "
+                "WHERE real_job_id IS NOT NULL "
+                "ON CONFLICT(provider,scope,native_id) DO NOTHING"
+            )
+            remaining = await conn.fetchval(
+                "SELECT COUNT(*) FROM jobs WHERE real_job_id IS NULL"
+            )
+        return int(remaining)
+
+    async def backfill_real_job_identifiers(
+        self, *, after_id: int = 0, limit: int = 100
+    ) -> tuple[int, int]:
+        """Explicitly reconcile one bounded exact-identity page on a DB copy."""
+        if limit < 1 or limit > MAX_REAL_JOB_BACKFILL_PAGE:
+            raise ValueError("limit must be between 1 and 1000")
+        async with self._get_pool().acquire() as conn, conn.transaction():
+            rows = await conn.fetch(
+                "SELECT * FROM jobs WHERE id>$1 AND real_job_id IS NOT NULL "
+                "ORDER BY id LIMIT $2",
+                after_id,
+                limit,
+            )
+            for row in rows:
+                merged = await resolve_postgres_real_job(
+                    conn,
+                    int(row["id"]),
+                    _job_from_record(row),
+                    include_content=False,
+                )
+                if merged:
+                    await sync_postgres_real_job_input(
+                        conn, int(row["id"]), _job_from_record
+                    )
+            await _refresh_backfilled_real_job_display(
+                conn, [int(row["id"]) for row in rows]
+            )
+        return (int(rows[-1]["id"]) if rows else after_id, len(rows))
 
     async def save_hard_filters(self, reasons: dict[str, str]) -> None:
         """Persist deterministic hard-filter reasons in one transaction.
@@ -2481,7 +3000,7 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                """SELECT jd_text, jd_quality, enriched_at, enrich_source
+                """SELECT *
                    FROM jobs WHERE platform = $1 AND canonical_id = $2""",
                 platform,
                 canonical_id,
@@ -2493,6 +3012,51 @@ class PostgresStore:
             quality=QualityBand(row["jd_quality"]) if row["jd_quality"] else None,
             enriched_at=row["enriched_at"],
             enrich_source=row["enrich_source"],
+            platform=row["platform"],
+            external_identity=row["external_identity"],
+            enrich_attempted_at=row["enrich_attempted_at"],
+            enrich_error_code=row["enrich_error_code"],
+            enrich_retry_after=row["enrich_retry_after"],
+            enrich_error=row["enrich_error"],
+        )
+
+    async def get_enrichment_by_identity(
+        self, identity: str
+    ) -> StoredEnrichment | None:
+        """Find a complete cross-source JD or latest deferred exact twin."""
+        if not identity:
+            return None
+        async with self._get_pool().acquire() as conn:
+            platform, _, canonical_id = identity.partition(":")
+            if platform in {"jobright", "handshake"}:
+                official = await conn.fetchval(
+                    "SELECT external_identity FROM jobs WHERE platform=$1 AND canonical_id=$2",
+                    platform,
+                    canonical_id,
+                )
+                if official:
+                    identity = official
+            row = await conn.fetchrow(
+                """SELECT * FROM jobs WHERE (external_identity=$1 OR external_identity IN
+                   (SELECT platform || ':' || canonical_id FROM jobs WHERE external_identity=$1 AND platform IN ('jobright','handshake'))) AND closed_at IS NULL
+                   ORDER BY CASE WHEN jd_quality IN ('good','full')
+                   AND LENGTH(TRIM(COALESCE(jd_text,'')))>0 THEN 0 ELSE 1 END,
+                   enrich_retry_after DESC NULLS LAST, enriched_at DESC NULLS LAST, id LIMIT 1""",
+                identity,
+            )
+        if row is None:
+            return None
+        return StoredEnrichment(
+            jd_text=row["jd_text"],
+            quality=QualityBand(row["jd_quality"]) if row["jd_quality"] else None,
+            enriched_at=row["enriched_at"],
+            enrich_source=row["enrich_source"],
+            platform=row["platform"],
+            external_identity=identity,
+            enrich_attempted_at=row["enrich_attempted_at"],
+            enrich_error_code=row["enrich_error_code"],
+            enrich_retry_after=row["enrich_retry_after"],
+            enrich_error=row["enrich_error"],
         )
 
     async def get_closed_canonical_ids(self, *, platform: str) -> set[str]:
@@ -2596,7 +3160,7 @@ class PostgresStore:
             error: Error detail.
         """
         pool = self._get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             await conn.execute(
                 """INSERT INTO evaluations (
                        job_id, stage_a_status, stage_a_error, stage_a_error_count
@@ -2617,6 +3181,12 @@ class PostgresStore:
             job_id: Store-assigned identity.
             result: Stage B result.
         """
+        verdict = result.verdict.value
+        summary = result.jd_summary
+        verdict_json = _stage_b_block_json(result, "verdict")
+        summary_json = _stage_b_block_json(result, "jd_summary")
+        fit_json = _stage_b_block_json(result, "fit_analysis")
+        hooks_json = _stage_b_block_json(result, "resume_hooks")
         pool = self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
@@ -2644,12 +3214,12 @@ class PostgresStore:
                        stage_b_at = COALESCE(evaluations.stage_b_at, now()),
                        updated_at = now()""",
                 int(job_id),
-                result.verdict.value,
-                result.jd_summary,
-                _stage_b_block_json(result, "verdict"),
-                _stage_b_block_json(result, "jd_summary"),
-                _stage_b_block_json(result, "fit_analysis"),
-                _stage_b_block_json(result, "resume_hooks"),
+                verdict,
+                summary,
+                verdict_json,
+                summary_json,
+                fit_json,
+                hooks_json,
                 result.model,
                 result.cost_usd,
                 result.prompt_hash,
@@ -2689,6 +3259,24 @@ class PostgresStore:
             await conn.execute(
                 """UPDATE evaluations SET
                        stage_b_status = 'skipped_below_threshold',
+                       updated_at = now()
+                   WHERE job_id = $1
+                     AND stage_b_status IS DISTINCT FROM 'completed'""",
+                int(job_id),
+            )
+
+    async def mark_stage_b_ineligible(self, job_id: str) -> None:
+        """Persist a hard-eligibility skip so it is not reclaimed.
+
+        Args:
+            job_id: Store-assigned identity.
+        """
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE evaluations SET
+                       stage_b_status = 'skipped_below_threshold',
+                       stage_b_error = 'ineligible',
                        updated_at = now()
                    WHERE job_id = $1
                      AND stage_b_status IS DISTINCT FROM 'completed'""",
@@ -2777,6 +3365,7 @@ class PostgresStore:
             "evaluations.job_id = jobs.id",
             "evaluations.stage_a_status = 'completed'",
             "evaluations.stage_b_status = 'skipped_below_threshold'",
+            "evaluations.stage_b_error IS NULL",
             "evaluations.stage_a_score >= $1",
         ]
         params: list[Any] = [threshold]
@@ -2991,6 +3580,7 @@ class PostgresStore:
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        require_stage_a: bool = True,
     ) -> list[JobPosting]:
         """Load Stage A-completed, Stage B-pending jobs.
 
@@ -3007,6 +3597,7 @@ class PostgresStore:
             max_days=max_days,
             stage_a_threshold=stage_a_threshold,
             now=datetime.now(UTC),
+            require_stage_a=require_stage_a,
         )
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -3019,6 +3610,7 @@ class PostgresStore:
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        require_stage_a: bool = True,
         job_ids: list[str] | None = None,
     ) -> list[JobPosting]:
         """Atomically claim jobs pending Stage B evaluation.
@@ -3037,6 +3629,7 @@ class PostgresStore:
             stage_a_threshold=stage_a_threshold,
             now=datetime.now(UTC),
             job_ids=None if job_ids is None else _numeric_job_ids(job_ids),
+            require_stage_a=require_stage_a,
         )
         pool = self._get_pool()
         async with pool.acquire() as conn:
@@ -3280,8 +3873,9 @@ class PostgresStore:
         shared, params = _jobs_view_filters(query)
         where = " AND ".join([_JOBS_VIEW_TAB_PREDICATES[query.tab], *shared])
         shared_where = " AND ".join(shared) if shared else "TRUE"
+        columns = _jobs_view_columns(include_jd_text=query.include_jd_text)
         rows_sql = (
-            f"SELECT {_JOBS_VIEW_COLUMNS} {_JOBS_VIEW_FROM} WHERE {where}"
+            f"SELECT {columns} {_JOBS_VIEW_FROM} WHERE {where}"
             f" ORDER BY {_JOBS_VIEW_SORT_SQL[query.sort]}"
             f" LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
         )
@@ -3316,6 +3910,7 @@ class PostgresStore:
         *,
         statuses: Sequence[str],
         limit: int,
+        include_jd_text: bool = True,
     ) -> list[JobsViewRow]:
         """List view rows in the given statuses for the given twin keys.
 
@@ -3335,15 +3930,17 @@ class PostgresStore:
         """
         if not keys or not statuses:
             return []
+        columns = _jobs_view_columns(include_jd_text=include_jd_text)
         sql = (
-            f"SELECT {_JOBS_VIEW_COLUMNS} {_JOBS_VIEW_FROM}"
-            " JOIN unnest($1::text[], $2::text[])"
+            f"SELECT {columns} {_JOBS_VIEW_FROM}"
+            " WHERE EXISTS (SELECT 1 FROM unnest($1::text[], $2::text[])"
             "   AS twin_keys(company_norm, title_norm)"
-            "   ON jobs.company_norm = twin_keys.company_norm"
-            "  AND jobs.title_norm = twin_keys.title_norm"
-            " WHERE job_status.status = ANY($3::text[])"
-            "   AND jobs.company_norm <> ''"
-            "   AND jobs.title_norm <> ''"
+            "   WHERE (twin_keys.company_norm='__external_identity__' AND jobs.external_identity=twin_keys.title_norm)"
+            " OR (twin_keys.company_norm='__external_identity__' AND jobs.platform='jobright' AND twin_keys.title_norm='jobright:' || jobs.canonical_id)"
+            " OR (twin_keys.company_norm='__display_title__' AND jobs.title_norm=twin_keys.title_norm)"
+            " OR (jobs.external_identity IS NULL AND jobs.company_norm=twin_keys.company_norm AND jobs.title_norm=twin_keys.title_norm)"
+            ") AND job_status.status = ANY($3::text[])"
+            "   AND (jobs.external_identity IS NOT NULL OR (jobs.company_norm <> '' AND jobs.title_norm <> ''))"
             " ORDER BY jobs.discovered_at DESC, jobs.id DESC"
             " LIMIT $4"
         )
@@ -3358,8 +3955,19 @@ class PostgresStore:
             )
         return [_jobs_view_row_from_record(r) for r in rows]
 
+    async def load_display_bodies(self, job_ids: Sequence[str]) -> dict[str, str]:
+        """Load only bodies whose lightweight rows may be display duplicates."""
+        if not job_ids:
+            return {}
+        async with self._get_pool().acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id,jd_text FROM jobs WHERE id=ANY($1::bigint[])",
+                [int(job_id) for job_id in job_ids],
+            )
+        return {str(row["id"]): row["jd_text"] for row in rows if row["jd_text"]}
+
     async def list_twin_statuses(self, job_id: str) -> list[TwinStatusRow]:
-        """List a job's twins (same persisted company_norm + title_norm).
+        """List known posting aliases at the same nonblank location.
 
         The job itself is excluded. Blank/NULL norms never cluster (the
         ``<> ''`` guards are NULL-safe: NULL comparisons are not true), so a
@@ -3374,16 +3982,16 @@ class PostgresStore:
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT twin.id, twin.platform, twin.url, job_status.status
+                """SELECT twin.id, twin.platform, twin.url, job_status.status,
+                          twin.location, jobs.location AS source_location
                    FROM jobs
                    JOIN jobs twin
-                     ON twin.company_norm = jobs.company_norm
-                    AND twin.title_norm = jobs.title_norm
+                     ON jobs.external_identity IS NOT NULL
+                     AND jobs.external_identity<>''
+                     AND twin.external_identity=jobs.external_identity
                     AND twin.id <> jobs.id
                    LEFT JOIN job_status ON job_status.job_id = twin.id
                    WHERE jobs.id = $1
-                     AND jobs.company_norm <> ''
-                     AND jobs.title_norm <> ''
                    ORDER BY twin.id""",
                 int(job_id),
             )
@@ -3395,6 +4003,9 @@ class PostgresStore:
                 status=r["status"],
             )
             for r in rows
+            if posting_location(r["source_location"])
+            and posting_location(r["location"])
+            == posting_location(r["source_location"])
         ]
 
     async def save_ml_gate_result(self, job_id: str, result: MLGateResult) -> None:
@@ -3457,10 +4068,12 @@ class PostgresStore:
                        jobs_scored, total_llm_cost_usd, errors, finished_at,
                        failure_code, failure_message, failed_stage,
                        failed_source, last_progress_at, restart_count,
-                       restarted_by_run_id, scan_stats_json
+                       restarted_by_run_id, scan_stats_json, scan_progress_json,
+                       verdict_counts_json
                    ) VALUES (
                        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
-                       $18,$19,$20,$21,$22,$23,$24,$25::jsonb
+                       $18,$19,$20,$21,$22,$23,$24,$25::jsonb,$26::jsonb,
+                       $27::jsonb
                    )""",
                 run.run_id,
                 run.started_at,
@@ -3487,6 +4100,10 @@ class PostgresStore:
                 run.restart_count,
                 run.restarted_by_run_id,
                 dump_scan_stats(run.scan_stats),
+                json.dumps(run.scan_progress),
+                json.dumps(run.verdict_counts)
+                if run.verdict_counts is not None
+                else None,
             )
 
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
@@ -3610,6 +4227,41 @@ class PostgresStore:
             (str(row["platform"]), int(row["n"])) for row in rows
         )
 
+    async def get_historical_run_verdict_counts(
+        self, run_id: str
+    ) -> dict[str, int] | None:
+        """Count unchanged Stage B rows first completed inside an old run."""
+        pool = self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT r.stage_b_scored AS expected,
+                          COUNT(e.job_id) AS actual,
+                          COUNT(e.job_id) FILTER (WHERE
+                              e.stage_b_status IS DISTINCT FROM 'completed'
+                              OR e.stage_b_verdict IS NULL
+                              OR e.stage_b_verdict NOT IN ('apply','consider','skip')
+                              OR e.updated_at > r.finished_at
+                          ) AS changed,
+                          COUNT(e.job_id) FILTER (WHERE e.stage_b_verdict='apply') AS apply_count,
+                          COUNT(e.job_id) FILTER (WHERE e.stage_b_verdict='consider') AS consider_count,
+                          COUNT(e.job_id) FILTER (WHERE e.stage_b_verdict='skip') AS skip_count
+                   FROM pipeline_runs AS r
+                   LEFT JOIN evaluations AS e
+                     ON e.stage_b_at >= r.started_at
+                    AND e.stage_b_at <= r.finished_at
+                   WHERE r.run_id=$1 AND r.source='evaluate'
+                     AND r.finished_at IS NOT NULL
+                   GROUP BY r.run_id""",
+                run_id,
+            )
+        if row is None or row["actual"] != row["expected"] or row["changed"]:
+            return None
+        return {
+            "apply": int(row["apply_count"]),
+            "consider": int(row["consider_count"]),
+            "skip": int(row["skip_count"]),
+        }
+
     async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:
         """Return current retryable scoring errors attributable to one run.
 
@@ -3667,8 +4319,9 @@ class PostgresStore:
                        failed_stage = $17, failed_source = $18,
                        last_progress_at = $19, restart_count = $20,
                        restarted_by_run_id = $21,
-                       scan_stats_json = $22::jsonb
-                   WHERE run_id = $23""",
+                       scan_stats_json = $22::jsonb, scan_progress_json = $23::jsonb,
+                       verdict_counts_json = $24::jsonb
+                   WHERE run_id = $25""",
                 run.status,
                 run.finished_at,
                 run.jobs_discovered,
@@ -3691,6 +4344,10 @@ class PostgresStore:
                 run.restart_count,
                 run.restarted_by_run_id,
                 dump_scan_stats(run.scan_stats),
+                json.dumps(run.scan_progress),
+                json.dumps(run.verdict_counts)
+                if run.verdict_counts is not None
+                else None,
                 run.run_id,
             )
 
@@ -4541,9 +5198,9 @@ class PostgresStore:
         return [r["to_status"] for r in rows]
 
     async def expand_twin_ids(self, job_ids: list[int]) -> dict[int, list[int]]:
-        """Expand each job_id to its twin cluster (same company_norm + title_norm).
+        """Expand each job_id to trusted posting aliases at the same location.
 
-        A row with blank company_norm or title_norm expands to itself only.
+        Missing identity or location expands to itself only.
 
         Args:
             job_ids: Store-assigned job identities.
@@ -4558,23 +5215,25 @@ class PostgresStore:
         async with pool.acquire() as conn:
             for jid in job_ids:
                 row = await conn.fetchrow(
-                    "SELECT company_norm, title_norm FROM jobs WHERE id = $1",
+                    "SELECT location, external_identity FROM jobs WHERE id = $1",
                     jid,
                 )
                 if row is None:
                     result[jid] = [jid]
                     continue
-                cn = row["company_norm"] or ""
-                tn = row["title_norm"] or ""
-                if not cn or not tn:
-                    result[jid] = [jid]
+                if row["external_identity"] and posting_location(row["location"]):
+                    twins = await conn.fetch(
+                        "SELECT id,location FROM jobs WHERE external_identity=$1",
+                        row["external_identity"],
+                    )
+                    result[jid] = [
+                        int(twin["id"])
+                        for twin in twins
+                        if posting_location(twin["location"])
+                        == posting_location(row["location"])
+                    ]
                     continue
-                twins = await conn.fetch(
-                    "SELECT id FROM jobs WHERE company_norm = $1 AND title_norm = $2",
-                    cn,
-                    tn,
-                )
-                result[jid] = [r["id"] for r in twins]
+                result[jid] = [jid]
         return result
 
     async def transition_status_bulk(
@@ -5673,7 +6332,7 @@ class PostgresStore:
                 untouched.
         """
         pool = self._get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             await conn.execute(
                 """UPDATE jobs SET
                        jd_text = $1, jd_quality = $2, enriched_at = $3,
@@ -5700,6 +6359,7 @@ class PostgresStore:
                 int(job_id),
                 posted_at,
             )
+            await sync_postgres_real_job_input(conn, int(job_id), _job_from_record)
 
     async def list_unenriched_jobs(
         self,
@@ -5763,7 +6423,7 @@ class PostgresStore:
                 value).
         """
         pool = self._get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             await conn.execute(
                 """UPDATE jobs
                    SET closed_at = $1,
@@ -5773,6 +6433,7 @@ class PostgresStore:
                 int(job_id),
                 reason,
             )
+            await sync_postgres_real_job_input(conn, int(job_id), _job_from_record)
 
     async def enrich_paste(
         self,
@@ -6074,23 +6735,26 @@ class PostgresStore:
             AND closed_at IS NULL
         """
         pool = self._get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             if dry_run:
                 return await self._count(
                     conn,
                     f"SELECT COUNT(*) FROM jobs WHERE {_STALE_WHERE}",
                     older_than_days,
                 )
-            result = await conn.execute(
+            rows = await conn.fetch(
                 f"""UPDATE jobs
                     SET closed_at = now(),
                         enrich_error = $2
-                    WHERE {_STALE_WHERE}""",
+                    WHERE {_STALE_WHERE} RETURNING id""",
                 older_than_days,
                 _STALE_BACKFILL_MARKER,
             )
-        # asyncpg returns "UPDATE N"
-        return int(result.split()[-1])
+            for row in rows:
+                await sync_postgres_real_job_input(
+                    conn, int(row["id"]), _job_from_record
+                )
+        return len(rows)
 
     async def record_llm_usage(self, usage: LLMUsage) -> None:
         """Record a single LLM call's usage metrics.

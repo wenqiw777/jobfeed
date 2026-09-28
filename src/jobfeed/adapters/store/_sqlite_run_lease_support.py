@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Final
 
@@ -115,8 +116,9 @@ async def _insert_run(
                stage_b_scored, jobs_scored,
                total_llm_cost_usd, errors, finished_at, failure_code,
                failure_message, failed_stage, failed_source, last_progress_at,
-               restart_count, restarted_by_run_id, scan_stats_json
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               restart_count, restarted_by_run_id, scan_stats_json, scan_progress_json,
+               verdict_counts_json
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         _run_values(run),
     )
 
@@ -137,7 +139,8 @@ async def _update_terminal_run(
                jobs_scored=?, total_llm_cost_usd=?, errors=?
                , failure_code=?, failure_message=?, failed_stage=?,
                failed_source=?, last_progress_at=?, restart_count=?,
-               restarted_by_run_id=?, scan_stats_json=?
+               restarted_by_run_id=?, scan_stats_json=?, scan_progress_json=?,
+               verdict_counts_json=?
            WHERE run_id=? AND status='running'""",
         (
             run.status,
@@ -164,6 +167,8 @@ async def _update_terminal_run(
             run.restart_count,
             run.restarted_by_run_id,
             dump_scan_stats(run.scan_stats),
+            json.dumps(run.scan_progress),
+            json.dumps(run.verdict_counts) if run.verdict_counts is not None else None,
             run.run_id,
         ),
     )
@@ -203,6 +208,8 @@ def _run_values(run: PipelineRun) -> tuple[object, ...]:
         run.restart_count,
         run.restarted_by_run_id,
         dump_scan_stats(run.scan_stats),
+        json.dumps(run.scan_progress),
+        json.dumps(run.verdict_counts) if run.verdict_counts is not None else None,
     )
 
 
@@ -232,6 +239,32 @@ async def _fail_expired_run(
             run_id=run_id,
         )
     return changed == 1
+
+
+async def _clear_orphaned_stage_a_claims(
+    connection: aiosqlite.Connection,
+    now_text: str,
+) -> int:
+    """Release empty Stage A claims only when no evaluation owns the lease."""
+    cursor = await connection.execute(
+        """UPDATE evaluations SET stage_a_status=NULL, updated_at=?
+           WHERE stage_a_status='in_progress'
+             AND stage_a_score IS NULL AND stage_a_error IS NULL""",
+        (now_text,),
+    )
+    cleared = cursor.rowcount
+    await cursor.close()
+    cursor = await connection.execute(
+        """UPDATE real_job_evaluations SET stage_a_status=NULL, updated_at=?
+           WHERE stage_a_status='in_progress'
+             AND stage_a_score IS NULL AND stage_a_error IS NULL""",
+        (now_text,),
+    )
+    cleared += cursor.rowcount
+    await cursor.close()
+    if cleared:
+        _LOG.info("orphaned_stage_a_claims_released", count=cleared)
+    return cleared
 
 
 async def _recover_lease(

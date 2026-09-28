@@ -1,7 +1,7 @@
-"""Non-claiming evaluation funnel: load -> hard-filter -> dedupe -> gate.
+"""Non-claiming evaluation funnel: load -> hard-filter -> distinct posts -> gate.
 
 The funnel turns eligible Stage A candidates into a survivor job-id list without
-claiming anything. Filter + dedupe are unconditional; gating is conditional on
+claiming anything. Filtering and unique job IDs are unconditional; gating depends on
 ``config.ml_gate_enabled`` AND a wired ``deps.ml_gate``. The caller
 (``EvaluateService``) then claims exactly the survivor ids via
 ``claim_stage_a_by_ids``.
@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
-from jobfeed.domain.dedupe import pick_representatives
 from jobfeed.domain.filtering import HardFilters, apply_hard_filters
 from jobfeed.domain.models import (
     DryRunPreviewItem,
@@ -24,6 +23,7 @@ from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_claims import GateCandidate
 from jobfeed.services._evaluate_claims import load_gate_candidates_for_run
 from jobfeed.services._evaluate_gate import gate_representatives, resolve_gate_mode
+from jobfeed.services._evaluate_repost import eligible_jobs
 from jobfeed.services._evaluate_seniority import apply_seniority_gate
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 
@@ -48,12 +48,12 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
 ) -> list[str]:
     """Run the candidate funnel and return survivor Stage A job-ids.
 
-    Flow: page candidates (no claim) -> hard filter (count drops) + dedupe each
-    iteration, overfetching PAST hard-filtered AND dedupe drops until enough
-    REPRESENTATIVES or the eligible set is exhausted -> optional ML gate (gate
+    Flow: page candidates (no claim) -> hard filter (count drops), retaining each
+    distinct job ID, overfetching past filtered rows until enough eligible
+    posts or the eligible set is exhausted -> optional ML gate (gate
     only NULL-gate reps; persist + count non-pass; already-'pass' reps survive
-    without re-gating). Survivors are the hard-filter ∩ representative ∩ gate-pass
-    set (or, gate off, hard-filter ∩ representative). In dry-run nothing is
+    without re-gating). Survivors are the hard-filter ∩ gate-pass
+    set (or, gate off, hard-filter survivors). In dry-run nothing is
     persisted; survivors are sliced to the Stage A ``limit`` (matching a real
     claim) and a survivor preview is recorded on ``run.dry_run_preview``.
 
@@ -93,6 +93,7 @@ async def run_funnel(  # noqa: PLR0913 - distinct funnel inputs; signature fixed
         mode=gate_mode,
         on_progress=on_progress,
     )
+    survivors = await eligible_jobs(deps.store, survivors)
     if deps.seniority_gate is not None:
         survivors, seniority_blocked = await apply_seniority_gate(
             deps.seniority_gate,
@@ -121,24 +122,17 @@ async def _load_representatives(  # noqa: PLR0913 - paginated load inputs
     exclude_gate_failed: bool,
     persist_hard_filters: bool,
 ) -> list[GateCandidate]:
-    """Page + hard-filter + dedupe candidates until enough REPRESENTATIVES.
+    """Page and hard-filter until enough distinct job IDs survive.
 
-    ``ml_gate_max_candidates`` is both the page size and the target, but the
-    target is DEDUPED representatives, not raw survivors: a newest page of twins
-    can collapse to a single rep, so counting raw survivors would stop short of
-    the budget and starve older DISTINCT jobs behind that page. So the loop pages
-    PAST both hard-filtered AND dedupe drops (keyset ``(discovered_at, id)``
-    cursor over the query's ``discovered_at DESC, id DESC`` order), re-deduping
-    the WHOLE accumulated survivor set each iteration so twins split across pages
-    still cluster. Each page reapplies the store-side predicates + the in-memory
-    hard filter (counted on ``run.jobs_filtered``). Stops when the rep count
-    reaches the page size, a short page proves the eligible set exhausted, or
-    ``_MAX_CANDIDATE_PAGES`` is hit — the last warns so the truncation is never a
-    silent cap.
+    ``ml_gate_max_candidates`` is both the page size and target. Page past
+    hard-filtered rows using the stable ``(discovered_at, id)`` cursor. Repeated
+    IDs are eliminated, but different posts are never folded by company/title,
+    content or external identity. Stop on the target, source exhaustion, or
+    the explicit page safety bound (which emits a warning).
 
     Returns:
-        Deduped representatives capped to ``ml_gate_max_candidates`` (newest
-        clusters first), each carrying its persisted ``ml_gate_result``.
+        Distinct posts capped to ``ml_gate_max_candidates`` in newest-first
+        order, each carrying its persisted ``ml_gate_result``.
     """
     page_size = config.ml_gate_max_candidates
     survivors: list[GateCandidate] = []
@@ -208,15 +202,9 @@ async def _apply_hard_filters(
 
 
 def _representatives(candidates: list[GateCandidate]) -> list[GateCandidate]:
-    """Reduce candidates to one representative per twin cluster, keeping state.
-
-    ``pick_representatives`` operates on ``JobPosting`` and returns the winning
-    member objects; we re-attach each winner's ``GateCandidate`` (carrying its
-    persisted ``ml_gate_result``) by store id so dedupe never loses gate state.
-    """
+    """Retain every distinct post; exact request reuse owns scoring savings."""
     by_id = {_job_id(c.job): c for c in candidates}
-    reps = pick_representatives([c.job for c in candidates])
-    return [by_id[_job_id(job)] for job in reps]
+    return list(by_id.values())
 
 
 def _limit_survivors(

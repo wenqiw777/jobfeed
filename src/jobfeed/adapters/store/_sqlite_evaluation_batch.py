@@ -82,6 +82,7 @@ async def _skip_threshold_rows(
     now: datetime,
 ) -> int:
     conditions = [
+        "jobs.is_repost IS NOT 1",
         "evaluations.job_id=jobs.id",
         "evaluations.stage_a_status='completed'",
         "evaluations.stage_a_score<?",
@@ -132,9 +133,11 @@ async def _reopen_threshold_rows(
     now: datetime,
 ) -> int:
     conditions = [
+        "jobs.is_repost IS NOT 1",
         "evaluations.job_id=jobs.id",
         "evaluations.stage_a_status='completed'",
         "evaluations.stage_b_status='skipped_below_threshold'",
+        "evaluations.stage_b_error IS NULL",
         "evaluations.stage_a_score>=?",
     ]
     params: list[object] = [threshold]
@@ -198,6 +201,7 @@ async def _preview_pending_stage_b_after_threshold_sync(
         raise ValueError("limit must be nonnegative")
     now = datetime.now(UTC)
     conditions = [
+        "jobs.is_repost IS NOT 1",
         "evaluations.stage_a_status='completed'",
         "evaluations.stage_a_score>=?",
         "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status<>'error' "

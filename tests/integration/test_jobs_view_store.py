@@ -260,7 +260,13 @@ async def test_list_twin_statuses_excludes_self_and_blank_norms(
     store: PostgresStore,
 ) -> None:
     """Twins share non-blank norms, exclude the job itself, and carry status."""
-    main_id = await _insert(store, "tw-main", company="Stripe", title="Engineer")
+    main_id = await _insert(
+        store,
+        "tw-main",
+        company="Stripe",
+        title="Engineer",
+        url="https://www.linkedin.com/jobs/view/123",
+    )
     twin_id = await _insert(
         store,
         "tw-twin",
@@ -268,6 +274,7 @@ async def test_list_twin_statuses_excludes_self_and_blank_norms(
         company="Stripe",
         title="Engineer",
         status="shortlisted",
+        url="https://www.linkedin.com/jobs/view/123?source=alias",
     )
     await _insert(store, "tw-other", company="Datadog", title="Engineer")
     blank_id = await _insert(store, "tw-blank-1", company="??", title="Engineer")
@@ -279,7 +286,7 @@ async def test_list_twin_statuses_excludes_self_and_blank_norms(
     assert [(t.job_id, t.platform, t.status) for t in twins] == [
         (twin_id, "greenhouse", "shortlisted")
     ]
-    assert twins[0].url == "https://example.com/tw-twin"
+    assert twins[0].url == "https://www.linkedin.com/jobs/view/123?source=alias"
     assert blank_twins == []
 
 
@@ -452,6 +459,7 @@ async def test_dedupe_queue_suppresses_cluster_with_applied_twin(
     await _insert(
         store,
         "if-applied",
+        url="https://www.linkedin.com/jobs/view/111",
         platform="indeed",
         company="TwinCo",
         title="Platform Engineer",
@@ -460,6 +468,7 @@ async def test_dedupe_queue_suppresses_cluster_with_applied_twin(
     await _insert(
         store,
         "if-queue",
+        url="https://www.linkedin.com/jobs/view/111?source=alias",
         platform="greenhouse",
         company="TwinCo",
         title="Platform Engineer",
@@ -468,13 +477,19 @@ async def test_dedupe_queue_suppresses_cluster_with_applied_twin(
     await _insert(
         store,
         "solo-good",
+        url="https://www.linkedin.com/jobs/view/222",
         platform="greenhouse",
         company="SoloCo",
         title="Backend Engineer",
         jd_quality=QualityBand.FULL,
     )
     await _insert(
-        store, "solo-dup", platform="indeed", company="SoloCo", title="Backend Engineer"
+        store,
+        "solo-dup",
+        platform="indeed",
+        company="SoloCo",
+        title="Backend Engineer",
+        url="https://www.linkedin.com/jobs/view/222?source=alias",
     )
     service = _service(store)
 

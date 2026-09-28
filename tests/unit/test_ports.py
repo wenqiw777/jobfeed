@@ -209,6 +209,13 @@ class FakeStore:
             job_id: Store-assigned job identity.
         """
 
+    async def mark_stage_b_ineligible(self, job_id: str) -> None:
+        """Persist a hard-eligibility skip.
+
+        Args:
+            job_id: Store-assigned job identity.
+        """
+
     async def get_evaluation(self, job_id: str) -> JobEvaluation | None:
         """Fetch evaluation for a job.
 
@@ -408,6 +415,7 @@ def test_job_store_protocol_has_required_async_methods() -> None:
         "save_stage_b",
         "save_stage_b_error",
         "mark_stage_b_skipped",
+        "mark_stage_b_ineligible",
         "load_pending_stage_a",
         "load_pending_stage_b",
         "list_evaluated_jobs",

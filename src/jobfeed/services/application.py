@@ -11,6 +11,7 @@ from jobfeed.domain.models import (
     ApplicationRecord,
     ApplicationStats,
     JobEvaluation,
+    RealJobApplicationEvent,
     ResumeSnapshot,
     ResumeSnapshotSummary,
 )
@@ -29,6 +30,9 @@ class ApplyRequest:
 
     job_id: str
     master_resume: str
+    real_job_id: str | None = None
+    source_job_id: str | None = None
+    apply_url: str | None = None
     tailored_resume: str | None = None
     cover_letter: str | None = None
     variant: str | None = None
@@ -129,11 +133,23 @@ class ApplicationService:
             hooks_snapshot=req.hooks_snapshot,
         )
 
-        is_new = await self._store.record_application_with_snapshots(
-            record,
-            snapshots=snapshots,
-            resume_variant=req.variant,
-        )
+        if req.real_job_id is not None:
+            if req.source_job_id is None:
+                raise ValueError("source_job_id is required for canonical apply")
+            is_new = await self._store.record_real_job_application_with_snapshots(
+                record,
+                real_job_id=req.real_job_id,
+                source_job_id=req.source_job_id,
+                apply_url=req.apply_url,
+                snapshots=snapshots,
+                resume_variant=req.variant,
+            )
+        else:
+            is_new = await self._store.record_application_with_snapshots(
+                record,
+                snapshots=snapshots,
+                resume_variant=req.variant,
+            )
         self._logger.info(
             "application_recorded",
             job_id=req.job_id,
@@ -193,6 +209,12 @@ class ApplicationService:
             resume_hash_prefix=resume_hash_prefix,
         )
 
+    async def real_job_apply_history(
+        self, *, limit: int = 100
+    ) -> list[RealJobApplicationEvent]:
+        """List canonical submission events and their source provenance."""
+        return await self._store.list_real_job_applications(limit=limit)
+
     async def reapply_notice(self, job_id: str) -> str | None:
         """Same-company active-application notice for a just-applied job.
 
@@ -205,6 +227,13 @@ class ApplicationService:
         Returns:
             Human-readable notice, or None when no active sibling exists.
         """
+        canonical = (
+            self._store.compute_real_job_reapply_notice
+            if hasattr(type(self._store), "compute_real_job_reapply_notice")
+            else None
+        )
+        if canonical is not None:
+            return await canonical(job_id=job_id)
         return await self._store.compute_reapply_notice(job_id=job_id)
 
     async def stats(
@@ -222,7 +251,13 @@ class ApplicationService:
         Returns:
             Application statistics.
         """
-        return await self._store.application_stats(
+        canonical = (
+            self._store.real_job_application_stats
+            if hasattr(type(self._store), "real_job_application_stats")
+            else None
+        )
+        stats = canonical if canonical is not None else self._store.application_stats
+        return await stats(
             since_days_ago=since_days_ago,
             by_resume=by_resume,
         )

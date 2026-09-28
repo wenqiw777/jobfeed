@@ -84,8 +84,7 @@ def build_evaluate_service(
     from jobfeed.services.evaluate import EvaluateService  # noqa: PLC0415
     from jobfeed.services.evaluate_types import (  # noqa: PLC0415
         EvaluateDependencies,
-        EvaluateLLMConfig,
-        EvaluateRuntimeConfig,
+        evaluation_runtime_config,
     )
     from jobfeed.services.seniority_gate import HybridSeniorityGate  # noqa: PLC0415
 
@@ -203,20 +202,8 @@ def build_evaluate_service(
             ),
             stage_b_threshold_sync=app.get("stage_b_threshold_sync"),
         ),
-        config=EvaluateRuntimeConfig(
-            llm=EvaluateLLMConfig(
-                stage_a=llm_settings.stage_a,
-                stage_b=llm_settings.stage_b,
-                max_concurrent=llm_settings.max_concurrent,
-                max_daily_score_calls=llm_settings.max_daily_score_calls,
-                max_daily_cost_usd=llm_settings.max_daily_cost_usd,
-            ),
-            stage_a_threshold=threshold,
-            resume_text=resume_text,
-            default_eval_limit=settings.scoring.default_eval_limit,
-            ml_gate_enabled=ml_gate_enabled,
-            ml_gate_max_candidates=settings.ml_gate.max_candidates,
-            seniority_gate_mode=seniority_settings.mode,
+        config=evaluation_runtime_config(
+            settings, resume_text=resume_text, threshold=threshold,
         ),
         run_orchestrator=app.get("run_orchestrator"),
         logger=logger,

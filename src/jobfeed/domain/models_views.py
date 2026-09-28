@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from jobfeed.domain.models import JobPosting
+from jobfeed.domain.eligibility import EligibilityResult
+from jobfeed.domain.job_priority import PriorityResult
+from jobfeed.domain.models import CompanyIntelligenceMatch, JobPosting
 
 #: The six jobs-view tabs. Triage tabs (queue, pending_jd) exclude closed
 #: rows; Library tabs (all, scored, shortlisted, archived) include them.
@@ -28,6 +30,10 @@ VALID_SORTS: tuple[str, ...] = (
     "score_asc",
     "score_desc",
     "company_asc",
+    "triage_posted_asc",
+    "triage_posted_desc",
+    "triage_score_asc",
+    "triage_score_desc",
 )
 
 #: The default sort (newest discovered first).
@@ -78,6 +84,8 @@ class JobsViewQuery:
     offset: int = 0
     include_counts: bool = True
     include_total: bool = True
+    # Internal opt-in for content folding; ordinary lists remain lightweight.
+    include_jd_text: bool = False
 
     def __post_init__(self) -> None:
         if self.tab not in VALID_TABS:
@@ -107,6 +115,9 @@ class JobsViewRow:
     stage_a_score: int | None
     stage_b_fit_score: int | None
     stage_b_status: str | None
+    eligibility: EligibilityResult | None = None
+    priority: PriorityResult | None = None
+    company_intelligence: CompanyIntelligenceMatch | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

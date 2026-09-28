@@ -44,7 +44,11 @@ export function LibraryTable({ jobs, onOpen, sort, onSort }: LibraryTableProps) 
       cell: (job) => (
         <SpaceBetween direction="horizontal" size="xs">
           <Box key="title">{job.title}</Box>
+          {job.is_repost === true && <Badge color="grey">Reposted</Badge>}
           {job.closed_at !== null && <Badge key="closed" color="grey">Closed</Badge>}
+          {job.evaluation_stale_reason && (
+            <Badge key="stale" color="blue">Old score · re-evaluation pending</Badge>
+          )}
         </SpaceBetween>
       ),
       width: 320,
@@ -53,6 +57,11 @@ export function LibraryTable({ jobs, onOpen, sort, onSort }: LibraryTableProps) 
       id: "decision",
       header: "Your decision",
       cell: (job) => decisionLabel(job.decision),
+    },
+    {
+      id: "real-job",
+      header: "Real job",
+      cell: (job) => job.real_job_id ? `#${job.real_job_id}` : "—",
     },
     {
       id: "verdict",
@@ -65,7 +74,9 @@ export function LibraryTable({ jobs, onOpen, sort, onSort }: LibraryTableProps) 
       id: "score",
       header: "Fit score",
       sortingField: "score",
-      cell: (job) => job.stage_b_fit_score ?? job.stage_a_score ?? "—",
+      cell: (job) => job.evaluation_stale_reason === "legacy_policy_unknown"
+        ? "Old score · pending"
+        : job.stage_b_fit_score ?? job.stage_a_score ?? (job.is_repost === true ? <div style={{ whiteSpace: "normal" }}>Skipped scoring: repost</div> : "—"),
     },
     {
       id: "posted",

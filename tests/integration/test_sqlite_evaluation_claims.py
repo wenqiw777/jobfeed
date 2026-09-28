@@ -86,7 +86,7 @@ async def test_stage_a_preview_and_claim_share_strict_eligibility(
 
 
 async def test_gate_candidates_keyset_twin_and_gate_filters(tmp_path: Path) -> None:
-    """Gate loading is read-only, keyset-stable, and suppresses scored twins."""
+    """Gate loading preserves pending posts even when a similar post was scored."""
     lifecycle, claims = await _open_capability(tmp_path)
     async with lifecycle.connection() as connection:
         completed = await seed_job(
@@ -128,11 +128,11 @@ async def test_gate_candidates_keyset_twin_and_gate_filters(tmp_path: Path) -> N
         )
 
     page = await claims.load_gate_candidates(now=_NOW, limit=1)
-    assert [candidate.job.id for candidate in page] == [second]
+    assert [candidate.job.id for candidate in page] == [twin]
     cursor = (page[0].job.discovered_at, int(page[0].job.id or "0"))
     next_page = await claims.load_gate_candidates(now=_NOW, limit=5, after=cursor)
-    assert [candidate.job.id for candidate in next_page] == [first]
-    assert twin not in [candidate.job.id for candidate in page + next_page]
+    assert [candidate.job.id for candidate in next_page] == [second, first]
+    assert completed not in [candidate.job.id for candidate in page + next_page]
     assert failed_gate not in [candidate.job.id for candidate in page + next_page]
 
     all_rows = await claims.load_gate_candidates(
@@ -142,6 +142,57 @@ async def test_gate_candidates_keyset_twin_and_gate_filters(tmp_path: Path) -> N
     )
     assert completed in [candidate.job.id for candidate in all_rows]
     assert failed_gate in [candidate.job.id for candidate in all_rows]
+    await lifecycle.close()
+
+
+async def test_thirty_day_claim_freshness_uses_posted_date(tmp_path: Path) -> None:
+    """A newly discovered old posting cannot enter either evaluation stage."""
+    lifecycle, claims = await _open_capability(tmp_path)
+    async with lifecycle.connection() as connection:
+        old_post = await seed_job(
+            connection, canonical_id="old-post", discovered_at=_NOW
+        )
+        recent_post = await seed_job(
+            connection, canonical_id="recent-post", discovered_at=_NOW
+        )
+        missing_post_date = await seed_job(
+            connection,
+            canonical_id="missing-post-date",
+            discovered_at=_NOW - timedelta(days=31),
+        )
+        future_post_date = await seed_job(
+            connection,
+            canonical_id="future-post-date",
+            discovered_at=_NOW - timedelta(days=31),
+        )
+        await connection.execute(
+            "UPDATE jobs SET posted_at=? WHERE id=?",
+            (sqlite_timestamp(_NOW - timedelta(days=31)), int(old_post)),
+        )
+        await connection.execute(
+            "UPDATE jobs SET posted_at=? WHERE id=?",
+            (sqlite_timestamp(_NOW - timedelta(days=30)), int(recent_post)),
+        )
+        await connection.execute(
+            "UPDATE jobs SET posted_at=? WHERE id=?",
+            (sqlite_timestamp(_NOW + timedelta(days=1)), int(future_post_date)),
+        )
+        for job_id in (old_post, recent_post, missing_post_date, future_post_date):
+            await seed_evaluation(
+                connection,
+                job_id=job_id,
+                updated_at=_NOW,
+                stage_a_status="completed",
+                stage_a_score=80,
+            )
+
+    gate = await claims.load_gate_candidates(
+        now=_NOW, corpus="all", max_days=30, exclude_gate_failed=False
+    )
+    assert [candidate.job.id for candidate in gate] == [recent_post]
+
+    stage_b = await claims.claim_pending_stage_b(now=_NOW, max_days=30)
+    assert [job.id for job in stage_b] == [recent_post]
     await lifecycle.close()
 
 
@@ -213,6 +264,27 @@ async def test_stage_b_claim_release_and_refresh_strict_boundaries(
     assert await _stage_b_status(lifecycle, pending) is None
     await claims.release_stage_b_claim(pending, now=_NOW + timedelta(minutes=32))
     assert await _stage_b_status(lifecycle, exact) == "in_progress"
+    await lifecycle.close()
+
+
+async def test_stage_b_claim_without_stage_a_requirement(
+    tmp_path: Path,
+) -> None:
+    """Stage B can claim a new job when the Stage A requirement is disabled."""
+    lifecycle, claims = await _open_capability(tmp_path)
+    async with lifecycle.connection() as connection:
+        job_id = await seed_job(
+            connection, canonical_id="stage-b-only", discovered_at=_NOW
+        )
+
+    claimed = await claims.claim_pending_stage_b(
+        now=_NOW,
+        require_stage_a=False,
+        job_ids=[str(job_id)],
+    )
+
+    assert [job.id for job in claimed] == [job_id]
+    assert await _stage_b_status(lifecycle, job_id) == "in_progress"
     await lifecycle.close()
 
 

@@ -28,6 +28,7 @@ class RunSummary(BaseModel):
     stage_a_scored: int
     stage_b_scored: int
     jobs_scored: int
+    verdict_counts: dict[str, int] | None = None
     total_llm_cost_usd: float
     errors: int
     finished_at: datetime | None
@@ -54,6 +55,7 @@ class RunSummary(BaseModel):
     scan_processed: int = 0
     scan_current_job_id: str | None = None
     scan_stats: dict[str, dict[str, int]] = Field(default_factory=dict)
+    scan_progress: dict[str, dict[str, str | int | None]] = Field(default_factory=dict)
     progress_updated_at: datetime | None = None
 
 
@@ -87,6 +89,7 @@ def run_summary(run: PipelineRun) -> RunSummary:
         stage_a_scored=run.stage_a_scored,
         stage_b_scored=run.stage_b_scored,
         jobs_scored=run.jobs_scored,
+        verdict_counts=run.verdict_counts,
         total_llm_cost_usd=run.total_llm_cost_usd,
         errors=run.errors,
         finished_at=run.finished_at,
@@ -113,6 +116,7 @@ def run_summary(run: PipelineRun) -> RunSummary:
         scan_processed=run.scan_processed,
         scan_current_job_id=run.scan_current_job_id,
         scan_stats=run.scan_stats,
+        scan_progress=run.scan_progress,
         progress_updated_at=run.progress_updated_at,
     )
 

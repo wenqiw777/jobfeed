@@ -22,6 +22,9 @@ export type JobsListResponse = components["schemas"]["JobsListResponse"];
 export type AttentionResponse = components["schemas"]["AttentionResponse"];
 export type JobSummary = components["schemas"]["JobSummary"];
 export type JobDetailResponse = components["schemas"]["JobDetailResponse"];
+export type RealJobsListResponse = components["schemas"]["RealJobsListResponse"];
+export type RealJobsSelectionResponse = components["schemas"]["RealJobsSelectionResponse"];
+export type RealJobDetailResponse = components["schemas"]["RealJobDetailResponse"];
 export type TransitionResponse = components["schemas"]["TransitionResponse"];
 export type BulkTransitionResponse = components["schemas"]["BulkTransitionResponse"];
 export type TransitionStatus = components["schemas"]["TransitionBody"]["to"];
@@ -52,8 +55,16 @@ export const jobsKeys = {
   attention: ["attention"] as const,
 };
 
+export const realJobsKeys = {
+  lists: ["real-jobs"] as const,
+  list: (query: RealJobsQuery) => ["real-jobs", "list", query] as const,
+  details: ["real-job"] as const,
+  detail: (id: string | null) => ["real-job", id] as const,
+};
+
 /** Query params of GET /api/jobs, typed off the generated snapshot types. */
 export type JobsQuery = NonNullable<paths["/api/jobs"]["get"]["parameters"]["query"]>;
+export type RealJobsQuery = NonNullable<paths["/api/real-jobs"]["get"]["parameters"]["query"]>;
 /** Query params of GET /api/runs. */
 export type RunsQuery = NonNullable<paths["/api/runs"]["get"]["parameters"]["query"]>;
 /** Query params of GET /api/companies. */
@@ -83,26 +94,103 @@ export function buildJobsParams(query: JobsQuery): URLSearchParams {
   return buildParams(query);
 }
 
+export function useRealJobsList(query: RealJobsQuery) {
+  return useQuery({
+    queryKey: realJobsKeys.list(query),
+    // Keep the keyed read alive across startup remounts; aborting HTTP does not
+    // stop SQLite work and would launch a duplicate query on the next mount.
+    queryFn: () => apiFetch<RealJobsListResponse>(
+      `/api/real-jobs?${buildParams(query)}`,
+    ),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export async function fetchAllMatchingRealJobIds(
+  query: RealJobsQuery,
+): Promise<RealJobsSelectionResponse> {
+  const filters = {
+    decision: query.decision,
+    sort: query.sort,
+    search: query.search,
+    require_verdict: query.require_verdict,
+  };
+  return apiFetch<RealJobsSelectionResponse>(
+    `/api/real-jobs/selection?${buildParams(filters)}`,
+  );
+}
+
+export function useRealJobDetail(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: realJobsKeys.detail(id),
+    queryFn: () => apiFetch<RealJobDetailResponse>(`/api/real-jobs/${id}`),
+    enabled: id !== null && enabled,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useSourceAuditDetail(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["source-job-audit", id],
+    queryFn: () => apiFetch<JobDetailResponse>(`/api/jobs/${id}/audit`),
+    enabled: id !== null && enabled,
+  });
+}
+
+export function useRealJobTransition() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, to, note, force }: TransitionVars) =>
+      apiPost<TransitionResponse>(`/api/real-jobs/${id}/transition`, {
+        to, note: note ?? null, force: force ?? false,
+      }),
+    onSuccess: (_data, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: realJobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: realJobsKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
+    },
+  });
+}
+
+export function useRealJobBulkTransition() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ items, force }: BulkTransitionVars) =>
+      apiPost<BulkTransitionResponse>("/api/real-jobs/bulk/transition", {
+        items, force: force ?? false,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: realJobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: realJobsKeys.details });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
+    },
+  });
+}
+
 /** One jobs-list page for the given typed params. `keepPrevious` holds the
  * last page on screen while a filter/page change refetches (Library) —
  * off by default so the triage zones keep their loading semantics. */
 export function useJobsList(query: JobsQuery, options: { keepPrevious?: boolean } = {}) {
   const fastEligible =
     query.offset === 0
+    && !query.sort?.startsWith("triage_")
     && query.tab === "queue"
     && query.apply_hard_filters === true
     && query.dedupe === true
     && query.require_verdict === true;
   const fastQuery = useQuery({
     queryKey: [...jobsKeys.list(query), "fast"],
-    queryFn: () => apiFetch<JobsListResponse>(
+    queryFn: ({ signal }) => apiFetch<JobsListResponse>(
       `/api/jobs?${buildJobsParams({ ...query, fast: true })}`,
+      { signal },
     ),
     enabled: fastEligible,
   });
   const exactQuery = useQuery({
     queryKey: jobsKeys.list(query),
-    queryFn: () => apiFetch<JobsListResponse>(`/api/jobs?${buildJobsParams(query)}`),
+    queryFn: ({ signal }) => apiFetch<JobsListResponse>(`/api/jobs?${buildJobsParams(query)}`, { signal }),
     placeholderData: options.keepPrevious === true ? keepPreviousData : undefined,
     enabled: !fastEligible || fastQuery.data !== undefined,
   });
@@ -134,11 +222,11 @@ export async function fetchAllMatchingJobIds(
 }
 
 /** Full detail aggregation for one job; disabled while nothing is selected. */
-export function useJobDetail(id: string | null) {
+export function useJobDetail(id: string | null, enabled = true) {
   return useQuery({
     queryKey: jobsKeys.detail(id),
     queryFn: () => apiFetch<JobDetailResponse>(`/api/jobs/${id}`),
-    enabled: id !== null,
+    enabled: id !== null && enabled,
     // Selection changes keep the previous row's pane visible while the next
     // detail loads instead of flashing the skeleton.
     placeholderData: keepPreviousData,
@@ -263,6 +351,16 @@ export function useRuns(query: RunsQuery) {
     queryKey: runsKeys.list(query),
     queryFn: () => apiFetch<RunsListResponse>(`/api/runs?${buildParams(query)}`),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Load a legacy evaluation's verified recommendation counts on expansion. */
+export function useRunDetail(runId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["runs", runId, "detail"] as const,
+    queryFn: () => apiFetch<RunSummary>(`/api/runs/${runId}`),
+    enabled,
+    staleTime: Number.POSITIVE_INFINITY,
   });
 }
 

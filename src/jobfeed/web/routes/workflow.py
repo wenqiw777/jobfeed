@@ -13,13 +13,14 @@ from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends
 
-from jobfeed.domain.models_status import TransitionRequest
+from jobfeed.domain.models_status import BulkTransitionRequest, TransitionRequest
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ops import StoreOpsMixin
 from jobfeed.ports.store_status import StoreStatusMixin
 from jobfeed.services.workflow import WorkflowService
 from jobfeed.web.deps import get_store, get_workflow_service
 from jobfeed.web.errors import ApiError
+from jobfeed.web.routes.real_jobs_workflow import RealJobWorkflowPort
 from jobfeed.web.schemas import (
     BulkTransitionBody,
     BulkTransitionResponse,
@@ -59,10 +60,20 @@ def _key_error_message(exc: KeyError) -> str:
     return str(exc.args[0]) if exc.args else "not found"
 
 
+async def _canonical_id(store: JobStore, source_id: int) -> str | None:
+    """Resolve a source ID only through its FK; never use its number as a real ID."""
+    try:
+        return await cast(RealJobWorkflowPort, store).resolve_real_job_id(
+            str(source_id)
+        )
+    except ValueError as exc:
+        raise ApiError(_HTTP_CONFLICT, "identity_unresolved", str(exc)) from exc
+
+
 # Registered before /jobs/{job_id}/transition so the literal segment wins.
 @router.post("/jobs/bulk/transition")
 async def bulk_transition(
-    body: BulkTransitionBody, service: _Workflow
+    body: BulkTransitionBody, service: _Workflow, store: _Store
 ) -> BulkTransitionResponse:
     """Transition multiple jobs with twin-cluster cascade.
 
@@ -78,7 +89,33 @@ async def bulk_transition(
     """
     items: list[tuple[str, str]] = [(item.id, item.to) for item in body.items]
     try:
-        result = await service.transition_bulk(items, force=body.force)
+        parents = [await _canonical_id(store, int(item.id)) for item in body.items]
+        if any(parent is not None for parent in parents):
+            if any(parent is None for parent in parents):
+                raise ValueError("bulk source IDs include a missing real-job parent")
+            source_by_parent = {
+                parent: item.id
+                for parent, item in zip(parents, body.items, strict=True)
+                if parent is not None
+            }
+            result = await cast(RealJobWorkflowPort, store).transition_real_jobs_bulk(
+                BulkTransitionRequest(
+                    items=[
+                        (parent, item.to)
+                        for parent, item in zip(parents, body.items, strict=True)
+                        if parent
+                    ],
+                    reason_selected="bulk_selected",
+                    reason_cascade="bulk_cascade",
+                    force=body.force,
+                )
+            )
+            result.failed = [
+                (source_by_parent.get(parent, parent), error)
+                for parent, error in result.failed
+            ]
+        else:
+            result = await service.transition_bulk(items, force=body.force)
     except ValueError as exc:
         raise ApiError(_HTTP_VALIDATION_ERROR, "validation_error", str(exc)) from exc
     return bulk_transition_response(result)
@@ -86,7 +123,7 @@ async def bulk_transition(
 
 @router.post("/jobs/{job_id}/transition")
 async def transition_job(
-    job_id: int, body: TransitionBody, service: _Workflow
+    job_id: int, body: TransitionBody, service: _Workflow, store: _Store
 ) -> TransitionResponse:
     """Transition a single job, optionally appending a note.
 
@@ -102,16 +139,25 @@ async def transition_job(
         ApiError: 404 when the job has no status row; 409 with code
             ``illegal_transition`` when the transition graph forbids it.
     """
+    real_id = await _canonical_id(store, job_id)
     request = TransitionRequest(
-        job_id=str(job_id), new_status=body.to, force=body.force
+        job_id=real_id or str(job_id), new_status=body.to, force=body.force
     )
     try:
-        status = await service.transition(request, note=body.note)
+        if real_id is None:
+            status = await service.transition(request, note=body.note)
+        else:
+            canonical = cast(RealJobWorkflowPort, store)
+            status = await canonical.transition_real_job_status(request)
+            if body.note:
+                await canonical.append_real_job_note(
+                    real_job_id=real_id, text=body.note
+                )
     except KeyError as exc:
         raise _not_found(_key_error_message(exc)) from exc
     except ValueError as exc:
         raise ApiError(_HTTP_CONFLICT, "illegal_transition", str(exc)) from exc
-    return TransitionResponse(job_id=str(job_id), status=status)
+    return TransitionResponse(job_id=str(job_id), status=status, real_job_id=real_id)
 
 
 @router.post("/jobs/{job_id}/restore")
@@ -135,6 +181,15 @@ async def restore_job(
         ApiError: 404 when the job has no status row; 409 with code
             ``not_restorable`` when the job is not ghosted or archived.
     """
+    real_id = await _canonical_id(store, job_id)
+    if real_id is not None:
+        try:
+            status = await cast(RealJobWorkflowPort, store).restore_real_job(real_id)
+        except KeyError as exc:
+            raise _not_found(_key_error_message(exc)) from exc
+        except ValueError as exc:
+            raise ApiError(_HTTP_CONFLICT, "not_restorable", str(exc)) from exc
+        return RestoreResponse(job_id=str(job_id), status=status, real_job_id=real_id)
     status_info = await cast(StoreStatusMixin, store).get_status(str(job_id))
     if status_info is None:
         raise _not_found(f"no status row for job {job_id}")
@@ -148,7 +203,9 @@ async def restore_job(
 
 
 @router.post("/jobs/{job_id}/note")
-async def add_note(job_id: int, body: NoteBody, service: _Workflow) -> OkResponse:
+async def add_note(
+    job_id: int, body: NoteBody, service: _Workflow, store: _Store
+) -> OkResponse:
     """Append a note to a job (resets its ghost clock).
 
     Args:
@@ -162,15 +219,22 @@ async def add_note(job_id: int, body: NoteBody, service: _Workflow) -> OkRespons
     Raises:
         ApiError: 404 when the job has no status row.
     """
-    was_appended = await service.note(str(job_id), body.text)
+    real_id = await _canonical_id(store, job_id)
+    was_appended = (
+        await cast(RealJobWorkflowPort, store).append_real_job_note(
+            real_job_id=real_id, text=body.text
+        )
+        if real_id
+        else await service.note(str(job_id), body.text)
+    )
     if not was_appended:
         raise _not_found(f"no status row for job {job_id}")
-    return OkResponse()
+    return OkResponse(real_job_id=real_id)
 
 
 @router.post("/jobs/{job_id}/followup")
 async def set_followup(
-    job_id: int, body: FollowupBody, service: _Workflow
+    job_id: int, body: FollowupBody, service: _Workflow, store: _Store
 ) -> OkResponse:
     """Set the next follow-up time for a job.
 
@@ -185,10 +249,17 @@ async def set_followup(
     Raises:
         ApiError: 404 when the job has no status row.
     """
-    was_set = await service.set_followup(job_id=str(job_id), at=body.at)
+    real_id = await _canonical_id(store, job_id)
+    was_set = (
+        await cast(RealJobWorkflowPort, store).set_real_job_followup(
+            real_job_id=real_id, at=body.at
+        )
+        if real_id
+        else await service.set_followup(job_id=str(job_id), at=body.at)
+    )
     if not was_set:
         raise _not_found(f"no status row for job {job_id}")
-    return OkResponse()
+    return OkResponse(real_job_id=real_id)
 
 
 @router.post("/jobs/{job_id}/jd")
@@ -224,7 +295,9 @@ async def paste_jd(job_id: int, body: JdPasteBody, store: _Store) -> JdPasteResp
 
 
 @router.get("/jobs/{job_id}/interviews")
-async def list_interviews(job_id: int, service: _Workflow) -> InterviewsListResponse:
+async def list_interviews(
+    job_id: int, service: _Workflow, store: _Store
+) -> InterviewsListResponse:
     """List a job's interview rounds, ascending by round index.
 
     Args:
@@ -234,7 +307,12 @@ async def list_interviews(job_id: int, service: _Workflow) -> InterviewsListResp
     Returns:
         Interview rounds of the job.
     """
-    rounds = await service.list_rounds(str(job_id))
+    real_id = await _canonical_id(store, job_id)
+    rounds = (
+        await cast(RealJobWorkflowPort, store).list_real_job_interviews(real_id)
+        if real_id
+        else await service.list_rounds(str(job_id))
+    )
     return InterviewsListResponse(
         interviews=[interview_round_response(round_) for round_ in rounds]
     )
@@ -258,6 +336,17 @@ async def add_interview(
     Raises:
         ApiError: 404 when the job has no status row.
     """
+    real_id = await _canonical_id(store, job_id)
+    if real_id is not None:
+        try:
+            round_ = await cast(RealJobWorkflowPort, store).add_real_job_interview(
+                real_job_id=real_id,
+                label=body.label,
+                scheduled_at=body.scheduled_at,
+            )
+        except KeyError as exc:
+            raise _not_found(_key_error_message(exc)) from exc
+        return interview_round_response(round_)
     status_info = await cast(StoreStatusMixin, store).get_status(str(job_id))
     if status_info is None:
         raise _not_found(f"no status row for job {job_id}")
@@ -273,6 +362,7 @@ async def complete_interview(
     round_index: int,
     body: InterviewCompleteBody,
     service: _Workflow,
+    store: _Store,
 ) -> InterviewRoundDetail:
     """Complete the indexed interview round, attaching optional notes.
 
@@ -289,8 +379,19 @@ async def complete_interview(
         ApiError: 404 when no open round exists at that index.
     """
     try:
-        round_ = await service.complete_round(
-            str(job_id), round_index=round_index, notes=body.notes
+        real_id = await _canonical_id(store, job_id)
+        round_ = (
+            await cast(RealJobWorkflowPort, store).complete_real_job_interview(
+                real_job_id=real_id,
+                round_index=round_index,
+                notes=body.notes,
+            )
+            if real_id
+            else await service.complete_round(
+                str(job_id),
+                round_index=round_index,
+                notes=body.notes,
+            )
         )
     except ValueError as exc:
         raise _not_found(str(exc)) from exc

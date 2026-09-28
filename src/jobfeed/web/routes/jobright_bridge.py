@@ -23,6 +23,7 @@ class JobrightBridgeStatus(BaseModel):
     """Current in-process extension connection state."""
 
     connected: bool
+    supported_sources: list[str]
 
 
 @router.get("/sources/jobright/status")
@@ -35,7 +36,10 @@ async def bridge_status(request: Request) -> JobrightBridgeStatus:
     Returns:
         Current in-process bridge connection state.
     """
-    return JobrightBridgeStatus(connected=_bridge(request.app.state.context).connected)
+    bridge = _bridge(request.app.state.context)
+    return JobrightBridgeStatus(
+        connected=bridge.connected, supported_sources=sorted(bridge.supported_sources)
+    )
 
 
 @router.websocket("/sources/jobright/bridge")
@@ -54,10 +58,31 @@ async def bridge_socket(websocket: WebSocket) -> None:
     connection: JobrightBridgeConnection | None = None
     try:
         hello = await asyncio.wait_for(websocket.receive_json(), timeout=5)
-        if hello != {"type": "hello", "protocol": 1}:
+        if (
+            not isinstance(hello, dict)
+            or hello.get("type") != "hello"
+            or hello.get("protocol") != 1
+        ):
             await websocket.close(code=1008, reason="Unsupported bridge protocol")
             return
-        connection = bridge.connect()
+        sources = hello.get("sources", ["jobright"])
+        if not isinstance(sources, list) or any(
+            not isinstance(s, str)
+            or s
+            not in {
+                "jobright",
+                "linkedin",
+                "handshake",
+                "linkedin-search-results",
+                "tiktok",
+                "github-jd",
+                "discovery-gate-v1",
+            }
+            for s in sources
+        ):
+            await websocket.close(code=1008, reason="Unsupported source capabilities")
+            return
+        connection = bridge.connect(sources=sources)
         await websocket.send_json({"type": "ready", "protocol": 1})
         sender = asyncio.create_task(_send_commands(websocket, connection))
         receiver = asyncio.create_task(_receive_messages(websocket, bridge))

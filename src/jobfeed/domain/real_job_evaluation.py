@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
-from typing import cast
 
 from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.models import JobPosting, MLGateResult, QualityBand, StageBResult
@@ -70,8 +69,8 @@ def select_real_job_input(
         complete,
         key=lambda job: (
             0 if _is_ats(job) else 1,
-            _QUALITY[cast(QualityBand, job.jd_quality)],
-            int(cast(str, job.id)),
+            _QUALITY[job.jd_quality],
+            int(job.id),
         ),
     )
     first_discovery = min(job.discovered_at for job in sources)
@@ -88,9 +87,22 @@ def select_real_job_input(
         closed_at=official_closure,
         is_repost=all(job.is_repost is True for job in sources),
     )
-    return RealJobEvaluationInput(
-        real_job_id, cast(str, representative.id), canonical_job
+    return RealJobEvaluationInput(real_job_id, representative.id, canonical_job)
+
+
+def canonical_sort_dates(sources: list[JobPosting]) -> tuple[datetime, datetime]:
+    """Return the stable first-seen and sortable canonical posting dates."""
+    first_discovery = min(job.discovered_at for job in sources)
+    original_dates = [
+        job.posted_at
+        for job in sources
+        if job.posted_at is not None and not job.is_repost
+    ]
+    original = min(original_dates) if original_dates else None
+    canonical_posted = (
+        original if original and original <= first_discovery else first_discovery
     )
+    return first_discovery, canonical_posted
 
 
 def official_closed_at(sources: list[JobPosting]) -> datetime | None:
@@ -109,7 +121,9 @@ def official_closed_at(sources: list[JobPosting]) -> datetime | None:
     return max(job.closed_at for job in official if job.closed_at is not None)
 
 
-def representative_source_id(real_job_id: str, sources: list[JobPosting]) -> int | None:
+def representative_source_id(
+    real_job_id: str, sources: list[JobPosting]
+) -> int | None:
     """Prefer the canonical input, then the best official source available.
 
     Args:
@@ -125,21 +139,14 @@ def representative_source_id(real_job_id: str, sources: list[JobPosting]) -> int
     available = [job for job in sources if job.id is not None]
     if not available:
         return None
-    return int(
-        cast(
-            str,
-            min(
-                available,
-                key=lambda job: (
-                    not _is_ats(job),
-                    _QUALITY.get(job.jd_quality, len(_QUALITY))
-                    if job.jd_quality is not None
-                    else len(_QUALITY),
-                    int(cast(str, job.id)),
-                ),
-            ).id,
-        )
-    )
+    return int(min(
+        available,
+        key=lambda job: (
+            not _is_ats(job),
+            _QUALITY.get(job.jd_quality, len(_QUALITY)),
+            int(job.id),
+        ),
+    ).id)
 
 
 def conflicting_complete_sources(
@@ -156,8 +163,7 @@ def conflicting_complete_sources(
         The two source IDs requiring review, or None when descriptions agree.
     """
     complete = [
-        job
-        for job in sources
+        job for job in sources
         if job.id is not None
         and job.jd_text
         and job.jd_quality in _QUALITY
@@ -168,7 +174,7 @@ def conflicting_complete_sources(
             if compatible_role_facts(left, right) and not strict_content_equivalent(
                 left, right
             ):
-                return int(cast(str, left.id)), int(cast(str, right.id))
+                return int(left.id), int(right.id)
     return None
 
 
@@ -193,11 +199,9 @@ def legacy_evaluation_input_hold(
         if job is None or not job.jd_text or job.jd_quality not in _QUALITY:
             return "evaluation_input_missing"
     if selected is None:
-        return (
-            "evaluation_input_conflict"
-            if any(job.jd_text and job.jd_quality in _QUALITY for job in sources)
-            else "evaluation_input_missing"
-        )
+        return "evaluation_input_conflict" if any(
+            job.jd_text and job.jd_quality in _QUALITY for job in sources
+        ) else "evaluation_input_missing"
     for source_id, scored_at in evaluated_sources:
         job = by_id[source_id]
         if (
@@ -325,20 +329,24 @@ def policy_visibility(
     facts = json.loads(stored_facts_json or "{}")
     stored_a = facts.get("stage_a_policy")
     stored_b = facts.get("stage_b_policy")
-    if stage_a_policy is not None and stored_a is None:
-        return False, False, "legacy_policy_unknown"
-    if stage_a_policy is not None and stored_a != stage_a_policy:
+    # Missing historical policy records do not invalidate an existing score.
+    if (
+        stored_a is not None
+        and stage_a_policy is not None
+        and stored_a != stage_a_policy
+    ):
         return False, False, "stage_a_policy_changed"
-    if stage_b_policy is not None and stored_b is None:
-        return True, False, "legacy_policy_unknown"
-    if stage_b_policy is not None and stored_b != stage_b_policy:
+    if (
+        stored_b is not None
+        and stage_b_policy is not None
+        and stored_b != stage_b_policy
+    ):
         return True, False, "stage_b_policy_changed"
     return True, True, None
 
 
 def mask_stale_evaluation_row(
-    row: dict[str, object],
-    *,
+    row: dict[str, object], *,
     stage_a_policy: dict[str, object] | None,
     stage_b_policy: dict[str, object] | None,
 ) -> None:
@@ -349,14 +357,14 @@ def mask_stale_evaluation_row(
         stage_a_policy: Current quick-score policy.
         stage_b_policy: Current detailed-score policy.
     """
-    facts = row.get("eval_input_facts_json")
     stage_a_current, stage_b_current, reason = policy_visibility(
-        facts if isinstance(facts, str) else None,
+        row.get("eval_input_facts_json"),
         stage_a_policy=stage_a_policy,
         stage_b_policy=stage_b_policy,
     )
     has_score = (
-        row.get("stage_a_score") is not None or row.get("stage_b_verdict") is not None
+        row.get("stage_a_score") is not None
+        or row.get("stage_b_verdict") is not None
     )
     row["evaluation_stale_reason"] = reason if has_score else None
     row["stale_stage_a_score"] = (

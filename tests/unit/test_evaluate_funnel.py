@@ -56,6 +56,16 @@ GATE_MAX_CANDIDATES = 123  # distinctive limit asserted on load_gate_candidates
 
 
 class FakeStore:
+    async def get_job(self, job_id: str) -> JobPosting | None:
+        return next(
+            (
+                job
+                for job in self._candidates + self._stage_b_candidates
+                if job.id == job_id
+            ),
+            None,
+        )
+
     """In-memory store covering the funnel + Stage A claim/score surface."""
 
     def __init__(
@@ -526,10 +536,9 @@ async def test_seniority_gate_runs_after_sde_gate_and_before_stage_a() -> None:
 
 
 @pytest.mark.asyncio
-async def test_only_representative_is_gated_and_survives() -> None:
-    """Twins fold to one representative; non-reps are never gated."""
-    # Same (company, title) => one twin cluster. ATS platform + later posted_at
-    # makes "rep" the representative over the linkedin twin.
+async def test_distinct_posts_are_gated_and_survive() -> None:
+    """Different posts remain eligible; exact request reuse saves model calls."""
+    # Company/title equality cannot remove distinct posts before scoring.
     rep = _job("rep")
     twin = replace(
         _job("twin"),
@@ -550,8 +559,8 @@ async def test_only_representative_is_gated_and_survives() -> None:
         dry_run=False,
     )
 
-    assert survivors == ["rep"]
-    assert [jid for jid, _ in store.gate_results] == ["rep"]
+    assert survivors == ["rep", "twin"]
+    assert [jid for jid, _ in store.gate_results] == ["rep", "twin"]
     assert run.jobs_ml_gated == 0
 
 

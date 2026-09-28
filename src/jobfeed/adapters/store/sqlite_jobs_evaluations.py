@@ -60,6 +60,24 @@ class SqliteJobsEvaluations:
             self._lifecycle, platform=platform, canonical_ids=canonical_ids
         )
 
+    async def save_job_batch(
+        self,
+        jobs: list[JobPosting],
+        *,
+        receipt_key: str,
+        run_id: str,
+        owner_id: str,
+        generation: int,
+    ) -> list[SaveJobResult]:
+        return await _sqlite_jobs._save_job_batch(
+            self._lifecycle,
+            jobs,
+            receipt_key=receipt_key,
+            run_id=run_id,
+            owner_id=owner_id,
+            generation=generation,
+        )
+
     async def list_jobs(self, limit: int = 100) -> list[JobPosting]:
         """List recent jobs in stable descending order.
 
@@ -150,6 +168,14 @@ class SqliteJobsEvaluations:
         """
         await _sqlite_evaluations._mark_stage_b_skipped(self._lifecycle, job_id)
 
+    async def mark_stage_b_ineligible(self, job_id: str) -> None:
+        """Persist a hard-eligibility skip so it is not reclaimed.
+
+        Args:
+            job_id: Store-assigned identity.
+        """
+        await _sqlite_evaluations._mark_stage_b_ineligible(self._lifecycle, job_id)
+
     async def load_pending_stage_a(
         self,
         *,
@@ -177,6 +203,7 @@ class SqliteJobsEvaluations:
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        require_stage_a: bool = True,
     ) -> list[JobPosting]:
         """Load non-claiming Stage B null/error rows.
 
@@ -188,6 +215,7 @@ class SqliteJobsEvaluations:
             limit=limit,
             max_days=max_days,
             stage_a_threshold=stage_a_threshold,
+            require_stage_a=require_stage_a,
         )
 
     async def list_evaluated_jobs(self, limit: int = 100) -> list[JobEvaluation]:

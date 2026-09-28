@@ -14,6 +14,10 @@ from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
 from jobfeed.ports.prompts import PromptBundle
 from jobfeed.ports.run_leases import RunLeaseStore
 from jobfeed.services._evaluate_budget import EvaluateBudgetGate
+from jobfeed.services._evaluate_canonical import (
+    build_canonical_dry_run_preview,
+    run_canonical_evaluation,
+)
 from jobfeed.services._evaluate_claims import (
     load_stage_a_for_run,
     release_stage_a_for_run,
@@ -28,6 +32,8 @@ from jobfeed.services._evaluate_helpers import (
     require_job_id,
     run_auto_decay,
 )
+from jobfeed.services._evaluate_repost import confirmed_repost, stored_repost
+from jobfeed.services._evaluate_reuse import EvaluationReuse
 from jobfeed.services._evaluate_stage_b import _run_stage_b
 from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
@@ -49,6 +55,7 @@ class EvaluateService:
         self._config = config
         self._logger = logger
         self._budget = EvaluateBudgetGate(deps.store_ops, config.llm, logger)
+        self._reuse = EvaluationReuse()
         self._perf = get_perf_store(deps.store)
         self._tracer = get_tracer("jobfeed.evaluate")
         self._on_progress: Callable[[PipelineRun], None] | None = None
@@ -65,6 +72,7 @@ class EvaluateService:
         max_days: int | None = None,
         dry_run: bool = False,
         job_ids: list[str] | None = None,
+        canonical: bool = False,
         on_progress: Callable[[PipelineRun], None] | None = None,
         run: PipelineRun | None = None,
         lease_session: RunLeaseSession | None = None,
@@ -78,6 +86,8 @@ class EvaluateService:
         Raises: Whatever a stage raised, after marking the run failed.
         """
         validate_evaluate_stage(stage)
+        if corpus not in {"unrated", "failed", "all"}:
+            raise ValueError(f"unknown corpus: {corpus!r}")
         lim = self._config.default_eval_limit if limit is None else limit
         if dry_run:
             if lease_session is not None:
@@ -85,8 +95,16 @@ class EvaluateService:
             if run is None:
                 run = self._run_orchestrator.new_unpersisted_run("evaluate")
             bind_run_id(run.run_id)
-            request = DryRunRequest(self._logger, stage, corpus, lim, max_days, job_ids)
-            await build_dry_run_preview(self._deps, self._config, run, request)
+            if canonical:
+                await build_canonical_dry_run_preview(
+                    self, run, stage=stage, limit=lim,
+                    source_job_ids=job_ids, corpus=corpus, max_days=max_days,
+                )
+            else:
+                request = DryRunRequest(
+                    self._logger, stage, corpus, lim, max_days, job_ids
+                )
+                await build_dry_run_preview(self._deps, self._config, run, request)
             run.jobs_scored = run.stage_a_scored + run.stage_b_scored
             self._run_orchestrator.finish_unpersisted(run, "succeeded")
             if on_progress is not None:
@@ -105,6 +123,7 @@ class EvaluateService:
                     limit=lim,
                     max_days=max_days,
                     job_ids=job_ids,
+                    canonical=canonical,
                     on_progress=on_progress,
                 ),
             )
@@ -118,6 +137,7 @@ class EvaluateService:
             limit=lim,
             max_days=max_days,
             job_ids=job_ids,
+            canonical=canonical,
             on_progress=on_progress,
         )
         return lease_session.run
@@ -132,34 +152,57 @@ class EvaluateService:
         max_days: int | None,
         job_ids: list[str] | None,
         on_progress: Callable[[PipelineRun], None] | None,
+        canonical: bool = False,
     ) -> None:
         """Execute evaluation work under an already-started fencing token."""
         run = lease_session.run
         bind_run_id(run.run_id)
+        run.verdict_counts = {"apply": 0, "consider": 0, "skip": 0}
         self._on_progress = on_progress
         run.evaluate_stage = stage
         run.progress_stage = "preparing"
         self._emit_progress(run)
         lease_session.ensure_active()
-        await run_auto_decay(self._deps, self._config, self._logger)
-        lease_session.ensure_active()
-        if stage != "b":
-            await self._run_stage_a(
-                run, corpus, limit, max_days, job_ids, lease_session
+        self._reuse = EvaluationReuse()
+        try:
+            await run_auto_decay(
+                self._deps, self._config, self._logger, canonical=canonical
             )
-        if stage != "a":
-            async with self._st(run.run_id, "stage", "stage_b"):
-                await _run_stage_b(
+            lease_session.ensure_active()
+            if canonical:
+                await run_canonical_evaluation(
                     self,
                     run,
-                    limit,
-                    max_days,
                     lease_session,
-                    job_ids=job_ids,
+                    stage=stage,
+                    limit=limit,
+                    source_job_ids=job_ids,
+                    corpus=corpus,
+                    max_days=max_days,
                 )
-        run.jobs_scored = run.stage_a_scored + run.stage_b_scored
-        run.progress_stage = "finalizing"
-        self._emit_progress(run)
+                run.jobs_scored = run.stage_a_scored + run.stage_b_scored
+                run.progress_stage = "finalizing"
+                self._emit_progress(run)
+                return
+            if stage != "b":
+                await self._run_stage_a(
+                    run, corpus, limit, max_days, job_ids, lease_session
+                )
+            if stage != "a":
+                async with self._st(run.run_id, "stage", "stage_b"):
+                    await _run_stage_b(
+                        self,
+                        run,
+                        limit,
+                        max_days,
+                        lease_session,
+                        job_ids=job_ids,
+                    )
+            run.jobs_scored = run.stage_a_scored + run.stage_b_scored
+            run.progress_stage = "finalizing"
+            self._emit_progress(run)
+        finally:
+            self._reuse = EvaluationReuse()
 
     def _emit_progress(self, run: PipelineRun) -> None:
         run.jobs_scored = run.stage_a_scored + run.stage_b_scored
@@ -226,7 +269,24 @@ class EvaluateService:
                     run.stage_a_processed += 1
                     self._emit_progress(run)
 
-            await asyncio.gather(*(_worker(j) for j in jobs))
+            workers = [asyncio.create_task(_worker(job)) for job in jobs]
+            try:
+                await asyncio.gather(*workers)
+            except BaseException:
+                for worker in workers:
+                    worker.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
+                if not lease_session.lease_lost:
+                    await asyncio.gather(
+                        *(
+                            release_stage_a_for_run(
+                                self._deps.store, require_job_id(job)
+                            )
+                            for job in jobs
+                        ),
+                        return_exceptions=True,
+                    )
+                raise
 
     async def _score_stage_a(
         self,
@@ -236,6 +296,10 @@ class EvaluateService:
     ) -> None:
         lease_session.ensure_active()
         job_id = require_job_id(job)
+        if await confirmed_repost(self._deps.store, job):
+            await release_stage_a_for_run(self._deps.store, job_id)
+            self._logger.info("scoring_skipped_repost", job_id=job_id, stage="a")
+            return
         if len(job.jd_text or "") < SHORT_JD_THRESHOLD:
             await self._deps.store.save_stage_a_error(
                 job_id, f"jd_text_too_short: {len(job.jd_text or '')} chars"
@@ -246,16 +310,33 @@ class EvaluateService:
             resume_text=self._config.resume_text, job=job
         )
         req = LLMRequest(messages=bundle.messages, model=self._config.llm.stage_a)
-        result = await self._call_parse_a(job_id, req, bundle, run, lease_session)
-        if result is None:
-            return
-        lease_session.ensure_active()
-        await self._deps.store.save_stage_a(job_id, result)
-        lease_session.ensure_active()
-        run.stage_a_scored += 1
-        self._logger.info("stage_a_scored", job_id=job_id, score=result.score)
-        if result.score < self._config.stage_a_threshold:
-            await self._deps.store.mark_stage_b_skipped(job_id)
+        async with self._reuse.entry("a", self._deps.llm_stage_a, req) as entry:
+            lease_session.ensure_active()
+            if await stored_repost(self._deps.store, job_id):
+                await release_stage_a_for_run(self._deps.store, job_id)
+                return
+            result = cast(StageAResult | None, entry.result)
+            if result is None:
+                result = await self._call_parse_a(
+                    job_id, req, bundle, run, lease_session
+                )
+            if result is None:
+                return
+            lease_session.ensure_active()
+            await self._deps.store.save_stage_a(job_id, result)
+            lease_session.ensure_active()
+            if entry.source_job_id is not None:
+                self._logger.info(
+                    "evaluation_reused",
+                    job_id=job_id,
+                    stage="a",
+                    reused_from_job_id=entry.source_job_id,
+                )
+            entry.publish(result, job_id)
+            run.stage_a_scored += 1
+            self._logger.info("stage_a_scored", job_id=job_id, score=result.score)
+            if result.score < self._config.stage_a_threshold:
+                await self._deps.store.mark_stage_b_skipped(job_id)
 
     async def _call_parse_a(
         self,
@@ -267,11 +348,18 @@ class EvaluateService:
     ) -> StageAResult | None:
         for attempt in range(2):
             lease_session.ensure_active()
+            if await stored_repost(self._deps.store, job_id):
+                await release_stage_a_for_run(self._deps.store, job_id)
+                return None
             ledger_day = await self._budget.reserve()
             lease_session.ensure_active()
             if ledger_day is None:
                 await release_stage_a_for_run(self._deps.store, job_id)
                 return None
+            if await stored_repost(self._deps.store, job_id):
+                await release_stage_a_for_run(self._deps.store, job_id)
+                return None
+            lease_session.ensure_active()
             try:
                 resp = await self._deps.llm_stage_a.complete(req)
                 lease_session.ensure_active()

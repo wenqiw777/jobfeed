@@ -7,7 +7,7 @@ resume hooks) and the verdict-bearing / verdict-independent mappers.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from jobfeed.domain.models import JobEvaluation, StageBResult
 
@@ -25,6 +25,12 @@ class GapDetail(BaseModel):
     requirement: str
     severity: str
     mitigation: str
+
+    @field_validator("mitigation", mode="before")
+    @classmethod
+    def empty_missing_mitigation(cls, value: object) -> object:
+        """Render absent historical mitigation text as an empty field."""
+        return "" if value is None else value
 
 
 class ResumeHooksDetail(BaseModel):

@@ -62,7 +62,7 @@ export function TriggerEvaluateButton() {
   };
 
   const handleError = (error: unknown) => {
-    if (error instanceof ApiError && error.status === 409) {
+    if (error instanceof ApiError && error.code === "evaluate_already_running") {
       toast({
         title: "Evaluation already running",
         description: "Wait for the current evaluation to finish.",

@@ -20,7 +20,7 @@ async def _list_personal_ml_observations(
             """SELECT e.stage_a_score, j.ml_gate_score,
                       j.ml_gate_fail_reason, j.role_type
                FROM evaluations e
-               JOIN jobs j ON j.id=e.job_id
+               JOIN jobs j INDEXED BY idx_jobs_personal_ml ON j.id=e.job_id
                WHERE e.stage_a_status='completed'
                ORDER BY e.stage_a_at ASC, e.job_id ASC"""
         )

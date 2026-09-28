@@ -77,18 +77,29 @@ def _stage_b(row: aiosqlite.Row) -> StageBResult | None:
 def _strengths(fit: dict[str, Any]) -> list[MatchItem]:
     values = fit.get("strong_match")
     if not isinstance(values, list):
+        values = _evidence_items(fit)
+    if not isinstance(values, list):
         return []
     return [
         MatchItem(
-            requirement=item["requirement"],
-            evidence=item.get("evidence_from_resume", item.get("evidence", "")),
+            requirement=str(item.get("requirement", item.get("jd_need", "")) or ""),
+            evidence=str(
+                item.get(
+                    "evidence_from_resume",
+                    item.get("resume_evidence", item.get("evidence", "")),
+                )
+                or ""
+            ),
         )
         for item in values
+        if isinstance(item, dict)
     ]
 
 
 def _gaps(fit: dict[str, Any]) -> list[GapItem]:
     values = fit.get("gaps")
+    if not isinstance(values, list):
+        return _evidence_gaps(fit)
     if not isinstance(values, list):
         return []
     return [
@@ -99,6 +110,50 @@ def _gaps(fit: dict[str, Any]) -> list[GapItem]:
         )
         for item in values
     ]
+
+
+def _evidence_items(fit: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten unique dimension evidence. Complexity: O(D * E)."""
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for name in (
+        "similar_work",
+        "core_technical_evidence",
+        "work_type_similarity",
+        "additional_relevant_evidence",
+    ):
+        dimension = fit.get(name)
+        if not isinstance(dimension, dict):
+            continue
+        for item in dimension.get("evidence", []):
+            if not isinstance(item, dict):
+                continue
+            key = (str(item.get("jd_need", "")), str(item.get("resume_evidence", "")))
+            if key not in seen and all(key):
+                seen.add(key)
+                items.append(item)
+    return items
+
+
+def _evidence_gaps(fit: dict[str, Any]) -> list[GapItem]:
+    """Flatten unique dimension gaps. Complexity: O(D * G)."""
+    gaps: list[GapItem] = []
+    seen: set[str] = set()
+    for name in (
+        "similar_work",
+        "core_technical_evidence",
+        "work_type_similarity",
+        "additional_relevant_evidence",
+    ):
+        dimension = fit.get(name)
+        if not isinstance(dimension, dict):
+            continue
+        for value in dimension.get("gaps", []):
+            gap = str(value).strip()
+            if gap and gap not in seen:
+                seen.add(gap)
+                gaps.append(GapItem(requirement=gap, severity="major", mitigation=""))
+    return gaps
 
 
 def _severity(value: str) -> Severity:
@@ -145,5 +200,6 @@ def _stage_b_display_blocks(row: aiosqlite.Row) -> dict[str, object] | None:
             }
             for item in _gaps(fit)
         ],
-        "hooks": _optional_json(row["stage_b_hooks_json"]),
+        "hooks": _optional_json(row["stage_b_hooks_json"])
+        or {"lead_with": "", "supporting": [], "avoid_mentioning": []},
     }

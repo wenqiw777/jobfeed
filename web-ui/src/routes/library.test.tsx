@@ -9,7 +9,7 @@ const calls: string[] = [];
 
 function row(status: string, postedAt: string | null = "2026-06-16T00:00:00Z"): JobSummary {
   return {
-    id: "1", company: "Acme", title: "Engineer", platform: "lever",
+    id: "1", company: "Acme", title: "Engineer", location: "Remote", platform: "lever",
     url: "https://example.com", status, decision: "results", verdict: "apply", stage_a_score: 80,
     stage_b_fit_score: 90, stage_b_status: "completed", jd_quality: "full",
     company_norm: "acme", title_norm: "engineer", posted_at: postedAt,
@@ -66,10 +66,11 @@ test("Applied filter groups historical application statuses", async () => {
   expect(screen.getByText("Applied")).toBeInTheDocument();
 });
 
-test("uses 50 rows for every library page", async () => {
+test("uses 25 rows for every library page", async () => {
   renderPage();
   await screen.findByTestId("job-row-1");
-  expect(calls.some((url) => url.includes("limit=50"))).toBe(true);
+  expect(calls.some((url) => url.includes("limit=25"))).toBe(true);
+  expect(calls.some((url) => url.includes("canonical=true"))).toBe(true);
 });
 
 test("sorts all postings from the Fit score and Posted headers", async () => {

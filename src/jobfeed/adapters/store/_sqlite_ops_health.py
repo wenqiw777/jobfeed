@@ -6,7 +6,13 @@ from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
-from jobfeed.adapters.store._sqlite_capability_support import _fetch_rows
+from jobfeed.adapters.store._sqlite_capability_support import (
+    _fetch_rows,
+    _immediate_transaction,
+)
+from jobfeed.adapters.store._sqlite_real_job_evaluation import (
+    sync_sqlite_real_job_input,
+)
 from jobfeed.adapters.store._sqlite_values import _utc_text
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.domain.models import AttentionItem, AttentionReport
@@ -86,14 +92,17 @@ async def _mark_stale_jobs_closed(
                 connection, f"SELECT id FROM jobs WHERE {where}", (cutoff,)
             )
             return len(rows)
-        cursor = await connection.execute(
-            "UPDATE jobs SET closed_at=?,enrich_error=? WHERE "
-            + where
-            + " RETURNING id",
-            (_utc_text(now), STALE_BACKFILL_MARKER, cutoff),
-        )
-        rows = list(await cursor.fetchall())
-        await cursor.close()
+        async with _immediate_transaction(connection):
+            cursor = await connection.execute(
+                "UPDATE jobs SET closed_at=?,enrich_error=? WHERE "
+                + where
+                + " RETURNING id",
+                (_utc_text(now), STALE_BACKFILL_MARKER, cutoff),
+            )
+            rows = list(await cursor.fetchall())
+            await cursor.close()
+            for row in rows:
+                await sync_sqlite_real_job_input(connection, int(row[0]))
     return len(rows)
 
 

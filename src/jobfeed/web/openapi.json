@@ -305,6 +305,17 @@
       },
       "Body_apply_to_job_api_jobs__job_id__apply_post": {
         "properties": {
+          "apply_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apply Url"
+          },
           "cover_letter": {
             "anyOf": [
               {
@@ -339,6 +350,17 @@
             ],
             "title": "Notes"
           },
+          "source_job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Job Id"
+          },
           "tailored": {
             "anyOf": [
               {
@@ -364,6 +386,91 @@
           }
         },
         "title": "Body_apply_to_job_api_jobs__job_id__apply_post",
+        "type": "object"
+      },
+      "Body_apply_to_real_job_api_real_jobs__real_job_id__apply_post": {
+        "properties": {
+          "apply_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apply Url"
+          },
+          "cover_letter": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Letter"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "source_job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Job Id"
+          },
+          "tailored": {
+            "anyOf": [
+              {
+                "contentMediaType": "application/octet-stream",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tailored"
+          },
+          "variant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant"
+          }
+        },
+        "title": "Body_apply_to_real_job_api_real_jobs__real_job_id__apply_post",
         "type": "object"
       },
       "Body_upload_resume_api_onboarding_resume_post": {
@@ -1154,6 +1261,47 @@
         "title": "HardFiltersSettings",
         "type": "object"
       },
+      "IdentityEvidence": {
+        "description": "Observed external identifier linking a source to its parent.",
+        "properties": {
+          "evidence_job_id": {
+            "title": "Evidence Job Id",
+            "type": "string"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "observed_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Url"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "scope",
+          "native_id",
+          "evidence_job_id",
+          "observed_url"
+        ],
+        "title": "IdentityEvidence",
+        "type": "object"
+      },
       "InsightsDayEntry": {
         "description": "One UTC day of the windowed series (only days having data appear).",
         "properties": {
@@ -1542,6 +1690,17 @@
           "evaluation": {
             "$ref": "#/components/schemas/EvaluationDetail"
           },
+          "evaluation_stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Stale Reason"
+          },
           "interviews": {
             "items": {
               "$ref": "#/components/schemas/InterviewRoundDetail"
@@ -1551,6 +1710,17 @@
           },
           "job": {
             "$ref": "#/components/schemas/JobDetailJob"
+          },
+          "real_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Real Job Id"
           },
           "status": {
             "$ref": "#/components/schemas/StatusDetail"
@@ -1767,9 +1937,31 @@
             "title": "Discovered At",
             "type": "string"
           },
+          "evaluation_stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Stale Reason"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "is_repost": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Repost"
           },
           "jd_quality": {
             "anyOf": [
@@ -1781,6 +1973,11 @@
               }
             ],
             "title": "Jd Quality"
+          },
+          "location": {
+            "default": "",
+            "title": "Location",
+            "type": "string"
           },
           "platform": {
             "title": "Platform",
@@ -1797,6 +1994,40 @@
               }
             ],
             "title": "Posted At"
+          },
+          "real_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Real Job Id"
+          },
+          "repost_evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repost Evidence"
+          },
+          "repost_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repost Observed At"
           },
           "stage_a_score": {
             "anyOf": [
@@ -1894,10 +2125,18 @@
           "connected": {
             "title": "Connected",
             "type": "boolean"
+          },
+          "supported_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Sources",
+            "type": "array"
           }
         },
         "required": [
-          "connected"
+          "connected",
+          "supported_sources"
         ],
         "title": "JobrightBridgeStatus",
         "type": "object"
@@ -2217,6 +2456,11 @@
             "title": "Model Version",
             "type": "string"
           },
+          "policy_version": {
+            "default": "v1",
+            "title": "Policy Version",
+            "type": "string"
+          },
           "threshold_override": {
             "anyOf": [
               {
@@ -2324,6 +2568,17 @@
             "default": true,
             "title": "Ok",
             "type": "boolean"
+          },
+          "real_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Real Job Id"
           }
         },
         "title": "OkResponse",
@@ -3043,12 +3298,618 @@
         "title": "ProviderStateResponse",
         "type": "object"
       },
+      "RealJobApplicationRow": {
+        "description": "Canonical submission event with source and target provenance.",
+        "properties": {
+          "application_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Method"
+          },
+          "applied_at": {
+            "format": "date-time",
+            "title": "Applied At",
+            "type": "string"
+          },
+          "apply_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apply Url"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "real_job_id": {
+            "title": "Real Job Id",
+            "type": "string"
+          },
+          "source_applied_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Applied Job Id"
+          },
+          "source_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Job Id"
+          }
+        },
+        "required": [
+          "id",
+          "real_job_id",
+          "source_job_id",
+          "source_applied_job_id",
+          "apply_url",
+          "applied_at",
+          "application_method",
+          "notes"
+        ],
+        "title": "RealJobApplicationRow",
+        "type": "object"
+      },
+      "RealJobApplicationsListResponse": {
+        "properties": {
+          "applications": {
+            "items": {
+              "$ref": "#/components/schemas/RealJobApplicationRow"
+            },
+            "title": "Applications",
+            "type": "array"
+          }
+        },
+        "required": [
+          "applications"
+        ],
+        "title": "RealJobApplicationsListResponse",
+        "type": "object"
+      },
+      "RealJobDetailResponse": {
+        "description": "Canonical detail with current decision and all source evidence.",
+        "properties": {
+          "application": {
+            "title": "Application",
+            "type": "null"
+          },
+          "evaluation": {
+            "$ref": "#/components/schemas/EvaluationDetail"
+          },
+          "evaluation_stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Stale Reason"
+          },
+          "identity_evidence": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityEvidence"
+            },
+            "title": "Identity Evidence",
+            "type": "array"
+          },
+          "identity_review_state": {
+            "title": "Identity Review State",
+            "type": "string"
+          },
+          "interviews": {
+            "items": {
+              "$ref": "#/components/schemas/InterviewRoundDetail"
+            },
+            "title": "Interviews",
+            "type": "array"
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobDetailJob"
+          },
+          "real_job_id": {
+            "title": "Real Job Id",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/RealJobSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "stale_stage_a_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stale Stage A Score"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StatusDetail"
+          },
+          "twins": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Twins",
+            "type": "array"
+          }
+        },
+        "required": [
+          "real_job_id",
+          "identity_review_state",
+          "job",
+          "evaluation",
+          "status",
+          "twins",
+          "interviews",
+          "sources",
+          "identity_evidence"
+        ],
+        "title": "RealJobDetailResponse",
+        "type": "object"
+      },
+      "RealJobSource": {
+        "description": "One source posting attached to a canonical parent.",
+        "properties": {
+          "apply_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apply Url"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "discovered_at": {
+            "format": "date-time",
+            "title": "Discovered At",
+            "type": "string"
+          },
+          "is_repost": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Repost"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "platform",
+          "url",
+          "apply_url",
+          "title",
+          "discovered_at",
+          "posted_at",
+          "closed_at",
+          "is_repost"
+        ],
+        "title": "RealJobSource",
+        "type": "object"
+      },
+      "RealJobSummary": {
+        "description": "One canonical Triage card with explicit representative source ID.",
+        "properties": {
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "company": {
+            "title": "Company",
+            "type": "string"
+          },
+          "company_norm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company Norm"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "enum": [
+                  "results",
+                  "wait",
+                  "applied",
+                  "ignored"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "discovered_at": {
+            "format": "date-time",
+            "title": "Discovered At",
+            "type": "string"
+          },
+          "evaluation_stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluation Stale Reason"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "identity_review_state": {
+            "title": "Identity Review State",
+            "type": "string"
+          },
+          "is_repost": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Repost"
+          },
+          "jd_quality": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jd Quality"
+          },
+          "location": {
+            "default": "",
+            "title": "Location",
+            "type": "string"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "priority_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority Score"
+          },
+          "queue_tier": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Tier"
+          },
+          "real_job_id": {
+            "title": "Real Job Id",
+            "type": "string"
+          },
+          "repost_evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repost Evidence"
+          },
+          "repost_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repost Observed At"
+          },
+          "source_job_id": {
+            "title": "Source Job Id",
+            "type": "string"
+          },
+          "stage_a_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage A Score"
+          },
+          "stage_b_fit_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Fit Score"
+          },
+          "stage_b_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage B Status"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "title_norm": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title Norm"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "id",
+          "real_job_id",
+          "company",
+          "title",
+          "platform",
+          "url",
+          "status",
+          "decision",
+          "verdict",
+          "stage_a_score",
+          "stage_b_fit_score",
+          "stage_b_status",
+          "posted_at",
+          "discovered_at",
+          "closed_at",
+          "jd_quality",
+          "company_norm",
+          "title_norm",
+          "source_job_id",
+          "identity_review_state"
+        ],
+        "title": "RealJobSummary",
+        "type": "object"
+      },
+      "RealJobsListResponse": {
+        "description": "Canonical page, exact total, and decision-tab counts.",
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/RealJobSummary"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "tab_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tab Counts",
+            "type": "object"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "total_is_exact": {
+            "default": true,
+            "title": "Total Is Exact",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "jobs",
+          "total",
+          "tab_counts"
+        ],
+        "title": "RealJobsListResponse",
+        "type": "object"
+      },
+      "RealJobsSelectionResponse": {
+        "description": "Canonical IDs and exact total captured in one selection snapshot.",
+        "properties": {
+          "real_job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Real Job Ids",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "real_job_ids",
+          "total"
+        ],
+        "title": "RealJobsSelectionResponse",
+        "type": "object"
+      },
       "RestoreResponse": {
         "description": "``POST /api/jobs/{id}/restore`` response: where the job landed.",
         "properties": {
           "job_id": {
             "title": "Job Id",
             "type": "string"
+          },
+          "real_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Real Job Id"
           },
           "status": {
             "title": "Status",
@@ -3385,6 +4246,26 @@
             "title": "Scan Processed",
             "type": "integer"
           },
+          "scan_progress": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "title": "Scan Progress",
+            "type": "object"
+          },
           "scan_source": {
             "anyOf": [
               {
@@ -3473,6 +4354,20 @@
           "total_llm_cost_usd": {
             "title": "Total Llm Cost Usd",
             "type": "number"
+          },
+          "verdict_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict Counts"
           }
         },
         "required": [
@@ -3533,10 +4428,25 @@
             "title": "Ml Gate Enabled",
             "type": "boolean"
           },
+          "resume_version": {
+            "default": "v1",
+            "title": "Resume Version",
+            "type": "string"
+          },
+          "stage_a_prompt_version": {
+            "default": "v1",
+            "title": "Stage A Prompt Version",
+            "type": "string"
+          },
           "stage_a_threshold": {
             "default": 60,
             "title": "Stage A Threshold",
             "type": "integer"
+          },
+          "stage_b_prompt_version": {
+            "default": "v1",
+            "title": "Stage B Prompt Version",
+            "type": "string"
           }
         },
         "title": "ScoringSettings",
@@ -3671,6 +4581,11 @@
             "minimum": 0.0,
             "title": "Out Of Scope Threshold",
             "type": "number"
+          },
+          "policy_version": {
+            "default": "v1",
+            "title": "Policy Version",
+            "type": "string"
           }
         },
         "title": "SeniorityGateSettings",
@@ -4417,6 +5332,17 @@
           "job_id": {
             "title": "Job Id",
             "type": "string"
+          },
+          "real_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Real Job Id"
           },
           "status": {
             "title": "Status",
@@ -5216,6 +6142,16 @@
           },
           {
             "in": "query",
+            "name": "canonical",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Canonical",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
             "name": "sort",
             "required": false,
             "schema": {
@@ -5226,7 +6162,11 @@
                 "posted_desc",
                 "score_asc",
                 "score_desc",
-                "company_asc"
+                "company_asc",
+                "triage_posted_asc",
+                "triage_posted_desc",
+                "triage_score_asc",
+                "triage_score_desc"
               ],
               "title": "Sort",
               "type": "string"
@@ -5407,6 +6347,46 @@
           }
         },
         "summary": "Apply To Job"
+      }
+    },
+    "/api/jobs/{job_id}/audit": {
+      "get": {
+        "description": "Read the retained source evaluation and workflow audit by source ID.",
+        "operationId": "get_source_job_audit_api_jobs__job_id__audit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Source Job Audit"
       }
     },
     "/api/jobs/{job_id}/followup": {
@@ -6513,6 +7493,717 @@
           }
         },
         "summary": "Get Personal Ml Status"
+      }
+    },
+    "/api/real-jobs": {
+      "get": {
+        "description": "Return the Triage page with canonical priority projections.\n\nArgs:\n    params: Validated Triage query filters and page window.\n    store: Canonical store resolved from the request context.\n    context: Application settings and store context.\n    policy: Current scoring-policy snapshot for stale-score projection.\n\nReturns:\n    Triage cards with canonical priority and exact counts.",
+        "operationId": "list_real_jobs_api_real_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "decision",
+            "required": false,
+            "schema": {
+              "default": "results",
+              "enum": [
+                "results",
+                "wait",
+                "applied",
+                "ignored"
+              ],
+              "title": "Decision",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "triage_posted_desc",
+              "enum": [
+                "triage_posted_asc",
+                "triage_posted_desc",
+                "triage_score_asc",
+                "triage_score_desc",
+                "discovered_desc"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_verdict",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Require Verdict",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealJobsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Real Jobs"
+      }
+    },
+    "/api/real-jobs/applications": {
+      "get": {
+        "description": "List canonical submission events, including their source provenance.",
+        "operationId": "list_real_job_applications_api_real_jobs_applications_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealJobApplicationsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Real Job Applications"
+      }
+    },
+    "/api/real-jobs/bulk/transition": {
+      "post": {
+        "description": "Apply a bulk decision to distinct canonical IDs.\n\nArgs:\n    body: Validated HTTP request body.\n    store: Canonical store resolved from the request context.\n\nReturns:\n    HTTP response with canonical bulk transition outcomes.",
+        "operationId": "bulk_transition_api_real_jobs_bulk_transition_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkTransitionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkTransitionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Transition"
+      }
+    },
+    "/api/real-jobs/selection": {
+      "get": {
+        "description": "Return all currently matching canonical IDs for bulk selection.\n\nArgs:\n    params: Validated Triage query filters and page window.\n    store: Canonical store resolved from the request context.\n    context: Application settings and store context.\n    policy: Current scoring-policy snapshot for stale-score projection.\n\nReturns:\n    All matching canonical IDs with the exact snapshot count.",
+        "operationId": "select_real_jobs_api_real_jobs_selection_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "decision",
+            "required": false,
+            "schema": {
+              "default": "results",
+              "enum": [
+                "results",
+                "wait",
+                "applied",
+                "ignored"
+              ],
+              "title": "Decision",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "triage_posted_desc",
+              "enum": [
+                "triage_posted_asc",
+                "triage_posted_desc",
+                "triage_score_asc",
+                "triage_score_desc",
+                "discovered_desc"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "require_verdict",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Require Verdict",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealJobsSelectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Select Real Jobs"
+      }
+    },
+    "/api/real-jobs/{real_job_id}": {
+      "get": {
+        "description": "Return canonical detail with source postings and status history.\n\nArgs:\n    real_job_id: Canonical parent ID, never a source posting ID.\n    store: Canonical store resolved from the request context.\n    policy: Current scoring-policy snapshot for stale-score projection.\n\nReturns:\n    Canonical detail including sources, history, and interviews.\n\nRaises:\n    ApiError: The canonical parent does not exist.",
+        "operationId": "get_real_job_api_real_jobs__real_job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealJobDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Real Job"
+      }
+    },
+    "/api/real-jobs/{real_job_id}/apply": {
+      "post": {
+        "description": "Record a submission against a canonical job with explicit source.",
+        "operationId": "apply_to_real_job_api_real_jobs__real_job_id__apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_apply_to_real_job_api_real_jobs__real_job_id__apply_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply To Real Job"
+      }
+    },
+    "/api/real-jobs/{real_job_id}/followup": {
+      "post": {
+        "description": "Schedule the next follow-up for one canonical job.\n\nArgs:\n    real_job_id: Canonical parent ID, never a source posting ID.\n    body: Validated HTTP request body.\n    store: Canonical store resolved from the request context.\n\nReturns:\n    Success response after the schedule is saved.\n\nRaises:\n    ApiError: The canonical parent is absent.",
+        "operationId": "followup_api_real_jobs__real_job_id__followup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowupBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Followup"
+      }
+    },
+    "/api/real-jobs/{real_job_id}/interviews": {
+      "get": {
+        "description": "List interview rounds for one canonical job.\n\nArgs:\n    real_job_id: Canonical parent ID, never a source posting ID.\n    store: Canonical store resolved from the request context.\n\nReturns:\n    HTTP response containing canonical interview rounds.\n\nRaises:\n    ApiError: The canonical parent is absent.",
+        "operationId": "list_interviews_api_real_jobs__real_job_id__interviews_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Interviews"
+      },
+      "post": {
+        "description": "Add an interview round for one canonical job.\n\nArgs:\n    real_job_id: Canonical parent ID, never a source posting ID.\n    body: Validated HTTP request body.\n    store: Canonical store resolved from the request context.\n\nReturns:\n    The newly created interview round.\n\nRaises:\n    ApiError: The parent is absent or the round is invalid.",
+        "operationId": "add_interview_api_real_jobs__real_job_id__interviews_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterviewAddBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewRoundDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Interview"
+      }
+    },
+    "/api/real-jobs/{real_job_id}/interviews/{round_index}": {
+      "patch": {
+        "description": "Mark one canonical interview round complete.\n\nArgs:\n    real_job_id: Canonical parent ID, never a source posting ID.\n    round_index: Optional exact round; otherwise choose the latest open round.\n    body: Validated HTTP request body.\n    store: Canonical store resolved from the request context.\n\nReturns:\n    The completed interview round.\n\nRaises:\n    ApiError: No matching open round exists.",
+        "operationId": "complete_interview_api_real_jobs__real_job_id__interviews__round_index__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "round_index",
+            "required": true,
+            "schema": {
+              "title": "Round Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterviewCompleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewRoundDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Interview"
+      }
+    },
+    "/api/real-jobs/{real_job_id}/note": {
+      "post": {
+        "description": "Append a note to one canonical job.\n\nArgs:\n    real_job_id: Canonical parent ID, never a source posting ID.\n    body: Validated HTTP request body.\n    store: Canonical store resolved from the request context.\n\nReturns:\n    Success response after the note is saved.\n\nRaises:\n    ApiError: The canonical parent is absent.",
+        "operationId": "note_api_real_jobs__real_job_id__note_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Note"
+      }
+    },
+    "/api/real-jobs/{real_job_id}/restore": {
+      "post": {
+        "description": "Restore one archived or ghosted canonical job.\n\nArgs:\n    real_job_id: Canonical parent ID, never a source posting ID.\n    store: Canonical store resolved from the request context.\n\nReturns:\n    HTTP response with the canonical ID and restored status.\n\nRaises:\n    ApiError: The parent is absent or cannot be restored.",
+        "operationId": "restore_api_real_jobs__real_job_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore"
+      }
+    },
+    "/api/real-jobs/{real_job_id}/transition": {
+      "post": {
+        "description": "Update one canonical status and optionally append a note.\n\nArgs:\n    real_job_id: Canonical parent ID, never a source posting ID.\n    body: Validated HTTP request body.\n    store: Canonical store resolved from the request context.\n\nReturns:\n    HTTP response with the canonical ID and saved status.\n\nRaises:\n    ApiError: The parent is absent or transition is invalid.",
+        "operationId": "transition_api_real_jobs__real_job_id__transition_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "real_job_id",
+            "required": true,
+            "schema": {
+              "title": "Real Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransitionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transition"
       }
     },
     "/api/runs": {

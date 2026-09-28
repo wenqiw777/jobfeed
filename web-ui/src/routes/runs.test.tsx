@@ -91,6 +91,15 @@ function mockApi(state: ServerState): void {
       if (method === "GET" && url === "/api/runs/active") {
         return json({ runs: state.activeRuns });
       }
+      if (method === "GET" && url.startsWith("/api/runs/") && !url.endsWith("/new-job-sources")) {
+        const run = state.runs.find((item) => url === `/api/runs/${item.run_id}`);
+        if (run) return json({
+          ...run,
+          verdict_counts: run.run_id === "historical-eval"
+            ? { apply: 97, consider: 40, skip: 12 }
+            : run.verdict_counts,
+        });
+      }
       if (method === "GET" && url === "/api/runs/r2/new-job-sources") {
         return json({
           run_id: "r2",
@@ -197,6 +206,39 @@ test("separates job rules, SDE role, and seniority filter counters", async () =>
   expect(screen.getByText("3 excluded by seniority filter")).toBeVisible();
 });
 
+test("shows a completed evaluation's own recommendation counts when expanded", async () => {
+  state.runs = [runRow("eval-finished", {
+    source: "evaluate",
+    stage_b_scored: 6,
+    verdict_counts: { apply: 3, consider: 2, skip: 1 },
+  })];
+  renderRuns();
+
+  const row = await screen.findByTestId("run-row-eval-finished");
+  expect(screen.getByTestId("run-activity-eval-finished")).not.toHaveTextContent("3 Apply");
+  fireEvent.click(within(row).getByRole("button", { name: /Run started/ }));
+  expect(within(row).getByText("Apply")).toBeVisible();
+  expect(within(row).getByText("Consider")).toBeVisible();
+  expect(within(row).getByText("Ignore")).toBeVisible();
+  expect(within(row).getByText("3")).toBeVisible();
+  expect(within(row).getByText("2")).toBeVisible();
+  expect(within(row).getByText("1")).toBeVisible();
+});
+
+test("loads an old evaluation's verified breakdown only when its row opens", async () => {
+  state.runs = [runRow("historical-eval", {
+    source: "evaluate", stage_b_scored: 149, verdict_counts: null,
+  })];
+  renderRuns();
+  const row = await screen.findByTestId("run-row-historical-eval");
+  expect(calls.some((call) => call.url === "/api/runs/historical-eval")).toBe(false);
+  fireEvent.click(within(row).getByRole("button", { name: /Run started/ }));
+  expect(await within(row).findByText("97")).toBeVisible();
+  expect(within(row).getByText("40")).toBeVisible();
+  expect(within(row).getByText("12")).toBeVisible();
+  expect(calls.some((call) => call.url === "/api/runs/historical-eval")).toBe(true);
+});
+
 test("explains how the latest scan becomes the evaluation candidate set", async () => {
   const activeEvaluation = runRow("eval-active", {
     started_at: "2026-06-10T10:00:00Z",
@@ -248,13 +290,14 @@ test("labels a backlog evaluation from its own scope, not the preceding scan", a
     source: "evaluate",
     status: "running",
     evaluation_scope: "backlog",
+    evaluation_input_total: 131699,
     progress_stage: "stage_a",
-    ml_gate_total: 6583,
-    ml_gate_processed: 6583,
+    ml_gate_total: 5867,
+    ml_gate_processed: 5867,
     jobs_filtered: 1133,
     jobs_ml_gated: 442,
     jobs_seniority_filtered: 5237,
-    stage_a_total: 904,
+    stage_a_total: 188,
     stage_a_processed: 18,
   });
   state.runs = [
@@ -276,7 +319,7 @@ test("labels a backlog evaluation from its own scope, not the preceding scan", a
   renderRuns();
 
   const active = await screen.findByTestId("live-run-eval-backlog");
-  expect(active).toHaveTextContent("Historical backlog → 6583 candidates");
+  expect(active).toHaveTextContent("Historical backlog → 7000 candidates");
   expect(active).not.toHaveTextContent("2411 new listings");
   expect(active).not.toHaveTextContent("already evaluated or duplicate");
 });
@@ -578,6 +621,32 @@ test("evaluate 409 shows conflict toast", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Start evaluation" }));
 
   expect(await screen.findByText("Evaluation already running")).toBeInTheDocument();
+});
+
+test("incomplete canonical evaluation shows its readiness error", async () => {
+  const baseFetch = globalThis.fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "POST" && String(input) === "/api/runs/evaluate") {
+        return json({ error: {
+          code: "canonical_evaluation_not_ready",
+          message: "canonical evaluation activation has evaluation backfill",
+          request_id: "req-ready",
+        } }, 409);
+      }
+      return baseFetch(input, init);
+    }),
+  );
+
+  renderRuns();
+  await screen.findByTestId("run-row-r2");
+  fireEvent.click(screen.getAllByRole("button", { name: "Start evaluation" })[0]!);
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Start evaluation" }));
+
+  expect(await screen.findByText("Evaluation could not start")).toBeInTheDocument();
+  expect(screen.getByText(/evaluation backfill/)).toBeInTheDocument();
 });
 
 test("active runs query fetches GET /api/runs/active", async () => {

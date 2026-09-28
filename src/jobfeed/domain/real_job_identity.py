@@ -66,7 +66,7 @@ def source_identifiers(job: JobPosting) -> tuple[ObservedIdentifier, ...]:
 
 
 def compatible_role_facts(left: JobPosting, right: JobPosting) -> bool:
-    """Require employer/title agreement and no concrete location conflict.
+    """Prefer official requisition identity over source display metadata.
 
     Args:
         left: First source posting to compare.
@@ -75,14 +75,27 @@ def compatible_role_facts(left: JobPosting, right: JobPosting) -> bool:
     Returns:
         Whether the two postings can describe the same requisition.
     """
+    left_observed = observed_identifiers(left)
+    right_observed = observed_identifiers(right)
+    left_ats = {
+        (i.provider, i.scope): i.native_id
+        for i in left_observed if i.provider in ATS_REQUISITION_PROVIDERS
+    }
+    right_ats = {
+        (i.provider, i.scope): i.native_id
+        for i in right_observed if i.provider in ATS_REQUISITION_PROVIDERS
+    }
+    shared_ats = left_ats.keys() & right_ats.keys()
+    if any(left_ats[key] != right_ats[key] for key in shared_ats):
+        return False
+    if shared_ats:
+        return True
     company = normalize_company(left.company)
     title = normalize(left.title)
     if not company or not title:
         return False
     if title != normalize(right.title):
         return False
-    left_observed = observed_identifiers(left)
-    right_observed = observed_identifiers(right)
     if company != normalize_company(right.company) and not _verified_ats_alias(
         left, right, left_observed, right_observed
     ):

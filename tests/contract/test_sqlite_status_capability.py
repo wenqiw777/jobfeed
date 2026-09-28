@@ -163,6 +163,13 @@ async def test_bulk_twin_cluster_is_atomic_and_other_clusters_continue(
     first = await _seed_job(lifecycle, "twin-a")
     twin = await _seed_job(lifecycle, "twin-b")
     other = await _seed_job(lifecycle, "other", company="Other")
+    async with lifecycle.connection() as connection:
+        await connection.execute(
+            "UPDATE jobs SET external_identity='greenhouse:123', location='New York' "
+            "WHERE id IN (?,?)",
+            (int(first), int(twin)),
+        )
+        await connection.commit()
     for job_id in (first, twin, other):
         await status.transition_status(
             TransitionRequest(job_id=job_id, new_status="scored")

@@ -20,6 +20,7 @@ from jobfeed.adapters.migration.canonical_schema_manifest import (
 )
 from jobfeed.adapters.store._sqlite_schema_metadata import (
     SQLITE_SCHEMA_VERSION,
+    SQLITE_TABLE_NAMES,
     SQLITE_TRIGGER_SQL,
     schema_ddl_statements,
 )
@@ -206,8 +207,7 @@ def _validate_table_set(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
-    expected = {table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables}
-    expected.add("run_leases")
+    expected = set(SQLITE_TABLE_NAMES)
     if {str(row[0]) for row in rows} != expected:
         raise ValueError("SQLite import table coverage mismatch")
 

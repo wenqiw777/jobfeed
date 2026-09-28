@@ -100,40 +100,41 @@ def _make_post_scan_hook(context: AppContext) -> _PostScanHook:
         specs: list[SourceSpec],
         on_progress: Callable[[PipelineRun], None],
     ) -> None:
-        if all(name != "linkedin_guest" for name, _, _ in specs):
-            return
-        config = context["settings"].sources.linkedin_guest
-        if not config.enrich_after_scan:
-            return
         logger = context["logger"]
-
-        def _report(progress: EnrichProgress) -> None:
-            run.scan_source = progress.platform
-            run.scan_phase = "enriching_job_descriptions"
-            run.scan_total = progress.total
-            run.scan_processed = progress.processed
-            run.scan_current_job_id = progress.current_job_id
-            run.progress_updated_at = datetime.now(UTC)
-            on_progress(run)
-
-        try:
-            summary = await run_guest_enrich_pass(
-                context,
-                config,
-                batch_limit=len(run.scan_inserted_job_ids),
-                job_ids=run.scan_inserted_job_ids,
-                on_progress=_report,
-            )
-        except Exception as exc:
-            logger.error("web_scan_guest_enrich_failed", error=str(exc))
-            return
-        logger.info(
-            "web_scan_guest_enrich_completed",
-            enriched=summary.enriched,
-            closed=summary.closed,
-            blocked=summary.blocked,
-            skipped=summary.skipped,
-            stopped_early=summary.stopped_early,
+        config = context["settings"].sources.linkedin_guest
+        should_enrich = (
+            any(name == "linkedin_guest" for name, _, _ in specs)
+            and config.enrich_after_scan
         )
+        if should_enrich:
+
+            def _report(progress: EnrichProgress) -> None:
+                run.scan_source = progress.platform
+                run.scan_phase = "enriching_job_descriptions"
+                run.scan_total = progress.total
+                run.scan_processed = progress.processed
+                run.scan_current_job_id = progress.current_job_id
+                run.progress_updated_at = datetime.now(UTC)
+                on_progress(run)
+
+            try:
+                summary = await run_guest_enrich_pass(
+                    context,
+                    config,
+                    batch_limit=len(run.scan_inserted_job_ids),
+                    job_ids=run.scan_inserted_job_ids,
+                    on_progress=_report,
+                )
+            except Exception as exc:
+                logger.error("web_scan_guest_enrich_failed", error=str(exc))
+            else:
+                logger.info(
+                    "web_scan_guest_enrich_completed",
+                    enriched=summary.enriched,
+                    closed=summary.closed,
+                    blocked=summary.blocked,
+                    skipped=summary.skipped,
+                    stopped_early=summary.stopped_early,
+                )
 
     return _post_scan

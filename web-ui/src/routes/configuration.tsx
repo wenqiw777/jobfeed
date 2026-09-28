@@ -232,7 +232,7 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                     <Box variant="small" color="text-body-secondary">Requires the local Jobfeed Jobright Source Chrome extension. The default one-second spacing is the verified safe operating rate.</Box>
                   </SpaceBetween>
                 </SourceToggle>
-                <SourceToggle label="GitHub job lists" detail="SpeedyApply, SimplifyJobs and Jobright GitHub lists" checked={sources.speedyapply!.enabled} onChange={(enabled) => updateSource("speedyapply", { ...sources.speedyapply!, enabled })}>
+                <SourceToggle label="GitHub job lists" detail="Software job lists hosted on GitHub" checked={sources.speedyapply!.enabled} onChange={(enabled) => updateSource("speedyapply", { ...sources.speedyapply!, enabled })}>
                   <SpaceBetween size="m">
                     <NumberField label="GitHub job lists maximum jobs per scan" value={sources.speedyapply!.max_jobs} min={1} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, max_jobs: value })} />
                     <ListField label="GitHub job list URLs" value={sources.speedyapply!.search_urls} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, search_urls: value })} />

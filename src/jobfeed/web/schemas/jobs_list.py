@@ -25,6 +25,10 @@ SortName = Literal[
     "score_asc",
     "score_desc",
     "company_asc",
+    "triage_posted_asc",
+    "triage_posted_desc",
+    "triage_score_asc",
+    "triage_score_desc",
 ]
 
 
@@ -46,6 +50,7 @@ class JobsListParams(BaseModel):
     apply_hard_filters: bool = False
     dedupe: bool = False
     fast: bool = False
+    canonical: bool = False
     sort: SortName = "discovered_desc"
     limit: int = Field(default=_DEFAULT_PAGE_LIMIT, ge=0, le=JOBS_VIEW_CORPUS_LIMIT)
     offset: int = Field(default=0, ge=0)
@@ -83,8 +88,11 @@ class JobSummary(BaseModel):
     """One jobs-list row (the DTO form of ``JobsViewRow``)."""
 
     id: str
+    real_job_id: str | None = None
+    evaluation_stale_reason: str | None = None
     company: str
     title: str
+    location: str = ""
     platform: str
     url: str
     status: str
@@ -99,6 +107,9 @@ class JobSummary(BaseModel):
     jd_quality: str | None
     company_norm: str | None
     title_norm: str | None
+    is_repost: bool | None = None
+    repost_evidence: str | None = None
+    repost_observed_at: datetime | None = None
 
 
 class JobsListResponse(BaseModel):
@@ -134,6 +145,7 @@ def _job_summary(row: JobsViewRow) -> JobSummary:
         id=job.id or "",
         company=job.company,
         title=job.title,
+        location=job.location,
         platform=job.platform,
         url=job.url,
         status=row.status,
@@ -148,6 +160,9 @@ def _job_summary(row: JobsViewRow) -> JobSummary:
         jd_quality=job.jd_quality.value if job.jd_quality else None,
         company_norm=row.company_norm,
         title_norm=row.title_norm,
+        is_repost=job.is_repost,
+        repost_evidence=job.repost_evidence,
+        repost_observed_at=job.repost_observed_at,
     )
 
 

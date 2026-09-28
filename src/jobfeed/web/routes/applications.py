@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 
@@ -19,10 +19,15 @@ from jobfeed.ports.store import JobStore
 from jobfeed.services.application import ApplicationService, ApplyRequest
 from jobfeed.web.deps import get_application_service, get_context, get_store
 from jobfeed.web.errors import ApiError
+from jobfeed.web.routes.real_jobs_workflow import RealJobWorkflowPort
 from jobfeed.web.schemas import (
     ApplicationsListResponse,
     ApplyResponse,
     applications_list_response,
+)
+from jobfeed.web.schemas.applications import (
+    RealJobApplicationsListResponse,
+    real_job_applications_response,
 )
 
 _HTTP_NOT_FOUND = 404
@@ -47,14 +52,18 @@ class ApplyForm:
     variant: str | None
     method: str | None
     notes: str | None
+    source_job_id: int | None
+    apply_url: str | None
 
 
-async def _apply_form(
+async def _apply_form(  # noqa: PLR0913
     tailored: Annotated[UploadFile | None, File()] = None,
     cover_letter: Annotated[UploadFile | None, File()] = None,
     variant: Annotated[str | None, Form()] = None,
     method: Annotated[str | None, Form()] = None,
     notes: Annotated[str | None, Form()] = None,
+    source_job_id: Annotated[int | None, Form()] = None,
+    apply_url: Annotated[str | None, Form()] = None,
 ) -> ApplyForm:
     """Collect the optional multipart upload + form fields (plan D8).
 
@@ -74,6 +83,8 @@ async def _apply_form(
         variant=variant,
         method=method,
         notes=notes,
+        source_job_id=source_job_id,
+        apply_url=apply_url,
     )
 
 
@@ -107,10 +118,64 @@ async def apply_to_job(
     """
     if await store.get_job(str(job_id)) is None:
         raise ApiError(_HTTP_NOT_FOUND, "not_found", f"job {job_id} not found")
+    try:
+        real_job_id = await cast(RealJobWorkflowPort, store).resolve_real_job_id(
+            str(job_id)
+        )
+    except ValueError as exc:
+        raise ApiError(_HTTP_CONFLICT, "identity_unresolved", str(exc)) from exc
+    return await _record_apply(
+        source_job_id=job_id,
+        real_job_id=real_job_id,
+        request=request,
+        form=form,
+        service=service,
+    )
+
+
+@router.post("/real-jobs/{real_job_id}/apply")
+async def apply_to_real_job(
+    real_job_id: int,
+    request: Request,
+    form: Annotated[ApplyForm, Depends(_apply_form)],
+    service: _Applications,
+    store: _Store,
+) -> ApplyResponse:
+    """Record a submission against a canonical job with explicit source."""
+    if form.source_job_id is None:
+        raise ApiError(
+            _HTTP_VALIDATION_ERROR,
+            "validation_error",
+            "source_job_id is required",
+        )
+    if await store.get_job(str(form.source_job_id)) is None:
+        raise ApiError(
+            _HTTP_NOT_FOUND, "not_found", f"job {form.source_job_id} not found"
+        )
+    return await _record_apply(
+        source_job_id=form.source_job_id,
+        real_job_id=str(real_job_id),
+        request=request,
+        form=form,
+        service=service,
+    )
+
+
+async def _record_apply(
+    *,
+    source_job_id: int,
+    real_job_id: str | None,
+    request: Request,
+    form: ApplyForm,
+    service: ApplicationService,
+) -> ApplyResponse:
     settings: Settings = get_context(request)["settings"]
-    snapshots = await service.stage_b_snapshots(str(job_id))
+    snapshots = await service.stage_b_snapshots(str(source_job_id))
     req = ApplyRequest(
-        job_id=str(job_id),
+        job_id=str(source_job_id),
+        real_job_id=real_job_id,
+        source_job_id=str(source_job_id) if real_job_id is not None else None,
+        apply_url=form.apply_url,
         master_resume=_read_master_resume(settings),
         tailored_resume=await _decode_upload(form.tailored, "tailored"),
         cover_letter=await _decode_upload(form.cover_letter, "cover_letter"),
@@ -125,7 +190,7 @@ async def apply_to_job(
         is_new = await service.apply(req)
     except ValueError as exc:
         raise ApiError(_HTTP_CONFLICT, "illegal_transition", str(exc)) from exc
-    notice = await service.reapply_notice(str(job_id)) if is_new else None
+    notice = await service.reapply_notice(str(source_job_id)) if is_new else None
     return ApplyResponse(applied=is_new, reapply_notice=notice)
 
 
@@ -145,6 +210,17 @@ async def list_applications(
     """
     records = await service.apply_history(limit=limit)
     return applications_list_response(records)
+
+
+@router.get("/real-jobs/applications")
+async def list_real_job_applications(
+    service: _Applications,
+    limit: Annotated[int, Query(ge=1, le=_MAX_HISTORY_LIMIT)] = _DEFAULT_HISTORY_LIMIT,
+) -> RealJobApplicationsListResponse:
+    """List canonical submission events, including their source provenance."""
+    return real_job_applications_response(
+        await service.real_job_apply_history(limit=limit)
+    )
 
 
 def _read_master_resume(settings: Settings) -> str:

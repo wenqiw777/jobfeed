@@ -40,6 +40,7 @@ class StageBQuery:
     limit: int = 100
     max_days: int | None = None
     stage_a_threshold: int | None = None
+    require_stage_a: bool = True
     job_ids: tuple[int, ...] | None = None
 
 
@@ -48,6 +49,7 @@ def _build_stage_a_select(query: StageAQuery) -> tuple[str, list[object]]:
     _validate_stage_a(query)
     params: list[object] = []
     conditions = [
+        "j.is_repost IS NOT 1",
         "j.closed_at IS NULL",
         "COALESCE(j.hard_filter,'')=''",
         "(e.stage_a_status IS NOT 'error' "
@@ -79,15 +81,13 @@ def _build_stage_b_select(query: StageBQuery) -> tuple[str, list[object]]:
     _require_utc_timestamp(query.now)
     params: list[object] = []
     conditions = [
-        "e.stage_a_status='completed'",
+        "j.is_repost IS NOT 1",
         "(e.stage_b_status IS NOT 'error' "
         f"OR e.stage_b_error_count < {MAX_STAGE_RETRIES})",
     ]
-    if query.max_days is not None:
-        conditions.append("j.discovered_at>=?")
-        params.append(
-            _require_utc_timestamp(query.now - timedelta(days=query.max_days))
-        )
+    if query.require_stage_a:
+        conditions.append("e.stage_a_status='completed'")
+    _append_freshness_filter(conditions, params, query.now, query.max_days)
     if query.stage_a_threshold is not None:
         conditions.append("e.stage_a_score>=?")
         params.append(query.stage_a_threshold)
@@ -104,7 +104,7 @@ def _build_stage_b_select(query: StageBQuery) -> tuple[str, list[object]]:
     )
     params.extend([_require_utc_timestamp(query.now - _CLAIM_TTL), query.limit])
     return (
-        "SELECT j.* FROM jobs j JOIN evaluations e ON e.job_id=j.id "
+        "SELECT j.* FROM jobs j LEFT JOIN evaluations e ON e.job_id=j.id "
         f"WHERE {' AND '.join(conditions)} "
         "ORDER BY j.discovered_at DESC, j.id DESC LIMIT ?",
         params,
@@ -148,11 +148,28 @@ def _append_common_filters(
         bands = sorted(query.quality_bands)
         conditions.append(f"j.jd_quality IN ({_placeholders(bands)})")
         params.extend(bands)
-    if query.max_days is not None:
-        conditions.append("j.discovered_at>=?")
-        params.append(
-            _require_utc_timestamp(query.now - timedelta(days=query.max_days))
-        )
+    _append_freshness_filter(conditions, params, query.now, query.max_days)
+
+
+def _append_freshness_filter(
+    conditions: list[str],
+    params: list[object],
+    now: datetime,
+    max_days: int | None,
+) -> None:
+    """Filter by a valid posting date, falling back to first discovery."""
+    if max_days is None:
+        return
+    conditions.append(
+        "(CASE WHEN j.posted_at IS NOT NULL AND j.posted_at<=? "
+        "THEN j.posted_at ELSE j.discovered_at END)>=?"
+    )
+    params.extend(
+        [
+            _require_utc_timestamp(now),
+            _require_utc_timestamp(now - timedelta(days=max_days)),
+        ]
+    )
 
 
 def _append_gate_filters(
@@ -166,16 +183,6 @@ def _append_gate_filters(
         conditions.append("(j.discovered_at<? OR (j.discovered_at=? AND j.id<?))")
         params.extend([timestamp, timestamp, after_id])
     if query.corpus == "unrated":
-        conditions.extend(
-            [
-                "e.stage_a_status IS NOT 'completed'",
-                "(COALESCE(j.company_norm,'')='' OR COALESCE(j.title_norm,'')='' "
-                "OR NOT EXISTS (SELECT 1 FROM jobs twin "
-                "JOIN evaluations te ON te.job_id=twin.id "
-                "WHERE twin.company_norm=j.company_norm "
-                "AND twin.title_norm=j.title_norm "
-                "AND te.stage_a_status='completed'))",
-            ]
-        )
+        conditions.append("e.stage_a_status IS NOT 'completed'")
     if query.exclude_gate_failed:
         conditions.append("j.ml_gate_result IS NOT 'fail'")

@@ -11,13 +11,12 @@ import Spinner from "@cloudscape-design/components/spinner";
 import Tabs from "@cloudscape-design/components/tabs";
 
 import {
-  useJobsList,
-  useJobTransition,
-  fetchAllMatchingJobIds,
-  jobsKeys,
-  type JobsListResponse,
-  type JobsQuery,
-  type JobSummary,
+  useRealJobsList,
+  useRealJobTransition,
+  fetchAllMatchingRealJobIds,
+  realJobsKeys,
+  type RealJobsListResponse,
+  type RealJobsQuery,
 } from "@/api/queries";
 import { BulkBar } from "@/components/jobs/BulkBar";
 import { DetailPane, type UserDecision } from "@/components/jobs/DetailPane";
@@ -27,27 +26,16 @@ import { useSelection } from "@/lib/use-selection";
 
 type TriageFilter = "results" | "wait" | "applied" | "ignored";
 type TriageSort = "posted_asc" | "posted_desc" | "score_asc" | "score_desc";
+type TriageJob = RealJobsListResponse["jobs"][number];
 
-const PAGE_LIMIT = 50;
+const PAGE_LIMIT = 25;
 
 /** Triage query with server-side pagination and user-selected ordering. */
-function triageQuery(filter: TriageFilter, page: number, sort: TriageSort): JobsQuery {
-  if (filter === "results") {
-    return {
-      tab: "queue",
-      decision: "results",
-      apply_hard_filters: true,
-      dedupe: true,
-      require_verdict: true,
-      sort,
-      limit: PAGE_LIMIT,
-      offset: page * PAGE_LIMIT,
-    };
-  }
+function triageQuery(filter: TriageFilter, page: number, sort: TriageSort): RealJobsQuery {
   return {
-    tab: "all",
     decision: filter,
-    sort,
+    require_verdict: filter === "results",
+    sort: `triage_${sort}`,
     limit: PAGE_LIMIT,
     offset: page * PAGE_LIMIT,
   };
@@ -67,7 +55,7 @@ export default function TriagePage() {
   const queryClient = useQueryClient();
 
   const query = useMemo(() => triageQuery(filter, page, sort), [filter, page, sort]);
-  const list = useJobsList(query, { keepPrevious: true });
+  const list = useRealJobsList(query);
   const rawJobs = useMemo(() => list.data?.jobs ?? [], [list.data]);
   const hidesCurrentRow = optimisticDecision?.filter === filter
     && rawJobs.some((job) => job.id === optimisticDecision.id);
@@ -82,12 +70,12 @@ export default function TriagePage() {
   // Decide/advance handlers read the displayed order through a ref so a
   // setTimeout never closes over a stale list. Synced in an effect (refs
   // must not be written during render); handlers only run after effects.
-  const rowsRef = useRef<JobSummary[]>(jobs);
+  const rowsRef = useRef<TriageJob[]>(jobs);
   useEffect(() => {
     rowsRef.current = jobs;
   });
 
-  const transition = useJobTransition();
+  const transition = useRealJobTransition();
 
   // Selection is derived, not effect-seeded: when nothing is selected or
   // the selected id dropped out of a refetched list, fall back to the
@@ -120,8 +108,8 @@ export default function TriagePage() {
    * refill the page and reconcile counts/dedupe. */
   const removeCompletedFromCurrentPage = (completedIds: string[]) => {
     const completed = new Set(completedIds);
-    queryClient.setQueriesData<JobsListResponse>(
-      { queryKey: jobsKeys.list(query) },
+    queryClient.setQueriesData<RealJobsListResponse>(
+      { queryKey: realJobsKeys.list(query) },
       (previous) => {
         if (previous === undefined) {
           return previous;
@@ -183,9 +171,12 @@ export default function TriagePage() {
     }
     setIsSelectingAll(true);
     try {
-      selection.selectAll(
-        await fetchAllMatchingJobIds(query, list.data.total),
-      );
+      const snapshot = await fetchAllMatchingRealJobIds(query);
+      const ids = [...new Set(snapshot.real_job_ids)];
+      if (ids.length !== snapshot.total) {
+        throw new Error("Selection count did not match the server snapshot");
+      }
+      selection.selectAll(ids);
     } catch (error) {
       toast({
         variant: "destructive",
@@ -235,7 +226,7 @@ export default function TriagePage() {
           actions={
             <Box variant="small" color="text-body-secondary">
               {list.data !== undefined
-                ? `${displayedTotal}${totalIsExact ? "" : "+"} postings`
+                ? `${displayedTotal}${totalIsExact ? "" : "+"} jobs`
                 : "Loading"}
             </Box>
           }
@@ -251,6 +242,7 @@ export default function TriagePage() {
         >
           <DetailPane
             jobId={effectiveSelectedId}
+            realJob
             decisionView={filter}
             isDeciding={transition.isPending}
             onDecide={decide}
@@ -265,6 +257,7 @@ export default function TriagePage() {
     return (
       <SpaceBetween size="xs">
         <BulkBar
+          canonical
           currentDecision={filter}
           selectedIds={selection.selectedIds}
           total={displayedTotal}
@@ -315,8 +308,8 @@ export default function TriagePage() {
 
 interface ListBodyProps {
   filter: TriageFilter;
-  list: ReturnType<typeof useJobsList>;
-  jobs: JobSummary[];
+  list: ReturnType<typeof useRealJobsList>;
+  jobs: TriageJob[];
   isChecked: (id: string) => boolean;
   onOpen: (id: string) => void;
   onToggle: (id: string) => void;

@@ -129,6 +129,9 @@ class ScoringSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     stage_a_threshold: int = 60
+    stage_a_prompt_version: str = "v1"
+    stage_b_prompt_version: str = "v1"
+    resume_version: str = "v1"
     ml_gate_enabled: bool = False
     # Default per-stage cap when `evaluate` is run without --limit/--full.
     # The CLI flags still override this; 0 means "evaluate nothing by default".
@@ -142,6 +145,7 @@ class MLGateSettings(BaseModel):
 
     model_dir: str = "models/ml_gate"
     model_version: str = "v20260601T170453Z"
+    policy_version: str = "v1"
     # The fastembed embedder maps this legacy short name to its full Hugging
     # Face id ("sentence-transformers/all-MiniLM-L6-v2"); both forms work.
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -158,6 +162,7 @@ class SeniorityGateSettings(BaseModel):
     mode: Literal["off", "shadow", "filter"] = "filter"
     model_dir: str = "models/seniority_gate"
     model_version: str = "v20260826T201223Z"
+    policy_version: str = "v1"
     embedding_model: str = "all-MiniLM-L6-v2"
     embedding_max_chars: int = Field(default=2000, gt=0)
     out_of_scope_threshold: float = Field(default=0.9210827946662903, ge=0, le=1)
@@ -230,12 +235,22 @@ class ObservabilitySettings(BaseModel):
     sentry_environment: str = "dev"
 
 
+class RedisPipelineSettings(BaseModel):
+    """Opt-in local durable scan transport; no silent volatile fallback."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    url: str = "redis://127.0.0.1:6379/0"
+    namespace: str = Field(default="jobfeed", pattern=r"^[A-Za-z0-9:_.-]+$")
+
+
 class Settings(BaseModel):
     """Validated top-level application settings."""
 
     model_config = ConfigDict(extra="forbid")
 
     db: DBSettings = Field(default_factory=DBSettings)
+    redis_pipeline: RedisPipelineSettings = Field(default_factory=RedisPipelineSettings)
     digest: DigestSettings = Field(default_factory=DigestSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)

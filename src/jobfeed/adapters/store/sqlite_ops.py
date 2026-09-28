@@ -169,14 +169,7 @@ class SqliteOps:
     async def get_enrichment_by_identity(
         self, identity: str
     ) -> StoredEnrichment | None:
-        """Read complete or deferred enrichment for an explicit source identity.
-
-        Args:
-            identity: Observed vendor-qualified requisition identifier.
-
-        Returns:
-            The best stored enrichment, or None when absent.
-        """
+        """Find a complete cross-source JD or the latest deferred exact twin."""
         return await _sqlite_ops_enrichment._get_enrichment_by_identity(
             self._lifecycle, identity
         )
