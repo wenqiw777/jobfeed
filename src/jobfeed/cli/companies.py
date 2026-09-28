@@ -16,6 +16,10 @@ from jobfeed.adapters.sources._http import (
 from jobfeed.adapters.sources.ats import SUPPORTED_VENDORS
 from jobfeed.cli import AppContext, require_app, run_with_store
 from jobfeed.cli._probe import build_probe_company
+from jobfeed.company_intelligence import (
+    CompanyIntelligenceCache,
+    CompanyIntelligenceSync,
+)
 from jobfeed.domain.models import CompanyRecord
 from jobfeed.ports.store_ops import StoreOpsMixin
 
@@ -179,6 +183,32 @@ def companies_remove(ctx: click.Context, slug: str) -> None:
     """
     app = require_app(ctx)
     asyncio.run(_run_remove(app, slug=slug))
+
+
+@companies.command(
+    name="sync-intelligence",
+    help="Refresh public-company and startup company evidence.",
+)
+@click.pass_context
+def companies_sync_intelligence(ctx: click.Context) -> None:
+    """Refresh every company-background source into the local cache.
+
+    Args:
+        ctx: Click invocation context carrying the active configuration.
+    """
+    app = require_app(ctx)
+    asyncio.run(_run_sync_intelligence(app))
+
+
+async def _run_sync_intelligence(app: AppContext) -> None:
+    cache = CompanyIntelligenceCache(
+        app["settings"].db.path.resolve().parent / "company-intelligence.json"
+    )
+    report = await CompanyIntelligenceSync(cache).sync()
+    for source, state in report.sources.items():
+        detail = f" ({state.error})" if state.error else ""
+        click.echo(f"{source}: {state.status}, {state.record_count} records{detail}")
+    click.echo(f"Indexed {report.company_count} distinct companies at {cache.path}")
 
 
 async def _run_remove(app: AppContext, *, slug: str) -> None:
