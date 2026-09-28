@@ -213,14 +213,15 @@ class PostgresRealJobViews:
                 *shared_args,
                 *count_hard_args,
             )
+        decisions: tuple[UserDecision, ...] = ("results", "wait", "applied", "ignored")
         counts: dict[str, int] = {
             name: sum(
                 int(row["filtered_n"] if name == "results" else row["n"])
                 for row in count_rows
-                if row["status"] in statuses_for_decision(cast(UserDecision, name))
+                if row["status"] in statuses_for_decision(name)
                 and (name != "results" or row["is_open"])
             )
-            for name in ("results", "wait", "applied", "ignored")
+            for name in decisions
         }
         return {
             "jobs": [dict(row) for row in rows],

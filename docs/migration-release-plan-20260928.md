@@ -35,3 +35,8 @@ implementation is explicitly grandfathered; no new hash logic is authorized.
 Remote CI initially failed in optype 0.17.1 because its type-alias syntax conflicts
 with the configured Python 3.11 mypy target. Pin optype 0.9.3, matching the locally
 verified typing environment; rerun CI without changing the supported Python target.
+
+CI mypy 2.3.1 additionally reproduced four count-comprehension inference errors
+not emitted by local mypy 2.1.0. Explicitly type the decision tuple and remove
+now-redundant casts. Mypy 2.3.1 now passes all 352 source files; focused workflow,
+route and query-shape regressions pass.
