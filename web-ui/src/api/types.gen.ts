@@ -3048,14 +3048,53 @@ export interface components {
             title_keywords?: string[];
         };
         /**
+         * SourcesBoardExtensionConfig
+         * @description Bounded authenticated job-board scans through the local Chrome bridge.
+         */
+        SourcesBoardExtensionConfig: {
+            /**
+             * Batch Size
+             * @default 25
+             */
+            batch_size: number;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Max Jobs
+             * @default 500
+             */
+            max_jobs: number;
+            /**
+             * Pacing S
+             * @default 1
+             */
+            pacing_s: number;
+            /** Queries */
+            queries?: string[];
+            /** Search Url */
+            search_url?: string | null;
+            /** Search Urls */
+            search_urls?: string[];
+            /**
+             * Timeout S
+             * @default 900
+             */
+            timeout_s: number;
+        };
+        /**
          * SourcesConfig
          * @description Container for all job-data source configurations.
          */
         SourcesConfig: {
             ats?: components["schemas"]["SourcesATSConfig"];
+            handshake?: components["schemas"]["SourcesBoardExtensionConfig"];
             indeed?: components["schemas"]["SourcesIndeedConfig"];
             jobright?: components["schemas"]["SourcesJobrightConfig"];
             linkedin?: components["schemas"]["SourcesLinkedInConfig"];
+            linkedin_extension?: components["schemas"]["SourcesBoardExtensionConfig"];
             linkedin_guest?: components["schemas"]["SourcesLinkedInGuestConfig"];
             speedyapply?: components["schemas"]["SourcesSpeedyApplyConfig"];
         };

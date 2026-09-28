@@ -3739,12 +3739,80 @@
         "title": "SourcesATSConfig",
         "type": "object"
       },
+      "SourcesBoardExtensionConfig": {
+        "additionalProperties": false,
+        "description": "Bounded authenticated job-board scans through the local Chrome bridge.",
+        "properties": {
+          "batch_size": {
+            "default": 25,
+            "maximum": 25.0,
+            "minimum": 1.0,
+            "title": "Batch Size",
+            "type": "integer"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "max_jobs": {
+            "default": 500,
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Max Jobs",
+            "type": "integer"
+          },
+          "pacing_s": {
+            "default": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Pacing S",
+            "type": "number"
+          },
+          "queries": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Queries",
+            "type": "array"
+          },
+          "search_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Url"
+          },
+          "search_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Search Urls",
+            "type": "array"
+          },
+          "timeout_s": {
+            "default": 900.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout S",
+            "type": "number"
+          }
+        },
+        "title": "SourcesBoardExtensionConfig",
+        "type": "object"
+      },
       "SourcesConfig": {
         "additionalProperties": false,
         "description": "Container for all job-data source configurations.",
         "properties": {
           "ats": {
             "$ref": "#/components/schemas/SourcesATSConfig"
+          },
+          "handshake": {
+            "$ref": "#/components/schemas/SourcesBoardExtensionConfig"
           },
           "indeed": {
             "$ref": "#/components/schemas/SourcesIndeedConfig"
@@ -3754,6 +3822,9 @@
           },
           "linkedin": {
             "$ref": "#/components/schemas/SourcesLinkedInConfig"
+          },
+          "linkedin_extension": {
+            "$ref": "#/components/schemas/SourcesBoardExtensionConfig"
           },
           "linkedin_guest": {
             "$ref": "#/components/schemas/SourcesLinkedInGuestConfig"

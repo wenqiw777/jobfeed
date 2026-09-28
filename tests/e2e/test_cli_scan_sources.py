@@ -36,8 +36,8 @@ from tests.support.run_leases import SuccessfulRunLeaseMixin
 scan_module = sys.modules["jobfeed.cli.scan"]
 sources_module = sys.modules["jobfeed.cli._scan_sources"]
 
-# ``--source all`` here disables ats + linkedin-guest + linkedin + jobright.
-_EXPECTED_SKIPS = 4
+# ``--source all`` disables ATS, LinkedIn guest/session/extension, Jobright, Handshake.
+_EXPECTED_SKIPS = 6
 # ats + speedyapply both own an httpx client -> two clients created.
 _EXPECTED_CLIENTS = 2
 
@@ -54,11 +54,18 @@ class FakeStore(SuccessfulRunLeaseMixin):
     """
 
     def __init__(self) -> None:
+        self.state: dict[str, str] = {}
         self.jobs: list[JobPosting] = []
         self.companies: dict[str, Any] = {}
         self.connected = False
         self.closed = False
         self.runs: list[Any] = []
+
+    async def set_state(self, key: str, value: str) -> None:
+        self.state[key] = value
+
+    async def get_state(self, key: str) -> str | None:
+        return self.state.get(key)
 
     async def connect(self) -> None:
         self.connected = True

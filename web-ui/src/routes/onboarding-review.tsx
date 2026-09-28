@@ -238,7 +238,7 @@ function ReviewSettings({
             <NumberField label="Company career pages maximum jobs per scan" value={values.atsMaxJobs} min={1} onChange={(value) => update("atsMaxJobs", value)} />
             <NumberField label="LinkedIn guest maximum jobs per scan" value={values.linkedInGuestMaxJobs} min={1} onChange={(value) => update("linkedInGuestMaxJobs", value)} />
             <NumberField label="Indeed maximum jobs per scan" value={values.indeedMaxJobs} min={1} onChange={(value) => update("indeedMaxJobs", value)} />
-            <NumberField label="SpeedyApply maximum jobs per scan" value={values.speedyApplyMaxJobs} min={1} onChange={(value) => update("speedyApplyMaxJobs", value)} />
+            <NumberField label="GitHub job lists maximum jobs per scan" value={values.speedyApplyMaxJobs} min={1} onChange={(value) => update("speedyApplyMaxJobs", value)} />
           </ColumnLayout>
           <Box margin={{ top: "m" }} variant="small" color="text-body-secondary">
             Company career pages keep only titles matching the job searches you confirmed, so unrelated ATS roles do not consume this limit.

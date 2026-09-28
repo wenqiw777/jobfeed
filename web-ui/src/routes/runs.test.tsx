@@ -486,6 +486,28 @@ test("trigger scan and evaluate buttons render in the header", async () => {
   expect(screen.queryByText(/Phase 9/)).toBeNull();
 });
 
+test.each([
+  ["All enabled sources", "all"],
+  ["Company career pages", "ats"],
+  ["GitHub job lists", "speedyapply"],
+  ["Indeed", "indeed"],
+  ["LinkedIn Guest", "linkedin-guest"],
+  ["LinkedIn · browser profile", "linkedin"],
+  ["Jobright recommendations", "jobright"],
+  ["LinkedIn · signed in", "linkedin-extension"],
+  ["Handshake · signed in", "handshake"],
+])("starts the selected %s source", async (label, source) => {
+  renderRuns();
+  await screen.findByTestId("run-row-r2");
+  fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: label }));
+  await waitFor(() => {
+    expect(calls.find((call) => call.method === "POST" && call.url === "/api/runs/scan")?.body)
+      .toEqual({ source });
+  });
+  expect(await screen.findByText(`Scan started (${label})`)).toBeInTheDocument();
+});
+
 test("trigger evaluate dialog opens and submits with defaults", async () => {
   renderRuns();
   await screen.findByTestId("run-row-r2");

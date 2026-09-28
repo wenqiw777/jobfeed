@@ -15,6 +15,7 @@ from jobfeed.cli._scan_sources import build_scan_sources
 from jobfeed.config import Settings, SourcesSpeedyApplyConfig
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.ports.source import PartialSourceFetchError, StoredEnrichment
+from jobfeed.services.job_page_extraction import JobPageExtractor
 
 
 @pytest.mark.parametrize("quality", [QualityBand.GOOD, QualityBand.FULL])
@@ -307,7 +308,6 @@ async def test_runtime_wiring_reuses_sqlite_body_after_reconnect(tmp_path):
 
 
 async def test_new_extractor_retries_old_failure_once_then_honors_cooldown(tmp_path):
-    from jobfeed.services.job_page_extraction import JobPageExtractor
 
     store = SQLiteStore(tmp_path / "revision.sqlite")
     await store.connect()

@@ -106,9 +106,7 @@ def official_closed_at(sources: list[JobPosting]) -> datetime | None:
     return max(job.closed_at for job in official if job.closed_at is not None)
 
 
-def representative_source_id(
-    real_job_id: str, sources: list[JobPosting]
-) -> int | None:
+def representative_source_id(real_job_id: str, sources: list[JobPosting]) -> int | None:
     """Prefer the canonical input, then the best official source available.
 
     Args:
@@ -124,14 +122,16 @@ def representative_source_id(
     available = [job for job in sources if job.id is not None]
     if not available:
         return None
-    return int(min(
-        available,
-        key=lambda job: (
-            not _is_ats(job),
-            _QUALITY.get(job.jd_quality, len(_QUALITY)),
-            int(job.id),
-        ),
-    ).id)
+    return int(
+        min(
+            available,
+            key=lambda job: (
+                not _is_ats(job),
+                _QUALITY.get(job.jd_quality, len(_QUALITY)),
+                int(job.id),
+            ),
+        ).id
+    )
 
 
 def conflicting_complete_sources(
@@ -148,7 +148,8 @@ def conflicting_complete_sources(
         The two source IDs requiring review, or None when descriptions agree.
     """
     complete = [
-        job for job in sources
+        job
+        for job in sources
         if job.id is not None
         and job.jd_text
         and job.jd_quality in _QUALITY
@@ -184,9 +185,11 @@ def legacy_evaluation_input_hold(
         if job is None or not job.jd_text or job.jd_quality not in _QUALITY:
             return "evaluation_input_missing"
     if selected is None:
-        return "evaluation_input_conflict" if any(
-            job.jd_text and job.jd_quality in _QUALITY for job in sources
-        ) else "evaluation_input_missing"
+        return (
+            "evaluation_input_conflict"
+            if any(job.jd_text and job.jd_quality in _QUALITY for job in sources)
+            else "evaluation_input_missing"
+        )
     for source_id, scored_at in evaluated_sources:
         job = by_id[source_id]
         if (
@@ -326,7 +329,8 @@ def policy_visibility(
 
 
 def mask_stale_evaluation_row(
-    row: dict[str, object], *,
+    row: dict[str, object],
+    *,
     stage_a_policy: dict[str, object] | None,
     stage_b_policy: dict[str, object] | None,
 ) -> None:
@@ -343,8 +347,7 @@ def mask_stale_evaluation_row(
         stage_b_policy=stage_b_policy,
     )
     has_score = (
-        row.get("stage_a_score") is not None
-        or row.get("stage_b_verdict") is not None
+        row.get("stage_a_score") is not None or row.get("stage_b_verdict") is not None
     )
     row["evaluation_stale_reason"] = reason if has_score else None
     row["stale_stage_a_score"] = (

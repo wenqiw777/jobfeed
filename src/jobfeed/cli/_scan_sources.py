@@ -17,6 +17,7 @@ import httpx
 from jobfeed.adapters.sources._http import create_http_client
 from jobfeed.adapters.sources.ats import ATSSource
 from jobfeed.adapters.sources.indeed_jobspy import IndeedSource
+from jobfeed.adapters.sources.jobboard_extension import JobboardExtensionSource
 from jobfeed.adapters.sources.jobright import JobrightSource
 from jobfeed.adapters.sources.linkedin import LinkedInSource
 from jobfeed.adapters.sources.linkedin_guest import (
@@ -25,6 +26,7 @@ from jobfeed.adapters.sources.linkedin_guest import (
 )
 from jobfeed.adapters.sources.speedyapply import SpeedyApplySource
 from jobfeed.cli import AppContext, require_enabled
+from jobfeed.cli._job_page_factory import build_page_extractor
 from jobfeed.domain.models import CompanyRecord
 from jobfeed.ports.source import ClosedJobLookup, EnrichmentLookup
 from jobfeed.ports.store_ops import StoreOpsMixin
@@ -38,6 +40,8 @@ _REAL_SOURCES = (
     "linkedin-guest",
     "linkedin",
     "jobright",
+    "linkedin-extension",
+    "handshake",
 )
 
 
@@ -156,6 +160,9 @@ async def _build_speedyapply(
                 config=config,
                 logger=app["logger"],
                 closed_lookup=closed_lookup,
+                enrichment_lookup=cast(EnrichmentLookup, app["store"]),
+                bridge=app["jobright_bridge"],
+                page_extractor=build_page_extractor(app),
             ),
             {},
         )
@@ -244,6 +251,46 @@ async def _build_jobright(
                 bridge=app["jobright_bridge"],
                 logger=app["logger"],
                 client=client,
+                enrichment_lookup=cast(EnrichmentLookup, app["store"]),
+            ),
+            {},
+        )
+    )
+
+
+async def _build_linkedin_extension(
+    app: AppContext, sources: list[SourceSpec], _stack: contextlib.AsyncExitStack
+) -> None:
+    config = app["settings"].sources.linkedin_extension
+    require_enabled(config.enabled, "linkedin-extension")
+    sources.append(
+        (
+            "linkedin-extension",
+            JobboardExtensionSource(
+                source="linkedin",
+                page_extractor=build_page_extractor(app),
+                config=config,
+                bridge=app["jobright_bridge"],
+                store=app["store"],
+            ),
+            {},
+        )
+    )
+
+
+async def _build_handshake(
+    app: AppContext, sources: list[SourceSpec], _stack: contextlib.AsyncExitStack
+) -> None:
+    config = app["settings"].sources.handshake
+    require_enabled(config.enabled, "handshake")
+    sources.append(
+        (
+            "handshake",
+            JobboardExtensionSource(
+                source="handshake",
+                config=config,
+                bridge=app["jobright_bridge"],
+                store=app["store"],
             ),
             {},
         )
@@ -277,6 +324,8 @@ _BUILDERS = {
     "linkedin-guest": _build_linkedin_guest,
     "linkedin": _build_linkedin,
     "jobright": _build_jobright,
+    "linkedin-extension": _build_linkedin_extension,
+    "handshake": _build_handshake,
 }
 
 # Real source token -> its field name on ``settings.sources`` (the hyphenated
@@ -288,6 +337,8 @@ _CONFIG_FIELDS = {
     "linkedin-guest": "linkedin_guest",
     "linkedin": "linkedin",
     "jobright": "jobright",
+    "linkedin-extension": "linkedin_extension",
+    "handshake": "handshake",
 }
 
 

@@ -67,6 +67,31 @@ async def _get_job(lifecycle: SqliteLifecycle, job_id: str) -> JobPosting | None
     return _job_from_row(row) if row is not None else None
 
 
+async def _get_jobs_by_canonical_ids(
+    lifecycle: SqliteLifecycle, *, platform: str, canonical_ids: list[str]
+) -> dict[str, JobPosting]:
+    """Probe a bounded discovery page with one connection, preserving source IDs."""
+    ids = list(dict.fromkeys(canonical_ids))
+    jobs: dict[str, JobPosting] = {}
+    if not ids:
+        return jobs
+    async with lifecycle.connection() as connection:
+        connection.row_factory = aiosqlite.Row
+        for offset in range(0, len(ids), 100):
+            batch = ids[offset : offset + 100]
+            placeholders = ",".join("?" for _ in batch)
+            cursor = await connection.execute(
+                "SELECT * FROM jobs WHERE platform=? "
+                f"AND canonical_id IN ({placeholders})",
+                (platform, *batch),
+            )
+            for row in await cursor.fetchall():
+                job = _job_from_row(row)
+                jobs[job.canonical_id] = job
+            await cursor.close()
+    return jobs
+
+
 async def _list_jobs(lifecycle: SqliteLifecycle, limit: int) -> list[JobPosting]:
     """List jobs by descending discovery time and identity."""
     _validate_limit(limit)

@@ -5,12 +5,15 @@ import { useTriggerScan } from "@/api/queries";
 import { toast } from "@/components/ui/use-toast";
 
 const SOURCES = [
-  { id: "all", text: "All sources" },
+  { id: "all", text: "All enabled sources" },
   { id: "ats", text: "Company career pages" },
+  { id: "speedyapply", text: "GitHub job lists" },
   { id: "indeed", text: "Indeed" },
+  { id: "linkedin-guest", text: "LinkedIn Guest" },
+  { id: "linkedin", text: "LinkedIn · browser profile" },
   { id: "jobright", text: "Jobright recommendations" },
-  { id: "linkedin-guest", text: "LinkedIn guest search" },
-  { id: "speedyapply", text: "SpeedyApply lists" },
+  { id: "linkedin-extension", text: "LinkedIn · signed in" },
+  { id: "handshake", text: "Handshake · signed in" },
 ] as const;
 
 /** Cloudscape source selector that starts a scan run. */

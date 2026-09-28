@@ -28,6 +28,8 @@ SOURCE_CHOICES = [
     "linkedin-guest",
     "linkedin",
     "jobright",
+    "linkedin-extension",
+    "handshake",
     "all",
 ]
 

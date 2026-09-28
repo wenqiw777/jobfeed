@@ -176,5 +176,6 @@ async def test_linkedin_each_search_gets_500_and_results_deduplicate_by_id():
     )
     jobs = await source.fetch_jobs({})
     assert [call["max_jobs"] for call in calls] == [500, 500]
-    assert len(jobs) == 900
+    expected_unique_jobs = 900
+    assert len(jobs) == expected_unique_jobs
     assert all(job.jd_text == "Complete description" for job in jobs)
