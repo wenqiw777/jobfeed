@@ -31,3 +31,7 @@ implementation is explicitly grandfathered; no new hash logic is authorized.
 - Independent review found no release blocker in journal extraction or canonical casts.
 - Screenshots remain local in artifacts/migration-release-20260928/.
 - Pending: screenshot approval, remote CI and rebase merge.
+
+Remote CI initially failed in optype 0.17.1 because its type-alias syntax conflicts
+with the configured Python 3.11 mypy target. Pin optype 0.9.3, matching the locally
+verified typing environment; rerun CI without changing the supported Python target.

@@ -86,6 +86,7 @@ dev = [
     "respx >= 0.22",
     "ruff == 0.15.14",
     "scipy-stubs==1.15.3.0",
+    "optype==0.9.3",  # Newer releases use syntax incompatible with the 3.11 mypy target.
     "testcontainers[postgres] >= 4.0",
 ]
 
