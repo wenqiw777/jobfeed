@@ -85,9 +85,7 @@ def _canonical_input(
         return strict
     first_discovery = min(job.discovered_at for job in jobs)
     original_dates = [
-        job.posted_at
-        for job in jobs
-        if job.posted_at is not None and not job.is_repost
+        job.posted_at for job in jobs if job.posted_at is not None and not job.is_repost
     ]
     canonical = replace(
         chosen,

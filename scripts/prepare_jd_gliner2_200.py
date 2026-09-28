@@ -274,8 +274,7 @@ def main():
         linkedin_platform_targets = {
             platform: int(count)
             for platform, count in (
-                item.split("=", 1)
-                for item in args.linkedin_platform_targets.split(",")
+                item.split("=", 1) for item in args.linkedin_platform_targets.split(",")
             )
         }
     cohort = build_cohort(
