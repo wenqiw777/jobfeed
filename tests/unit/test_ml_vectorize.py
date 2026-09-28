@@ -11,7 +11,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from jobfeed.adapters.ml._vectorize import featurize
+from jobfeed.adapters.ml._vectorize import (
+    LEXICAL_HASH_DIM,
+    featurize,
+    featurize_sde_batch,
+)
 from jobfeed.domain.ml_features import (
     DEGREE_LEVELS,
     DOMAIN_NAMES,
@@ -182,3 +186,33 @@ def test_rejects_wrong_length_embedding() -> None:
         featurize(_features(), np.zeros(383, dtype=np.float32))
     with pytest.raises(ValueError):
         featurize(_features(), np.zeros(385, dtype=np.float32))
+
+
+def test_sde_batch_keeps_full_jd_signal_after_legacy_cutoff() -> None:
+    """Text after 2,000 chars must affect the SDE model's lexical features."""
+    shared_prefix = "company background " * 130
+    matrix = featurize_sde_batch(
+        [_features(), _features()],
+        np.stack([_fake_embedding(0.0), _fake_embedding(0.0)]),
+        ["Engineer", "Engineer"],
+        [
+            shared_prefix + " design municipal water drainage systems",
+            shared_prefix + " write and deploy production backend code",
+        ],
+    )
+
+    assert matrix.shape == (2, TOTAL_DIM + LEXICAL_HASH_DIM)
+    assert matrix[:, TOTAL_DIM:].nnz > 0
+    assert (matrix[0, TOTAL_DIM:] != matrix[1, TOTAL_DIM:]).nnz > 0
+
+
+def test_sde_batch_weights_title_separately_from_identical_jd() -> None:
+    """Different titles must remain distinguishable when the JD is identical."""
+    matrix = featurize_sde_batch(
+        [_features(), _features()],
+        np.stack([_fake_embedding(0.0), _fake_embedding(0.0)]),
+        ["Water Resources Engineer", "Software Engineer"],
+        ["same complete job description", "same complete job description"],
+    )
+
+    assert (matrix[0, TOTAL_DIM:] != matrix[1, TOTAL_DIM:]).nnz > 0
