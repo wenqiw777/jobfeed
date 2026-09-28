@@ -15,14 +15,45 @@ which these tests pin.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from jobfeed.adapters.ml.xgboost_gate import EmbedderConfig, XGBoostGate
+from jobfeed.adapters.ml._vectorize import LEXICAL_HASH_DIM
+from jobfeed.adapters.ml.xgboost_gate import EmbedderConfig, XGBoostGate, _RowState
+from jobfeed.domain.ml_features import extract_features
 from jobfeed.ports.ml_gate import GateInput, MLGate
+
+
+def test_full_text_gate_rejects_nurse_without_legacy_rules() -> None:
+    job = GateInput(
+        job_id="431820",
+        title="RN - Post Surgical/Stroke Part-time Day",
+        jd_text="Registered nursing care; current nursing license required.",
+    )
+    row = _RowState(
+        extract_features(job.title, job.jd_text), job, apply_legacy_hard_fail=False
+    )
+    assert row.hard_fail == "not software engineering role"
+    assert row.to_result("test", True).is_swe_role is False
+
+
+def test_full_text_gate_does_not_reapply_broad_operations_rule() -> None:
+    job = GateInput(
+        job_id="456111",
+        title="Machine Learning Operations Engineer",
+        jd_text="Build and operate model serving APIs and deployment pipelines.",
+    )
+    row = _RowState(
+        extract_features(job.title, job.jd_text), job, apply_legacy_hard_fail=False
+    )
+    assert row.hard_fail is None
+    row.apply_model_score(0.997, 0.096, True)
+    assert row.to_result("test", True).result == "pass"
+
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 TINY_MODEL = FIXTURES / "ml_gate_tiny_model.json"
@@ -32,6 +63,7 @@ WRONG_OBJ_META = FIXTURES / "ml_gate_wrong_objective.meta.json"
 
 META_THRESHOLD = 0.5
 EMBED_DIM = 384
+LEGACY_FEATURE_DIM = 450
 
 # Clean SWE postings that clear every hard-fail rule (is_swe, no clearance,
 # yoe<2). With a zero-fill embedding the tiny model scores "react" >= 0.5 (pass)
@@ -146,20 +178,41 @@ async def test_model_pass_sets_version_and_no_reason(tmp_path: Path) -> None:
         [GateInput(job_id="p", title=PASS_TITLE, jd_text=PASS_JD)]
     )
     assert res.result == "pass"
+    assert res.is_swe_role is True
     assert res.fail_reason is None
     assert res.score >= META_THRESHOLD
     assert res.version == "v20260101T000000Z"
 
 
-async def test_model_fail_has_no_reason(tmp_path: Path) -> None:
-    """A model-driven fail (score < threshold) carries fail_reason=None."""
+async def test_model_fail_marks_job_as_non_sde(tmp_path: Path) -> None:
+    """The classifier decision is the persisted SDE label at runtime."""
     gate = _gate(tmp_path, CountingFakeEmbedder(fill=0.0))
     [res] = await gate.predict_batch(
         [GateInput(job_id="f", title=FAIL_TITLE, jd_text=FAIL_JD)]
     )
     assert res.result == "fail"
-    assert res.fail_reason is None
+    assert res.is_swe_role is False
+    assert res.fail_reason == "not software engineering role"
     assert 0.0 < res.score < META_THRESHOLD
+
+
+async def test_legacy_model_cannot_claim_sde_classifier_authority(
+    tmp_path: Path,
+) -> None:
+    model_dir = _model_dir(tmp_path, model=TINY_MODEL, meta=TINY_META)
+    meta_path = model_dir / "v20260101T000000Z.meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta.pop("label_source")
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    gate = XGBoostGate(model_dir=model_dir, embedder=CountingFakeEmbedder())
+
+    [result] = await gate.predict_batch(
+        [GateInput(job_id="legacy", title=FAIL_TITLE, jd_text=FAIL_JD)]
+    )
+
+    assert result.result == "fail"
+    assert result.fail_reason is None
+    assert result.is_swe_role is True
 
 
 async def test_threshold_override_beats_meta(tmp_path: Path) -> None:
@@ -172,6 +225,66 @@ async def test_threshold_override_beats_meta(tmp_path: Path) -> None:
     )
     assert res.result == "pass"
     assert res.fail_reason is None
+
+
+async def test_full_jd_feature_schema_routes_runtime_through_sparse_v2(
+    tmp_path: Path,
+) -> None:
+    """A v2 model must receive the full-JD lexical feature columns at runtime."""
+    model_dir = _model_dir(tmp_path, model=TINY_MODEL, meta=TINY_META)
+    meta_path = model_dir / "v20260101T000000Z.meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["feature_schema"] = "sde-full-jd-hash-v2"
+    meta["lexical_hash_dim"] = LEXICAL_HASH_DIM
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    gate = XGBoostGate(model_dir=model_dir, embedder=CountingFakeEmbedder())
+    captured: dict[str, object] = {}
+
+    def predict(matrix: object) -> np.ndarray:
+        captured["shape"] = matrix.shape  # type: ignore[attr-defined]
+        return np.asarray([0.9])
+
+    gate._predict = predict  # type: ignore[method-assign]
+    await gate.predict_batch(
+        [
+            GateInput(
+                job_id="v2",
+                title="Software Engineer",
+                jd_text="company " * 400 + "write production backend code",
+            )
+        ]
+    )
+
+    assert captured["shape"] == (1, LEGACY_FEATURE_DIM + LEXICAL_HASH_DIM)
+
+
+async def test_full_jd_sde_model_decides_without_legacy_title_short_circuit(
+    tmp_path: Path,
+) -> None:
+    """The learned SDE model, not the old regex gate, decides every v2 row."""
+    model_dir = _model_dir(tmp_path, model=TINY_MODEL, meta=TINY_META)
+    meta_path = model_dir / "v20260101T000000Z.meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["feature_schema"] = "sde-full-jd-hash-v2"
+    meta["lexical_hash_dim"] = LEXICAL_HASH_DIM
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    embedder = CountingFakeEmbedder()
+    gate = XGBoostGate(model_dir=model_dir, embedder=embedder)
+    gate._predict = lambda _matrix: np.asarray([0.9])  # type: ignore[method-assign]
+
+    [result] = await gate.predict_batch(
+        [
+            GateInput(
+                job_id="analyst",
+                title="Commercial Risk Data Analyst",
+                jd_text="Build ETL pipelines, APIs, automations, and cloud systems.",
+            )
+        ]
+    )
+
+    assert result.result == "pass"
+    assert result.score == pytest.approx(0.9)
+    assert embedder.batch_calls == 1
 
 
 async def test_hard_fail_short_circuits_without_embedding(tmp_path: Path) -> None:
@@ -210,7 +323,8 @@ async def test_batch_realigns_with_interleaved_hard_fail(tmp_path: Path) -> None
     assert results[1].score == 0.0
     # Row 2: model fail.
     assert results[2].result == "fail"
-    assert results[2].fail_reason is None
+    assert results[2].fail_reason == HARDFAIL_REASON
+    assert results[2].is_swe_role is False
     assert 0.0 < results[2].score < META_THRESHOLD
 
     # Only the two survivors were embedded, in their original relative order.

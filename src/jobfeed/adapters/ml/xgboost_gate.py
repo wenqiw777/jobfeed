@@ -12,10 +12,15 @@ embedding contract, then each batch runs the legacy predictor flow:
 2. The surviving subset is formatted + embedded in ONE batch, vectorized to
    ``(m, 450)``, and scored by the booster. ``binary:logistic`` yields the
    positive-class probability directly; ``result="pass"`` iff ``score >=
-   threshold`` (a model-driven fail has ``fail_reason=None``).
+   threshold``.
 3. Results are re-aligned to the original input order (hard-failed rows
    interleaved), each carrying the model ``version`` and feature columns with
    ``int -> bool`` coercion for ``clearance_required`` / ``school_restricted``.
+
+Models whose metadata declares ``luna-explicit-is-sde-job-v1`` are dedicated
+SDE classifiers. For those models only, the model decision becomes
+``is_swe_role`` and a negative prediction carries the non-software fail reason.
+Older model artifacts keep their legacy non-authoritative behavior.
 
 The ``xgboost`` import is lazy (deferred to load), so this module imports without
 the toolchain present; only an actual load/predict needs it. The embedder is
@@ -44,9 +49,14 @@ from jobfeed.adapters.ml._gate_validation import (
     resolve_model_path,
     validate_embedding_contract,
 )
-from jobfeed.adapters.ml._vectorize import featurize
+from jobfeed.adapters.ml._vectorize import (
+    LEXICAL_HASH_DIM,
+    featurize,
+    featurize_sde_batch,
+)
 from jobfeed.domain.ml_features import (
     MLGateFeatures,
+    clearly_nonsoftware_title,
     extract_features,
     hard_fail_reason,
 )
@@ -56,6 +66,8 @@ from jobfeed.ports.ml_gate import GateInput
 
 DEFAULT_MODEL_DIR = "models/ml_gate"
 _BINARY_LOGISTIC = "binary:logistic"
+_SDE_LABEL_SOURCE = "luna-explicit-is-sde-job-v1"
+_FULL_JD_FEATURE_SCHEMA = "sde-full-jd-hash-v2"
 FAIL_SCORE = 0.0
 _tracer = get_tracer("jobfeed.ml_gate")
 
@@ -111,6 +123,12 @@ class XGBoostGate:
         self._version = version
         meta = read_meta(Path(model_dir), version)
         validate_embedding_contract(meta, model_name)
+        self._is_sde_classifier = meta.get("label_source") == _SDE_LABEL_SOURCE
+        self._feature_schema = str(meta.get("feature_schema", "legacy-v1"))
+        if self._feature_schema == _FULL_JD_FEATURE_SCHEMA and int(
+            meta.get("lexical_hash_dim", -1)
+        ) != LEXICAL_HASH_DIM:
+            raise ValueError("lexical_hash_dim mismatch for full-JD SDE model")
         meta_threshold = float(meta[_META_THRESHOLD_KEY])
         self._threshold = (
             threshold_override if threshold_override is not None else meta_threshold
@@ -153,11 +171,18 @@ class XGBoostGate:
     def _predict_batch_sync(self, jobs: list[GateInput]) -> list[MLGateResult]:
         with _tracer.start_as_current_span("extract_features"):
             rows = [
-                _RowState(extract_features(job.title, job.jd_text), job) for job in jobs
+                _RowState(
+                    extract_features(job.title, job.jd_text),
+                    job,
+                    apply_legacy_hard_fail=(
+                        self._feature_schema != _FULL_JD_FEATURE_SCHEMA
+                    ),
+                )
+                for job in jobs
             ]
         survivors = [row for row in rows if row.hard_fail is None]
         self._score_survivors(survivors)
-        return [row.to_result(self._version) for row in rows]
+        return [row.to_result(self._version, self._is_sde_classifier) for row in rows]
 
     def _score_survivors(self, survivors: list[_RowState]) -> None:
         """Embed + featurize + score the non-hard-failed rows in one batch."""
@@ -172,19 +197,29 @@ class XGBoostGate:
         with _tracer.start_as_current_span("embed"):
             embeddings = embedder.embed_batch(texts)
         with _tracer.start_as_current_span("featurize"):
-            matrix = np.stack(
-                [
-                    featurize(row.features, embeddings[i])
-                    for i, row in enumerate(survivors)
-                ],
-                axis=0,
-            )
+            if self._feature_schema == _FULL_JD_FEATURE_SCHEMA:
+                matrix = featurize_sde_batch(
+                    [row.features for row in survivors],
+                    embeddings,
+                    [row.job.title for row in survivors],
+                    [row.job.jd_text for row in survivors],
+                )
+            else:
+                matrix = np.stack(
+                    [
+                        featurize(row.features, embeddings[i])
+                        for i, row in enumerate(survivors)
+                    ],
+                    axis=0,
+                )
         with _tracer.start_as_current_span("predict"):
             scores = self._predict(matrix)
         for row, score in zip(survivors, scores, strict=True):
-            row.apply_model_score(float(score), self._threshold)
+            row.apply_model_score(
+                float(score), self._threshold, self._is_sde_classifier
+            )
 
-    def _predict(self, matrix: npt.NDArray[np.float32]) -> npt.NDArray[np.float64]:
+    def _predict(self, matrix: Any) -> npt.NDArray[np.float64]:
         """Run the booster; binary:logistic returns positive-class probability."""
         import xgboost as xgb  # noqa: PLC0415
 
@@ -195,15 +230,25 @@ class XGBoostGate:
 class _RowState:
     """Mutable per-input scratch: features, hard-fail verdict, model verdict."""
 
-    def __init__(self, features: MLGateFeatures, job: GateInput) -> None:
+    def __init__(
+        self,
+        features: MLGateFeatures,
+        job: GateInput,
+        *,
+        apply_legacy_hard_fail: bool = True,
+    ) -> None:
         self.features = features
         self.job = job
-        self.hard_fail = hard_fail_reason(features)
+        self.hard_fail = hard_fail_reason(features) if apply_legacy_hard_fail else None
+        if clearly_nonsoftware_title(job.title):
+            self.hard_fail = "not software engineering role"
         self.result = "fail"
         self.fail_reason: str | None = self.hard_fail
         self.score = FAIL_SCORE
 
-    def apply_model_score(self, score: float, threshold: float) -> None:
+    def apply_model_score(
+        self, score: float, threshold: float, is_sde_classifier: bool
+    ) -> None:
         """Record the model verdict for a non-hard-failed row."""
         self.score = score
         if score >= threshold:
@@ -211,9 +256,11 @@ class _RowState:
             self.fail_reason = None
         else:
             self.result = "fail"
-            self.fail_reason = None  # model-driven fail carries no reason string
+            self.fail_reason = (
+                "not software engineering role" if is_sde_classifier else None
+            )
 
-    def to_result(self, version: str) -> MLGateResult:
+    def to_result(self, version: str, is_sde_classifier: bool) -> MLGateResult:
         """Build the ordered ``MLGateResult``, coercing int columns to bool."""
         features = self.features
         return MLGateResult(
@@ -221,7 +268,9 @@ class _RowState:
             result=self.result,
             fail_reason=self.fail_reason,
             version=version,
-            is_swe_role=features.is_swe_role,
+            is_swe_role=(self.result == "pass")
+            if is_sde_classifier
+            else features.is_swe_role,
             seniority_level=features.seniority_level,
             degree_required=features.degree_required,
             clearance_required=bool(features.clearance_required),

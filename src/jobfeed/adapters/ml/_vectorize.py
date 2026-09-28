@@ -1,8 +1,13 @@
-"""Numpy feature vectorizer for the XGBoost ML gate (exact legacy numeric port).
+"""Feature vectorizers for legacy ML gates and the full-JD SDE classifier.
 
 ``featurize(features, embedding)`` converts a structured ``MLGateFeatures``
 record plus a 384-d sentence embedding into a single flat ``float32`` vector of
 shape ``(450,)`` = ``[structured(66), embedding(384)]``, ready for XGBoost.
+
+``featurize_sde_batch`` preserves that legacy block and appends a normalized
+32,768-column sparse lexical block. Unlike the sentence embedding, this block
+reads the complete JD and separately upweights title words and character
+n-grams, so late responsibilities and precise occupation wording survive.
 
 Layout (structured portion, length ``STRUCTURED_DIM`` = 66 — verbatim from the
 legacy ``ml_gate.features.featurize``)::
@@ -25,9 +30,13 @@ single source of truth) and are never redefined here.
 from __future__ import annotations
 
 import contextlib
+import re
+import zlib
+from itertools import pairwise
 
 import numpy as np
 import numpy.typing as npt
+import scipy.sparse as sp
 
 from jobfeed.domain.ml_features import (
     DEGREE_LEVELS,
@@ -39,7 +48,11 @@ from jobfeed.domain.ml_features import (
 )
 
 EMBEDDING_DIM = 384
+LEXICAL_HASH_DIM = 32_768
 YOE_SCALE = 10.0
+_TITLE_LIMIT = 180
+_CHAR_NGRAMS = (3, 4, 5)
+_WORD = re.compile(r"[a-z0-9+#.]{2,}")
 
 
 def _one_hot(vocab: list[str], value: str) -> npt.NDArray[np.float32]:
@@ -106,4 +119,80 @@ def featurize(
     return np.concatenate([_structured(features), emb])
 
 
-__all__ = ["EMBEDDING_DIM", "featurize"]
+def featurize_sde_batch(
+    features: list[MLGateFeatures],
+    embeddings: npt.NDArray[np.float32],
+    titles: list[str],
+    jd_texts: list[str],
+) -> sp.csr_matrix:
+    """Build SDE-v2 features from legacy signals plus title and the full JD.
+
+    The legacy dense block remains first for backward conceptual parity. A
+    normalized sparse lexical block follows it and covers every JD character;
+    title character n-grams and title words receive extra weight so occupation
+    wording is not diluted by long company boilerplate.
+    """
+    size = len(features)
+    if len(titles) != size or len(jd_texts) != size or len(embeddings) != size:
+        raise ValueError("SDE feature inputs must contain the same number of rows")
+    dense = np.stack(
+        [featurize(row, embeddings[index]) for index, row in enumerate(features)]
+    )
+    lexical = _lexical_matrix(titles, jd_texts)
+    return sp.hstack([sp.csr_matrix(dense), lexical], format="csr")
+
+
+def _lexical_matrix(titles: list[str], jd_texts: list[str]) -> sp.csr_matrix:
+    row_indices: list[int] = []
+    column_indices: list[int] = []
+    values: list[float] = []
+    for row_index, (raw_title, jd_text) in enumerate(
+        zip(titles, jd_texts, strict=True)
+    ):
+        counts: dict[int, float] = {}
+        title = " ".join(raw_title.casefold().split())[:_TITLE_LIMIT]
+        padded_title = f"^{title}$"
+        for width in _CHAR_NGRAMS:
+            for start in range(len(padded_title) - width + 1):
+                _add_hash(counts, f"tc:{padded_title[start : start + width]}", 2.0)
+        title_words = _WORD.findall(title)
+        _add_words(counts, "tw", "tb", title_words, weight=4.0)
+        _add_words(
+            counts,
+            "jw",
+            "jb",
+            _WORD.findall(jd_text.casefold()),
+            weight=1.0,
+        )
+        norm = sum(value * value for value in counts.values()) ** 0.5 or 1.0
+        for column_index, value in counts.items():
+            row_indices.append(row_index)
+            column_indices.append(column_index)
+            values.append(value / norm)
+    return sp.csr_matrix(
+        (values, (row_indices, column_indices)),
+        shape=(len(titles), LEXICAL_HASH_DIM),
+        dtype=np.float32,
+    )
+
+
+def _add_words(
+    counts: dict[int, float],
+    word_prefix: str,
+    bigram_prefix: str,
+    words: list[str],
+    *,
+    weight: float,
+) -> None:
+    for word in words:
+        _add_hash(counts, f"{word_prefix}:{word}", weight)
+    for first, second in pairwise(words):
+        _add_hash(counts, f"{bigram_prefix}:{first} {second}", weight)
+
+
+def _add_hash(counts: dict[int, float], token: str, weight: float) -> None:
+    index = zlib.crc32(token.encode()) % LEXICAL_HASH_DIM
+    counts[index] = counts.get(index, 0.0) + weight
+
+
+__all__ = ["EMBEDDING_DIM", "LEXICAL_HASH_DIM", "featurize", "featurize_sde_batch"]
