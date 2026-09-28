@@ -45,8 +45,8 @@ async def _table_names(connection: aiosqlite.Connection) -> tuple[str, ...]:
     return tuple(row[0] for row in rows)
 
 
-def test_metadata_matches_frozen_0008_registry_plus_run_leases() -> None:
-    """Core metadata has the exact migrated columns and one lease table."""
+def test_metadata_matches_frozen_registry_plus_leases_and_retry_columns() -> None:
+    """Core metadata preserves the frozen registry and explicit additive columns."""
     migrated = CANONICAL_SCHEMA_MANIFEST_V1.tables
 
     assert SQLITE_SCHEMA_VERSION == 1
@@ -55,9 +55,23 @@ def test_metadata_matches_frozen_0008_registry_plus_run_leases() -> None:
     assert tuple(SQLITE_METADATA.tables) == SQLITE_TABLE_NAMES
     for expected in migrated:
         actual = SQLITE_METADATA.tables[expected.name]
-        assert tuple(column.name for column in actual.columns) == tuple(
-            column.name for column in expected.columns
+        additive = (
+            (
+                "external_identity",
+                "enrich_attempted_at",
+                "enrich_error_code",
+                "enrich_retry_after",
+            )
+            if expected.name == "jobs"
+            else ()
         )
+        assert tuple(column.name for column in actual.columns) == (
+            *(column.name for column in expected.columns),
+            *additive,
+        )
+        for name in additive:
+            assert str(actual.columns[name].type) == "TEXT"
+            assert actual.columns[name].nullable
         assert (
             tuple(column.name for column in actual.primary_key) == expected.primary_key
         )

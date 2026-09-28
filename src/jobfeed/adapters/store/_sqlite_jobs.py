@@ -14,6 +14,7 @@ from jobfeed.adapters.store._sqlite_values import (
     _utc_text,
 )
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.domain.external_identity import external_identity
 from jobfeed.domain.ml_features import classify_role_type
 from jobfeed.domain.models import JobPosting, MLGateResult, SaveJobResult
 from jobfeed.domain.quality import quality_rank
@@ -21,8 +22,9 @@ from jobfeed.domain.quality import quality_rank
 _INSERT_JOB_SQL = """INSERT INTO jobs (
     platform, canonical_id, url, title, company, location,
     jd_text, jd_quality, posted_at, discovered_at, enriched_at, enrich_source,
-    company_norm, title_norm, location_norm, closed_at, enrich_error, role_type
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id"""
+    company_norm, title_norm, location_norm, closed_at, enrich_error, role_type,
+    external_identity, enrich_attempted_at, enrich_error_code, enrich_retry_after
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id"""
 
 
 async def _save_job(lifecycle: SqliteLifecycle, job: JobPosting) -> SaveJobResult:
@@ -70,7 +72,10 @@ async def _get_job(lifecycle: SqliteLifecycle, job_id: str) -> JobPosting | None
 async def _get_jobs_by_canonical_ids(
     lifecycle: SqliteLifecycle, *, platform: str, canonical_ids: list[str]
 ) -> dict[str, JobPosting]:
-    """Probe a bounded discovery page with one connection, preserving source IDs."""
+    """Probe a bounded discovery page with one connection, preserving source IDs.
+
+    Time complexity: O(N), over the requested IDs and returned rows.
+    """
     ids = list(dict.fromkeys(canonical_ids))
     jobs: dict[str, JobPosting] = {}
     if not ids:
@@ -194,6 +199,10 @@ def _job_values(job: JobPosting) -> tuple[object, ...]:
         _utc_text(job.closed_at) if job.closed_at else None,
         job.enrich_error,
         classify_role_type(job.title, job.jd_text or ""),
+        job.external_identity or external_identity(job.apply_url or job.url),
+        _time(job.enrich_attempted_at),
+        job.enrich_error_code,
+        _time(job.enrich_retry_after),
     )
 
 
@@ -247,9 +256,10 @@ async def _update_job(
         if job.jd_text is not None
         else existing["closed_at"] or _time(job.closed_at)
     )
+    complete = jd_quality in {"good", "full"} and bool((jd_text or "").strip())
     enrich_error = (
         None
-        if job.jd_text is not None
+        if complete
         else (
             job.enrich_error
             if job.enrich_error is not None
@@ -267,7 +277,9 @@ async def _update_job(
         """UPDATE jobs SET url=?, title=?, company=?, location=?, jd_text=?,
             jd_quality=?, posted_at=?, discovered_at=?, enriched_at=?, enrich_source=?,
             company_norm=?, title_norm=?, location_norm=?, closed_at=?,
-            enrich_error=?, role_type=?"""
+            enrich_error=?, role_type=?,
+            external_identity=COALESCE(?,external_identity),
+            enrich_attempted_at=?, enrich_error_code=?, enrich_retry_after=?"""
         + gate_sql
         + hard_filter_sql
         + " WHERE id=?",
@@ -288,6 +300,14 @@ async def _update_job(
             closed_at,
             enrich_error,
             role_type,
+            job.external_identity or external_identity(job.apply_url or job.url),
+            _time(job.enrich_attempted_at) or existing["enrich_attempted_at"],
+            None
+            if complete
+            else job.enrich_error_code or existing["enrich_error_code"],
+            None
+            if complete
+            else _time(job.enrich_retry_after) or existing["enrich_retry_after"],
             existing["id"],
         ),
     )

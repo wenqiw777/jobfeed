@@ -166,6 +166,21 @@ class SqliteOps:
             self._lifecycle, platform=platform, canonical_id=canonical_id
         )
 
+    async def get_enrichment_by_identity(
+        self, identity: str
+    ) -> StoredEnrichment | None:
+        """Read complete or deferred enrichment for an explicit source identity.
+
+        Args:
+            identity: Observed vendor-qualified requisition identifier.
+
+        Returns:
+            The best stored enrichment, or None when absent.
+        """
+        return await _sqlite_ops_enrichment._get_enrichment_by_identity(
+            self._lifecycle, identity
+        )
+
     async def get_closed_canonical_ids(self, *, platform: str) -> set[str]:
         """Return definitive closed identities excluding stale backfill guesses.
 

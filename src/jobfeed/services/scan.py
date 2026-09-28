@@ -15,6 +15,7 @@ from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
 from jobfeed.ports.run_leases import RunLeaseStore
 from jobfeed.ports.source import (
     EnrichResult,
+    PartialSourceFetchError,
     ProgressiveSimpleSource,
     ScanSession,
     SessionSource,
@@ -98,12 +99,18 @@ class ScanService:
         self._perf_store = get_perf_store(self.store)
         self._on_progress = on_progress
         lease_session.ensure_active()
-        await asyncio.gather(
+        outcomes = await asyncio.gather(
             *(
                 self._scan_one_source(lease_session, run, name, source, config)
                 for name, source, config in sources
             )
         )
+
+        for (name, _, _), error in zip(sources, outcomes, strict=True):
+            if error is not None:
+                run.scan_source = name
+                run.scan_phase = "source_fetch"
+                raise RuntimeError(f"Scan has failed source work: {error}") from error
 
     async def _scan_one_source(
         self,
@@ -112,7 +119,8 @@ class ScanService:
         name: str,
         source: SourcePort,
         config: dict[str, object],
-    ) -> None:
+    ) -> PartialSourceFetchError | None:
+        partial_error: PartialSourceFetchError | None = None
         lease_session.ensure_active()
         self._publish_scan_progress(run, source=name, phase="fetching")
         async with StepTimer(
@@ -127,10 +135,13 @@ class ScanService:
                     lease_session, run, name, source, config
                 )
             else:
-                await self._scan_simple_source(lease_session, run, name, source, config)
+                partial_error = await self._scan_simple_source(
+                    lease_session, run, name, source, config
+                )
         if self._on_progress is not None:
             self._on_progress(run)
         await self._run_orchestrator.checkpoint(lease_session)
+        return partial_error
 
     async def _scan_simple_source(
         self,
@@ -139,7 +150,8 @@ class ScanService:
         name: str,
         source: SimpleSource,
         config: dict[str, object],
-    ) -> None:
+    ) -> PartialSourceFetchError | None:
+        partial_error: PartialSourceFetchError | None = None
         try:
             lease_session.ensure_active()
             if isinstance(source, ProgressiveSimpleSource):
@@ -151,9 +163,13 @@ class ScanService:
                 jobs = await source.fetch_jobs(config)
         except RunLeaseLostError:
             raise
+        except PartialSourceFetchError as exc:
+            jobs = exc.postings
+            partial_error = exc
+            self.error_handler.handle_source_fetch_error(run, name, exc)
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
-            return
+            return None
         _record_fetched_stats(run, name, len(jobs))
         await self._run_orchestrator.checkpoint(lease_session)
         self._publish_scan_progress(
@@ -164,6 +180,7 @@ class ScanService:
             processed=0,
         )
         await self._record_jobs(lease_session, run, name, jobs)
+        return partial_error
 
     def _publish_fetch_progress(
         self,

@@ -21,6 +21,10 @@ _SEED_LEASE_SQL: Final = (
 _CREATE_PREFIX = re.compile(r"^CREATE\s+(TABLE|INDEX|TRIGGER)\s+([^\s(]+)", re.I)
 _ADDITIVE_INDEXES = frozenset({("index", "idx_eval_verdict_job")})
 _ADDITIVE_COLUMNS: Final[dict[tuple[str, str], str]] = {
+    ("jobs", "external_identity"): "TEXT",
+    ("jobs", "enrich_attempted_at"): "TEXT",
+    ("jobs", "enrich_error_code"): "TEXT",
+    ("jobs", "enrich_retry_after"): "TEXT",
     (
         "pipeline_runs",
         "jobs_seniority_filtered",
