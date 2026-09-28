@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from math import ceil
 from typing import Literal, Protocol, runtime_checkable
@@ -65,6 +66,7 @@ class PersonalMLLearningService:
 
     def __init__(self, store: PersonalMLObservationStore) -> None:
         self._store = store
+        self._pending: dict[tuple[int, bool], asyncio.Task[PersonalMLStatus]] = {}
 
     async def status(
         self, *, quick_pass_threshold: int, enabled: bool
@@ -73,10 +75,23 @@ class PersonalMLLearningService:
         Args: Quick-pass threshold and current enabled state.
         Returns: Current learning lifecycle state and measured quality.
         """
-        observations = await self._store.list_personal_ml_observations(
-            quick_pass_threshold=quick_pass_threshold
-        )
-        return assess_personal_ml(observations, enabled=enabled)
+        key = (quick_pass_threshold, enabled)
+        task = self._pending.get(key)
+        if task is None:
+            task = asyncio.create_task(self._read_status(key))
+            self._pending[key] = task
+        # A disconnected page must not cancel work another request still needs.
+        return await asyncio.shield(task)
+
+    async def _read_status(self, key: tuple[int, bool]) -> PersonalMLStatus:
+        try:
+            observations = await self._store.list_personal_ml_observations(
+                quick_pass_threshold=key[0]
+            )
+            return assess_personal_ml(observations, enabled=key[1])
+        finally:
+            # Share only in-flight work; later reads must see fresh observations.
+            self._pending.pop(key, None)
 
 
 def assess_personal_ml(
