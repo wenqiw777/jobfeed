@@ -518,7 +518,14 @@ def classify_clearance_status(jd_text: str) -> str:
 
 
 def clearly_nonsoftware_title(title: str) -> bool:
-    """Identify narrow nonsoftware occupations without broad legacy rules."""
+    """Identify narrow nonsoftware occupations without broad legacy rules.
+
+    Args:
+        title: Posting title.
+
+    Returns:
+        Whether the title clearly describes work outside software.
+    """
     return bool(_SWE_TITLE_CLEAR_NEG.search(title)) and not bool(
         _SWE_TITLE_STRONG.search(title)
     )

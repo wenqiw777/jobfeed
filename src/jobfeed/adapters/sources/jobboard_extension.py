@@ -44,6 +44,14 @@ class JobboardExtensionSource:
         )
 
     async def fetch_jobs(self, config: dict[str, object]) -> list[JobPosting]:
+        """Collect signed-in board postings.
+
+        Args:
+            config: Source-specific request options.
+
+        Returns:
+            Collected postings with available descriptions.
+        """
         return await self.fetch_jobs_with_progress(config, lambda _: None)
 
     async def fetch_jobs_with_progress(  # noqa: C901 - sequential fetch and recovery phases
@@ -51,6 +59,21 @@ class JobboardExtensionSource:
         config: dict[str, object],  # noqa: ARG002
         on_progress: SourceFetchProgressCallback,
     ) -> list[JobPosting]:
+        """Collect board postings and publish scan progress.
+
+        Complexity: O(Q * J), for queries Q and returned jobs J.
+
+        Args:
+            config: Source-specific request options.
+            on_progress: Callback receiving scan progress updates.
+
+        Returns:
+            Collected postings, deduplicated by source identity.
+
+        Raises:
+            PartialSourceFetchError: If a source fails after producing partial results.
+        """
+
         def blocked(company: str | None) -> bool:
             return self.source == "linkedin" and blocked_linkedin_company(company)
 
@@ -235,7 +258,18 @@ class JobboardExtensionSource:
 
 
 def map_board_job(raw: dict[str, Any], *, discovered_at: datetime) -> JobPosting:
-    """Preserve the platform's complete text and native job identifier."""
+    """Preserve the platform's complete text and native job identifier.
+
+    Args:
+        raw: Source response row.
+        discovered_at: Discovered at supplied by the caller.
+
+    Returns:
+        Normalized source posting.
+
+    Raises:
+        ValueError: If the source row lacks required identity fields.
+    """
     source = raw.get("source")
     if source not in {"linkedin", "handshake"}:
         raise ValueError("Unsupported board source")

@@ -12,6 +12,15 @@ from jobfeed.adapters.sources import _ats_greenhouse as greenhouse
 
 
 def greenhouse_target(requested: str, observed: str) -> tuple[str, str] | None:
+    """Resolve a board and requisition from observed Greenhouse URLs.
+
+    Args:
+        requested: Original application URL.
+        observed: URL observed in the browser.
+
+    Returns:
+        Observed board and requisition, or None if they cannot be verified.
+    """
     source, page = urlparse(requested), urlparse(observed)
     if not re.fullmatch(
         r"(?:boards|job-boards)(?:\.[a-z]{2})?\.greenhouse\.io", page.hostname or ""
@@ -33,6 +42,13 @@ async def enrich_observed(
     targets: list[dict[str, Any]],
     results: dict[str, dict[str, Any]],
 ) -> None:
+    """Fill missing browser descriptions using observed official API targets.
+
+    Args:
+        client: HTTP client for official source requests.
+        targets: Requested job-page targets.
+        results: Mutable browser results indexed by target ID.
+    """
     slots = asyncio.Semaphore(2)
 
     async def one(target: dict[str, Any]) -> None:

@@ -76,7 +76,15 @@ class SpeedyApplySource:
     async def fetch_jobs_with_progress(
         self, config: dict[str, object], on_progress: SourceFetchProgressCallback
     ) -> list[JobPosting]:
-        """Report list, native, and browser work independently of other sources."""
+        """Report list, native, and browser work independently of other sources.
+
+        Args:
+            config: Source-specific request options.
+            on_progress: Callback receiving scan progress updates.
+
+        Returns:
+            Collected GitHub feed postings.
+        """
         self._on_progress = on_progress
         try:
             return await self.fetch_jobs(config)
@@ -97,6 +105,9 @@ class SpeedyApplySource:
 
         Returns:
             Fully-populated job postings, deduped by canonical_id across lists.
+
+        Raises:
+            PartialSourceFetchError: If enrichment fails after collecting postings.
         """
         discovered_at = datetime.now(UTC)
         self.stats = dict.fromkeys(
@@ -232,6 +243,7 @@ class SpeedyApplySource:
     async def _fetch_missing_descriptions(
         self, postings: list[JobPosting]
     ) -> tuple[dict[str, dict[str, Any]], str | None]:
+        """Time complexity: O(J + R), over job targets J and returned browser rows R."""
         self._item_warning = False
         groups: dict[str, list[JobPosting]] = {}
         now = datetime.now(UTC)

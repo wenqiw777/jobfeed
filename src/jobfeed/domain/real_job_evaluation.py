@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+from typing import cast
 
 from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.models import JobPosting, MLGateResult, QualityBand, StageBResult
@@ -69,8 +70,8 @@ def select_real_job_input(
         complete,
         key=lambda job: (
             0 if _is_ats(job) else 1,
-            _QUALITY[job.jd_quality],
-            int(job.id),
+            _QUALITY[cast(QualityBand, job.jd_quality)],
+            int(cast(str, job.id)),
         ),
     )
     first_discovery = min(job.discovered_at for job in sources)
@@ -87,7 +88,9 @@ def select_real_job_input(
         closed_at=official_closure,
         is_repost=all(job.is_repost is True for job in sources),
     )
-    return RealJobEvaluationInput(real_job_id, representative.id, canonical_job)
+    return RealJobEvaluationInput(
+        real_job_id, cast(str, representative.id), canonical_job
+    )
 
 
 def official_closed_at(sources: list[JobPosting]) -> datetime | None:
@@ -123,14 +126,19 @@ def representative_source_id(real_job_id: str, sources: list[JobPosting]) -> int
     if not available:
         return None
     return int(
-        min(
-            available,
-            key=lambda job: (
-                not _is_ats(job),
-                _QUALITY.get(job.jd_quality, len(_QUALITY)),
-                int(job.id),
-            ),
-        ).id
+        cast(
+            str,
+            min(
+                available,
+                key=lambda job: (
+                    not _is_ats(job),
+                    _QUALITY.get(job.jd_quality, len(_QUALITY))
+                    if job.jd_quality is not None
+                    else len(_QUALITY),
+                    int(cast(str, job.id)),
+                ),
+            ).id,
+        )
     )
 
 
@@ -160,7 +168,7 @@ def conflicting_complete_sources(
             if compatible_role_facts(left, right) and not strict_content_equivalent(
                 left, right
             ):
-                return int(left.id), int(right.id)
+                return int(cast(str, left.id)), int(cast(str, right.id))
     return None
 
 
@@ -341,8 +349,9 @@ def mask_stale_evaluation_row(
         stage_a_policy: Current quick-score policy.
         stage_b_policy: Current detailed-score policy.
     """
+    facts = row.get("eval_input_facts_json")
     stage_a_current, stage_b_current, reason = policy_visibility(
-        row.get("eval_input_facts_json"),
+        facts if isinstance(facts, str) else None,
         stage_a_policy=stage_a_policy,
         stage_b_policy=stage_b_policy,
     )

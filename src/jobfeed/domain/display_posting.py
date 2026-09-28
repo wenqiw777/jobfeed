@@ -14,12 +14,26 @@ _MIN_EXACT_BODY_LENGTH = 200
 
 
 def posting_location(location: str | None) -> str:
-    """Conservative shared location normalization for display and workflow."""
+    """Conservative shared location normalization for display and workflow.
+
+    Args:
+        location: Source location text.
+
+    Returns:
+        Case-normalized location with collapsed whitespace.
+    """
     return " ".join((location or "").casefold().split())
 
 
 def posting_identity(job: JobPosting) -> str | None:
-    """Use only explicit vendor identity; never guess from employer and title."""
+    """Use only explicit vendor identity; never guess from employer and title.
+
+    Args:
+        job: Posting to inspect.
+
+    Returns:
+        Explicit source identity, or None when unavailable.
+    """
     if job.external_identity:
         return job.external_identity
     if job.platform == "jobright" and job.canonical_id:
@@ -35,6 +49,13 @@ def pick_posting_representatives(
     A single vendor requisition can advertise multiple locations and title
     variants. Missing identities remain separate unless long JD content
     supports an exact or guarded near-copy match.
+
+    Args:
+        jobs: Postings to group or persist.
+        status_by_id: Current workflow status by stored job ID.
+
+    Returns:
+        One representative per compatible posting group.
     """
     groups = _posting_groups(jobs)
     return [
@@ -56,7 +77,10 @@ def pick_posting_representatives(
 def _posting_groups(  # noqa: C901 - identity and guarded content joins share roots
     jobs: list[JobPosting],
 ) -> dict[int, list[JobPosting]]:
-    """Join trusted IDs and long content copies without changing stored IDs."""
+    """Join trusted IDs and long content copies without changing stored IDs.
+
+    Time complexity: O(N² * T) worst case, for postings N and description length T.
+    """
     parents = list(range(len(jobs)))
 
     def root(index: int) -> int:

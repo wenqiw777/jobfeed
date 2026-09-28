@@ -39,6 +39,7 @@ def _text(value: str) -> str:
 
 
 def _locations(left: JobPosting, right: JobPosting) -> list[str]:
+    """Time complexity: O(L * T), for location entries L and their text length T."""
     locations: set[str] = set()
     for job in (left, right):
         for location in (job.location or "").split(";"):
@@ -90,7 +91,15 @@ def _requirements(value: str, locations: list[str]) -> tuple[str, ...]:
 
 
 def same_display_content(left: JobPosting, right: JobPosting) -> bool:
-    """Accept long near-copies only within a matching title/employer boundary."""
+    """Accept long near-copies only within a matching title/employer boundary.
+
+    Args:
+        left: First posting to compare.
+        right: Second posting to compare.
+
+    Returns:
+        Whether the two postings can be folded for display.
+    """
     return _same_prepared(_Prepared(left), _Prepared(right))
 
 
@@ -193,7 +202,16 @@ def _strip_layout_heading(sentence: str) -> str:
 
 
 def fold_content_groups(groups: list[list[JobPosting]]) -> list[list[JobPosting]]:
-    """Fold native groups using all anchors, preventing transitive similarity chains."""
+    """Fold native groups using all anchors, preventing transitive similarity chains.
+
+    Args:
+        groups: Groups supplied by the caller.
+
+    Returns:
+        Groups of display-equivalent postings.
+
+    Time complexity: O(N² * T), for postings N and comparison text length T.
+    """
     buckets: dict[str, list[list[JobPosting]]] = {}
     result: list[list[JobPosting]] = []
     prepared = {id(job): _Prepared(job) for members in groups for job in members}

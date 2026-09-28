@@ -52,18 +52,43 @@ class JobPageExtractor:
         self._slots = asyncio.Semaphore(2)
 
     async def needs_retry_upgrade(self, identity: str) -> bool:
-        """One new attempt for failed records predating this extraction revision."""
+        """One new attempt for failed records predating this extraction revision.
+
+        Args:
+            identity: Observed posting identity.
+
+        Returns:
+            Whether this identity has not received the current extractor retry.
+        """
         return self.store is not None and not await self.store.get_state(
             "job-page-retry:v4:" + identity
         )
 
     async def record_retry_upgrade(self, identity: str) -> None:
+        """Record that an identity has used its extractor upgrade retry.
+
+        Args:
+            identity: Observed posting identity.
+        """
         if self.store is not None:
             await self.store.set_state("job-page-retry:v4:" + identity, "attempted")
 
     async def extract(
         self, target: dict[str, Any], snapshot: dict[str, Any]
     ) -> dict[str, Any]:
+        """Select original job-description blocks from a bounded page snapshot.
+
+        Args:
+            target: Job-page target and identity hints.
+            snapshot: Browser page snapshot containing text blocks.
+
+        Returns:
+            Validated extraction with the selected original text.
+
+        Raises:
+            ValueError: If the snapshot is incomplete, oversized or has
+                invalid block IDs.
+        """
         blocks = snapshot.get("blocks")
         if snapshot.get("truncated") or not isinstance(blocks, list) or not blocks:
             raise ValueError("Incomplete page snapshot")
@@ -80,10 +105,9 @@ class JobPageExtractor:
         async with self._slots:
             if self.store is not None:
                 saved = await self.store.get_state(key)
-                if saved:
-                    cached = json.loads(saved)
-                    if cached.get("input") == payload and "selection" in cached:
-                        return self._validate(cached["selection"], by_id)
+                cached = json.loads(saved) if saved else {}
+                if cached.get("input") == payload and "selection" in cached:
+                    return self._validate(cached["selection"], by_id)
                 await self.store.set_state(key, json.dumps({"input": payload}))
             response = await self.client.complete(
                 LLMRequest(
@@ -173,7 +197,16 @@ class JobPageExtractor:
         target: dict[str, Any],
         need_description: bool = True,
     ) -> dict[str, Any]:
-        """A failed interpretation retains original data and a retryable diagnostic."""
+        """A failed interpretation retains original data and a retryable diagnostic.
+
+        Args:
+            row: Source row to enrich.
+            target: Job-page target and identity hints.
+            need_description: Need description supplied by the caller.
+
+        Returns:
+            The source row enriched with validated original text or an error.
+        """
         snapshot = row.get("page_snapshot")
         if not isinstance(snapshot, dict):
             return row
@@ -218,6 +251,13 @@ class JobPageExtractor:
     async def enrich_targets(
         self, targets: list[dict[str, Any]], results: dict[str, dict[str, Any]]
     ) -> None:
+        """Enrich browser targets using their recorded page snapshots.
+
+        Args:
+            targets: Requested job-page targets.
+            results: Mutable browser results indexed by target ID.
+        """
+
         async def interpret(target: dict[str, Any]) -> None:
             row = results.get(target["id"])
             if row and not row.get("description"):

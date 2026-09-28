@@ -88,6 +88,9 @@ class JobrightBridge:
 
         Raises:
             JobrightBridgeError: If another extension is already connected.
+
+        Args:
+            sources: Supported source names advertised by the extension.
         """
         if self._commands is not None:
             raise JobrightBridgeError("Jobright Chrome extension is already connected")
@@ -113,7 +116,17 @@ class JobrightBridge:
                 )
 
     async def run_scan(self, **kwargs: Any) -> list[dict[str, Any]]:
-        """Allow independent sources while rejecting same-lane contention."""
+        """Allow independent sources while rejecting same-lane contention.
+
+        Args:
+            kwargs: Extension scan request options.
+
+        Returns:
+            Source rows returned by the extension.
+
+        Raises:
+            JobrightBridgeError: If the extension is unavailable or the scan fails.
+        """
         source = kwargs.get("source", "jobright")
         lane = "enrichment" if source in {"github-jd", "tiktok"} else source
         if lane in self._active_lanes:
@@ -287,7 +300,20 @@ class JobrightBridge:
             if not future.done():
                 future.cancel()
 
-    async def receive(self, message: dict[str, object]) -> None:  # noqa: C901 - protocol dispatch
+    async def _notify_batch(
+        self, task_id: str, pending: _PendingScan, before: int
+    ) -> None:
+        if pending.on_batch is None:
+            return
+        try:
+            await pending.on_batch(pending.jobs[before:])
+        except Exception as exc:
+            if not pending.future.done():
+                pending.future.set_exception(exc)
+            if self._commands is not None:
+                await self._commands.put({"type": "cancel", "task_id": task_id})
+
+    async def receive(self, message: dict[str, object]) -> None:
         """Accept one batch, completion, or error message from the extension.
 
         Args:
@@ -311,26 +337,17 @@ class JobrightBridge:
         if message_type == "batch":
             before = len(pending.jobs)
             self._receive_batch(pending, message.get("jobs"))
-            if pending.on_batch is not None:
-                try:
-                    await pending.on_batch(pending.jobs[before:])
-                except Exception as exc:
-                    if not pending.future.done():
-                        pending.future.set_exception(exc)
-                    if self._commands is not None:
-                        await self._commands.put({"type": "cancel", "task_id": task_id})
-                    return
+            await self._notify_batch(task_id, pending, before)
             return
         if message_type == "complete":
-            if not pending.future.done():
-                if isinstance(message.get("warning"), str) and message["warning"]:
-                    pending.future.set_exception(
-                        JobrightBridgeError(
-                            str(message["warning"]), list(pending.jobs), warning=True
-                        )
+            if isinstance(message.get("warning"), str) and message["warning"]:
+                pending.future.set_exception(
+                    JobrightBridgeError(
+                        str(message["warning"]), list(pending.jobs), warning=True
                     )
-                else:
-                    pending.future.set_result(list(pending.jobs))
+                )
+            else:
+                pending.future.set_result(list(pending.jobs))
             return
         if message_type == "error":
             detail = message.get("error")

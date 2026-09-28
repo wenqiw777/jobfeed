@@ -188,20 +188,19 @@ class JobrightSource:
             )
             if job.external_identity and lookup:
                 twin = await lookup(job.external_identity)
-                if isinstance(twin, StoredEnrichment):
-                    if (
-                        twin.quality in {QualityBand.GOOD, QualityBand.FULL}
-                        and (twin.jd_text or "").strip()
-                    ):
-                        return replace(
-                            twin,
-                            enrich_source=(
-                                f"reused:{twin.platform}:"
-                                f"{twin.enrich_source or 'stored'}"
-                            ),
-                        )
-                    if twin.enrich_retry_after:
-                        stored = twin
+                if (
+                    isinstance(twin, StoredEnrichment)
+                    and twin.quality in {QualityBand.GOOD, QualityBand.FULL}
+                    and (twin.jd_text or "").strip()
+                ):
+                    return replace(
+                        twin,
+                        enrich_source=(
+                            f"reused:{twin.platform}:{twin.enrich_source or 'stored'}"
+                        ),
+                    )
+                if isinstance(twin, StoredEnrichment) and twin.enrich_retry_after:
+                    stored = twin
             if (
                 stored
                 and stored.enrich_retry_after

@@ -8,6 +8,14 @@ from jobfeed.services.job_page_extraction import JobPageExtractor
 
 
 def build_page_extractor(app: Any) -> JobPageExtractor:
+    """Build the configured page extraction client and persistence adapter.
+
+    Args:
+        app: Application dependencies and provider settings.
+
+    Returns:
+        Page extractor bound to the application configuration.
+    """
     settings = app["settings"].llm
     secrets = app.get("provider_secrets")
     key = secrets.resolve("azure_openai") if secrets is not None else None

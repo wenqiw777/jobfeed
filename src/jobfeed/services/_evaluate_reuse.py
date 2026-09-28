@@ -44,7 +44,12 @@ class ReuseEntry:
         self.source_job_id = None if stored is None else stored.source_job_id
 
     def publish(self, result: Result, job_id: str) -> None:
-        """Retain a successful result, with zero incremental cost on future hits."""
+        """Retain a successful result, with zero incremental cost on future hits.
+
+        Args:
+            result: Completed evaluation result.
+            job_id: Job id supplied by the caller.
+        """
         if self.result is not None:
             return
         flight = self._flight
@@ -81,7 +86,16 @@ class EvaluationReuse:
     async def entry(
         self, stage: str, client: object, request: LLMRequest
     ) -> AsyncIterator[ReuseEntry]:
-        """Serialize identical calls while leaving unrelated requests concurrent."""
+        """Serialize identical calls while leaving unrelated requests concurrent.
+
+        Args:
+            stage: Stage supplied by the caller.
+            client: HTTP client for official source requests.
+            request: Evaluation input used as the reuse key.
+
+        Returns:
+            Existing shared evaluation entry, or None.
+        """
         probe = _Flight(stage, client, request, asyncio.Lock())
         flight = next((item for item in self._flights if _matches(item, probe)), None)
         if flight is None:

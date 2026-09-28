@@ -7,7 +7,16 @@ from datetime import datetime, timedelta
 def retry_policy(
     error: str, now: datetime, *, code: str | None = None
 ) -> tuple[str, datetime]:
-    """Classify an unsuccessful attempt and choose its next eligible time."""
+    """Classify an unsuccessful attempt and choose its next eligible time.
+
+    Args:
+        error: Failure detail from the enrichment attempt.
+        now: Current timestamp used for age or retry calculations.
+        code: Optional source-specific failure category.
+
+    Returns:
+        Failure category and the earliest next retry timestamp.
+    """
     detail = error.lower()
     if code == "missing_permission" or "permission" in detail:
         # No timed native retry: each explicit scan performs the extension's
