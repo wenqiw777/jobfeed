@@ -79,11 +79,13 @@ def compatible_role_facts(left: JobPosting, right: JobPosting) -> bool:
     right_observed = observed_identifiers(right)
     left_ats = {
         (i.provider, i.scope): i.native_id
-        for i in left_observed if i.provider in ATS_REQUISITION_PROVIDERS
+        for i in left_observed
+        if i.provider in ATS_REQUISITION_PROVIDERS
     }
     right_ats = {
         (i.provider, i.scope): i.native_id
-        for i in right_observed if i.provider in ATS_REQUISITION_PROVIDERS
+        for i in right_observed
+        if i.provider in ATS_REQUISITION_PROVIDERS
     }
     shared_ats = left_ats.keys() & right_ats.keys()
     if any(left_ats[key] != right_ats[key] for key in shared_ats):

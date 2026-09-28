@@ -195,7 +195,11 @@ async def _get_job(lifecycle: SqliteLifecycle, job_id: str) -> JobPosting | None
 async def _get_jobs_by_canonical_ids(
     lifecycle: SqliteLifecycle, *, platform: str, canonical_ids: list[str]
 ) -> dict[str, JobPosting]:
-    """Probe a bounded discovery page with one connection, preserving source IDs."""
+    """Probe a bounded discovery page with one connection, preserving source IDs.
+
+    Time complexity: O(N + R) Python work for N requested IDs and R returned
+    rows. Each ID belongs to one fixed-size SQL batch and each row is read once.
+    """
     ids = list(dict.fromkeys(canonical_ids))
     jobs: dict[str, JobPosting] = {}
     if not ids:

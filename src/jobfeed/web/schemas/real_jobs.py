@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from jobfeed.domain.user_decisions import UserDecision, decision_for_status
-from jobfeed.web.schemas._jobs_detail_stage_b import StageBDetail
+from jobfeed.web.schemas._jobs_detail_stage_b import ResumeHooksDetail, StageBDetail
 from jobfeed.web.schemas.jobs_detail import (
     EvaluationDetail,
     InterviewRoundDetail,
@@ -157,10 +157,8 @@ def real_jobs_list_response(payload: dict[str, object]) -> RealJobsListResponse:
                 queue_tier=row.get("queue_tier"),
             )
         )
-    return RealJobsListResponse(
-        jobs=jobs,
-        total=int(payload["total"]),
-        tab_counts=payload["tab_counts"],
+    return RealJobsListResponse.model_validate(
+        {"jobs": jobs, "total": payload["total"], "tab_counts": payload["tab_counts"]}
     )
 
 
@@ -210,10 +208,8 @@ def source_library_response(payload: dict[str, object]) -> JobsListResponse:
                 repost_observed_at=row["repost_observed_at"],
             )
         )
-    return JobsListResponse(
-        jobs=jobs,
-        total=int(payload["total"]),
-        tab_counts=payload["tab_counts"],
+    return JobsListResponse.model_validate(
+        {"jobs": jobs, "total": payload["total"], "tab_counts": payload["tab_counts"]}
     )
 
 
@@ -231,7 +227,11 @@ def real_job_detail_response(
         Validated canonical detail response.
     """
     row = payload["row"]
+    sources = payload["sources"]
+    evidence = payload["identity_evidence"]
     assert isinstance(row, dict)
+    assert isinstance(sources, list)
+    assert isinstance(evidence, list)
     raw_stage_b = json.loads(row["stage_b_json"]) if row["stage_b_json"] else None
     fit = raw_stage_b.get("fit_analysis", {}) if raw_stage_b else {}
     blocks = raw_stage_b.get("raw_blocks") if raw_stage_b else None
@@ -243,7 +243,9 @@ def real_job_detail_response(
             fit_score=fit.get("score"),
             strengths=fit.get("strengths") or [],
             gaps=fit.get("gaps") or [],
-            hooks=hooks or {"lead_with": "", "supporting": [], "avoid_mentioning": []},
+            hooks=ResumeHooksDetail.model_validate(
+                hooks or {"lead_with": "", "supporting": [], "avoid_mentioning": []}
+            ),
         )
         if raw_stage_b
         else None
@@ -287,15 +289,15 @@ def real_job_detail_response(
             history=history,
         ),
         twins=[],
-        interviews=interviews,
+        interviews=[InterviewRoundDetail.model_validate(item) for item in interviews],
         sources=[
             RealJobSource.model_validate({**source, "job_id": str(source["job_id"])})
-            for source in payload["sources"]
+            for source in sources
         ],
         identity_evidence=[
             IdentityEvidence.model_validate(
                 {**item, "evidence_job_id": str(item["evidence_job_id"])}
             )
-            for item in payload["identity_evidence"]
+            for item in evidence
         ],
     )

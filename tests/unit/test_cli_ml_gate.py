@@ -87,17 +87,20 @@ def _no_ml_toolchain_imported() -> Iterator[None]:
 # ---- ml-gate info ----
 
 
-def test_ml_gate_info_prints_version_threshold_and_meta_metrics() -> None:
+def test_ml_gate_info_prints_version_threshold_and_meta_metrics(tmp_path: Path) -> None:
     """``ml-gate info`` prints the version, threshold, dir, and real metrics."""
-    result = CliRunner().invoke(
-        cli, ["ml-gate", "info", "--model-dir", str(MODELS_DIR)]
-    )
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    for suffix in (".json", ".meta.json"):
+        name = MODEL_VERSION + suffix
+        (model_dir / name).write_bytes((MODELS_DIR / name).read_bytes())
+    result = CliRunner().invoke(cli, ["ml-gate", "info", "--model-dir", str(model_dir)])
 
     assert result.exit_code == 0, result.output
     out = result.output
     assert MODEL_VERSION in out
     assert MODEL_THRESHOLD in out
-    assert str(MODELS_DIR) in out
+    assert str(model_dir) in out
     # Real meta metrics from v20260601T170453Z.meta.json.
     assert "recall_pos" in out and "0.973" in out
     assert "precision_pos" in out and "0.543" in out

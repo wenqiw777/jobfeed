@@ -79,13 +79,11 @@ def build_evaluate_service(
         build_ml_gate,
         needs_ml_gate,
     )
+    from jobfeed.evaluation_config import evaluation_runtime_config  # noqa: PLC0415
     from jobfeed.ports.store_ops import StoreOpsMixin  # noqa: PLC0415
     from jobfeed.ports.store_status import StoreStatusMixin  # noqa: PLC0415
     from jobfeed.services.evaluate import EvaluateService  # noqa: PLC0415
-    from jobfeed.services.evaluate_types import (  # noqa: PLC0415
-        EvaluateDependencies,
-        evaluation_runtime_config,
-    )
+    from jobfeed.services.evaluate_types import EvaluateDependencies  # noqa: PLC0415
     from jobfeed.services.seniority_gate import HybridSeniorityGate  # noqa: PLC0415
 
     settings = app["settings"]
@@ -161,7 +159,6 @@ def build_evaluate_service(
         if params.threshold is not None
         else settings.scoring.stage_a_threshold
     )
-    ml_gate_enabled = settings.scoring.ml_gate_enabled
     needs_gate = needs_ml_gate(params.stage, params.limit, ml_gate_enabled=True)
     seniority_settings = settings.seniority_gate
     needs_seniority = params.stage != "b" and seniority_settings.mode != "off"
@@ -203,7 +200,9 @@ def build_evaluate_service(
             stage_b_threshold_sync=app.get("stage_b_threshold_sync"),
         ),
         config=evaluation_runtime_config(
-            settings, resume_text=resume_text, threshold=threshold,
+            settings,
+            resume_text=resume_text,
+            threshold=threshold,
         ),
         run_orchestrator=app.get("run_orchestrator"),
         logger=logger,

@@ -1,4 +1,5 @@
 """Concurrent UI readers share work without retaining stale learning status."""
+
 import asyncio
 
 import pytest
@@ -24,8 +25,10 @@ class Store:
 async def test_parallel_readers_share_one_read_but_next_read_is_fresh():
     store = Store()
     service = PersonalMLLearningService(store)
-    tasks = [asyncio.create_task(service.status(quick_pass_threshold=70, enabled=True))
-             for _ in range(3)]
+    tasks = [
+        asyncio.create_task(service.status(quick_pass_threshold=70, enabled=True))
+        for _ in range(3)
+    ]
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     store.ready.set()

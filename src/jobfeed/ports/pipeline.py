@@ -1,9 +1,10 @@
 """Durable scan persistence capabilities beyond the core job store."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
-from jobfeed.domain.models import JobPosting, SaveJobResult
+from jobfeed.domain.models import JobPosting, PipelineRun, SaveJobResult
 
 
 class PipelineStore(Protocol):
@@ -56,6 +57,9 @@ class PipelineStore(Protocol):
 class PipelineStep(Protocol):
     """Run-scoped journal operation consumed by source work."""
 
+    root: str
+    writer_lock: asyncio.Lock
+
     async def step(
         self,
         name: str,
@@ -94,5 +98,33 @@ class PipelineStep(Protocol):
         Args:
             name: Stable scan operation name.
             rows: Source rows received in the batch.
+        """
+        ...
+
+
+class ScanJournal(Protocol):
+    """Run and release durable source work without exposing queue infrastructure."""
+
+    async def run(
+        self,
+        run: PipelineRun,
+        work: Callable[[], Awaitable[None]],
+        *,
+        generation: int,
+    ) -> None:
+        """Execute source work under a fenced journal.
+
+        Args:
+            run: Current scan and optional replay parent.
+            work: Source callback to execute in the journal context.
+            generation: Lease fencing generation.
+        """
+        ...
+
+    async def release(self, run: PipelineRun) -> None:
+        """Release completed journals or bound their retry retention.
+
+        Args:
+            run: Persisted terminal scan to clean up.
         """
         ...

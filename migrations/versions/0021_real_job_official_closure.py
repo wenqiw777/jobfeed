@@ -11,7 +11,9 @@ depends_on = None
 
 def upgrade() -> None:
     """Add nullable canonical closure; explicit reconciliation fills old rows."""
-    op.add_column("real_jobs", sa.Column("official_closed_at", sa.DateTime(timezone=True)))
+    op.add_column(
+        "real_jobs", sa.Column("official_closed_at", sa.DateTime(timezone=True))
+    )
 
 
 def downgrade() -> None:

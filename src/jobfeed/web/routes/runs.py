@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 from jobfeed.cli.scan import SOURCE_CHOICES
+from jobfeed.config import Settings
 from jobfeed.domain.errors import (
     CanonicalEvaluationNotReadyError,
     ResumeNotConfiguredError,
@@ -47,7 +48,8 @@ router = APIRouter()
 
 def _evaluation_freshness_days(request: Request) -> int:
     """Apply the stricter of the Web ceiling and saved posting-age rule."""
-    configured = request.app.state.context["settings"].hard_filters.posted_within_days
+    settings = cast(Settings, request.app.state.context["settings"])
+    configured = settings.hard_filters.posted_within_days
     if configured is None:
         return _EVALUATION_MAX_DAYS
     return min(_EVALUATION_MAX_DAYS, configured)

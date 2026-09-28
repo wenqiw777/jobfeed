@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import cast
 
 from jobfeed.adapters.store._real_job_hard_filters import (
     SQLITE_CANONICAL_DATE,
@@ -12,9 +13,10 @@ from jobfeed.adapters.store._real_job_hard_filters import (
 )
 from jobfeed.adapters.store._repost_sort import triage_sorts
 from jobfeed.adapters.store._sqlite_capability_support import _fetch_row, _fetch_rows
+from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.real_job_evaluation import mask_stale_evaluation_row
-from jobfeed.domain.user_decisions import statuses_for_decision
+from jobfeed.domain.user_decisions import UserDecision, statuses_for_decision
 
 _POLICY_CTE = "WITH policy(a,b) AS (SELECT json(?),json(?)) "
 _BASE = (
@@ -89,7 +91,7 @@ def _real_job_predicate(
     hard_filters: HardFilters | None,
     now: datetime,
 ) -> tuple[str, tuple[object, ...], str, tuple[object, ...], str, tuple[object, ...]]:
-    statuses = statuses_for_decision(decision)
+    statuses = statuses_for_decision(cast(UserDecision, decision))
     shared: list[str] = []
     shared_args: list[object] = []
     if search:
@@ -122,6 +124,8 @@ def _real_job_predicate(
 
 class SqliteRealJobViews:
     """Use real-job IDs for exact counts, sorting, pagination, and detail."""
+
+    _lifecycle: SqliteLifecycle
 
     async def query_real_jobs_view(  # noqa: PLR0913 - public filter contract
         self,
@@ -157,7 +161,7 @@ class SqliteRealJobViews:
         Raises:
             ValueError: Decision, sort, or page window is invalid.
         """
-        statuses_for_decision(decision)
+        statuses_for_decision(cast(UserDecision, decision))
         if sort not in _SORTS or limit < 0 or offset < 0 or limit > _MAX_LIMIT:
             raise ValueError("invalid real-job view window or sort")
         where, page_args, shared_where, shared_args, hard_where, hard_args = (
@@ -205,14 +209,15 @@ class SqliteRealJobViews:
                 f"AND r.official_closed_at IS NULL AND ({hard_where})",
                 (*policy_args, *result_statuses, *shared_args, *hard_args),
             )
-        by_status = {
+        assert result_count is not None
+        by_status: dict[str, int] = {
             name: (
                 int(result_count["n"])
                 if name == "results"
                 else sum(
                     int(row["n"])
                     for row in count_rows
-                    if row["status"] in statuses_for_decision(name)
+                    if row["status"] in statuses_for_decision(cast(UserDecision, name))
                 )
             )
             for name in ("results", "wait", "applied", "ignored")
@@ -371,7 +376,7 @@ class SqliteRealJobViews:
         fragments: list[str] = []
         args: list[object] = []
         if decision is not None:
-            statuses = statuses_for_decision(decision)
+            statuses = statuses_for_decision(cast(UserDecision, decision))
             status_placeholders = ",".join("?" for _ in statuses)
             fragments.append(
                 f"COALESCE(s.status,js.status,'new') IN ({status_placeholders})"

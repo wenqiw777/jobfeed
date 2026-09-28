@@ -85,6 +85,7 @@ dev = [
     "pytest-playwright",
     "respx >= 0.22",
     "ruff == 0.15.14",
+    "scipy-stubs==1.15.3.0",
     "testcontainers[postgres] >= 4.0",
 ]
 

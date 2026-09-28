@@ -15,10 +15,10 @@ from jobfeed.adapters.queue.redis_pipeline import _COMPLETE, _ENQUEUE, RedisPipe
 from jobfeed.adapters.store.sqlite import SQLiteStore
 from jobfeed.domain.models import JobPosting
 from jobfeed.ports.source import PartialSourceFetchError
+from jobfeed.scan_wiring import build_scan_service
 from jobfeed.services.jobright_bridge import JobrightBridge
 from jobfeed.services.pipeline_context import current_pipeline, durable_posting
 from jobfeed.services.run_manager import RunManager
-from jobfeed.services.scan import ScanService
 
 ONE_DAY_SECONDS = 24 * 60 * 60
 MISSING_TTL = -2
@@ -156,7 +156,7 @@ async def test_four_lanes_and_commit_before_ack_replay(
     manager = RunManager(
         store=store,
         logger=MagicMock(),
-        scan_service_factory=lambda: ScanService(
+        scan_service_factory=lambda: build_scan_service(
             store,
             MagicMock(),
             redis_url=os.environ.get(
@@ -275,7 +275,7 @@ async def test_terminal_source_error_retry_does_not_replay_cached_error(
         store=store,
         logger=MagicMock(),
         evaluate_service_factory=MagicMock(),
-        scan_service_factory=lambda: ScanService(
+        scan_service_factory=lambda: build_scan_service(
             store,
             MagicMock(),
             redis_url=os.environ.get(
@@ -344,7 +344,7 @@ async def test_release_requires_finalized_drained_journal(
     store = MagicMock()
     store.get_pipeline_run = AsyncMock(return_value=run)
     store.get_state = AsyncMock(return_value=drained)
-    service = ScanService(
+    service = build_scan_service(
         store,
         MagicMock(),
         redis_namespace=namespace,
@@ -372,7 +372,7 @@ async def test_resume_removes_terminal_retention_expiry(redis_client):
     store = MagicMock()
     store.get_pipeline_run = AsyncMock(return_value=run)
     store.get_state = AsyncMock(return_value=None)
-    service = ScanService(
+    service = build_scan_service(
         store,
         MagicMock(),
         redis_namespace=namespace,
@@ -454,7 +454,7 @@ async def test_mixed_pending_and_partial_failure_retry_saves_new_rows(
         store=store,
         logger=MagicMock(),
         evaluate_service_factory=MagicMock(),
-        scan_service_factory=lambda: ScanService(
+        scan_service_factory=lambda: build_scan_service(
             store,
             MagicMock(),
             redis_url=os.environ.get(

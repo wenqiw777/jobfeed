@@ -48,7 +48,8 @@ def _pipeline_run_from_row(row: aiosqlite.Row) -> PipelineRun:
         stage_b_scored=int(row["stage_b_scored"]),
         jobs_scored=int(row["jobs_scored"]),
         verdict_counts=json.loads(row["verdict_counts_json"])
-        if row["verdict_counts_json"] is not None else None,
+        if row["verdict_counts_json"] is not None
+        else None,
         total_llm_cost_usd=float(row["total_llm_cost_usd"]),
         errors=int(row["errors"]),
         finished_at=(

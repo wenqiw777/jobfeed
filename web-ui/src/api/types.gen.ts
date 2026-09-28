@@ -434,6 +434,16 @@ export interface paths {
         /**
          * Get Source Job Audit
          * @description Read the retained source evaluation and workflow audit by source ID.
+         *
+         *     Args:
+         *         job_id: Source posting identifier.
+         *         service: Injected application or job-view service.
+         *
+         *     Returns:
+         *         Retained source evaluation and workflow audit response.
+         *
+         *     Raises:
+         *         HTTPException: If the source posting does not exist.
          */
         get: operations["get_source_job_audit_api_jobs__job_id__audit_get"];
         put?: never;
@@ -1291,6 +1301,13 @@ export interface paths {
         /**
          * List Real Job Applications
          * @description List canonical submission events, including their source provenance.
+         *
+         *     Args:
+         *         service: Injected application or job-view service.
+         *         limit: Maximum number of records to select.
+         *
+         *     Returns:
+         *         Serialized canonical application history.
          */
         get: operations["list_real_job_applications_api_real_jobs_applications_get"];
         put?: never;
@@ -1400,6 +1417,20 @@ export interface paths {
         /**
          * Apply To Real Job
          * @description Record a submission against a canonical job with explicit source.
+         *
+         *     Args:
+         *         real_job_id: Canonical job receiving the application.
+         *         request: HTTP request used for API error context.
+         *         form: Submitted source selection, resume content, and application metadata.
+         *         service: Injected application or job-view service.
+         *         store: Store providing the state or posting reads required by this operation.
+         *
+         *     Returns:
+         *         Application result with the canonical job identity.
+         *
+         *     Raises:
+         *         ApiError: If the source is missing, invalid, or inconsistent with the canonical
+         *             job.
          */
         post: operations["apply_to_real_job_api_real_jobs__real_job_id__apply_post"];
         delete?: never;
@@ -3196,7 +3227,10 @@ export interface components {
             /** Source Job Id */
             source_job_id: string | null;
         };
-        /** RealJobApplicationsListResponse */
+        /**
+         * RealJobApplicationsListResponse
+         * @description Canonical application history returned by the list endpoint.
+         */
         RealJobApplicationsListResponse: {
             /** Applications */
             applications: components["schemas"]["RealJobApplicationRow"][];

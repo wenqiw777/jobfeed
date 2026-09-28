@@ -47,6 +47,7 @@ def _track_setup(
     method: Callable[..., Awaitable[str]],
 ) -> Callable[..., Awaitable[str]]:
     """Keep shutdown from overtaking an already admitted run setup."""
+
     @wraps(method)
     async def wrapped(self: RunManager, *args: Any, **kwargs: Any) -> str:
         self._require_running()
@@ -57,6 +58,7 @@ def _track_setup(
         finally:
             setup.set_result(None)
             self._setup_tasks.discard(setup)
+
     return wrapped
 
 
@@ -165,6 +167,14 @@ class RunManager:
                     self._scan_lock.release()
             raise
 
+    async def _resolve_evaluation_scope(self, kwargs: dict[str, Any]) -> str:
+        scope = str(kwargs.pop("scope", "latest_scan"))
+        if scope == "latest_scan":
+            kwargs["job_ids"] = await self._latest_scan_inserted_job_ids()
+        elif scope != "backlog":
+            raise ValueError(f"unknown evaluation scope: {scope!r}")
+        return scope
+
     @_track_setup
     async def trigger_evaluate(self, **kwargs: Any) -> str:
         """Start an evaluate if none active.
@@ -183,11 +193,7 @@ class RunManager:
         run: PipelineRun | None = None
         session: RunLeaseSession | None = None
         try:
-            scope = str(kwargs.pop("scope", "latest_scan"))
-            if scope == "latest_scan":
-                kwargs["job_ids"] = await self._latest_scan_inserted_job_ids()
-            elif scope != "backlog":
-                raise ValueError(f"unknown evaluation scope: {scope!r}")
+            scope = await self._resolve_evaluation_scope(kwargs)
             service = self._eval_factory(**kwargs)
             ready = getattr(self._store, "canonical_evaluation_ready", None)
             if ready is not None and await ready():
@@ -532,6 +538,9 @@ class RunManager:
 
         Never resurrect an older scan superseded by a newer user action. Normal
         source errors and manual stops require an explicit retry, not a loop.
+
+        Returns:
+            Replacement run ID when resumption starts, or None when no scan is resumed.
         """
         if self._shutting_down or self._scan_lock.locked():
             return None

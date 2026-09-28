@@ -16,9 +16,7 @@ _SQLITE_LOCATION = (
 _PG_COMPANY = "lower(COALESCE(e.input_facts_json::jsonb->>'company',j.company))"
 _PG_LOCATION = "COALESCE(e.input_facts_json::jsonb->>'location',j.location,'')"
 _SQLITE_FIRST_SEEN = "r.first_discovered_at"
-_PG_FIRST_SEEN = (
-    "(SELECT MIN(d.discovered_at) FROM jobs d WHERE d.real_job_id=r.id)"
-)
+_PG_FIRST_SEEN = "(SELECT MIN(d.discovered_at) FROM jobs d WHERE d.real_job_id=r.id)"
 _SQLITE_ORIGINAL = "r.canonical_posted_at"
 _PG_ORIGINAL = (
     "(SELECT MIN(d.posted_at) FROM jobs d WHERE d.real_job_id=r.id "

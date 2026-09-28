@@ -21,5 +21,7 @@ def test_interleaved_updates_preserve_each_source():
         run, "jobright", SourceFetchProgress(processed=20, total=100)
     )
     assert run.scan_progress["speedyapply"]["phase"] == "browser_enrichment"
-    assert run.scan_progress["speedyapply"]["processed"] == 2
-    assert run.scan_progress["jobright"]["processed"] == 20
+    expected_browser_processed = 2
+    expected_jobright_processed = 20
+    assert run.scan_progress["speedyapply"]["processed"] == expected_browser_processed
+    assert run.scan_progress["jobright"]["processed"] == expected_jobright_processed

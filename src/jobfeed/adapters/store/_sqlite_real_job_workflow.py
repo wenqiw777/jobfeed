@@ -835,6 +835,7 @@ class SqliteRealJobWorkflow:
                 "WHERE real_job_id=?",
                 (_require_utc_timestamp(now), int(real_job_id)),
             )
+        assert added is not None
         return _round(added)
 
     async def list_real_job_interviews(self, real_job_id: str) -> list[InterviewRound]:
@@ -911,6 +912,7 @@ class SqliteRealJobWorkflow:
                 "SELECT * FROM real_job_interview_rounds WHERE id=?",
                 (target["id"],),
             )
+        assert row is not None
         return _round(row)
 
 

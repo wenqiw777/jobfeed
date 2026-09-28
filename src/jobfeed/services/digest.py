@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 from jobfeed.domain.digest import render_attention_footer, render_digest
 from jobfeed.domain.models import JobEvaluation
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store import JobStore
+from jobfeed.ports.store_canonical import CanonicalWorkflowStore
 from jobfeed.ports.store_ops import StoreOpsMixin
 from jobfeed.ports.store_status import StoreStatusMixin
 
@@ -84,13 +85,17 @@ class DigestService:
             source_id = evaluation.job.id
             if source_id is None:
                 continue
-            real_id = await self.store.resolve_real_job_id(source_id)
+            real_id = await cast(
+                CanonicalWorkflowStore, self.store
+            ).resolve_real_job_id(source_id)
             if real_id is None:
                 selected.append(evaluation)
                 continue
             if real_id in seen:
                 continue
-            status = await self.store.get_real_job_status(real_id)
+            status = await cast(CanonicalWorkflowStore, self.store).get_real_job_status(
+                real_id
+            )
             if status is None or status.status not in actionable:
                 continue
             seen.add(real_id)
@@ -115,7 +120,7 @@ class DigestService:
     async def _append_footer(self, digest: str) -> str:
         """Append the attention footer when any bucket has items."""
         canonical = (
-            self.store.real_job_workflow_attention
+            cast(CanonicalWorkflowStore, self.store).real_job_workflow_attention
             if hasattr(type(self.store), "real_job_workflow_attention")
             else None
         )

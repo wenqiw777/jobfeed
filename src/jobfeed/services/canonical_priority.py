@@ -5,24 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 
+from jobfeed.domain.canonical_priority import (
+    CanonicalPriorityInput,
+)
 from jobfeed.domain.job_priority import PriorityResult, priority_for_job
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.real_job_evaluation import select_real_job_input
-
-
-@dataclass(frozen=True)
-class CanonicalPriorityInput:
-    """Source evidence and canonical scoring facts for one real job."""
-
-    real_job_id: str
-    source_job_id: str
-    job: JobPosting
-    status: str
-    stage_a_score: int | None
-    stage_b_fit_score: int | None
-    stage_a_status: str | None = None
-    stage_b_status: str | None = None
-    input_facts_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +57,7 @@ def priority_input_for_sources(  # noqa: PLR0913 - explicit priority facts
     """
     if not sources:
         return None
+    source_id: str | None
     selected = select_real_job_input(real_job_id, sources, now=now)
     if selected is not None:
         job = selected.job
@@ -121,3 +110,10 @@ def canonical_priority_rows(
         )
         for item in unique.values()
     ]
+
+
+__all__ = [
+    "CanonicalPriorityInput",
+    "CanonicalPriorityRow",
+    "priority_input_for_sources",
+]

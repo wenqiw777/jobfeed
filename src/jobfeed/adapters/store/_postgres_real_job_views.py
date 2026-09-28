@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import cast
+
+import asyncpg  # type: ignore[import-untyped]
 
 from jobfeed.adapters.store._real_job_hard_filters import (
     PG_CANONICAL_DATE,
@@ -13,7 +16,7 @@ from jobfeed.adapters.store._real_job_hard_filters import (
 from jobfeed.adapters.store._repost_sort import triage_sorts
 from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.real_job_evaluation import mask_stale_evaluation_row
-from jobfeed.domain.user_decisions import statuses_for_decision
+from jobfeed.domain.user_decisions import UserDecision, statuses_for_decision
 
 _POLICY_CTE = "WITH policy AS (SELECT $1::jsonb AS a,$2::jsonb AS b) "
 _BASE = (
@@ -116,6 +119,10 @@ def _real_job_predicate(
 class PostgresRealJobViews:
     """SQL count/page/filter/detail operations keyed only by real-job ID."""
 
+    def _get_pool(self) -> asyncpg.Pool:
+        """Require the concrete store to supply its connection pool."""
+        raise NotImplementedError
+
     async def query_real_jobs_view(  # noqa: PLR0913 - public filter contract
         self,
         *,
@@ -150,7 +157,7 @@ class PostgresRealJobViews:
         Raises:
             ValueError: Decision, sort, or page window is invalid.
         """
-        statuses = statuses_for_decision(decision)
+        statuses = statuses_for_decision(cast(UserDecision, decision))
         if sort not in _SORTS or limit < 0 or offset < 0 or limit > _MAX_LIMIT:
             raise ValueError("invalid real-job view window or sort")
         reference = now or datetime.now(UTC)
@@ -206,11 +213,11 @@ class PostgresRealJobViews:
                 *shared_args,
                 *count_hard_args,
             )
-        counts = {
+        counts: dict[str, int] = {
             name: sum(
                 int(row["filtered_n"] if name == "results" else row["n"])
                 for row in count_rows
-                if row["status"] in statuses_for_decision(name)
+                if row["status"] in statuses_for_decision(cast(UserDecision, name))
                 and (name != "results" or row["is_open"])
             )
             for name in ("results", "wait", "applied", "ignored")
@@ -251,7 +258,7 @@ class PostgresRealJobViews:
         Raises:
             ValueError: The sort or decision is invalid.
         """
-        statuses = statuses_for_decision(decision)
+        statuses = statuses_for_decision(cast(UserDecision, decision))
         if sort not in _SORTS:
             raise ValueError("invalid real-job view sort")
         where, args, *_ = _real_job_predicate(
@@ -369,7 +376,7 @@ class PostgresRealJobViews:
         args: list[object] = []
         if decision is not None:
             fragments.append("COALESCE(s.status,js.status,'new')=ANY($3::text[])")
-            args.append(list(statuses_for_decision(decision)))
+            args.append(list(statuses_for_decision(cast(UserDecision, decision))))
         if search:
             index = len(args) + 3
             fragments.append(

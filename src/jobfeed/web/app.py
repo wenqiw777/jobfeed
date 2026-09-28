@@ -21,12 +21,13 @@ from jobfeed.config_editor import ConfigurationEditor
 from jobfeed.domain.errors import SourceConfigError
 from jobfeed.observability import get_logger, init_otel, init_sentry
 from jobfeed.ports.store_perf import StorePerfMixin
+from jobfeed.scan_wiring import build_scan_service
 from jobfeed.services.application import ApplicationService, ApplicationStore
 from jobfeed.services.insights import InsightsService, InsightsStore
 from jobfeed.services.jobs_view import JobsViewService, JobsViewStore
 from jobfeed.services.performance import PerformanceService
 from jobfeed.services.run_manager import RunManager, SourceResolver
-from jobfeed.services.scan import ScanService, SourceSpec
+from jobfeed.services.scan import SourceSpec
 from jobfeed.services.workflow import WorkflowService, WorkflowStore
 from jobfeed.web.config_runtime import apply_runtime_settings
 from jobfeed.web.errors import install_error_handling
@@ -43,8 +44,8 @@ from jobfeed.web.routes.insights import router as insights_router
 from jobfeed.web.routes.jobright_bridge import router as jobright_bridge_router
 from jobfeed.web.routes.jobs import router as jobs_router
 from jobfeed.web.routes.performance import router as performance_router
-from jobfeed.web.routes.real_jobs_workflow import router as real_jobs_workflow_router
 from jobfeed.web.routes.real_jobs import router as real_jobs_router
+from jobfeed.web.routes.real_jobs_workflow import router as real_jobs_workflow_router
 from jobfeed.web.routes.run_sources import router as run_sources_router
 from jobfeed.web.routes.runs import router as runs_router
 from jobfeed.web.routes.workflow import router as workflow_router
@@ -132,7 +133,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.state.run_manager = RunManager(
         store=store,
         logger=logger,
-        scan_service_factory=lambda: ScanService(
+        scan_service_factory=lambda: build_scan_service(
             store,
             logger,
             context.get("run_orchestrator"),

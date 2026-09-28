@@ -14,7 +14,7 @@ from jobfeed.services._timing import StepTimer
 from jobfeed.services.scan import ScanService
 from tests.support.run_leases import SuccessfulRunLeaseMixin
 
-EXPECTED_PROGRESS_CALLS = 8
+EXPECTED_PROGRESS_CALLS = 10  # includes one queued event per source
 
 
 # ---------------------------------------------------------------------------

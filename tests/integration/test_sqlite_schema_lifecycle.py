@@ -89,6 +89,10 @@ async def test_schema_open_backfills_missing_role_types(tmp_path: Path) -> None:
                 "2026-08-25T12:00:00.000000Z",
             ),
         )
+        # Reproduce a pre-repair database, not a corrupt post-repair database.
+        await connection.execute(
+            "DELETE FROM state WHERE key='sqlite_schema_data_repair_version'"
+        )
     await lifecycle.close()
 
     await lifecycle.open()

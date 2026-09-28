@@ -41,6 +41,14 @@ class DisplayFoldCache:
         self._lock = Lock()
 
     def fold(self, rows: list[JobsViewRow]) -> list[JobsViewRow]:
+        """Collapse duplicate display rows using the configured fold state.
+
+        Args:
+            rows: View rows to fold by their posting identity and description content.
+
+        Returns:
+            Rows after duplicate display entries have been folded.
+        """
         signature: list[tuple[object, ...]] = [
             (
                 row.job.id,
@@ -122,7 +130,15 @@ async def fold_with_inflight_twins(
 async def fold_provisional(
     store: StoreViewsMixin, rows: list[JobsViewRow]
 ) -> list[JobsViewRow]:
-    """Fold the first page with content while exact cross-status lookup runs."""
+    """Fold the first page with content while exact cross-status lookup runs.
+
+    Args:
+        store: Store providing the state or posting reads required by this operation.
+        rows: View rows to fold by their posting identity and description content.
+
+    Returns:
+        Provisionally folded rows for the current page.
+    """
     await _load_candidate_bodies(store, rows)
     folded = _fold_to_posting_representatives(rows)
     for row in rows:

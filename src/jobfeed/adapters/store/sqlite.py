@@ -50,7 +50,11 @@ MAX_REAL_JOB_BACKFILL_PAGE = 1000
 async def _refresh_backfilled_real_job_display(
     connection: aiosqlite.Connection, source_ids: list[int]
 ) -> None:
-    """Project representative and official closure for one bounded source page."""
+    """Project representative and official closure for one bounded source page.
+
+    Time complexity: O(N + R) Python grouping work for N source IDs and R
+    source rows returned across batches. A parent spanning batches can recur.
+    """
     for start in range(0, len(source_ids), 900):
         page = source_ids[start : start + 900]
         placeholders = ",".join("?" for _ in page)
@@ -125,7 +129,18 @@ class SQLiteStore(
     async def backfill_real_job_identifiers(
         self, *, after_id: int = 0, limit: int = 100
     ) -> tuple[int, int]:
-        """Explicitly reconcile one bounded source page on a migrated DB copy."""
+        """Explicitly reconcile one bounded source page on a migrated DB copy.
+
+        Args:
+            after_id: Exclusive source-ID cursor for the next backfill page.
+            limit: Maximum number of records to select.
+
+        Returns:
+            Last processed source ID and number of source rows processed.
+
+        Raises:
+            ValueError: If limit is outside the inclusive range 1 through 1000.
+        """
         if limit < 1 or limit > MAX_REAL_JOB_BACKFILL_PAGE:
             raise ValueError("limit must be between 1 and 1000")
         async with self._lifecycle.connection() as connection:
@@ -137,7 +152,7 @@ class SQLiteStore(
                     "ORDER BY id LIMIT ?",
                     (after_id, limit),
                 )
-                rows = await cursor.fetchall()
+                rows = list(await cursor.fetchall())
                 await cursor.close()
                 for row in rows:
                     merged = await resolve_sqlite_real_job(
@@ -158,7 +173,18 @@ class SQLiteStore(
         return (int(rows[-1]["id"]) if rows else after_id, len(rows))
 
     async def resolve_real_job_ids(self, source_ids: list[str]) -> list[str]:
-        """Resolve a source scope once and reject orphaned source rows."""
+        """Resolve a source scope once and reject orphaned source rows.
+
+        Args:
+            source_ids: Source posting IDs whose canonical parents are required.
+
+        Returns:
+            Distinct canonical IDs in first-source order.
+
+        Raises:
+            ValueError: If an ID is invalid or a requested source lacks a canonical
+                parent.
+        """
         if not source_ids:
             return []
         ids = [int(value) for value in dict.fromkeys(source_ids)]
@@ -171,7 +197,7 @@ class SQLiteStore(
                     f"SELECT id,real_job_id FROM jobs WHERE id IN ({placeholders})",
                     page,
                 )
-                rows = await cursor.fetchall()
+                rows = list(await cursor.fetchall())
                 await cursor.close()
                 mapping.update(
                     {int(row[0]): str(row[1]) for row in rows if row[1] is not None}
@@ -190,7 +216,22 @@ class SQLiteStore(
         stage_a_policy: dict[str, object] | None = None,
         stage_b_policy: dict[str, object] | None = None,
     ) -> list[str]:
-        """Bound backlog selection before canonical claim filtering."""
+        """Bound backlog selection before canonical claim filtering.
+
+        Args:
+            limit: Maximum number of records to select.
+            stage: Evaluation stage: a, b, or both.
+            threshold: Minimum Stage A score for Stage B eligibility.
+            before_id: Exclusive canonical-ID bound for descending pagination.
+            stage_a_policy: Configured Stage A policy used to verify stored scores.
+            stage_b_policy: Configured Stage B policy used to verify stored scores.
+
+        Returns:
+            Bounded canonical IDs eligible for the requested evaluation stages.
+
+        Raises:
+            ValueError: If stage is not a, b, or both.
+        """
         if limit <= 0:
             return []
         if stage not in {"a", "b", "both"}:
@@ -235,12 +276,20 @@ class SQLiteStore(
                 "ORDER BY r.id DESC LIMIT ?",
                 params,
             )
-            rows = await cursor.fetchall()
+            rows = list(await cursor.fetchall())
             await cursor.close()
         return [str(row[0]) for row in rows]
 
     async def canonical_evaluation_ready(self) -> bool:
-        """Existing v1 databases stay on the source path until explicit migration."""
+        """Existing v1 databases stay on the source path until explicit migration.
+
+        Returns:
+            True when canonical evaluation is activated; False before activation.
+
+        Raises:
+            CanonicalEvaluationNotReadyError: If activation exists without the required
+                schema or consistent canonical ownership.
+        """
         if await self.get_state(EVALUATION_ACTIVATION_KEY) != "enabled":
             return False
         async with self._lifecycle.connection() as connection:
@@ -248,7 +297,9 @@ class SQLiteStore(
                 "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' "
                 "AND name='real_job_evaluations'"
             )
-            value = (await cursor.fetchone())[0]
+            count_row = await cursor.fetchone()
+            assert count_row is not None
+            value = count_row[0]
             await cursor.close()
             if not value:
                 raise CanonicalEvaluationNotReadyError(
@@ -297,7 +348,15 @@ class SQLiteStore(
         stage_a_policy: dict[str, object],
         stage_b_policy: dict[str, object],
     ) -> dict[str, int]:
-        """Count completed scores whose model/policy version is unverified."""
+        """Count completed scores whose model/policy version is unverified.
+
+        Args:
+            stage_a_policy: Configured Stage A policy used to verify stored scores.
+            stage_b_policy: Configured Stage B policy used to verify stored scores.
+
+        Returns:
+            Counts of completed Stage A and Stage B scores lacking current policy proof.
+        """
         a = json.dumps(stage_a_policy, sort_keys=True, separators=(",", ":"))
         b = json.dumps(stage_b_policy, sort_keys=True, separators=(",", ":"))
         async with self._lifecycle.connection() as connection:
@@ -324,6 +383,7 @@ class SQLiteStore(
             )
             row = await cursor.fetchone()
             await cursor.close()
+        assert row is not None
         return dict(
             zip(
                 (
@@ -343,7 +403,18 @@ class SQLiteStore(
         stage_a_policy: dict[str, object],
         stage_b_policy: dict[str, object],
     ) -> bool:
-        """Fail closed when completed scores lack the configured policy proof."""
+        """Fail closed when completed scores lack the configured policy proof.
+
+        Args:
+            stage_a_policy: Configured Stage A policy used to verify stored scores.
+            stage_b_policy: Configured Stage B policy used to verify stored scores.
+
+        Returns:
+            True when no completed scores remain unverified for the configured policies.
+
+        Raises:
+            ValueError: If completed scores still lack current policy proof.
+        """
         counts = await self.canonical_policy_pending_counts(
             stage_a_policy=stage_a_policy,
             stage_b_policy=stage_b_policy,
@@ -360,7 +431,19 @@ class SQLiteStore(
         stage_a_policy: dict[str, object] | None = None,
         stage_b_policy: dict[str, object] | None = None,
     ) -> list[CanonicalPriorityInput]:
-        """Return one canonical priority input per requested parent."""
+        """Return one canonical priority input per requested parent.
+
+        Time complexity: O(N + R) Python grouping work for N distinct parents
+        and R source rows. Fixed-size parent batches partition the result.
+
+        Args:
+            real_job_ids: Canonical parent IDs to load.
+            stage_a_policy: Configured Stage A policy used to verify stored scores.
+            stage_b_policy: Configured Stage B policy used to verify stored scores.
+
+        Returns:
+            Priority inputs for existing requested canonical jobs.
+        """
         if not real_job_ids:
             return []
         ids = list(dict.fromkeys(int(value) for value in real_job_ids))
@@ -383,7 +466,7 @@ class SQLiteStore(
                     f"WHERE r.id IN ({placeholders}) ORDER BY r.id,j.id",
                     page,
                 )
-                rows = await cursor.fetchall()
+                rows = list(await cursor.fetchall())
                 await cursor.close()
                 for row in rows:
                     real_id = int(row["real_job_id"])
@@ -391,9 +474,9 @@ class SQLiteStore(
                     metadata[real_id] = row
         output: list[CanonicalPriorityInput] = []
         for real_id in ids:
-            row = metadata.get(real_id)
-            if row is None:
+            if real_id not in metadata:
                 continue
+            row = metadata[real_id]
             stage_b = json.loads(row["real_b_json"]) if row["real_b_json"] else {}
             fit = stage_b.get("fit_analysis", {}).get("score")
             a_visible, b_visible, _ = policy_visibility(

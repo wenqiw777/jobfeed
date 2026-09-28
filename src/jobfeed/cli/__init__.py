@@ -24,6 +24,7 @@ from jobfeed.onboarding_secrets import ProviderSecretStore
 from jobfeed.ports.source import SimpleSource
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ext import StageBThresholdSync
+from jobfeed.scan_wiring import build_scan_service
 from jobfeed.services.digest import DigestService, DigestStore
 from jobfeed.services.jobright_bridge import JobrightBridge
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator
@@ -87,7 +88,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
         config_path=config_path,
         store=store,
         sources=sources,
-        scan_service=ScanService(
+        scan_service=build_scan_service(
             store,
             logger,
             run_orchestrator,

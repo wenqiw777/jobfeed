@@ -117,6 +117,7 @@ async def test_existing_sqlite_adds_retry_columns_without_losing_jobs(tmp_path):
     )
     await store.close()
     with sqlite3.connect(path) as connection:
+        connection.execute("DROP INDEX idx_jobs_external_identity")
         for column in (
             "external_identity",
             "enrich_attempted_at",

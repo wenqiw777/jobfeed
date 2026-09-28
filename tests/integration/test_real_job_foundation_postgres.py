@@ -125,19 +125,33 @@ async def test_shared_ats_with_conflicting_complete_jds_holds_without_score(
     try:
         body = "Requirements: Python, distributed systems, and API ownership. " * 12
         ats = "https://qualcomm.eightfold.ai/careers?pid=446721162271"
-        first = await store.save_job(JobPosting(
-            platform="linkedin", canonical_id="li-requirements",
-            url="https://www.linkedin.com/jobs/view/4469009469/", apply_url=ats,
-            title="Backend SWE", company="Qualcomm", location="San Diego, CA",
-            discovered_at=datetime.now(UTC), jd_text=body, jd_quality=QualityBand.FULL,
-        ))
-        second = await store.save_job(JobPosting(
-            platform="jobright", canonical_id="jr-requirements", url=ats,
-            title="Backend SWE", company="Qualcomm", location="San Diego, CA",
-            discovered_at=datetime.now(UTC),
-            jd_text=body.replace("distributed systems", "mobile apps"),
-            jd_quality=QualityBand.FULL,
-        ))
+        first = await store.save_job(
+            JobPosting(
+                platform="linkedin",
+                canonical_id="li-requirements",
+                url="https://www.linkedin.com/jobs/view/4469009469/",
+                apply_url=ats,
+                title="Backend SWE",
+                company="Qualcomm",
+                location="San Diego, CA",
+                discovered_at=datetime.now(UTC),
+                jd_text=body,
+                jd_quality=QualityBand.FULL,
+            )
+        )
+        second = await store.save_job(
+            JobPosting(
+                platform="jobright",
+                canonical_id="jr-requirements",
+                url=ats,
+                title="Backend SWE",
+                company="Qualcomm",
+                location="San Diego, CA",
+                discovered_at=datetime.now(UTC),
+                jd_text=body.replace("distributed systems", "mobile apps"),
+                jd_quality=QualityBand.FULL,
+            )
+        )
         async with store._get_pool().acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id,real_job_id FROM jobs WHERE id=ANY($1::int[]) ORDER BY id",
@@ -145,19 +159,26 @@ async def test_shared_ats_with_conflicting_complete_jds_holds_without_score(
             )
             assert rows[0]["real_job_id"] == rows[1]["real_job_id"]
             parent = int(rows[0]["real_job_id"])
-            assert await conn.fetchval(
-                "SELECT identity_review_state FROM real_jobs WHERE id=$1", parent
-            ) == "requirements_conflict"
+            assert (
+                await conn.fetchval(
+                    "SELECT identity_review_state FROM real_jobs WHERE id=$1", parent
+                )
+                == "requirements_conflict"
+            )
             cases = await conn.fetch(
                 "SELECT left_job_id,right_job_id,reason FROM real_job_review_cases "
-                "WHERE left_real_job_id=$1 AND right_real_job_id=$1", parent
+                "WHERE left_real_job_id=$1 AND right_real_job_id=$1",
+                parent,
             )
             assert [tuple(case.values()) for case in cases] == [
                 (int(first.job_id), int(second.job_id), "requirements_conflict")
             ]
-            assert await conn.fetchval(
-                "SELECT 1 FROM real_job_evaluations WHERE real_job_id=$1", parent
-            ) is None
+            assert (
+                await conn.fetchval(
+                    "SELECT 1 FROM real_job_evaluations WHERE real_job_id=$1", parent
+                )
+                is None
+            )
     finally:
         await store.close()
 
@@ -170,25 +191,37 @@ async def test_concurrent_transitive_merge_rejects_stale_parent(
     try:
         ids = []
         for native in ("race-a", "race-b", "race-c"):
-            result = await store.save_job(JobPosting(
-                platform="linkedin", canonical_id=native,
-                url=f"https://example.test/{native}", title="Engineer",
-                company="Example", location="Detroit",
-                discovered_at=datetime.now(UTC),
-            ))
+            result = await store.save_job(
+                JobPosting(
+                    platform="linkedin",
+                    canonical_id=native,
+                    url=f"https://example.test/{native}",
+                    title="Engineer",
+                    company="Example",
+                    location="Detroit",
+                    discovered_at=datetime.now(UTC),
+                )
+            )
             ids.append(int(result.job_id))
         async with store._get_pool().acquire() as conn:
-            parents = [int(row["real_job_id"]) for row in await conn.fetch(
-                "SELECT real_job_id FROM jobs WHERE id=ANY($1::int[]) ORDER BY id", ids
-            )]
+            parents = [
+                int(row["real_job_id"])
+                for row in await conn.fetch(
+                    "SELECT real_job_id FROM jobs WHERE id=ANY($1::int[]) ORDER BY id",
+                    ids,
+                )
+            ]
         first_done = asyncio.Event()
         release_first = asyncio.Event()
 
         async def merge_first() -> None:
             async with store._get_pool().acquire() as conn, conn.transaction():
                 await _merge(
-                    conn, parents[0], parents[1],
-                    source_id=ids[0], other_source_id=ids[1],
+                    conn,
+                    parents[0],
+                    parents[1],
+                    source_id=ids[0],
+                    other_source_id=ids[1],
                 )
                 first_done.set()
                 await release_first.wait()
@@ -198,8 +231,11 @@ async def test_concurrent_transitive_merge_rejects_stale_parent(
             async with store._get_pool().acquire() as conn, conn.transaction():
                 try:
                     await _merge(
-                        conn, parents[1], parents[2],
-                        source_id=ids[1], other_source_id=ids[2],
+                        conn,
+                        parents[1],
+                        parents[2],
+                        source_id=ids[1],
+                        other_source_id=ids[2],
                     )
                 except RuntimeError as exc:
                     return str(exc)
@@ -212,9 +248,12 @@ async def test_concurrent_transitive_merge_rejects_stale_parent(
         await asyncio.wait_for(asyncio.gather(first_task, second_task), timeout=10)
         assert second_task.result() == "real-job parent changed during merge"
         async with store._get_pool().acquire() as conn:
-            assert await conn.fetchval(
-                "SELECT COUNT(*) FROM jobs WHERE real_job_id IS NULL"
-            ) == 0
+            assert (
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM jobs WHERE real_job_id IS NULL"
+                )
+                == 0
+            )
             assert (
                 await conn.fetchval("SELECT COUNT(*) FROM real_jobs")
                 == EXPECTED_SEPARATE_REAL_JOBS
@@ -231,12 +270,17 @@ async def test_merge_rechecks_explicit_status_after_waiting_for_writer(
     try:
         ids = []
         for native in ("status-race-left", "status-race-right"):
-            saved = await store.save_job(JobPosting(
-                platform="linkedin", canonical_id=native,
-                url=f"https://example.test/{native}", title="Engineer",
-                company="Example", location="Detroit",
-                discovered_at=datetime.now(UTC),
-            ))
+            saved = await store.save_job(
+                JobPosting(
+                    platform="linkedin",
+                    canonical_id=native,
+                    url=f"https://example.test/{native}",
+                    title="Engineer",
+                    company="Example",
+                    location="Detroit",
+                    discovered_at=datetime.now(UTC),
+                )
+            )
             ids.append(int(saved.job_id))
         parents = [int(await store.resolve_real_job_id(str(source))) for source in ids]
         await store.transition_real_job_status(
@@ -256,13 +300,14 @@ async def test_merge_rechecks_explicit_status_after_waiting_for_writer(
 
         async def merge_after_stale_precheck() -> None:
             async with store._get_pool().acquire() as conn, conn.transaction():
-                assert not await _status_conflict(
-                    conn, parents[0], parents[1]
-                )
+                assert not await _status_conflict(conn, parents[0], parents[1])
                 await writer_ready.wait()
                 await _merge(
-                    conn, parents[0], parents[1],
-                    source_id=ids[0], other_source_id=ids[1],
+                    conn,
+                    parents[0],
+                    parents[1],
+                    source_id=ids[0],
+                    other_source_id=ids[1],
                 )
 
         writer = asyncio.create_task(write_applied())
@@ -273,25 +318,36 @@ async def test_merge_rechecks_explicit_status_after_waiting_for_writer(
         await asyncio.wait_for(asyncio.gather(writer, merger), timeout=10)
         async with store._get_pool().acquire() as conn:
             assert await conn.fetchval("SELECT COUNT(*) FROM real_jobs") == len(parents)
-            assert {row["status"] for row in await conn.fetch(
-                "SELECT status FROM real_job_status "
-                "WHERE real_job_id=ANY($1::bigint[])",
-                parents,
-            )} == {"applied", "ignored"}
-            assert await conn.fetchval(
-                "SELECT COUNT(*) FROM real_job_review_cases WHERE "
-                "reason='explicit_status_conflict'"
-            ) == 1
-            assert {row["to_status"] for row in await conn.fetch(
-                "SELECT to_status FROM real_job_status_history WHERE "
-                "real_job_id=ANY($1::bigint[])", parents,
-            )} >= {"applied", "ignored"}
+            assert {
+                row["status"]
+                for row in await conn.fetch(
+                    "SELECT status FROM real_job_status "
+                    "WHERE real_job_id=ANY($1::bigint[])",
+                    parents,
+                )
+            } == {"applied", "ignored"}
+            assert (
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM real_job_review_cases WHERE "
+                    "reason='explicit_status_conflict'"
+                )
+                == 1
+            )
+            assert {
+                row["to_status"]
+                for row in await conn.fetch(
+                    "SELECT to_status FROM real_job_status_history WHERE "
+                    "real_job_id=ANY($1::bigint[])",
+                    parents,
+                )
+            } >= {"applied", "ignored"}
     finally:
         await store.close()
 
 
 async def test_source_upsert_retries_parent_move_once(
-    fresh_pg_dsn: str, monkeypatch: pytest.MonkeyPatch,
+    fresh_pg_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = PostgresStore(fresh_pg_dsn)
     await store.connect()
@@ -307,21 +363,32 @@ async def test_source_upsert_retries_parent_move_once(
             await original(conn, source_id, posting)
 
         monkeypatch.setattr(postgres_module, "resolve_postgres_real_job", moved_once)
-        result = await store.save_job(JobPosting(
-            platform="linkedin", canonical_id="retry-source",
-            url="https://example.test/retry-source", title="Engineer",
-            company="Example", location="Detroit",
-            discovered_at=datetime.now(UTC),
-        ))
+        result = await store.save_job(
+            JobPosting(
+                platform="linkedin",
+                canonical_id="retry-source",
+                url="https://example.test/retry-source",
+                title="Engineer",
+                company="Example",
+                location="Detroit",
+                discovered_at=datetime.now(UTC),
+            )
+        )
         assert attempts == EXPECTED_SEPARATE_REAL_JOBS
         async with store._get_pool().acquire() as conn:
-            assert await conn.fetchval(
-                "SELECT COUNT(*) FROM jobs WHERE platform='linkedin' "
-                "AND canonical_id='retry-source'"
-            ) == 1
-            assert await conn.fetchval(
-                "SELECT real_job_id FROM jobs WHERE id=$1", int(result.job_id)
-            ) is not None
+            assert (
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM jobs WHERE platform='linkedin' "
+                    "AND canonical_id='retry-source'"
+                )
+                == 1
+            )
+            assert (
+                await conn.fetchval(
+                    "SELECT real_job_id FROM jobs WHERE id=$1", int(result.job_id)
+                )
+                is not None
+            )
     finally:
         await store.close()
 
@@ -343,25 +410,31 @@ async def test_exact_id_backfill_holds_divergent_full_descriptions(
                 [
                     ("linkedin", "li-old", ats, body),
                     (
-                        "jobright", "jr-old", ats,
+                        "jobright",
+                        "jr-old",
+                        ats,
                         body.replace("distributed systems", "mobile apps"),
                     ),
                 ],
             )
         assert await store.reconcile_real_jobs() == 0
-        assert (
-            await store.backfill_real_job_identifiers(limit=10)
-        )[1] == EXPECTED_SEPARATE_REAL_JOBS
+        assert (await store.backfill_real_job_identifiers(limit=10))[
+            1
+        ] == EXPECTED_SEPARATE_REAL_JOBS
         async with store._get_pool().acquire() as conn:
             parents = await conn.fetch("SELECT DISTINCT real_job_id FROM jobs")
             assert len(parents) == 1
             parent = parents[0][0]
-            assert await conn.fetchval(
-                "SELECT identity_review_state FROM real_jobs WHERE id=$1", parent
-            ) == "requirements_conflict"
-            assert [row[0] for row in await conn.fetch(
-                "SELECT reason FROM real_job_review_cases"
-            )] == ["requirements_conflict"]
+            assert (
+                await conn.fetchval(
+                    "SELECT identity_review_state FROM real_jobs WHERE id=$1", parent
+                )
+                == "requirements_conflict"
+            )
+            assert [
+                row[0]
+                for row in await conn.fetch("SELECT reason FROM real_job_review_cases")
+            ] == ["requirements_conflict"]
     finally:
         await store.close()
 

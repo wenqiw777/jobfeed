@@ -20,8 +20,8 @@ from jobfeed.domain.models import (
     TransitionRequest,
     Verdict,
 )
+from jobfeed.evaluation_config import current_policy_for_settings
 from jobfeed.personal_ml_learning import PersonalMLLearningService
-from jobfeed.services._evaluate_canonical import current_policy_for_settings
 from jobfeed.web.app import build_web_app
 from tests.web.test_app_skeleton import open_client
 
@@ -43,40 +43,63 @@ async def test_policy_change_hides_unverified_api_scores_before_next_evaluate(
     await store.connect()
     try:
         settings = Settings()
-        saved = await store.save_job(JobPosting(
-            platform="linkedin", canonical_id="policy-api",
-            url="https://example.test/policy-api", title="Engineer",
-            company="Acme", location="Remote", discovered_at=datetime.now(UTC),
-            jd_text="Build production services and APIs. " * 12,
-            jd_quality=QualityBand.FULL,
-        ))
+        saved = await store.save_job(
+            JobPosting(
+                platform="linkedin",
+                canonical_id="policy-api",
+                url="https://example.test/policy-api",
+                title="Engineer",
+                company="Acme",
+                location="Remote",
+                discovered_at=datetime.now(UTC),
+                jd_text="Build production services and APIs. " * 12,
+                jd_quality=QualityBand.FULL,
+            )
+        )
         real_id = await store.resolve_real_job_id(saved.job_id)
         policy = await current_policy_for_settings(
             settings, PersonalMLLearningService(store)
         )
-        a = (await store.claim_real_job_stage_a_by_ids(
-            [real_id], stage_a_policy=policy.stage_a(),
-            stage_b_policy=policy.stage_b(),
-        ))[0]
+        a = (
+            await store.claim_real_job_stage_a_by_ids(
+                [real_id],
+                stage_a_policy=policy.stage_a(),
+                stage_b_policy=policy.stage_b(),
+            )
+        )[0]
         assert await store.save_real_job_stage_a(
-            real_id, StageAResult(
-                score=CURRENT_QUICK_SCORE, one_line="Fit",
-                timing_eligible="yes", model="v1",
-                prompt_hash="existing", resume_hash="existing",
-            ), expected_revision=a.input_revision,
+            real_id,
+            StageAResult(
+                score=CURRENT_QUICK_SCORE,
+                one_line="Fit",
+                timing_eligible="yes",
+                model="v1",
+                prompt_hash="existing",
+                resume_hash="existing",
+            ),
+            expected_revision=a.input_revision,
             expected_generation=a.claim_generation,
         )
-        b = (await store.claim_real_job_stage_b_by_ids(
-            [real_id], stage_a_threshold=60,
-            stage_a_policy=policy.stage_a(), stage_b_policy=policy.stage_b(),
-        ))[0]
+        b = (
+            await store.claim_real_job_stage_b_by_ids(
+                [real_id],
+                stage_a_threshold=60,
+                stage_a_policy=policy.stage_a(),
+                stage_b_policy=policy.stage_b(),
+            )
+        )[0]
         assert await store.save_real_job_stage_b(
-            real_id, StageBResult(
-                verdict=Verdict.APPLY, jd_summary="Fit",
+            real_id,
+            StageBResult(
+                verdict=Verdict.APPLY,
+                jd_summary="Fit",
                 fit_analysis=FitAnalysis(score=93, strengths=[], gaps=[]),
-                resume_hooks=[], model="v1", prompt_hash="existing",
+                resume_hooks=[],
+                model="v1",
+                prompt_hash="existing",
                 resume_hash="existing",
-            ), expected_revision=b.input_revision,
+            ),
+            expected_revision=b.input_revision,
             expected_generation=b.claim_generation,
         )
         async with aiosqlite.connect(path) as db:
@@ -115,7 +138,8 @@ async def test_policy_change_hides_unverified_api_scores_before_next_evaluate(
             async with aiosqlite.connect(path) as db:
                 await db.execute(
                     "UPDATE real_job_evaluations SET input_facts_json='{}' "
-                    "WHERE real_job_id=?", (int(real_id),),
+                    "WHERE real_job_id=?",
+                    (int(real_id),),
                 )
                 await db.commit()
             legacy = await client.get("/api/real-jobs", params={"decision": "results"})
@@ -133,8 +157,7 @@ async def test_policy_change_hides_unverified_api_scores_before_next_evaluate(
             legacy_library = await client.get("/api/jobs", params={"canonical": "true"})
             assert legacy_library.json()["jobs"][0]["evaluation_stale_reason"] is None
             assert (
-                legacy_library.json()["jobs"][0]["stage_a_score"]
-                == CURRENT_QUICK_SCORE
+                legacy_library.json()["jobs"][0]["stage_a_score"] == CURRENT_QUICK_SCORE
             )
             legacy_source = await client.get(f"/api/jobs/{saved.job_id}")
             assert legacy_source.json()["evaluation_stale_reason"] is None
@@ -150,8 +173,10 @@ async def test_policy_change_hides_unverified_api_scores_before_next_evaluate(
                 stage_b_policy=new_policy.stage_b(),
             )
             assert counts == {
-                "stage_a_pending": 1, "stage_b_pending": 0,
-                "legacy_stage_a": 1, "legacy_stage_b": 1,
+                "stage_a_pending": 1,
+                "stage_b_pending": 0,
+                "legacy_stage_a": 1,
+                "legacy_stage_b": 1,
             }
             with pytest.raises(ValueError, match="legacy_stage_a=1"):
                 await store.canonical_policy_cutover_ready(
@@ -442,10 +467,12 @@ async def test_real_job_views_keep_parent_and_source_id_namespaces(
                     int(first_real),
                     int(saved[0].job_id),
                     "Description for one",
-                    json.dumps({
-                        "stage_a_policy": policy.stage_a(),
-                        "stage_b_policy": policy.stage_b(),
-                    }),
+                    json.dumps(
+                        {
+                            "stage_a_policy": policy.stage_a(),
+                            "stage_b_policy": policy.stage_b(),
+                        }
+                    ),
                     json.dumps(
                         {
                             "verdict": "apply",

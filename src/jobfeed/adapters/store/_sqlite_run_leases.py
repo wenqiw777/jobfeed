@@ -177,7 +177,8 @@ class _SqliteRunLeases:
                     json.dumps(run.scan_progress),
                     (
                         json.dumps(run.verdict_counts)
-                        if run.verdict_counts is not None else None
+                        if run.verdict_counts is not None
+                        else None
                     ),
                     run.run_id,
                 ),

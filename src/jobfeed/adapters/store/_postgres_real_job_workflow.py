@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from statistics import median
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]
 
 from jobfeed.adapters.store._normalize import normalize_company
 from jobfeed.domain.interview import InterviewRound
@@ -39,6 +39,12 @@ class PostgresRealJobWorkflow:
     """PostgreSQL canonical workflow commands and source-audit preserving reads."""
 
     def _get_pool(self) -> asyncpg.Pool:
+        raise NotImplementedError
+
+    async def _save_resume_snapshot_in_tx(
+        self, conn: asyncpg.Connection, snapshot: ResumeSnapshot
+    ) -> None:
+        """Require the concrete store to persist an application snapshot."""
         raise NotImplementedError
 
     async def auto_decay_real_jobs(
@@ -176,7 +182,7 @@ class PostgresRealJobWorkflow:
                 "ORDER BY a.applied_at,a.id",
                 cutoff,
             )
-            first = {}
+            first: dict[int, asyncpg.Record] = {}
             for row in applied:
                 first.setdefault(row["real_job_id"], row)
             if not first:
@@ -805,7 +811,7 @@ class PostgresRealJobWorkflow:
                 now,
                 int(real_job_id),
             )
-        return result == "UPDATE 1"
+        return bool(result == "UPDATE 1")
 
     async def set_real_job_followup(self, *, real_job_id: str, at: datetime) -> bool:
         """Set the next follow-up time on one canonical status.
@@ -828,7 +834,7 @@ class PostgresRealJobWorkflow:
                 at,
                 int(real_job_id),
             )
-        return result == "UPDATE 1"
+        return bool(result == "UPDATE 1")
 
     async def restore_real_job(self, real_job_id: str) -> str:
         """Restore an archived or ghosted parent to its previous active state.

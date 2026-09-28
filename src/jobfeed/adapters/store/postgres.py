@@ -1905,7 +1905,18 @@ class PostgresStore(
     """
 
     async def resolve_real_job_ids(self, source_ids: list[str]) -> list[str]:
-        """Resolve source insertions to distinct canonical IDs in input order."""
+        """Resolve source insertions to distinct canonical IDs in input order.
+
+        Args:
+            source_ids: Source posting IDs whose canonical parents are required.
+
+        Returns:
+            Distinct canonical IDs in first-source order.
+
+        Raises:
+            ValueError: If an ID is invalid or a requested source lacks a canonical
+                parent.
+        """
         if not source_ids:
             return []
         ids = [int(value) for value in dict.fromkeys(source_ids)]
@@ -1932,6 +1943,22 @@ class PostgresStore(
         stage_a_policy: dict[str, object] | None = None,
         stage_b_policy: dict[str, object] | None = None,
     ) -> list[str]:
+        """Select a bounded canonical evaluation backlog.
+
+        Args:
+            limit: Maximum number of records to select.
+            stage: Evaluation stage: a, b, or both.
+            threshold: Minimum Stage A score for Stage B eligibility.
+            before_id: Exclusive canonical-ID bound for descending pagination.
+            stage_a_policy: Configured Stage A policy used to verify stored scores.
+            stage_b_policy: Configured Stage B policy used to verify stored scores.
+
+        Returns:
+            Bounded canonical IDs eligible for the requested evaluation stages.
+
+        Raises:
+            ValueError: If stage is not a, b, or both.
+        """
         if limit <= 0:
             return []
         if stage not in {"a", "b", "both"}:
@@ -1977,6 +2004,15 @@ class PostgresStore(
         return [str(row["id"]) for row in rows]
 
     async def canonical_evaluation_ready(self) -> bool:
+        """Check activation and fail closed on an inconsistent canonical schema.
+
+        Returns:
+            True when canonical evaluation is activated; False before activation.
+
+        Raises:
+            CanonicalEvaluationNotReadyError: If activation exists without the required
+                schema or consistent canonical ownership.
+        """
         if await self.get_state(EVALUATION_ACTIVATION_KEY) != "enabled":
             return False
         async with self._get_pool().acquire() as db:
@@ -2025,7 +2061,15 @@ class PostgresStore(
         stage_a_policy: dict[str, object],
         stage_b_policy: dict[str, object],
     ) -> dict[str, int]:
-        """Count completed canonical scores with unverified policy versions."""
+        """Count completed canonical scores with unverified policy versions.
+
+        Args:
+            stage_a_policy: Configured Stage A policy used to verify stored scores.
+            stage_b_policy: Configured Stage B policy used to verify stored scores.
+
+        Returns:
+            Counts of completed Stage A and Stage B scores lacking current policy proof.
+        """
         a = json.dumps(stage_a_policy, sort_keys=True, separators=(",", ":"))
         b = json.dumps(stage_b_policy, sort_keys=True, separators=(",", ":"))
         async with self._get_pool().acquire() as db:
@@ -2067,7 +2111,18 @@ class PostgresStore(
         stage_a_policy: dict[str, object],
         stage_b_policy: dict[str, object],
     ) -> bool:
-        """Fail closed when completed scores lack configured policy proof."""
+        """Fail closed when completed scores lack configured policy proof.
+
+        Args:
+            stage_a_policy: Configured Stage A policy used to verify stored scores.
+            stage_b_policy: Configured Stage B policy used to verify stored scores.
+
+        Returns:
+            True when no completed scores remain unverified for the configured policies.
+
+        Raises:
+            ValueError: If completed scores still lack current policy proof.
+        """
         counts = await self.canonical_policy_pending_counts(
             stage_a_policy=stage_a_policy,
             stage_b_policy=stage_b_policy,
@@ -2084,7 +2139,16 @@ class PostgresStore(
         stage_a_policy: dict[str, object] | None = None,
         stage_b_policy: dict[str, object] | None = None,
     ) -> list[CanonicalPriorityInput]:
-        """Load canonical score/status and source evidence once per parent."""
+        """Load canonical score/status and source evidence once per parent.
+
+        Args:
+            real_job_ids: Canonical parent IDs to load.
+            stage_a_policy: Configured Stage A policy used to verify stored scores.
+            stage_b_policy: Configured Stage B policy used to verify stored scores.
+
+        Returns:
+            Priority inputs for existing requested canonical jobs.
+        """
         if not real_job_ids:
             return []
         ids = list(dict.fromkeys(int(value) for value in real_job_ids))
@@ -2676,7 +2740,19 @@ class PostgresStore(
     # ------------------------------------------------------------------
 
     async def save_job(self, job: JobPosting) -> SaveJobResult:
-        """Persist one source, retrying a bounded concurrent identity move."""
+        """Persist one source, retrying a bounded concurrent identity move.
+
+        Args:
+            job: Source posting to inspect or persist.
+
+        Returns:
+            Saved source identity and whether the operation inserted or updated it.
+
+        Raises:
+            AssertionError: If the bounded identity retry loop reaches an impossible
+                state.
+            asyncpg.PostgresError: If persistence fails after any permitted retry.
+        """
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
@@ -2689,7 +2765,8 @@ class PostgresStore(
     async def _save_job_once(self, job: JobPosting) -> SaveJobResult:
         """Insert or upsert a job by (platform, canonical_id).
 
-        Uses ``INSERT ... ON CONFLICT DO UPDATE ... RETURNING id, (xmax = 0) AS inserted``
+        Uses ``INSERT ... ON CONFLICT DO UPDATE ... RETURNING id, (xmax = 0) AS
+            inserted``
         to atomically handle the upsert in a single round-trip.
 
         Args:
@@ -2865,6 +2942,9 @@ class PostgresStore(
 
         Run this after the nullable-FK migration and repeat it while old scan
         workers may still be writing. It preserves all source child rows.
+
+        Returns:
+            Number of source rows still lacking canonical parents after reconciliation.
         """
         async with self._get_pool().acquire() as conn, conn.transaction():
             await conn.execute(
@@ -2891,7 +2971,18 @@ class PostgresStore(
     async def backfill_real_job_identifiers(
         self, *, after_id: int = 0, limit: int = 100
     ) -> tuple[int, int]:
-        """Explicitly reconcile one bounded exact-identity page on a DB copy."""
+        """Explicitly reconcile one bounded exact-identity page on a DB copy.
+
+        Args:
+            after_id: Exclusive source-ID cursor for the next backfill page.
+            limit: Maximum number of records to select.
+
+        Returns:
+            Last processed source ID and number of source rows processed.
+
+        Raises:
+            ValueError: If limit is outside the inclusive range 1 through 1000.
+        """
         if limit < 1 or limit > MAX_REAL_JOB_BACKFILL_PAGE:
             raise ValueError("limit must be between 1 and 1000")
         async with self._get_pool().acquire() as conn, conn.transaction():
@@ -3023,7 +3114,14 @@ class PostgresStore(
     async def get_enrichment_by_identity(
         self, identity: str
     ) -> StoredEnrichment | None:
-        """Find a complete cross-source JD or latest deferred exact twin."""
+        """Find a complete cross-source JD or latest deferred exact twin.
+
+        Args:
+            identity: Existing exact cross-source identity to match.
+
+        Returns:
+            Reusable enriched posting, latest deferred twin, or None when absent.
+        """
         if not identity:
             return None
         async with self._get_pool().acquire() as conn:
@@ -3956,7 +4054,14 @@ class PostgresStore(
         return [_jobs_view_row_from_record(r) for r in rows]
 
     async def load_display_bodies(self, job_ids: Sequence[str]) -> dict[str, str]:
-        """Load only bodies whose lightweight rows may be display duplicates."""
+        """Load only bodies whose lightweight rows may be display duplicates.
+
+        Args:
+            job_ids: Source posting IDs whose description bodies are required.
+
+        Returns:
+            Available nonempty description bodies keyed by source posting ID.
+        """
         if not job_ids:
             return {}
         async with self._get_pool().acquire() as conn:
@@ -4230,7 +4335,15 @@ class PostgresStore(
     async def get_historical_run_verdict_counts(
         self, run_id: str
     ) -> dict[str, int] | None:
-        """Count unchanged Stage B rows first completed inside an old run."""
+        """Count unchanged Stage B rows first completed inside an old run.
+
+        Args:
+            run_id: Run identifier used to bound historical completed reviews.
+
+        Returns:
+            Reconstructed verdict counts, or None when the run cannot be reconstructed
+                safely.
+        """
         pool = self._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(

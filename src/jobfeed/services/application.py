@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 from jobfeed.domain.models import (
     ApplicationRecord,
@@ -17,6 +17,7 @@ from jobfeed.domain.models import (
 )
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store_application import StoreApplicationMixin
+from jobfeed.ports.store_canonical import CanonicalWorkflowStore
 from jobfeed.services._application_snapshots import (
     build_snapshots,
     content_hash,
@@ -105,6 +106,9 @@ class ApplicationService:
 
         Returns:
             True if new application, False if already applied.
+
+        Raises:
+            ValueError: If canonical application recording has no source_job_id.
         """
         now = datetime.now(UTC)
         master_hash = content_hash(req.master_resume)
@@ -136,7 +140,9 @@ class ApplicationService:
         if req.real_job_id is not None:
             if req.source_job_id is None:
                 raise ValueError("source_job_id is required for canonical apply")
-            is_new = await self._store.record_real_job_application_with_snapshots(
+            is_new = await cast(
+                CanonicalWorkflowStore, self._store
+            ).record_real_job_application_with_snapshots(
                 record,
                 real_job_id=req.real_job_id,
                 source_job_id=req.source_job_id,
@@ -212,8 +218,17 @@ class ApplicationService:
     async def real_job_apply_history(
         self, *, limit: int = 100
     ) -> list[RealJobApplicationEvent]:
-        """List canonical submission events and their source provenance."""
-        return await self._store.list_real_job_applications(limit=limit)
+        """List canonical submission events and their source provenance.
+
+        Args:
+            limit: Maximum number of records to select.
+
+        Returns:
+            Canonical application events with source provenance.
+        """
+        return await cast(
+            CanonicalWorkflowStore, self._store
+        ).list_real_job_applications(limit=limit)
 
     async def reapply_notice(self, job_id: str) -> str | None:
         """Same-company active-application notice for a just-applied job.
@@ -228,7 +243,7 @@ class ApplicationService:
             Human-readable notice, or None when no active sibling exists.
         """
         canonical = (
-            self._store.compute_real_job_reapply_notice
+            cast(CanonicalWorkflowStore, self._store).compute_real_job_reapply_notice
             if hasattr(type(self._store), "compute_real_job_reapply_notice")
             else None
         )
@@ -252,7 +267,7 @@ class ApplicationService:
             Application statistics.
         """
         canonical = (
-            self._store.real_job_application_stats
+            cast(CanonicalWorkflowStore, self._store).real_job_application_stats
             if hasattr(type(self._store), "real_job_application_stats")
             else None
         )

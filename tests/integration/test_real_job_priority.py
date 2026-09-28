@@ -18,15 +18,25 @@ async def test_aliases_share_one_priority_identity(tmp_path: Path) -> None:
         source_ids = []
         for platform, key, url in (
             ("linkedin", "123", "https://www.linkedin.com/jobs/view/123/"),
-            ("jobright", "other", "https://careers.southwestair.com/us/en/job/REQ123/engineer"),
+            (
+                "jobright",
+                "other",
+                "https://careers.southwestair.com/us/en/job/REQ123/engineer",
+            ),
         ):
-            saved = await store.save_job(JobPosting(
-                platform=platform, canonical_id=key, url=url,
-                title="Software Engineer", company="Southwest Airlines", location="Dallas, TX",
-                discovered_at=datetime.now(UTC),
-                jd_text="Build production software services and APIs. " * 10,
-                jd_quality=QualityBand.FULL,
-            ))
+            saved = await store.save_job(
+                JobPosting(
+                    platform=platform,
+                    canonical_id=key,
+                    url=url,
+                    title="Software Engineer",
+                    company="Southwest Airlines",
+                    location="Dallas, TX",
+                    discovered_at=datetime.now(UTC),
+                    jd_text="Build production software services and APIs. " * 10,
+                    jd_quality=QualityBand.FULL,
+                )
+            )
             source_ids.append(saved.job_id)
         real_ids = await store.resolve_real_job_ids(source_ids)
         inputs = await store.load_real_job_priority_inputs(real_ids)
@@ -47,15 +57,25 @@ async def test_postgres_aliases_share_one_priority_identity(fresh_pg_dsn: str) -
         ids = []
         for platform, key, url in (
             ("linkedin", "123", "https://www.linkedin.com/jobs/view/123/"),
-            ("jobright", "other", "https://careers.southwestair.com/us/en/job/REQ123/engineer"),
+            (
+                "jobright",
+                "other",
+                "https://careers.southwestair.com/us/en/job/REQ123/engineer",
+            ),
         ):
-            saved = await store.save_job(JobPosting(
-                platform=platform, canonical_id=key, url=url,
-                title="Software Engineer", company="Southwest Airlines", location="Dallas, TX",
-                discovered_at=datetime.now(UTC),
-                jd_text="Build production software services and APIs. " * 10,
-                jd_quality=QualityBand.FULL,
-            ))
+            saved = await store.save_job(
+                JobPosting(
+                    platform=platform,
+                    canonical_id=key,
+                    url=url,
+                    title="Software Engineer",
+                    company="Southwest Airlines",
+                    location="Dallas, TX",
+                    discovered_at=datetime.now(UTC),
+                    jd_text="Build production software services and APIs. " * 10,
+                    jd_quality=QualityBand.FULL,
+                )
+            )
             ids.append(saved.job_id)
         real_ids = await store.resolve_real_job_ids(ids)
         rows = canonical_priority_rows(

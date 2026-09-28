@@ -24,7 +24,15 @@ def _posting_id(value: str) -> str | None:
 def target_region(
     target: dict[str, Any], snapshot: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Scope only an unambiguous, bounded title/company header, never a whole page."""
+    """Scope only an unambiguous, bounded title/company header, never a whole page.
+
+    Args:
+        target: Expected source identity, title, company, and URL.
+        snapshot: Structured browser snapshot containing page blocks and paths.
+
+    Returns:
+        Normalized target-owned header region, or None if ownership is ambiguous.
+    """
     identity = _posting_id(str(target.get("url", "")))
     title, company = target.get("title"), target.get("company")
     blocks = snapshot.get("blocks", [])
@@ -78,21 +86,27 @@ def target_region(
 def _contradicts(
     region: list[dict[str, Any]], identity: str, title: str, company: str
 ) -> bool:
-    for block in region:
+    return any(_block_contradicts(block, identity, title, company) for block in region)
+
+
+def _block_contradicts(
+    block: dict[str, Any], identity: str, title: str, company: str
+) -> bool:
+    """Reject one block that contradicts the expected posting or employer."""
+    if (
+        block.get("kind") == "heading"
+        and block.get("text", "").strip() != title.strip()
+    ):
+        return True
+    for link in block.get("links", []):
+        other_id = _posting_id(link)
+        if other_id and other_id != identity:
+            return True
         if (
-            block.get("kind") == "heading"
-            and block.get("text", "").strip() != title.strip()
+            urlsplit(link).path.startswith("/company/")
+            and block.get("text", "").strip() != company.strip()
         ):
             return True
-        for link in block.get("links", []):
-            other_id = _posting_id(link)
-            if other_id and other_id != identity:
-                return True
-            if (
-                urlsplit(link).path.startswith("/company/")
-                and block.get("text", "").strip() != company.strip()
-            ):
-                return True
     return False
 
 
@@ -104,11 +118,7 @@ def _normalize_region(
     nodes: dict[int, int] = {}
     normalized = []
     for index, block in enumerate(region):
-        path = []
-        for node in block.get("path", [])[len(common) :]:
-            if node not in nodes:
-                nodes[node] = len(nodes)
-            path.append(nodes[node])
+        path = _normalize_path(block.get("path", [])[len(common) :], nodes)
         normalized.append({**block, "id": index, "path": path})
     return {
         "url": snapshot["url"],
@@ -118,8 +128,25 @@ def _normalize_region(
     }
 
 
+def _normalize_path(path: list[int], nodes: dict[int, int]) -> list[int]:
+    """Assign encounter-order local IDs while retaining ancestor sharing."""
+    normalized = []
+    for node in path:
+        if node not in nodes:
+            nodes[node] = len(nodes)
+        normalized.append(nodes[node])
+    return normalized
+
+
 def explicit_repost(region: dict[str, Any]) -> str | None:
-    """Accept only a standalone metadata segment inside a proven target region."""
+    """Accept only a standalone metadata segment inside a proven target region.
+
+    Args:
+        region: Bounded page region already proven to belong to the target posting.
+
+    Returns:
+        Unique explicit repost evidence text, or None if absent or ambiguous.
+    """
     evidence = [
         b["text"]
         for b in region["blocks"]
@@ -130,6 +157,14 @@ def explicit_repost(region: dict[str, Any]) -> str | None:
 
 
 def has_repost(snapshot: dict[str, Any]) -> bool:
+    """Check whether a structured snapshot mentions reposting.
+
+    Args:
+        snapshot: Structured browser snapshot containing page blocks and paths.
+
+    Returns:
+        Whether any snapshot block mentions reposting.
+    """
     return any(
         re.search(r"\breposted\b", str(b.get("text", "")), re.I)
         for b in snapshot.get("blocks", [])

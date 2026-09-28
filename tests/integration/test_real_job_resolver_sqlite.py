@@ -163,16 +163,23 @@ async def test_shared_ats_with_conflicting_complete_jds_holds_without_score(
         parent = await _parent(lifecycle, first.job_id)
         assert parent == await _parent(lifecycle, second.job_id)
         async with lifecycle.connection() as connection:
-            state = await (await connection.execute(
-                "SELECT identity_review_state FROM real_jobs WHERE id=?", (parent,)
-            )).fetchone()
-            cases = await (await connection.execute(
-                "SELECT left_job_id,right_job_id,reason FROM real_job_review_cases "
-                "WHERE left_real_job_id=? AND right_real_job_id=?", (parent, parent)
-            )).fetchall()
-            evaluation = await (await connection.execute(
-                "SELECT 1 FROM real_job_evaluations WHERE real_job_id=?", (parent,)
-            )).fetchone()
+            state = await (
+                await connection.execute(
+                    "SELECT identity_review_state FROM real_jobs WHERE id=?", (parent,)
+                )
+            ).fetchone()
+            cases = await (
+                await connection.execute(
+                    "SELECT left_job_id,right_job_id,reason FROM real_job_review_cases "
+                    "WHERE left_real_job_id=? AND right_real_job_id=?",
+                    (parent, parent),
+                )
+            ).fetchall()
+            evaluation = await (
+                await connection.execute(
+                    "SELECT 1 FROM real_job_evaluations WHERE real_job_id=?", (parent,)
+                )
+            ).fetchone()
         assert state[0] == "requirements_conflict"
         assert cases == [
             (int(first.job_id), int(second.job_id), "requirements_conflict")
@@ -268,7 +275,8 @@ async def test_exact_id_backfill_holds_divergent_full_descriptions(
             for platform, native, body in (
                 ("linkedin", "li-old", _JD),
                 (
-                    "jobright", "jr-old",
+                    "jobright",
+                    "jr-old",
                     _JD.replace("distributed systems", "mobile apps"),
                 ),
             ):
@@ -276,26 +284,35 @@ async def test_exact_id_backfill_holds_divergent_full_descriptions(
                     "INSERT INTO jobs(platform,canonical_id,url,title,company,location,"
                     "jd_text,jd_quality,discovered_at) VALUES(?,?,?,?,?,?,?,?,?)",
                     (
-                        platform, native, _ATS, "Backend SWE", "Qualcomm",
-                        "San Diego, CA", body, "full", "2026-09-24T00:00:00Z",
+                        platform,
+                        native,
+                        _ATS,
+                        "Backend SWE",
+                        "Qualcomm",
+                        "San Diego, CA",
+                        body,
+                        "full",
+                        "2026-09-24T00:00:00Z",
                     ),
                 )
         async with store._lifecycle.connection() as connection:
             await migrate_real_jobs_schema(connection)
-        assert (
-            await store.backfill_real_job_identifiers(limit=10)
-        )[1] == EXPECTED_EXACT_BACKFILL_SOURCES
+        assert (await store.backfill_real_job_identifiers(limit=10))[
+            1
+        ] == EXPECTED_EXACT_BACKFILL_SOURCES
         async with store._lifecycle.connection() as connection:
-            parents = await (await connection.execute(
-                "SELECT DISTINCT real_job_id FROM jobs"
-            )).fetchall()
-            state = await (await connection.execute(
-                "SELECT identity_review_state FROM real_jobs WHERE id=?",
-                (parents[0][0],),
-            )).fetchone()
-            cases = await (await connection.execute(
-                "SELECT reason FROM real_job_review_cases"
-            )).fetchall()
+            parents = await (
+                await connection.execute("SELECT DISTINCT real_job_id FROM jobs")
+            ).fetchall()
+            state = await (
+                await connection.execute(
+                    "SELECT identity_review_state FROM real_jobs WHERE id=?",
+                    (parents[0][0],),
+                )
+            ).fetchone()
+            cases = await (
+                await connection.execute("SELECT reason FROM real_job_review_cases")
+            ).fetchall()
         assert len(parents) == 1
         assert state[0] == "requirements_conflict"
         assert cases == [("requirements_conflict",)]
@@ -458,28 +475,42 @@ async def test_same_ashby_requisition_merges_source_title_and_location_variants(
     lifecycle, store = await open_sqlite_store(tmp_path / "quora.db")
     url = "https://jobs.ashbyhq.com/quora/cf34f80e-fe5c-454d-bc9a-4c59993ffda0/application"
     try:
-        first = await store.save_job(replace(
-            make_job("quora-jobright", jd_text=_JD), platform="jobright",
-            url=url, company="Quora",
-            title=("Software Engineer New Grad, Machine Learning Platform "
-                   "- Quora (Remote)"),
-            location="United States",
-        ))
-        second = await store.save_job(replace(
-            make_job("quora-speedy", jd_text=_JD), platform="speedyapply",
-            url=url + "?embed=true&utm_source=Simplify", company="Quora",
-            title="Software Engineer New Grad - Machine Learning Platform",
-            location="Remote in USA Remote in Canada",
-        ))
+        first = await store.save_job(
+            replace(
+                make_job("quora-jobright", jd_text=_JD),
+                platform="jobright",
+                url=url,
+                company="Quora",
+                title=(
+                    "Software Engineer New Grad, Machine Learning Platform "
+                    "- Quora (Remote)"
+                ),
+                location="United States",
+            )
+        )
+        second = await store.save_job(
+            replace(
+                make_job("quora-speedy", jd_text=_JD),
+                platform="speedyapply",
+                url=url + "?embed=true&utm_source=Simplify",
+                company="Quora",
+                title="Software Engineer New Grad - Machine Learning Platform",
+                location="Remote in USA Remote in Canada",
+            )
+        )
         assert await _parent(lifecycle, first.job_id) == await _parent(
             lifecycle, second.job_id
         )
         async with lifecycle.connection() as connection:
-            assert (await (await connection.execute(
-                "SELECT COUNT(*) FROM jobs"
-            )).fetchone())[0] == EXPECTED_EXACT_BACKFILL_SOURCES
-            assert (await (await connection.execute(
-                "SELECT COUNT(*) FROM real_job_review_cases"
-            )).fetchone())[0] == 0
+            assert (
+                await (await connection.execute("SELECT COUNT(*) FROM jobs")).fetchone()
+            )[0] == EXPECTED_EXACT_BACKFILL_SOURCES
+            assert (
+                await (
+                    await connection.execute(
+                        "SELECT COUNT(*) FROM real_job_review_cases"
+                    )
+                ).fetchone()
+            )[0] == 0
     finally:
         await lifecycle.close()

@@ -13,6 +13,7 @@ import click
 
 from jobfeed.cli import AppContext, require_app, run_with_store
 from jobfeed.domain.models import ApplicationRecord
+from jobfeed.ports.store_canonical import CanonicalWorkflowStore
 from jobfeed.services.application import (
     ApplicationService,
     ApplicationStore,
@@ -107,7 +108,7 @@ async def _run_apply(app: AppContext, opts: dict[str, object]) -> None:
         cover_letter = _read_file(cover_letter_path) if cover_letter_path else None
         svc = _build_application_svc(app)
         resolver = (
-            app["store"].resolve_real_job_id
+            cast(CanonicalWorkflowStore, app["store"]).resolve_real_job_id
             if hasattr(type(app["store"]), "resolve_real_job_id")
             else None
         )

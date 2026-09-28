@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 from jobfeed.domain.interview import InterviewRound
 from jobfeed.domain.models_status import (
@@ -19,6 +19,7 @@ from jobfeed.domain.status import (
     pick_restore_target,
 )
 from jobfeed.observability import JobfeedLogger
+from jobfeed.ports.store_canonical import CanonicalWorkflowStore
 from jobfeed.ports.store_ext import StoreInterviewMixin
 from jobfeed.ports.store_status import StoreStatusMixin
 
@@ -264,7 +265,7 @@ class WorkflowService:
             Follow-up, interview prep, and going-ghosted lists.
         """
         canonical = (
-            self._store.real_job_workflow_attention
+            cast(CanonicalWorkflowStore, self._store).real_job_workflow_attention
             if hasattr(type(self._store), "real_job_workflow_attention")
             else None
         )
@@ -292,7 +293,7 @@ class WorkflowService:
             Counts of ghosted and archived jobs.
         """
         canonical = (
-            self._store.auto_decay_real_jobs
+            cast(CanonicalWorkflowStore, self._store).auto_decay_real_jobs
             if hasattr(type(self._store), "auto_decay_real_jobs")
             else None
         )

@@ -29,7 +29,14 @@ class GapDetail(BaseModel):
     @field_validator("mitigation", mode="before")
     @classmethod
     def empty_missing_mitigation(cls, value: object) -> object:
-        """Render absent historical mitigation text as an empty field."""
+        """Render absent historical mitigation text as an empty field.
+
+        Args:
+            value: Historical mitigation value before schema validation.
+
+        Returns:
+            An empty string for None; otherwise the original value.
+        """
         return "" if value is None else value
 
 

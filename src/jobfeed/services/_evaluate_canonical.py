@@ -8,9 +8,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
-from jobfeed.config import Settings
 from jobfeed.domain.errors import ScoringParseError
 from jobfeed.domain.filtering import apply_hard_filters
 from jobfeed.domain.models import (
@@ -21,9 +20,9 @@ from jobfeed.domain.models import (
 )
 from jobfeed.domain.real_job_evaluation import RealJobEvaluationInput
 from jobfeed.domain.scoring_parse import parse_stage_a_response, parse_stage_b_response
-from jobfeed.personal_ml_learning import PersonalMLLearningService
 from jobfeed.ports.ml_gate import GateInput
 from jobfeed.ports.store import JobStore
+from jobfeed.ports.store_canonical import CanonicalEvaluationStore
 from jobfeed.services._evaluate_claims import STAGE_B_LEASE_HEARTBEAT_SECONDS
 from jobfeed.services._evaluate_gate import gate_mode_for_state, resolve_gate_mode
 from jobfeed.services._evaluate_helpers import UsageRecordContext, record_usage
@@ -31,7 +30,6 @@ from jobfeed.services._evaluate_seniority import apply_seniority_gate
 from jobfeed.services.canonical_priority import CanonicalPriorityInput
 from jobfeed.services.evaluate_types import (
     EvaluateRuntimeConfig,
-    evaluation_runtime_config,
 )
 from jobfeed.services.run_orchestration import RunLeaseSession
 
@@ -68,10 +66,10 @@ class _PolicySnapshot:
     config: EvaluateRuntimeConfig
 
     def stage_a(self) -> dict[str, object]:
-        return json.loads(self.stage_a_json)
+        return cast(dict[str, object], json.loads(self.stage_a_json))
 
     def stage_b(self) -> dict[str, object]:
-        return json.loads(self.stage_b_json)
+        return cast(dict[str, object], json.loads(self.stage_b_json))
 
 
 async def _policy_for_run(
@@ -90,30 +88,7 @@ async def _policy_for_run(
     return _snapshot_for_config(config, mode)
 
 
-async def current_policy_for_settings(
-    settings: Settings, personal_ml: PersonalMLLearningService
-) -> _PolicySnapshot:
-    """Resolve the paid policy currently configured for API score reads.
-
-    Args:
-        settings: Effective GUI or loaded file configuration.
-        personal_ml: Read-only learning lifecycle service.
-
-    Returns:
-        The same explicit policy fields used by a Stage A/B paid run.
-    """
-    config = evaluation_runtime_config(settings)
-    status = await personal_ml.status(
-        quick_pass_threshold=config.stage_a_threshold,
-        enabled=config.ml_gate_enabled,
-    )
-    mode = gate_mode_for_state(config.ml_gate_enabled, status.state)
-    return _snapshot_for_config(config, mode)
-
-
-def _snapshot_for_config(
-    config: EvaluateRuntimeConfig, mode: str
-) -> _PolicySnapshot:
+def _snapshot_for_config(config: EvaluateRuntimeConfig, mode: str) -> _PolicySnapshot:
     """Freeze the explicit model and gate facts for one reader or runner."""
     stage_a = {
         "model": config.llm.stage_a,
@@ -132,15 +107,18 @@ def _snapshot_for_config(
         "seniority_gate_mode": config.seniority_gate_mode,
         "seniority_gate_model_version": (
             config.seniority_gate_model_version
-            if config.seniority_gate_mode != "off" else None
+            if config.seniority_gate_mode != "off"
+            else None
         ),
         "seniority_gate_threshold": (
             config.seniority_gate_threshold
-            if config.seniority_gate_mode != "off" else None
+            if config.seniority_gate_mode != "off"
+            else None
         ),
         "seniority_gate_policy_version": (
             config.seniority_gate_policy_version
-            if config.seniority_gate_mode != "off" else None
+            if config.seniority_gate_mode != "off"
+            else None
         ),
     }
     stage_b = {
@@ -174,7 +152,9 @@ async def _real_id_pages(
         return
     before_id: int | None = None
     while True:
-        page = await store.list_real_job_ids_for_evaluation(
+        page = await cast(
+            CanonicalEvaluationStore, store
+        ).list_real_job_ids_for_evaluation(
             limit=page_size,
             stage=stage,
             threshold=policy.config.stage_a_threshold,
@@ -222,43 +202,74 @@ async def build_canonical_dry_run_preview(  # noqa: PLR0913 - paged preview
     # persistence, while personal-ML shadow mode can differ by that flag.
     policy = await _policy_for_run(service, dry_run=False)
     explicit_ids = (
-        await store.resolve_real_job_ids(source_job_ids)
-        if source_job_ids is not None else None
+        await cast(CanonicalEvaluationStore, store).resolve_real_job_ids(source_job_ids)
+        if source_job_ids is not None
+        else None
     )
     for target_stage in ("a", "b"):
         if stage in {target_stage, "both"}:
             await _preview_stage(
-                service, run, target_stage=target_stage, limit=limit,
-                explicit_ids=explicit_ids, corpus=corpus, max_days=max_days,
+                service,
+                run,
+                target_stage=target_stage,
+                limit=limit,
+                explicit_ids=explicit_ids,
+                corpus=corpus,
+                max_days=max_days,
                 policy=policy,
             )
 
 
 async def _preview_stage(  # noqa: PLR0913 - explicit preview scope
-    service: EvaluateService, run: PipelineRun, *, target_stage: str, limit: int,
-    explicit_ids: list[str] | None, corpus: str, max_days: int | None,
+    service: EvaluateService,
+    run: PipelineRun,
+    *,
+    target_stage: str,
+    limit: int,
+    explicit_ids: list[str] | None,
+    corpus: str,
+    max_days: int | None,
     policy: _PolicySnapshot,
 ) -> None:
     """Page one requested stage and stop after enough preview rows."""
     async for page in _real_id_pages(
-        service, stage=target_stage, explicit_real_ids=explicit_ids, policy=policy,
+        service,
+        stage=target_stage,
+        explicit_real_ids=explicit_ids,
+        policy=policy,
     ):
+        assert run.evaluation_input_total is not None
         run.evaluation_input_total += len(page)
-        inputs = await service._deps.store.load_real_job_priority_inputs(page)
+        inputs = await cast(
+            CanonicalEvaluationStore, service._deps.store
+        ).load_real_job_priority_inputs(page)
         _append_preview_page(
-            service, run, inputs, target_stage=target_stage, limit=limit,
-            corpus=corpus, max_days=max_days, policy=policy,
+            service,
+            run,
+            inputs,
+            target_stage=target_stage,
+            limit=limit,
+            corpus=corpus,
+            max_days=max_days,
+            policy=policy,
         )
-        if sum(
-            item.stage == f"stage_{target_stage}" for item in run.dry_run_preview
-        ) >= limit:
+        if (
+            sum(item.stage == f"stage_{target_stage}" for item in run.dry_run_preview)
+            >= limit
+        ):
             return
 
 
 def _append_preview_page(  # noqa: PLR0913 - preview decision facts
-    service: EvaluateService, run: PipelineRun,
-    inputs: list[CanonicalPriorityInput], *, target_stage: str, limit: int,
-    corpus: str, max_days: int | None, policy: _PolicySnapshot,
+    service: EvaluateService,
+    run: PipelineRun,
+    inputs: list[CanonicalPriorityInput],
+    *,
+    target_stage: str,
+    limit: int,
+    corpus: str,
+    max_days: int | None,
+    policy: _PolicySnapshot,
 ) -> None:
     """Append eligible rows from one bounded page."""
     previewed = sum(
@@ -275,8 +286,7 @@ def _append_preview_page(  # noqa: PLR0913 - preview decision facts
         ):
             if (
                 service._deps.hard_filters is not None
-                and apply_hard_filters(item.job, service._deps.hard_filters)
-                is not None
+                and apply_hard_filters(item.job, service._deps.hard_filters) is not None
             ):
                 run.jobs_filtered += 1
             else:
@@ -305,7 +315,7 @@ def _preview_policy_stale(
     facts = json.loads(item.input_facts_json or "{}")
     key = "stage_a_policy" if stage == "a" else "stage_b_policy"
     requested = policy.stage_a() if stage == "a" else policy.stage_b()
-    return facts.get(key) != requested
+    return bool(facts.get(key) != requested)
 
 
 def _preview_eligible(item: CanonicalPriorityInput, max_days: int | None) -> bool:
@@ -362,28 +372,43 @@ async def run_canonical_evaluation(  # noqa: PLR0913 - claim funnel
     run.ml_gate_processed = 0
     run.jobs_gate_passed = 0
     explicit_ids = (
-        await store.resolve_real_job_ids(source_job_ids)
-        if source_job_ids is not None else None
+        await cast(CanonicalEvaluationStore, store).resolve_real_job_ids(source_job_ids)
+        if source_job_ids is not None
+        else None
     )
     if stage != "b" and limit > 0 and await service._budget.has_budget():
         run.stage_a_total = 0
         service._emit_progress(run)
         stage_a_claims = await _claim_stage_a_candidates(
-            service, run, session, explicit_ids=explicit_ids, corpus=corpus,
-            limit=limit, max_days=max_days, policy=policy,
+            service,
+            run,
+            session,
+            explicit_ids=explicit_ids,
+            corpus=corpus,
+            limit=limit,
+            max_days=max_days,
+            policy=policy,
         )
         run.stage_a_total = len(stage_a_claims)
         service._emit_progress(run)
         try:
             quick_claims = await _prepare_stage_a_claims(
-                service, run, session, stage_a_claims, policy=policy,
+                service,
+                run,
+                session,
+                stage_a_claims,
+                policy=policy,
             )
             run.stage_a_total = len(quick_claims)
             run.stage_a_processed = 0
             run.progress_stage = "stage_a"
             service._emit_progress(run)
             await _score_stage_a_claims(
-                service, run, session, quick_claims, policy=policy,
+                service,
+                run,
+                session,
+                quick_claims,
+                policy=policy,
             )
         except BaseException:
             await _release_stage_a_claims(
@@ -397,21 +422,36 @@ async def run_canonical_evaluation(  # noqa: PLR0913 - claim funnel
         run.stage_b_total = 0
         service._emit_progress(run)
         stage_b_claims = await _claim_stage_b_candidates(
-            service, run, session, explicit_ids=explicit_ids,
-            count_inputs=stage == "b", limit=limit, max_days=max_days,
+            service,
+            run,
+            session,
+            explicit_ids=explicit_ids,
+            count_inputs=stage == "b",
+            limit=limit,
+            max_days=max_days,
             policy=policy,
         )
         run.stage_b_total = len(stage_b_claims)
         service._emit_progress(run)
         await _score_stage_b_claims(
-            service, run, session, stage_b_claims, policy=policy,
+            service,
+            run,
+            session,
+            stage_b_claims,
+            policy=policy,
         )
 
 
 async def _claim_stage_a_candidates(  # noqa: PLR0913 - bounded claim context
-    service: EvaluateService, run: PipelineRun, session: RunLeaseSession,
-    *, explicit_ids: list[str] | None, corpus: str, limit: int,
-    max_days: int | None, policy: _PolicySnapshot,
+    service: EvaluateService,
+    run: PipelineRun,
+    session: RunLeaseSession,
+    *,
+    explicit_ids: list[str] | None,
+    corpus: str,
+    limit: int,
+    max_days: int | None,
+    policy: _PolicySnapshot,
 ) -> list[RealJobEvaluationInput]:
     """Discover and claim the complete bounded Stage A candidate set."""
     store = service._deps.store
@@ -420,21 +460,32 @@ async def _claim_stage_a_candidates(  # noqa: PLR0913 - bounded claim context
         async for page in _real_id_pages(
             service, stage="a", explicit_real_ids=explicit_ids, policy=policy
         ):
+            assert run.evaluation_input_total is not None
             run.evaluation_input_total += len(page)
             if corpus == "failed":
-                inputs = await store.load_real_job_priority_inputs(page)
+                inputs = await cast(
+                    CanonicalEvaluationStore, store
+                ).load_real_job_priority_inputs(page)
                 failed = {
-                    item.real_job_id for item in inputs
+                    item.real_job_id
+                    for item in inputs
                     if item.stage_a_status == "error"
                 }
                 candidates = [real_id for real_id in page if real_id in failed]
             else:
                 candidates = page
             session.ensure_active()
-            claimed.extend(await store.claim_real_job_stage_a_by_ids(
-                candidates, limit=limit - len(claimed), max_days=max_days,
-                stage_a_policy=policy.stage_a(), stage_b_policy=policy.stage_b(),
-            ))
+            claimed.extend(
+                await cast(
+                    CanonicalEvaluationStore, store
+                ).claim_real_job_stage_a_by_ids(
+                    candidates,
+                    limit=limit - len(claimed),
+                    max_days=max_days,
+                    stage_a_policy=policy.stage_a(),
+                    stage_b_policy=policy.stage_b(),
+                )
+            )
             run.stage_a_total = len(claimed)
             service._emit_progress(run)
             if len(claimed) >= limit:
@@ -450,8 +501,12 @@ async def _claim_stage_a_candidates(  # noqa: PLR0913 - bounded claim context
 
 
 async def _score_stage_a_claims(
-    service: EvaluateService, run: PipelineRun, session: RunLeaseSession,
-    claims: list[RealJobEvaluationInput], *, policy: _PolicySnapshot,
+    service: EvaluateService,
+    run: PipelineRun,
+    session: RunLeaseSession,
+    claims: list[RealJobEvaluationInput],
+    *,
+    policy: _PolicySnapshot,
 ) -> None:
     """Score a discovered Stage A set with bounded concurrency."""
     store = service._deps.store
@@ -461,12 +516,15 @@ async def _score_stage_a_claims(
         try:
             async with semaphore:
                 session.ensure_active()
-                async with _maintain_real_job_claim(store, item, stage="a") as active:
+                async with _maintain_real_job_claim(
+                    cast(CanonicalEvaluationStore, store), item, stage="a"
+                ) as active:
                     if active:
                         await _score_a(service, run, session, item, policy=policy)
         except BaseException:
-            await store.release_real_job_stage_a_claim(
-                item.real_job_id, expected_revision=item.input_revision,
+            await cast(CanonicalEvaluationStore, store).release_real_job_stage_a_claim(
+                item.real_job_id,
+                expected_revision=item.input_revision,
                 expected_generation=item.claim_generation,
             )
             raise
@@ -485,8 +543,12 @@ async def _score_stage_a_claims(
 
 
 async def _prepare_stage_a_claims(
-    service: EvaluateService, run: PipelineRun, session: RunLeaseSession,
-    claims: list[RealJobEvaluationInput], *, policy: _PolicySnapshot,
+    service: EvaluateService,
+    run: PipelineRun,
+    session: RunLeaseSession,
+    claims: list[RealJobEvaluationInput],
+    *,
+    policy: _PolicySnapshot,
 ) -> list[RealJobEvaluationInput]:
     """Move one complete candidate set through the pre-LLM stages."""
     store = service._deps.store
@@ -495,7 +557,8 @@ async def _prepare_stage_a_claims(
     for item in claims:
         reason = (
             apply_hard_filters(item.job, service._deps.hard_filters)
-            if service._deps.hard_filters is not None else None
+            if service._deps.hard_filters is not None
+            else None
         )
         if reason is None:
             hard_filter_survivors.append(item)
@@ -511,7 +574,11 @@ async def _prepare_stage_a_claims(
     run.progress_stage = "ml_gate"
     service._emit_progress(run)
     gate_survivors = await _gate_stage_a_claims(
-        service, run, session, hard_filter_survivors, policy=policy,
+        service,
+        run,
+        session,
+        hard_filter_survivors,
+        policy=policy,
     )
 
     run.progress_stage = "seniority_gate"
@@ -525,9 +592,7 @@ async def _prepare_stage_a_claims(
     )
     run.jobs_seniority_filtered += blocked
     survivor_source_ids = {job.id for job in jobs}
-    survivors = [
-        item for item in gate_survivors if item.job.id in survivor_source_ids
-    ]
+    survivors = [item for item in gate_survivors if item.job.id in survivor_source_ids]
     rejected = [
         item for item in gate_survivors if item.job.id not in survivor_source_ids
     ]
@@ -540,8 +605,12 @@ async def _prepare_stage_a_claims(
 
 
 async def _gate_stage_a_claims(
-    service: EvaluateService, run: PipelineRun, session: RunLeaseSession,
-    claims: list[RealJobEvaluationInput], *, policy: _PolicySnapshot,
+    service: EvaluateService,
+    run: PipelineRun,
+    session: RunLeaseSession,
+    claims: list[RealJobEvaluationInput],
+    *,
+    policy: _PolicySnapshot,
 ) -> list[RealJobEvaluationInput]:
     """Run the SDE gate once for the complete post-rule candidate set."""
     store = service._deps.store
@@ -558,7 +627,8 @@ async def _gate_stage_a_claims(
     semaphore = asyncio.Semaphore(max(1, policy.config.llm.max_concurrent))
 
     async def persist(
-        item: RealJobEvaluationInput, result: MLGateResult,
+        item: RealJobEvaluationInput,
+        result: MLGateResult,
     ) -> RealJobEvaluationInput | None:
         if (
             result.result == "fail"
@@ -567,7 +637,7 @@ async def _gate_stage_a_claims(
             result = replace(result, result="pass", fail_reason=None)
         async with semaphore:
             session.ensure_active()
-            saved = await store.save_real_job_ml_gate(
+            saved = await cast(CanonicalEvaluationStore, store).save_real_job_ml_gate(
                 item.real_job_id,
                 result,
                 expected_revision=item.input_revision,
@@ -583,7 +653,7 @@ async def _gate_stage_a_claims(
             and int(item.real_job_id) % 10 != 0
         ):
             run.jobs_ml_gated += 1
-            await store.release_real_job_stage_a_claim(
+            await cast(CanonicalEvaluationStore, store).release_real_job_stage_a_claim(
                 item.real_job_id,
                 expected_revision=item.input_revision,
                 expected_generation=item.claim_generation,
@@ -594,21 +664,27 @@ async def _gate_stage_a_claims(
     predicted: list[RealJobEvaluationInput | None] = []
     for offset in range(0, len(to_predict), _ML_GATE_PROGRESS_BATCH_SIZE):
         session.ensure_active()
-        batch = to_predict[offset:offset + _ML_GATE_PROGRESS_BATCH_SIZE]
-        results = await service._deps.ml_gate.predict_batch([
-            GateInput(
-                job_id=item.real_job_id,
-                title=item.job.title,
-                jd_text=item.job.jd_text or "",
-            )
-            for item in batch
-        ])
+        batch = to_predict[offset : offset + _ML_GATE_PROGRESS_BATCH_SIZE]
+        results = await service._deps.ml_gate.predict_batch(
+            [
+                GateInput(
+                    job_id=item.real_job_id,
+                    title=item.job.title,
+                    jd_text=item.job.jd_text or "",
+                )
+                for item in batch
+            ]
+        )
         if len(results) != len(batch):
             raise ValueError("ML gate returned the wrong number of decisions")
-        predicted.extend(await asyncio.gather(*(
-            persist(item, result)
-            for item, result in zip(batch, results, strict=True)
-        )))
+        predicted.extend(
+            await asyncio.gather(
+                *(
+                    persist(item, result)
+                    for item, result in zip(batch, results, strict=True)
+                )
+            )
+        )
     survivors = already_passed + [item for item in predicted if item is not None]
     run.jobs_gate_passed += len(survivors)
     return survivors
@@ -625,7 +701,7 @@ async def _release_stage_a_claims(
 
     async def release(item: RealJobEvaluationInput) -> None:
         async with semaphore:
-            await store.release_real_job_stage_a_claim(  # type: ignore[attr-defined]
+            await cast(CanonicalEvaluationStore, store).release_real_job_stage_a_claim(
                 item.real_job_id,
                 expected_revision=item.input_revision,
                 expected_generation=item.claim_generation,
@@ -635,9 +711,15 @@ async def _release_stage_a_claims(
 
 
 async def _claim_stage_b_candidates(  # noqa: PLR0913 - bounded claim context
-    service: EvaluateService, run: PipelineRun, session: RunLeaseSession,
-    *, explicit_ids: list[str] | None, count_inputs: bool, limit: int,
-    max_days: int | None, policy: _PolicySnapshot,
+    service: EvaluateService,
+    run: PipelineRun,
+    session: RunLeaseSession,
+    *,
+    explicit_ids: list[str] | None,
+    count_inputs: bool,
+    limit: int,
+    max_days: int | None,
+    policy: _PolicySnapshot,
 ) -> list[RealJobEvaluationInput]:
     """Discover and claim the complete bounded Stage B candidate set."""
     store = service._deps.store
@@ -647,13 +729,21 @@ async def _claim_stage_b_candidates(  # noqa: PLR0913 - bounded claim context
             service, stage="b", explicit_real_ids=explicit_ids, policy=policy
         ):
             if count_inputs:
+                assert run.evaluation_input_total is not None
                 run.evaluation_input_total += len(page)
             session.ensure_active()
-            claimed.extend(await store.claim_real_job_stage_b_by_ids(
-                page, stage_a_threshold=policy.config.stage_a_threshold,
-                limit=limit - len(claimed), max_days=max_days,
-                stage_a_policy=policy.stage_a(), stage_b_policy=policy.stage_b(),
-            ))
+            claimed.extend(
+                await cast(
+                    CanonicalEvaluationStore, store
+                ).claim_real_job_stage_b_by_ids(
+                    page,
+                    stage_a_threshold=policy.config.stage_a_threshold,
+                    limit=limit - len(claimed),
+                    max_days=max_days,
+                    stage_a_policy=policy.stage_a(),
+                    stage_b_policy=policy.stage_b(),
+                )
+            )
             if len(claimed) >= limit:
                 break
         return claimed
@@ -677,7 +767,7 @@ async def _release_stage_b_claims(
 
     async def release(item: RealJobEvaluationInput) -> None:
         async with semaphore:
-            await store.release_real_job_stage_b_claim(  # type: ignore[attr-defined]
+            await cast(CanonicalEvaluationStore, store).release_real_job_stage_b_claim(
                 item.real_job_id,
                 expected_revision=item.input_revision,
                 expected_generation=item.claim_generation,
@@ -687,8 +777,12 @@ async def _release_stage_b_claims(
 
 
 async def _score_stage_b_claims(
-    service: EvaluateService, run: PipelineRun, session: RunLeaseSession,
-    claims: list[RealJobEvaluationInput], *, policy: _PolicySnapshot,
+    service: EvaluateService,
+    run: PipelineRun,
+    session: RunLeaseSession,
+    claims: list[RealJobEvaluationInput],
+    *,
+    policy: _PolicySnapshot,
 ) -> None:
     """Score a discovered Stage B set with bounded concurrency."""
     store = service._deps.store
@@ -698,12 +792,15 @@ async def _score_stage_b_claims(
         try:
             async with semaphore:
                 session.ensure_active()
-                async with _maintain_real_job_stage_b_claim(store, item) as active:
+                async with _maintain_real_job_stage_b_claim(
+                    cast(CanonicalEvaluationStore, store), item
+                ) as active:
                     if active:
                         await _score_b(service, run, session, item, policy=policy)
         except BaseException:
-            await store.release_real_job_stage_b_claim(
-                item.real_job_id, expected_revision=item.input_revision,
+            await cast(CanonicalEvaluationStore, store).release_real_job_stage_b_claim(
+                item.real_job_id,
+                expected_revision=item.input_revision,
                 expected_generation=item.claim_generation,
             )
             raise
@@ -734,9 +831,9 @@ async def _maintain_real_job_claim(
     store: _StageBClaimRefresher, item: RealJobEvaluationInput, *, stage: str
 ) -> AsyncIterator[bool]:
     refresh = (
-        store.refresh_real_job_stage_a_claim
+        cast(CanonicalEvaluationStore, store).refresh_real_job_stage_a_claim
         if stage == "a"
-        else store.refresh_real_job_stage_b_claim
+        else cast(CanonicalEvaluationStore, store).refresh_real_job_stage_b_claim
     )
     if not await refresh(
         item.real_job_id,
@@ -782,7 +879,9 @@ async def _score_a(
     request = LLMRequest(messages=bundle.messages, model=policy.config.llm.stage_a)
     for attempt in range(2):
         session.ensure_active()
-        if not await store.refresh_real_job_stage_a_claim(
+        if not await cast(
+            CanonicalEvaluationStore, store
+        ).refresh_real_job_stage_a_claim(
             real_id,
             expected_revision=revision,
             expected_generation=item.claim_generation,
@@ -790,7 +889,7 @@ async def _score_a(
             return
         ledger_day = await service._budget.reserve()
         if ledger_day is None:
-            await store.release_real_job_stage_a_claim(
+            await cast(CanonicalEvaluationStore, store).release_real_job_stage_a_claim(
                 real_id,
                 expected_revision=revision,
                 expected_generation=item.claim_generation,
@@ -812,7 +911,7 @@ async def _score_a(
                 resume_hash=bundle.resume_hash,
                 cost_usd=response.cost_usd,
             )
-            if await store.save_real_job_stage_a(
+            if await cast(CanonicalEvaluationStore, store).save_real_job_stage_a(
                 real_id,
                 result,
                 expected_revision=revision,
@@ -823,7 +922,7 @@ async def _score_a(
         except ScoringParseError as error:
             if attempt == 0:
                 continue
-            await store.save_real_job_stage_a_error(
+            await cast(CanonicalEvaluationStore, store).save_real_job_stage_a_error(
                 real_id,
                 str(error),
                 expected_revision=revision,
@@ -835,7 +934,7 @@ async def _score_a(
             session.ensure_active()
             if attempt == 0:
                 continue
-            await store.save_real_job_stage_a_error(
+            await cast(CanonicalEvaluationStore, store).save_real_job_stage_a_error(
                 real_id,
                 str(error),
                 expected_revision=revision,
@@ -864,7 +963,9 @@ async def _score_b(
     request = LLMRequest(messages=bundle.messages, model=policy.config.llm.stage_b)
     for attempt in range(2):
         session.ensure_active()
-        if not await store.refresh_real_job_stage_b_claim(
+        if not await cast(
+            CanonicalEvaluationStore, store
+        ).refresh_real_job_stage_b_claim(
             real_id,
             expected_revision=revision,
             expected_generation=item.claim_generation,
@@ -872,7 +973,7 @@ async def _score_b(
             return
         ledger_day = await service._budget.reserve()
         if ledger_day is None:
-            await store.release_real_job_stage_b_claim(
+            await cast(CanonicalEvaluationStore, store).release_real_job_stage_b_claim(
                 real_id,
                 expected_revision=revision,
                 expected_generation=item.claim_generation,
@@ -894,7 +995,7 @@ async def _score_b(
                 resume_hash=bundle.resume_hash,
                 cost_usd=response.cost_usd,
             )
-            if await store.save_real_job_stage_b(
+            if await cast(CanonicalEvaluationStore, store).save_real_job_stage_b(
                 real_id,
                 result,
                 expected_revision=revision,
@@ -907,7 +1008,7 @@ async def _score_b(
         except ScoringParseError as error:
             if attempt == 0:
                 continue
-            await store.save_real_job_stage_b_error(
+            await cast(CanonicalEvaluationStore, store).save_real_job_stage_b_error(
                 real_id,
                 str(error),
                 expected_revision=revision,
@@ -919,7 +1020,7 @@ async def _score_b(
             session.ensure_active()
             if attempt == 0:
                 continue
-            await store.save_real_job_stage_b_error(
+            await cast(CanonicalEvaluationStore, store).save_real_job_stage_b_error(
                 real_id,
                 str(error),
                 expected_revision=revision,
