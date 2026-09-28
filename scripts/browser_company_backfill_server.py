@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data/jobfeed.sqlite"
 AUDIT = ROOT / "artifacts/company-browser-backfill-20260919.sqlite"
 TOKEN = str(uuid4())
+MAX_BATCH_SIZE = 40
 seen = set()
 
 
@@ -28,7 +29,7 @@ class Receiver(BaseHTTPRequestHandler):
             return
         params = parse_qs(request.query)
         rows = json.loads(params.get("rows", ["[]"])[0])
-        if len(rows) > 40:
+        if len(rows) > MAX_BATCH_SIZE:
             self.send_error(400)
             return
         updated = apply(DB, AUDIT, rows)
@@ -40,8 +41,12 @@ class Receiver(BaseHTTPRequestHandler):
                 "ORDER BY posted_at DESC"
             ).fetchall()
         next_ids = [row[0] for row in missing if row[0] not in seen][:20]
-        result = json.dumps({"updated": updated, "remaining": len(missing), "ids": next_ids})
-        body = ("<!doctype html><title>" + result + "</title><pre>" + result + "</pre>").encode()
+        result = json.dumps(
+            {"updated": updated, "remaining": len(missing), "ids": next_ids}
+        )
+        body = (
+            "<!doctype html><title>" + result + "</title><pre>" + result + "</pre>"
+        ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")

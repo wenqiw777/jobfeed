@@ -212,9 +212,7 @@ def main():
             "development": _metrics(
                 aggregated_by_split["development"], document_labels, threshold
             ),
-            "test": _metrics(
-                aggregated_by_split["test"], document_labels, threshold
-            ),
+            "test": _metrics(aggregated_by_split["test"], document_labels, threshold),
         }
 
     report = {

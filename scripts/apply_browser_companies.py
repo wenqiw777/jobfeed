@@ -6,6 +6,8 @@ import sqlite3
 
 from jobfeed.domain.normalize import normalize_company
 
+LINKEDIN_TITLE_PARTS = 3
+
 
 def apply(db, audit, rows):
     connection = sqlite3.connect(db, timeout=30)
@@ -23,7 +25,7 @@ def apply(db, audit, rows):
             if not identifier.isdigit() or row["url"] != expected_url:
                 continue
             parts = row["title"].rsplit(" | ", 2)
-            if len(parts) != 3 or parts[-1] != "LinkedIn":
+            if len(parts) != LINKEDIN_TITLE_PARTS or parts[-1] != "LinkedIn":
                 continue
             company = parts[-2].strip()
             if not company or company.lower() == "unknown":
