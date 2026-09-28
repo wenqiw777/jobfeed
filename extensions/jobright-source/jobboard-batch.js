@@ -287,7 +287,7 @@ var JobboardBatch = (() => {
           }
           const description = typeof detail.description === 'string' ? detail.description : detail.description?.text;
           let employer = detail.employer?.name?.trim() ? detail.employer : row.employer;
-          if (source === 'linkedin' && (!employer?.name?.trim() || row.isRepost!==true)) {
+          if (source === 'linkedin' && !employer?.name?.trim()) {
             const metadata=await metadataFromPosting(row.id);
             employer=employer || metadata?.employer;
             if(metadata?.page_snapshot)row.page_snapshot=metadata.page_snapshot;

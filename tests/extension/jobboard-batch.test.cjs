@@ -42,7 +42,8 @@ test('LinkedIn discovery does not fetch details; gated detail phase only fetches
  assert.deepEqual(discovery.discoveredRows.map(r=>r.id),['1','2']);
  const details=await scan({source:'linkedin',maxJobs:2,maxPages:1,pacingMs:0,discoveredRows:discovery.discoveredRows,skipIds:['1']},request);
  assert.deepEqual(details.jobs.map(j=>j.id),['2']);
- assert.equal(requests.length,3);
+ assert.equal(requests.length,2);
+ assert.equal(requests.filter(url=>url.includes('/jobs/view/')).length,0);
 });
 test('missing company uses signed-in posting title, never the public guest endpoint',async()=>{
  const { Window } = await import('../../web-ui/node_modules/happy-dom/lib/index.js');
@@ -103,7 +104,7 @@ test('LinkedIn fetches descriptions without detail-page navigation',async()=>{
   if(url.includes('voyagerJobsDashJobCards'))return reply({included:[{entityUrn:'urn:li:fsd_jobPosting:123',title:'SWE'},{entityUrn:'urn:li:fsd_jobPosting:456',title:'AI'}]});
   return reply({title:'Engineer',employer:{name:'Example'},description:{text:'Full job description'}});
  });
- assert.equal(result.jobs.length,2);assert.ok(result.jobs.every(x=>x.description==='Full job description'));assert.equal(urls.length,5);assert.equal(urls.filter(x=>x.includes('/jobs/view/')).length,2);
+ assert.equal(result.jobs.length,2);assert.ok(result.jobs.every(x=>x.description==='Full job description'));assert.equal(urls.length,3);assert.equal(urls.filter(x=>x.includes('/jobs/view/')).length,0);
 });
 test('missing body is retained as missing, never inferred from title',async()=>{
  const result=await scan({source:'handshake',query:'SWE',maxJobs:1},async()=>reply({data:{jobSearch:{edges:[{node:{job:{id:'1',title:'SWE'}}}]}}}));assert.equal(result.withDescription,0);
