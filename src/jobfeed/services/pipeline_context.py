@@ -6,10 +6,10 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from jobfeed.adapters.queue.redis_pipeline import RedisPipeline
 from jobfeed.domain.models import JobPosting
+from jobfeed.ports.pipeline import PipelineStep
 
-current_pipeline: ContextVar[RedisPipeline | None] = ContextVar(
+current_pipeline: ContextVar[PipelineStep | None] = ContextVar(
     "scan_pipeline", default=None
 )
 POSTING = TypeAdapter(JobPosting)
@@ -19,6 +19,16 @@ POSTINGS = TypeAdapter(list[JobPosting])
 async def durable_posting(
     name: str, payload: Any, work: Callable[[Any], Awaitable[JobPosting | None]]
 ) -> JobPosting | None:
+    """Run posting work through the current journal when one is active.
+
+    Args:
+        name: Stable operation or source name.
+        payload: JSON-compatible operation input.
+        work: Async operation to execute with saved input.
+
+    Returns:
+        The saved or freshly constructed posting, or None.
+    """
     pipeline = current_pipeline.get()
     if pipeline is None:
         return await work(payload)

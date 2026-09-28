@@ -6,5 +6,12 @@ _BLOCKED_COMPANIES = frozenset(
 
 
 def blocked_linkedin_company(company: str | None) -> bool:
-    """Match whole company names, ignoring case and repeated whitespace."""
+    """Match whole company names, ignoring case and repeated whitespace.
+
+    Args:
+        company: Company name to check.
+
+    Returns:
+        Whether the company is on the configured exclusion list.
+    """
     return " ".join((company or "").casefold().split()) in _BLOCKED_COMPANIES

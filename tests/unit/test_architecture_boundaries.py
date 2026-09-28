@@ -11,6 +11,12 @@ SOURCE_ROOT = PROJECT_ROOT / "src" / "jobfeed"
 DOMAIN_ALLOWED_IMPORTS = {
     "__future__",
     "collections.abc",
+    "collections",
+    "difflib",
+    "html",
+    "unicodedata",
+    "urllib.parse",
+    "zoneinfo",
     "dataclasses",
     "datetime",
     "enum",

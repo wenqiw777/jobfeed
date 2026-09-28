@@ -106,7 +106,17 @@ class RedisPipeline:
     async def start(
         self, run_id: str, *, generation: int, resume_from: str | None = None
     ) -> None:
-        """A replacement may take ownership only after acquiring the DB run lease."""
+        """Acquire a journal after obtaining the database run lease.
+
+        Args:
+            run_id: Identifier of the current scan run.
+            generation: Fencing generation of the acquired lease.
+            resume_from: Previous run whose journal should be resumed.
+
+        Raises:
+            RuntimeError: If the requested resume journal is missing.
+            ResponseError: If Redis rejects stream-group creation.
+        """
         root = (
             await self.client.get(f"{self.namespace}:run:{resume_from}")
             if resume_from
@@ -157,7 +167,20 @@ class RedisPipeline:
         *,
         retry_errors: bool = False,
     ) -> Any:
-        """Persist before work, reuse completed output, ACK only after output exists."""
+        """Persist an operation and acknowledge it only after saving its output.
+
+        Args:
+            name: Stable operation or source name.
+            payload: JSON-compatible operation input.
+            work: Async operation to execute with saved input.
+            retry_errors: Whether prior error results may be retried.
+
+        Returns:
+            Saved or freshly computed output.
+
+        Raises:
+            RuntimeError: If the accepted journal task is missing.
+        """
         async with self._slots:
             key = self.prefix + "step:" + quote(name, safe="")
             status, value = await self._command(
@@ -208,7 +231,12 @@ class RedisPipeline:
             return result
 
     async def save_partial(self, name: str, rows: list[dict[str, Any]]) -> None:
-        """Persist each browser batch before accepting its receipt locally."""
+        """Persist a browser batch before accepting its receipt.
+
+        Args:
+            name: Stable operation or source name.
+            rows: Collected source rows.
+        """
         if rows:
             await self._command(
                 "EVAL",
@@ -221,16 +249,33 @@ class RedisPipeline:
             )
 
     async def load_partial(self, name: str) -> list[dict[str, Any]]:
+        """Load previously persisted browser batches.
+
+        Args:
+            name: Stable operation or source name.
+
+        Returns:
+            Rows from all saved batches, in journal order.
+        """
         chunks = await self._command(
             "LRANGE", self.prefix + "partial:" + quote(name, safe=""), 0, -1
         )
         return [row for chunk in chunks for row in json.loads(chunk)]
 
     async def pending_count(self) -> int:
+        """Count unfinished journal tasks.
+
+        Returns:
+            Number of tasks still awaiting completion.
+        """
         return int(await self.client.xlen(self.prefix + "tasks"))
 
     async def assert_drained(self) -> None:
-        """Call only after all discovery/source coroutines have finished."""
+        """Verify all discovery and source work has finished.
+
+        Raises:
+            RuntimeError: If unfinished tasks remain.
+        """
         pending = await self.pending_count()
         if pending:
             raise RuntimeError(

@@ -10,6 +10,13 @@ def effective_job_date(job: JobPosting, *, now: datetime | None = None) -> datet
 
     Naive timestamps follow the existing UTC convention. This does not mutate
     source timestamps, choose an archive threshold, or reconstruct history.
+
+    Args:
+        job: Posting to inspect.
+        now: Current timestamp used for age or retry calculations.
+
+    Returns:
+        Posting date when valid, otherwise first discovery date.
     """
     reference = _utc(now or datetime.now(UTC))
     if job.posted_at is not None:

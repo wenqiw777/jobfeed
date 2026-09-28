@@ -20,7 +20,14 @@ class ObservedIdentifier:
 
 
 def observed_identifier(url: str) -> ObservedIdentifier | None:
-    """Parse only URLs with a known concrete vendor requisition contract."""
+    """Parse only URLs with a known concrete vendor requisition contract.
+
+    Args:
+        url: Observed application URL.
+
+    Returns:
+        Normalized observed source identifier, or None.
+    """
     identity = external_identity(url)
     if not identity:
         return None
@@ -35,7 +42,14 @@ def observed_identifier(url: str) -> ObservedIdentifier | None:
 
 
 def external_identity(url: str) -> str | None:  # noqa: C901 - explicit vendor URL contracts
-    """Extract an explicit posting ID; unsupported URLs remain unclassified."""
+    """Extract an explicit posting ID; unsupported URLs remain unclassified.
+
+    Args:
+        url: Observed application URL.
+
+    Returns:
+        Explicit vendor identity parsed from the URL, or None.
+    """
     try:
         parsed = urlsplit(url)
         host = (parsed.hostname or "").lower()
