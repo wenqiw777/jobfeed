@@ -210,6 +210,7 @@ class SqliteRealJobViews:
                 (*policy_args, *result_statuses, *shared_args, *hard_args),
             )
         assert result_count is not None
+        decisions: tuple[UserDecision, ...] = ("results", "wait", "applied", "ignored")
         by_status: dict[str, int] = {
             name: (
                 int(result_count["n"])
@@ -217,10 +218,10 @@ class SqliteRealJobViews:
                 else sum(
                     int(row["n"])
                     for row in count_rows
-                    if row["status"] in statuses_for_decision(cast(UserDecision, name))
+                    if row["status"] in statuses_for_decision(name)
                 )
             )
-            for name in ("results", "wait", "applied", "ignored")
+            for name in decisions
         }
         return {
             "jobs": [dict(row) for row in rows],
