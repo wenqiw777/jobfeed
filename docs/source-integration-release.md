@@ -21,8 +21,10 @@ scan activation remain outside this release.
 Verification used an exported committed/staged snapshot, independently of the
 uncommitted work in the development checkout.
 
+- Source setup defers model construction until extraction is needed. The full
+  backend suite also passes with codex removed from PATH, reproducing CI.
 - Source/API tests: 21 passed. Frontend: 169 passed; production build passed.
-- Final backend: 2249 passed, 418 deselected, 34 file-length warnings.
+- Final backend: 2250 passed, 418 deselected, 34 file-length warnings.
 - Ruff lint and format check passed; mypy passed for 328 source files.
 - Partial scan regression: initially only one of two sources was counted at
   finalization; after repair both postings and final counters are preserved.
