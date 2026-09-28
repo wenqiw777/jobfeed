@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
+
+import aiosqlite
 
 from jobfeed.adapters.store._sqlite_capability_support import (
     _fetch_row,
@@ -143,10 +146,44 @@ async def _get_enrichment(
     async with lifecycle.connection() as connection:
         row = await _fetch_row(
             connection,
-            "SELECT jd_text,jd_quality,enriched_at,enrich_source FROM jobs "
-            "WHERE platform=? AND canonical_id=?",
+            "SELECT * FROM jobs WHERE platform=? AND canonical_id=?",
             (platform, canonical_id),
         )
+    return _stored_enrichment(row)
+
+
+async def _get_enrichment_by_identity(
+    lifecycle: SqliteLifecycle, identity: str
+) -> StoredEnrichment | None:
+    if not identity:
+        return None
+    async with lifecycle.connection() as connection:
+        platform, _, canonical_id = identity.partition(":")
+        if platform in {"jobright", "handshake"}:
+            official = await _fetch_row(
+                connection,
+                "SELECT external_identity FROM jobs "
+                "WHERE platform=? AND canonical_id=?",
+                (platform, canonical_id),
+            )
+            if official and official["external_identity"]:
+                identity = official["external_identity"]
+        row = await _fetch_row(
+            connection,
+            "SELECT * FROM jobs WHERE (external_identity=? OR external_identity IN "
+            "(SELECT platform || ':' || canonical_id FROM jobs "
+            "WHERE external_identity=? AND platform IN ('jobright','handshake'))) "
+            "AND closed_at IS NULL "
+            "ORDER BY CASE WHEN jd_quality IN ('good','full') "
+            "AND LENGTH(TRIM(COALESCE(jd_text,'')))>0 THEN 0 ELSE 1 END, "
+            "enrich_retry_after DESC, enriched_at DESC, id LIMIT 1",
+            (identity, identity),
+        )
+    stored = _stored_enrichment(row)
+    return replace(stored, external_identity=identity) if stored else None
+
+
+def _stored_enrichment(row: aiosqlite.Row | None) -> StoredEnrichment | None:
     if row is None:
         return None
     quality = row["jd_quality"]
@@ -155,6 +192,12 @@ async def _get_enrichment(
         quality=QualityBand(quality) if quality else None,
         enriched_at=_datetime_from_text(row["enriched_at"]),
         enrich_source=row["enrich_source"],
+        platform=row["platform"],
+        external_identity=row["external_identity"],
+        enrich_attempted_at=_datetime_from_text(row["enrich_attempted_at"]),
+        enrich_error_code=row["enrich_error_code"],
+        enrich_retry_after=_datetime_from_text(row["enrich_retry_after"]),
+        enrich_error=row["enrich_error"],
     )
 
 

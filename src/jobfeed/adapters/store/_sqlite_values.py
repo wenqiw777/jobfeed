@@ -52,6 +52,7 @@ def _canonical_json(value: object) -> str:
 def _job_from_row(row: aiosqlite.Row) -> JobPosting:
     """Hydrate a job row into the public domain representation."""
     quality = row["jd_quality"]
+    row_keys = row.keys()
     discovered_at = _datetime_from_text(row["discovered_at"])
     if discovered_at is None:
         raise ValueError("stored job discovered_at is NULL")
@@ -71,6 +72,18 @@ def _job_from_row(row: aiosqlite.Row) -> JobPosting:
         enrich_source=row["enrich_source"],
         closed_at=_datetime_from_text(row["closed_at"]),
         enrich_error=row["enrich_error"],
+        external_identity=row["external_identity"]
+        if "external_identity" in row_keys
+        else None,
+        enrich_attempted_at=_datetime_from_text(row["enrich_attempted_at"])
+        if "enrich_attempted_at" in row_keys
+        else None,
+        enrich_error_code=row["enrich_error_code"]
+        if "enrich_error_code" in row_keys
+        else None,
+        enrich_retry_after=_datetime_from_text(row["enrich_retry_after"])
+        if "enrich_retry_after" in row_keys
+        else None,
     )
 
 

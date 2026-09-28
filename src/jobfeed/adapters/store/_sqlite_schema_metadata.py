@@ -115,6 +115,13 @@ def _base_metadata() -> sa.MetaData:
         sa.Column("heartbeat_at", sa.Text()),
         sa.Column("expires_at", sa.Text()),
     )
+    for name in (
+        "external_identity",
+        "enrich_attempted_at",
+        "enrich_error_code",
+        "enrich_retry_after",
+    ):
+        metadata.tables["jobs"].append_column(sa.Column(name, sa.Text()))
     return metadata
 
 

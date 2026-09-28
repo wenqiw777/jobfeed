@@ -47,7 +47,15 @@ class SqliteJobsEvaluations:
     async def get_jobs_by_canonical_ids(
         self, *, platform: str, canonical_ids: list[str]
     ) -> dict[str, JobPosting]:
-        """Bulk native-ID lookup before source detail requests."""
+        """Bulk native-ID lookup before source detail requests.
+
+        Args:
+            platform: Source platform name.
+            canonical_ids: Native identifiers requested within the platform.
+
+        Returns:
+            Stored postings keyed by source-native identifier.
+        """
         return await _sqlite_jobs._get_jobs_by_canonical_ids(
             self._lifecycle, platform=platform, canonical_ids=canonical_ids
         )
