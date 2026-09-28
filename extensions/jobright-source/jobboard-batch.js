@@ -155,16 +155,40 @@ var JobboardBatch = (() => {
     let warning = null, stopReason = null;
     let requestCount = 0, httpStatus = null, retryAfter = null;
     let companyLookupBlocked = false;
-    async function metadataFromPosting(id) {
+    let blockedUntil = 0, metadataQueue = Promise.resolve(), detailProcessed = 0, detailTotal = 0, detailError = null;
+    async function waitForRateLimit() {
+      while (blockedUntil > Date.now()) {
+        if(detailError)throw detailError;
+        await new Promise(resolve=>setTimeout(resolve,blockedUntil-Date.now()));
+      }
+      if(detailError)throw detailError;
+    }
+    function observeRateLimit(response, attempt = 0) {
+      httpStatus=response.status;retryAfter=response.headers?.get?.('Retry-After')??null;
+      const seconds=retryAfter===null?NaN:Number(retryAfter);
+      const delay=Number.isFinite(seconds)?Math.max(0,seconds*1000):Math.max(0,Date.parse(retryAfter)-Date.now());
+      const retryAfterMs=Number.isFinite(delay)?delay:1000*(attempt+1);
+      blockedUntil=Math.max(blockedUntil,Date.now()+retryAfterMs);
+      progress({source,phase:'rate_limited',processed:detailProcessed,total:detailTotal,retryAfterMs:Math.max(0,blockedUntil-Date.now()),elapsedMs:Date.now()-started});
+    }
+    function metadataFromPosting(id) {
+      const pending=metadataQueue.then(()=>loadPostingMetadata(id));
+      metadataQueue=pending.catch(()=>{});
+      return pending;
+    }
+    async function loadPostingMetadata(id) {
       if (companyLookupBlocked) return null;
-      if (pacing || options.observeReposts) await new Promise(resolve => setTimeout(resolve, Math.max(pacing,250)));
       try {
+        if (pacing || options.observeReposts) await new Promise(resolve => setTimeout(resolve, Math.max(pacing,250)));
+        await waitForRateLimit();
+        if(detailError)return null;
         requestCount++;
         const url=`https://www.linkedin.com/jobs/view/${id}/`;
         const response = await request(url, {
           credentials:'include', headers:{Accept:'text/html'}, signal:AbortSignal.timeout(15000),
         });
         if (!response.ok) {
+          if(response.status===429)observeRateLimit(response);
           if ([401,403,429,999].includes(response.status)) companyLookupBlocked = true;
           return null;
         }
@@ -175,8 +199,10 @@ var JobboardBatch = (() => {
         return {employer:name ? {name} : null,...linkedInPostingEvidence(doc,url)};
       } catch { return null; } // Missing company must never discard an already fetched JD.
     }
-    async function get(url, body, asText = false) {
+    async function get(url, body, asText = false, detailRequest = false) {
       for (let attempt = 0; attempt < 3; attempt++) {
+        await waitForRateLimit();
+        if(detailError)throw detailError;
         const signal = AbortSignal.timeout(30000);
         try {
           requestCount++;
@@ -187,6 +213,10 @@ var JobboardBatch = (() => {
           });
           if (!response.ok) {
             httpStatus = response.status; retryAfter = response.headers?.get?.("Retry-After") ?? null;
+            if (detailRequest && response.status === 429) {
+              observeRateLimit(response,attempt);
+              if(attempt<2)continue;
+            }
             throw new Error(`HTTP ${response.status}`);
           }
           if (asText) return await response.text();
@@ -276,13 +306,17 @@ var JobboardBatch = (() => {
           return {source,status:'succeeded',error:null,warning,stopReason,jobs:[],discoveredRows:rows,
             nextOffset:offset+rows.length,total,requestCount,batches:[{offset,returned:rows.length}],elapsedMs:Date.now()-started};
         }
-        let added = 0;
-        for (const row of rows) {
-          if (jobs.length >= maxJobs) break;
-          if (!row.id || seen.has(String(row.id))) continue;
+        let added = 0, cursor = 0;
+        const pending=rows.filter(row=>{
+          if(!row.id||seen.has(String(row.id)))return false;
+          seen.add(String(row.id));return true;
+        }).slice(0,maxJobs-jobs.length);
+        const completed=new Array(pending.length);
+        detailProcessed=jobs.length;detailTotal=jobs.length+pending.length;
+        async function fetchRow(row,index) {
           let detail = row;
           if (source === 'linkedin') {
-            const payload = await get(`https://www.linkedin.com/voyager/api/jobs/jobPostings/${row.id}`);
+            const payload = await get(`https://www.linkedin.com/voyager/api/jobs/jobPostings/${row.id}`,undefined,false,true);
             detail = payload.data || payload;
           }
           const description = typeof detail.description === 'string' ? detail.description : detail.description?.text;
@@ -293,7 +327,7 @@ var JobboardBatch = (() => {
             if(metadata?.page_snapshot)row.page_snapshot=metadata.page_snapshot;
             if(metadata?.isRepost===true)Object.assign(row,metadata);
           }
-          jobs.push({source,id:String(row.id),title:detail.title||row.title,
+          completed[index]={source,id:String(row.id),title:detail.title||row.title,
             isRepost:row.isRepost ?? null,repostEvidence:row.repostEvidence ?? null,repostObservedAt:row.repostObservedAt ?? null,
             url:source==='linkedin'?`https://www.linkedin.com/jobs/view/${row.id}/`:`https://app.joinhandshake.com/jobs/${row.id}`,
             description: typeof description==='string'?description:null,
@@ -303,9 +337,20 @@ var JobboardBatch = (() => {
             employer:employer ?? null,locations:detail.locations ?? detail.formattedLocation ?? null,
             postedAt:detail.applyStart ?? detail.originalListedAt ?? null,
             expiresAt:detail.expirationDate ?? detail.expireAt ?? null,
-            studentScreen:detail.studentScreen ?? null});
-          seen.add(String(row.id)); added++;
+            studentScreen:detail.studentScreen ?? null};
+          added++;
+          detailProcessed=jobs.length+added;
+          progress({source,phase:'details',processed:jobs.length+added,total:jobs.length+pending.length,currentJobId:String(row.id),elapsedMs:Date.now()-started});
         }
+        async function worker() {
+          while(!detailError && cursor<pending.length) {
+            const index=cursor++;
+            try {await fetchRow(pending[index],index);}catch(error){detailError??=error;}
+          }
+        }
+        await Promise.all(Array.from({length:Math.min(source==='linkedin'?2:1,pending.length)},()=>worker()));
+        jobs.push(...completed.filter(Boolean));
+        if(detailError)throw detailError;
         batches.push({offset,returned:rawCount,added,elapsedMs:Date.now()-pageStart});
         progress({source,processed:jobs.length,elapsedMs:Date.now()-started});
         offset += rawCount;
@@ -313,7 +358,7 @@ var JobboardBatch = (() => {
         if (total !== null && offset >= total) break;
       }
     } catch (e) { error = e.message || String(e); }
-    return {source,query,status:error?'failed':'succeeded',error,warning,stopReason,jobs,batches,total,nextOffset:offset,requestCount,httpStatus,retryAfter,
+    return {source,query,status:error?'failed':'succeeded',error,warning,stopReason,jobs,batches,total,nextOffset:offset,requestCount,httpStatus,retryAfter,retryAfterMs:Math.max(0,blockedUntil-Date.now()),
       withDescription:jobs.filter(j=>j.description?.trim()).length,elapsedMs:Date.now()-started,
       observedAt:new Date().toISOString()};
   }

@@ -3,6 +3,8 @@ const pilotHeaders = new Map();
 const pilotTabs = new Set();
 let pilotRunning = false;
 const discoveryRequests = new Map();
+const boardProgressTasks = new Map();
+let linkedInRetryUntil = 0;
 let discoverySequence = 0;
 function resolveDiscovery(message) {
   const pending = discoveryRequests.get(message.request_id);
@@ -41,6 +43,14 @@ chrome.webRequest.onBeforeSendHeaders.addListener(details => {
 }, {urls:['https://www.linkedin.com/voyager/api/*','https://app.joinhandshake.com/hs/graphql']}, ['requestHeaders']);
 chrome.tabs.onRemoved.addListener(id => { pilotHeaders.delete(id); pilotTabs.delete(id); });
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if(message?.type==='jobboard_progress') {
+    const owner=boardProgressTasks.get(message.task_id);
+    if(!owner||!owner.progressEvents||owner.task.cancelled||sender.tab?.id!==owner.tabId||!['details','rate_limited'].includes(message.phase))return false;
+    send({type:'progress',task_id:message.task_id,phase:message.phase,
+      processed:message.processed,total:message.total,current_job_id:message.currentJobId,
+      retry_after_ms:message.retryAfterMs});
+    return false;
+  }
   if (message?.type !== 'pilot_scan') return false;
   if (!sender.url?.startsWith(chrome.runtime.getURL('pilot.html'))) return false;
   if (pilotRunning || (typeof activeTasks !== 'undefined' && activeTasks.size)) {
@@ -91,6 +101,9 @@ async function runBoardPilot(message) {
 // Retry only transient LinkedIn main-frame loss, without advancing the cursor.
 async function runBoardBatch(tabId, options, task, taskId) {
   for(let attempt=0;attempt<3&&!task.cancelled;attempt++) {
+    while(options.source==='linkedin'&&linkedInRetryUntil>Date.now()&&!task.cancelled)
+      await wait(Math.min(250,linkedInRetryUntil-Date.now()));
+    if(task.cancelled)return;
     if(attempt) {
       await wait(1000);
       if(task.cancelled)return;
@@ -105,8 +118,17 @@ async function runBoardBatch(tabId, options, task, taskId) {
     try {
       await chrome.scripting.executeScript({target:{tabId},world:'ISOLATED',files:['job-page-snapshot.js','jobboard-batch.js']});
       if(task.cancelled)return;
-      return await chrome.scripting.executeScript({target:{tabId},world:'ISOLATED',args:[options],
-        func:async options=>await JobboardBatch.scan(options)});
+      const results=await chrome.scripting.executeScript({target:{tabId},world:'ISOLATED',args:[{...options,taskId}],
+        func:async options=>await JobboardBatch.scan(options,fetch,update=>{
+          if(!options.progressEvents||!['details','rate_limited'].includes(update.phase))return;
+          void chrome.runtime.sendMessage({...update,type:'jobboard_progress',task_id:options.taskId,
+            processed:(options.progressOffset||0)+update.processed,
+            total:update.total==null?undefined:(options.progressOffset||0)+update.total}).catch(()=>{});
+        })});
+      const retryAfterMs=results?.[0]?.result?.retryAfterMs;
+      if(options.source==='linkedin'&&Number.isFinite(retryAfterMs)&&retryAfterMs>0)
+        linkedInRetryUntil=Math.max(linkedInRetryUntil,Date.now()+retryAfterMs);
+      return results;
     } catch(error) {
       if(task.cancelled)return;
       if(options.source!=='linkedin'||attempt===2||!/^Frame with ID 0 was removed\.?$/.test(error.message||''))throw error;
@@ -143,10 +165,11 @@ async function runBoardScan(command, task) {
     : `https://app.joinhandshake.com/job-search?query=${encodeURIComponent(query)}&per_page=25&sort=relevance&page=1`), active:true});
   task.tabId = tab.id;
   pilotTabs.add(tab.id);
+  boardProgressTasks.set(command.task_id,{tabId:tab.id,task,progressEvents:command.progress_events===true});
   const seen = new Set();
   const cached = new Map((command.cached_jobs || []).map(job=>[String(job.id),job]));
   const maxJobs = positiveInteger(command.max_jobs, 500);
-  let offset = 0, warning = null, duplicatePages = 0;
+  let offset = 0, warning = null, duplicatePages = 0, delivered = 0;
   const onUpdated=(id,change)=>{
     if(id===tab.id&&(change.status||change.url||change.discarded!==undefined))
       console.warn('jobboard_tab_updated',{taskId:command.task_id,tabId:id,offset,status:change.status,navigated:!!change.url,discarded:change.discarded,at:new Date().toISOString()});
@@ -168,7 +191,7 @@ async function runBoardScan(command, task) {
     if (task.cancelled) return;
     while (!task.cancelled && seen.size < maxJobs) {
       const options={source,query,searchUrl:command.search_url,filters:command.filters,sort:command.sort || 'relevance',maxJobs:Math.min(25,maxJobs-seen.size),batchSize:Math.min(25,maxJobs-seen.size),
-          startOffset:offset,maxPages:1,pacingMs:0,headers:pilotHeaders.get(tab.id)};
+          startOffset:offset,maxPages:1,pacingMs:0,progressOffset:delivered,progressEvents:command.progress_events===true,headers:pilotHeaders.get(tab.id)};
       let results;
       let discoveredIds=[];
       if (command.discovery_gate) {
@@ -190,7 +213,7 @@ async function runBoardScan(command, task) {
         if(task.cancelled)return;
         if(!Array.isArray(decision.skip_ids)||!Array.isArray(decision.reused_jobs))throw new Error('Invalid discovery decision');
         const remaining=probe.filter(row=>!decision.skip_ids.includes(String(row.id)));
-        const details=remaining.length?(await runBoardBatch(tab.id,{...options,discoveredRows:remaining},task,command.task_id))?.[0]?.result:{jobs:[]};
+        const details=remaining.length?(await runBoardBatch(tab.id,{...options,progressOffset:delivered+restored.length+decision.reused_jobs.length,discoveredRows:remaining},task,command.task_id))?.[0]?.result:{jobs:[]};
         if(task.cancelled)return;
         if(!details)throw new Error('Details returned no result');
         results=[{result:{...discovery,...details,jobs:[...restored,...decision.reused_jobs,...details.jobs],
@@ -205,6 +228,7 @@ async function runBoardScan(command, task) {
       for(const job of fresh) seen.add(job.id);
       for(const id of discoveredIds) seen.add(id);
       if (fresh.length) {
+        delivered+=fresh.length;
         await waitForSocketCapacity();
         send({type:'batch',task_id:command.task_id,jobs:fresh});
       }
@@ -217,6 +241,7 @@ async function runBoardScan(command, task) {
       await wait(positiveInteger(command.pacing_ms,1000));
     }
   } finally {
+    boardProgressTasks.delete(command.task_id);
     chrome.tabs.onUpdated.removeListener(onUpdated);
     chrome.tabs.onRemoved.removeListener(onRemoved);
     pilotHeaders.delete(tab.id); pilotTabs.delete(tab.id);

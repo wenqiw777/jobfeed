@@ -3,15 +3,79 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 function harness(pages){
- const sent=[],removed=[],calls=[],injections=[],waits=[],logs=[];let observe;
+ const sent=[],removed=[],calls=[],injections=[],waits=[],logs=[],listeners=[];let observe;
  const chrome={webRequest:{onBeforeSendHeaders:{addListener(fn){observe=fn}}},
- runtime:{onMessage:{addListener(){}},getURL:p=>'chrome-extension://test/'+p},
+ runtime:{onMessage:{addListener(fn){listeners.push(fn)}},getURL:p=>'chrome-extension://test/'+p},
  tabs:{onUpdated:{addListener(){},removeListener(){}},onRemoved:{addListener(){},removeListener(){}},async get(){return {url:'https://www.linkedin.com/jobs/search/',status:'complete'}},async create(){setTimeout(()=>observe({tabId:7,requestHeaders:[{name:'x-csrf-token',value:'ephemeral-test'},{name:'csrf-token',value:'ephemeral-test'}]}),0);return {id:7}},async remove(id){removed.push(id)}},
  scripting:{async executeScript(args){if(args.files){injections.push(args);return [];}calls.push(args.args[0]);const page=pages.shift();if(page instanceof Error)throw page;return [{result:page}]}}};
  const context=vm.createContext({chrome,Map,Set,Date,URL,setTimeout,clearTimeout,console:{warn:(...args)=>logs.push(args)},positiveInteger:(n,d)=>n||d,wait:ms=>{waits.push(ms);return new Promise(r=>setTimeout(r,0));},waitForTabComplete:async()=>{},waitForSocketCapacity:async()=>{},send:m=>sent.push(m)});
  vm.runInContext(fs.readFileSync('extensions/jobright-source/pilot-worker.js','utf8'),context);
- return {context,sent,removed,calls,injections,waits,logs};
+ return {context,sent,removed,calls,injections,waits,logs,listeners};
 }
+test('detail progress is forwarded only for its active task and owned tab',async()=>{
+ const h=harness([{jobs:[{id:'1'}],nextOffset:1,total:1}]);
+ const execute=h.context.chrome.scripting.executeScript;
+ h.context.chrome.scripting.executeScript=async args=>{
+  if(!args.files){
+   const m={type:'jobboard_progress',task_id:'t',phase:'details',processed:1,total:1,currentJobId:'1'};
+   for(const fn of h.listeners){fn({...m,task_id:'other'},{tab:{id:7}},()=>{});fn(m,{tab:{id:8}},()=>{});fn(m,{tab:{id:7}},()=>{});}
+  }
+  return execute(args);
+ };
+ await h.context.runBoardScan({source:'linkedin',query:'SWE',task_id:'t',max_jobs:1,progress_events:true},{cancelled:false});
+ const progress=h.sent.filter(m=>m.type==='progress');
+ assert.equal(progress.length,1);assert.equal(progress[0].current_job_id,'1');assert.equal(progress[0].processed,1);
+ for(const fn of h.listeners)fn({type:'jobboard_progress',task_id:'t',phase:'details',processed:2},{tab:{id:7}},()=>{});
+ assert.equal(h.sent.filter(m=>m.type==='progress').length,1);
+});
+test('old backend commands never receive unsolicited progress',async()=>{
+ const h=harness([{jobs:[{id:'1'}],nextOffset:1,total:1}]);
+ const execute=h.context.chrome.scripting.executeScript;
+ h.context.chrome.scripting.executeScript=async args=>{
+  if(!args.files){
+   assert.equal(args.args[0].progressEvents,false);
+   for(const fn of h.listeners)fn({type:'jobboard_progress',task_id:'t',phase:'details',processed:1,total:1},{tab:{id:7}},()=>{});
+  }
+  return execute(args);
+ };
+ await h.context.runBoardScan({source:'linkedin',query:'SWE',task_id:'t',max_jobs:1},{cancelled:false});
+ assert.equal(h.sent.filter(m=>m.type==='progress').length,0);
+ assert.equal(h.sent.at(-1).type,'complete');
+});
+test('long cross-batch backoff notices cancellation within one short wait',async()=>{
+ const h=harness([{jobs:[{id:'1'}],nextOffset:1,total:2,retryAfterMs:300000}]);
+ const task={cancelled:false};const wait=h.context.wait;
+ let backoffWait;
+ h.context.wait=async ms=>{
+  if(h.calls.length===1&&ms>1){backoffWait=ms;task.cancelled=true;}
+  await wait(ms);
+ };
+ await h.context.runBoardScan({source:'linkedin',query:'SWE',task_id:'t',max_jobs:2,pacing_ms:1},task);
+ assert.ok(backoffWait<=250);
+ assert.equal(h.calls.length,1);
+ assert.ok(!h.sent.some(m=>m.type==='complete'));
+});
+test('LinkedIn Retry-After survives page and task boundaries without delaying Handshake',async()=>{
+ const h=harness([{jobs:[{id:'1'}],nextOffset:1,total:2,retryAfterMs:100},
+  {jobs:[{id:'2'}],nextOffset:2,total:2,retryAfterMs:100},
+  {jobs:[{id:'h'}],nextOffset:1,total:1},
+  {jobs:[{id:'3'}],nextOffset:1,total:1}]);
+ await h.context.runBoardScan({source:'linkedin',query:'SWE',task_id:'one',max_jobs:2},{cancelled:false});
+ assert.ok(h.waits.some(ms=>ms>50&&ms<=100));
+ const before=h.waits.length;
+ await h.context.runBoardScan({source:'handshake',query:'SWE',task_id:'h',max_jobs:1},{cancelled:false});
+ assert.ok(!h.waits.slice(before).some(ms=>ms>50&&ms<=100));
+ const next=h.waits.length;
+ await h.context.runBoardScan({source:'linkedin',query:'SWE',task_id:'two',max_jobs:1},{cancelled:false});
+ assert.ok(h.waits.slice(next).some(ms=>ms>50&&ms<=100));
+});
+test('cancellation during cross-batch Retry-After does not inject a new request',async()=>{
+ const h=harness([{jobs:[{id:'1'}],nextOffset:1,total:2,retryAfterMs:100},{jobs:[{id:'2'}],nextOffset:2,total:2}]);
+ const task={cancelled:false};const wait=h.context.wait;
+ h.context.wait=async ms=>{if(ms>50&&ms<=100)task.cancelled=true;await wait(ms);};
+ await h.context.runBoardScan({source:'linkedin',query:'SWE',task_id:'t',max_jobs:2},task);
+ assert.equal(h.calls.length,1);assert.ok(!h.sent.some(m=>m.type==='complete'));
+});
 test('uncertain discovery stops with warning and never requests details',async()=>{
  const h=harness([{discoveredRows:[],jobs:[],warning:'Unconfirmed empty page',nextOffset:25,batches:[{returned:0}]}]);
  await h.context.runBoardScan({source:'linkedin',query:'SWE',task_id:'t',discovery_gate:true},{cancelled:false});
