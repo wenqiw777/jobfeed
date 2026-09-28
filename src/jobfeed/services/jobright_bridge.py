@@ -17,6 +17,7 @@ ProgressCallback = Callable[[SourceFetchProgress], None]
 DiscoveryCallback = Callable[[list[dict[str, Any]]], Awaitable[dict[str, Any]]]
 _DISCOVERY_PAGE_LIMIT = 25
 _NATIVE_ID_LIMIT = 256
+_MAX_RETRY_MS = 86_400_000
 
 
 class JobrightBridgeError(RuntimeError):
@@ -274,6 +275,7 @@ class JobrightBridge:
                 **({"search_url": search_url} if search_url else {}),
                 **({"targets": targets} if targets is not None else {}),
                 "task_id": task_id,
+                "progress_events": True,
                 **(
                     {"discovery_gate": True, "cached_jobs": cached_jobs or []}
                     if on_discovery is not None
@@ -323,6 +325,10 @@ class JobrightBridge:
             JobrightBridgeError: If the task or message type is unknown.
         """
         task_id = message.get("task_id")
+        if message.get("type") == "progress" and (
+            not isinstance(task_id, str) or task_id not in self._pending
+        ):
+            return  # Late/invalid observations must not disconnect other lanes.
         if isinstance(task_id, str) and task_id in self._retired_tasks:
             return  # A batch/completion can already be in flight when cancelled.
         if not isinstance(task_id, str) or task_id not in self._pending:
@@ -331,6 +337,9 @@ class JobrightBridge:
         if pending.future.done():
             return
         message_type = message.get("type")
+        if message_type == "progress":
+            self._receive_progress(pending, message)
+            return
         if message_type == "discovery":
             await self._receive_discovery(task_id, pending, message)
             return
@@ -340,24 +349,66 @@ class JobrightBridge:
             await self._notify_batch(task_id, pending, before)
             return
         if message_type == "complete":
-            if isinstance(message.get("warning"), str) and message["warning"]:
-                pending.future.set_exception(
-                    JobrightBridgeError(
-                        str(message["warning"]), list(pending.jobs), warning=True
-                    )
-                )
-            else:
-                pending.future.set_result(list(pending.jobs))
+            self._receive_complete(pending, message.get("warning"))
             return
         if message_type == "error":
             detail = message.get("error")
             text = detail if isinstance(detail, str) else "Jobright extension failed"
-            if not pending.future.done():
-                pending.future.set_exception(
-                    JobrightBridgeError(text, list(pending.jobs))
-                )
+            pending.future.set_exception(JobrightBridgeError(text, list(pending.jobs)))
             return
         raise JobrightBridgeError(f"unknown Jobright bridge message: {message_type!r}")
+
+    @staticmethod
+    def _receive_complete(pending: _PendingScan, warning: object) -> None:
+        if isinstance(warning, str) and warning:
+            pending.future.set_exception(
+                JobrightBridgeError(warning, list(pending.jobs), warning=True)
+            )
+        else:
+            pending.future.set_result(list(pending.jobs))
+
+    @staticmethod
+    def _receive_progress(pending: _PendingScan, message: dict[str, object]) -> None:
+        """Observation messages never mutate results or disconnect other lanes."""
+        phase, processed, total = (
+            message.get("phase"),
+            message.get("processed"),
+            message.get("total"),
+        )
+        job_id, retry_ms = message.get("current_job_id"), message.get("retry_after_ms")
+        if (
+            not isinstance(phase, str)
+            or phase not in {"details", "rate_limited"}
+            or type(processed) is not int
+            or not 0 <= processed <= pending.max_jobs
+            or (
+                total is not None
+                and (
+                    type(total) is not int or not processed <= total <= pending.max_jobs
+                )
+            )
+            or (
+                job_id is not None
+                and (not isinstance(job_id, str) or len(job_id) > _NATIVE_ID_LIMIT)
+            )
+            or (
+                retry_ms is not None
+                and (
+                    not isinstance(retry_ms, int | float)
+                    or isinstance(retry_ms, bool)
+                    or not 0 <= retry_ms <= _MAX_RETRY_MS
+                )
+            )
+        ):
+            return
+        pending.on_progress(
+            SourceFetchProgress(
+                phase=str(phase),
+                processed=processed,
+                total=total,
+                current_job_id=job_id,
+            )
+        )
 
     async def _receive_discovery(
         self, task_id: str, pending: _PendingScan, message: dict[str, object]

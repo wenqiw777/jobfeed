@@ -36,6 +36,7 @@ async def _load_pending_stage_a(
     """Load the non-claiming Stage A corpus with stable ordering."""
     _validate_limit(limit)
     conditions = [
+        "jobs.is_repost IS NOT 1",
         _corpus_condition(corpus),
         "jobs.closed_at IS NULL",
         "COALESCE(jobs.hard_filter,'')=''",
@@ -69,15 +70,18 @@ async def _load_pending_stage_b(
     limit: int,
     max_days: int | None,
     stage_a_threshold: int | None,
+    require_stage_a: bool = True,
 ) -> list[JobPosting]:
     """Load non-claiming Stage B null/error rows under the retry cap."""
     _validate_limit(limit)
     conditions = [
-        "evaluations.stage_a_status='completed'",
+        "jobs.is_repost IS NOT 1",
         "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status='error')",
         "(evaluations.stage_b_status IS NULL OR evaluations.stage_b_status<>'error' "
         f"OR evaluations.stage_b_error_count<{MAX_STAGE_RETRIES})",
     ]
+    if require_stage_a:
+        conditions.append("evaluations.stage_a_status='completed'")
     params: list[object] = []
     if max_days is not None:
         conditions.append("jobs.discovered_at>=?")
@@ -88,7 +92,7 @@ async def _load_pending_stage_b(
     params.append(limit)
     return await _job_query(
         lifecycle,
-        "SELECT jobs.* FROM jobs JOIN evaluations ON evaluations.job_id=jobs.id "
+        "SELECT jobs.* FROM jobs LEFT JOIN evaluations ON evaluations.job_id=jobs.id "
         "WHERE "
         + " AND ".join(conditions)
         + " ORDER BY jobs.discovered_at DESC, jobs.id DESC LIMIT ?",

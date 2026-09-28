@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import json
+from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+import aiosqlite
+
+from jobfeed.adapters.store._sqlite_real_job_evaluation import (
+    SqliteRealJobEvaluation,
+    sync_sqlite_real_job_input,
+)
+from jobfeed.adapters.store._sqlite_real_job_identity import resolve_sqlite_real_job
+from jobfeed.adapters.store._sqlite_real_job_views import SqliteRealJobViews
+from jobfeed.adapters.store._sqlite_real_job_workflow import SqliteRealJobWorkflow
 from jobfeed.adapters.store._sqlite_runs import _get_pipeline_run
+from jobfeed.adapters.store._sqlite_values import _job_from_row, _utc_text
 from jobfeed.adapters.store.sqlite_claims_runs import SqliteClaimsRuns
 from jobfeed.adapters.store.sqlite_jobs_evaluations import SqliteJobsEvaluations
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
@@ -18,12 +30,70 @@ from jobfeed.adapters.store.sqlite_status_applications import (
 from jobfeed.adapters.store.sqlite_views_performance import (
     SqliteViewsPerformance,
 )
-from jobfeed.domain.models import PipelineRun
+from jobfeed.domain.errors import CanonicalEvaluationNotReadyError
+from jobfeed.domain.models import JobPosting, PipelineRun
+from jobfeed.domain.real_job_evaluation import (
+    EVALUATION_ACTIVATION_KEY,
+    official_closed_at,
+    policy_visibility,
+    representative_source_id,
+)
+from jobfeed.services.canonical_priority import (
+    CanonicalPriorityInput,
+    priority_input_for_sources,
+)
 
 Clock = Callable[[], datetime]
+MAX_REAL_JOB_BACKFILL_PAGE = 1000
+
+
+async def _refresh_backfilled_real_job_display(
+    connection: aiosqlite.Connection, source_ids: list[int]
+) -> None:
+    """Project representative and official closure for one bounded source page."""
+    for start in range(0, len(source_ids), 900):
+        page = source_ids[start : start + 900]
+        placeholders = ",".join("?" for _ in page)
+        cursor = await connection.execute(
+            f"SELECT DISTINCT real_job_id FROM jobs WHERE id IN ({placeholders})",
+            page,
+        )
+        parents = [int(row[0]) for row in await cursor.fetchall()]
+        await cursor.close()
+        if not parents:
+            continue
+        placeholders = ",".join("?" for _ in parents)
+        cursor = await connection.execute(
+            f"SELECT * FROM jobs WHERE real_job_id IN ({placeholders}) "
+            "ORDER BY real_job_id,id",
+            parents,
+        )
+        grouped: dict[int, list[JobPosting]] = defaultdict(list)
+        for row in await cursor.fetchall():
+            grouped[int(row["real_job_id"])].append(_job_from_row(row))
+        await cursor.close()
+        await connection.executemany(
+            "UPDATE real_jobs SET representative_job_id=?,official_closed_at=? "
+            "WHERE id=?",
+            [
+                (
+                    representative_source_id(str(parent_id), jobs),
+                    (
+                        _utc_text(closure)
+                        if (closure := official_closed_at(jobs))
+                        else None
+                    ),
+                    parent_id,
+                )
+                for parent_id, jobs in grouped.items()
+            ],
+        )
 
 
 class SQLiteStore(
+    SqliteRealJobEvaluation,
+    SqliteRealJobWorkflow,
+    SqliteRealJobViews,
     SqliteJobsEvaluations,
     SqliteClaimsRuns,
     SqliteStatusApplications,
@@ -52,6 +122,311 @@ class SQLiteStore(
         """Close the shared SQLite lifecycle idempotently."""
         await self._lifecycle.close()
 
+    async def backfill_real_job_identifiers(
+        self, *, after_id: int = 0, limit: int = 100
+    ) -> tuple[int, int]:
+        """Explicitly reconcile one bounded source page on a migrated DB copy."""
+        if limit < 1 or limit > MAX_REAL_JOB_BACKFILL_PAGE:
+            raise ValueError("limit must be between 1 and 1000")
+        async with self._lifecycle.connection() as connection:
+            connection.row_factory = aiosqlite.Row
+            await connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await connection.execute(
+                    "SELECT * FROM jobs WHERE id>? AND real_job_id IS NOT NULL "
+                    "ORDER BY id LIMIT ?",
+                    (after_id, limit),
+                )
+                rows = await cursor.fetchall()
+                await cursor.close()
+                for row in rows:
+                    merged = await resolve_sqlite_real_job(
+                        connection,
+                        int(row["id"]),
+                        _job_from_row(row),
+                        include_content=False,
+                    )
+                    if merged:
+                        await sync_sqlite_real_job_input(connection, int(row["id"]))
+                await _refresh_backfilled_real_job_display(
+                    connection, [int(row["id"]) for row in rows]
+                )
+                await connection.commit()
+            except BaseException:
+                await connection.rollback()
+                raise
+        return (int(rows[-1]["id"]) if rows else after_id, len(rows))
+
+    async def resolve_real_job_ids(self, source_ids: list[str]) -> list[str]:
+        """Resolve a source scope once and reject orphaned source rows."""
+        if not source_ids:
+            return []
+        ids = [int(value) for value in dict.fromkeys(source_ids)]
+        mapping: dict[int, str] = {}
+        async with self._lifecycle.connection() as connection:
+            for start in range(0, len(ids), 900):
+                page = ids[start : start + 900]
+                placeholders = ",".join("?" for _ in page)
+                cursor = await connection.execute(
+                    f"SELECT id,real_job_id FROM jobs WHERE id IN ({placeholders})",
+                    page,
+                )
+                rows = await cursor.fetchall()
+                await cursor.close()
+                mapping.update(
+                    {int(row[0]): str(row[1]) for row in rows if row[1] is not None}
+                )
+        if len(mapping) != len(ids):
+            raise ValueError("evaluation scope contains a missing real-job parent")
+        return list(dict.fromkeys(mapping[value] for value in ids))
+
+    async def list_real_job_ids_for_evaluation(  # noqa: PLR0913 - bounded policy query
+        self,
+        *,
+        limit: int,
+        stage: str = "both",
+        threshold: int = 0,
+        before_id: int | None = None,
+        stage_a_policy: dict[str, object] | None = None,
+        stage_b_policy: dict[str, object] | None = None,
+    ) -> list[str]:
+        """Bound backlog selection before canonical claim filtering."""
+        if limit <= 0:
+            return []
+        if stage not in {"a", "b", "both"}:
+            raise ValueError("unknown canonical evaluation stage")
+        policy_a = (
+            json.dumps(stage_a_policy, sort_keys=True, separators=(",", ":"))
+            if stage_a_policy is not None
+            else None
+        )
+        policy_b = (
+            json.dumps(stage_b_policy, sort_keys=True, separators=(",", ":"))
+            if stage_b_policy is not None
+            else None
+        )
+        stage_a = (
+            "(e.real_job_id IS NULL OR "
+            "COALESCE(e.stage_a_status,'pending')!='completed' OR "
+            "(? IS NOT NULL AND json_extract(e.input_facts_json,"
+            "'$.stage_a_policy') IS NOT ?))"
+        )
+        stage_b = (
+            "(e.stage_a_status='completed' AND e.stage_a_score>=? "
+            "AND (COALESCE(e.stage_b_status,'pending')!='completed' OR "
+            "(? IS NOT NULL AND json_extract(e.input_facts_json,"
+            "'$.stage_b_policy') IS NOT ?)))"
+        )
+        predicate = {
+            "a": stage_a,
+            "b": stage_b,
+            "both": f"({stage_a} OR {stage_b})",
+        }[stage]
+        a_args = (policy_a, policy_a)
+        b_args = (threshold, policy_b, policy_b)
+        params = (
+            a_args if stage == "a" else b_args if stage == "b" else (*a_args, *b_args)
+        ) + (before_id, before_id, limit)
+        async with self._lifecycle.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT r.id FROM real_jobs r LEFT JOIN real_job_evaluations e "
+                "ON e.real_job_id=r.id WHERE r.identity_review_state='clear' "
+                f"AND {predicate} AND (? IS NULL OR r.id < ?) "
+                "ORDER BY r.id DESC LIMIT ?",
+                params,
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [str(row[0]) for row in rows]
+
+    async def canonical_evaluation_ready(self) -> bool:
+        """Existing v1 databases stay on the source path until explicit migration."""
+        if await self.get_state(EVALUATION_ACTIVATION_KEY) != "enabled":
+            return False
+        async with self._lifecycle.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' "
+                "AND name='real_job_evaluations'"
+            )
+            value = (await cursor.fetchone())[0]
+            await cursor.close()
+            if not value:
+                raise CanonicalEvaluationNotReadyError(
+                    "canonical evaluation activation lacks schema"
+                )
+            for label, sql in (
+                (
+                    "orphan source",
+                    "SELECT 1 FROM jobs WHERE real_job_id IS NULL LIMIT 1",
+                ),
+                (
+                    "workflow backfill",
+                    "SELECT 1 FROM real_jobs r LEFT JOIN real_job_status s "
+                    "ON s.real_job_id=r.id WHERE r.identity_review_state='clear' "
+                    "AND s.real_job_id IS NULL LIMIT 1",
+                ),
+                (
+                    "application backfill",
+                    "SELECT 1 FROM applied a LEFT JOIN real_job_applications ra "
+                    "ON ra.source_applied_job_id=a.job_id WHERE ra.id IS NULL LIMIT 1",
+                ),
+                (
+                    "evaluation backfill",
+                    "SELECT 1 FROM evaluations e JOIN jobs j ON j.id=e.job_id "
+                    "JOIN real_jobs r ON r.id=j.real_job_id "
+                    "LEFT JOIN real_job_evaluations re ON re.real_job_id=j.real_job_id "
+                    "WHERE e.stage_a_status='completed' "
+                    "AND re.real_job_id IS NULL "
+                    "AND r.identity_review_state NOT IN "
+                    "('evaluation_conflict','evaluation_input_conflict',"
+                    "'evaluation_input_missing','requirements_conflict') LIMIT 1",
+                ),
+            ):
+                cursor = await connection.execute(sql)
+                issue = await cursor.fetchone()
+                await cursor.close()
+                if issue is not None:
+                    raise CanonicalEvaluationNotReadyError(
+                        f"canonical evaluation activation has {label}"
+                    )
+        return True
+
+    async def canonical_policy_pending_counts(
+        self,
+        *,
+        stage_a_policy: dict[str, object],
+        stage_b_policy: dict[str, object],
+    ) -> dict[str, int]:
+        """Count completed scores whose model/policy version is unverified."""
+        a = json.dumps(stage_a_policy, sort_keys=True, separators=(",", ":"))
+        b = json.dumps(stage_b_policy, sort_keys=True, separators=(",", ":"))
+        async with self._lifecycle.connection() as connection:
+            cursor = await connection.execute(
+                "WITH p AS (SELECT json(?) AS a,json(?) AS b) "
+                "SELECT "
+                "SUM(CASE WHEN e.stage_a_status='completed' AND "
+                "json_extract(e.input_facts_json,'$.stage_a_policy') IS NOT p.a "
+                "THEN 1 ELSE 0 END),"
+                "SUM(CASE WHEN e.stage_b_status='completed' AND "
+                "json_extract(e.input_facts_json,'$.stage_a_policy') IS p.a "
+                "AND json_extract(e.input_facts_json,'$.stage_b_policy') IS NOT p.b "
+                "THEN 1 ELSE 0 END),"
+                "SUM(CASE WHEN e.stage_a_status='completed' AND "
+                "json_extract(e.input_facts_json,'$.stage_a_policy') IS NULL "
+                "THEN 1 ELSE 0 END),"
+                "SUM(CASE WHEN e.stage_b_status='completed' AND "
+                "json_extract(e.input_facts_json,'$.stage_b_policy') IS NULL "
+                "THEN 1 ELSE 0 END) "
+                "FROM real_job_evaluations e JOIN real_jobs r "
+                "ON r.id=e.real_job_id CROSS JOIN p "
+                "WHERE r.identity_review_state='clear'",
+                (a, b),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return dict(
+            zip(
+                (
+                    "stage_a_pending",
+                    "stage_b_pending",
+                    "legacy_stage_a",
+                    "legacy_stage_b",
+                ),
+                (int(value or 0) for value in row),
+                strict=True,
+            )
+        )
+
+    async def canonical_policy_cutover_ready(
+        self,
+        *,
+        stage_a_policy: dict[str, object],
+        stage_b_policy: dict[str, object],
+    ) -> bool:
+        """Fail closed when completed scores lack the configured policy proof."""
+        counts = await self.canonical_policy_pending_counts(
+            stage_a_policy=stage_a_policy,
+            stage_b_policy=stage_b_policy,
+        )
+        if counts["stage_a_pending"] or counts["stage_b_pending"]:
+            detail = ", ".join(f"{key}={value}" for key, value in counts.items())
+            raise ValueError(f"canonical policy cutover pending: {detail}")
+        return True
+
+    async def load_real_job_priority_inputs(
+        self,
+        real_job_ids: list[str],
+        *,
+        stage_a_policy: dict[str, object] | None = None,
+        stage_b_policy: dict[str, object] | None = None,
+    ) -> list[CanonicalPriorityInput]:
+        """Return one canonical priority input per requested parent."""
+        if not real_job_ids:
+            return []
+        ids = list(dict.fromkeys(int(value) for value in real_job_ids))
+        grouped: dict[int, list[JobPosting]] = {value: [] for value in ids}
+        metadata: dict[int, aiosqlite.Row] = {}
+        async with self._lifecycle.connection() as connection:
+            connection.row_factory = aiosqlite.Row
+            for start in range(0, len(ids), 900):
+                page = ids[start : start + 900]
+                placeholders = ",".join("?" for _ in page)
+                cursor = await connection.execute(
+                    "SELECT j.*,r.representative_job_id,s.status AS real_status,"
+                    "e.stage_a_status AS real_a_status,"
+                    "e.stage_a_score AS real_a_score,e.stage_b_json AS real_b_json,"
+                    "e.stage_b_status AS real_b_status,"
+                    "e.input_facts_json AS real_input_facts_json "
+                    "FROM jobs j JOIN real_jobs r ON r.id=j.real_job_id "
+                    "LEFT JOIN real_job_status s ON s.real_job_id=r.id "
+                    "LEFT JOIN real_job_evaluations e ON e.real_job_id=r.id "
+                    f"WHERE r.id IN ({placeholders}) ORDER BY r.id,j.id",
+                    page,
+                )
+                rows = await cursor.fetchall()
+                await cursor.close()
+                for row in rows:
+                    real_id = int(row["real_job_id"])
+                    grouped[real_id].append(_job_from_row(row))
+                    metadata[real_id] = row
+        output: list[CanonicalPriorityInput] = []
+        for real_id in ids:
+            row = metadata.get(real_id)
+            if row is None:
+                continue
+            stage_b = json.loads(row["real_b_json"]) if row["real_b_json"] else {}
+            fit = stage_b.get("fit_analysis", {}).get("score")
+            a_visible, b_visible, _ = policy_visibility(
+                row["real_input_facts_json"],
+                stage_a_policy=stage_a_policy,
+                stage_b_policy=stage_b_policy,
+            )
+            item = priority_input_for_sources(
+                str(real_id),
+                grouped[real_id],
+                representative_source_id=(
+                    str(row["representative_job_id"])
+                    if row["representative_job_id"] is not None
+                    else None
+                ),
+                status=str(row["real_status"] or "new"),
+                stage_a_score=(
+                    int(row["real_a_score"])
+                    if a_visible
+                    and row["real_a_status"] == "completed"
+                    and row["real_a_score"] is not None
+                    else None
+                ),
+                stage_b_fit_score=int(fit) if b_visible and fit is not None else None,
+                stage_a_status=row["real_a_status"] if a_visible else None,
+                stage_b_status=row["real_b_status"] if b_visible else None,
+                input_facts_json=row["real_input_facts_json"],
+                now=self._now(),
+            )
+            if item is not None:
+                output.append(item)
+        return output
+
     async def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Load one persisted pipeline run by identity.
 
@@ -74,7 +449,11 @@ class SQLiteStore(
         return self._now() if value is None else super()._claim_time(value)
 
     def _application_time(self, value: datetime | None = None) -> datetime:
-        return self._now() if value is None else super()._application_time(value)
+        if value is None:
+            return self._now()
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("SQLite application time must be aware")
+        return value.astimezone(UTC)
 
 
 def _utc_now() -> datetime:

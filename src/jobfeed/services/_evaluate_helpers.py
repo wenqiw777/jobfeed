@@ -106,6 +106,8 @@ async def run_auto_decay(
     deps: EvaluateDependencies,
     config: EvaluateRuntimeConfig,
     logger: JobfeedLogger,
+    *,
+    canonical: bool = False,
 ) -> None:
     """Ghost/archive stale jobs before evaluation; log a non-empty sweep.
 
@@ -114,7 +116,15 @@ async def run_auto_decay(
         config: Runtime config with the decay thresholds.
         logger: Structured logger for the sweep event.
     """
-    decay = await deps.store_status.auto_decay(
+    canonical_sweep = (
+        getattr(deps.store_status, "auto_decay_real_jobs", None) if canonical else None
+    )
+    sweep = (
+        canonical_sweep
+        if canonical_sweep is not None
+        else deps.store_status.auto_decay
+    )
+    decay = await sweep(
         ghost_days=config.ghost_days,
         archive_ignored_days=config.archive_ignored_days,
     )

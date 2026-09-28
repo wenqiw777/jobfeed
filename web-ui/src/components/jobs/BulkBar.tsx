@@ -3,10 +3,11 @@ import Box from "@cloudscape-design/components/box";
 import Container from "@cloudscape-design/components/container";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 
-import { useBulkTransition, type TransitionStatus } from "@/api/queries";
+import { useBulkTransition, useRealJobBulkTransition, type TransitionStatus } from "@/api/queries";
 import { toast } from "@/components/ui/use-toast";
 
 interface BulkBarProps {
+  canonical?: boolean;
   currentDecision: "results" | "wait" | "applied" | "ignored";
   selectedIds: string[];
   /** True total matching the current filters (the API's `total`). */
@@ -35,6 +36,7 @@ const ACTIONS: BulkAction[] = [
 
 /** Appears while rows are checkbox-selected; runs the bulk endpoint. */
 export function BulkBar({
+  canonical = false,
   currentDecision,
   selectedIds,
   total,
@@ -45,7 +47,9 @@ export function BulkBar({
   onClear,
   onBulkResult,
 }: BulkBarProps) {
-  const bulk = useBulkTransition();
+  const sourceBulk = useBulkTransition();
+  const realBulk = useRealJobBulkTransition();
+  const bulk = canonical ? realBulk : sourceBulk;
 
   if (selectedIds.length === 0) {
     return null;

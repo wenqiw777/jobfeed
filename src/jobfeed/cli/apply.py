@@ -79,6 +79,7 @@ def _read_file(path: Path) -> str:
     default=None,
     help="Free-form note stored on the application record.",
 )
+@click.option("--apply-url", default=None, help="Actual submission URL.")
 @click.pass_context
 def apply_cmd(ctx: click.Context, /, **kwargs: object) -> None:
     """Record an application for a job.
@@ -105,10 +106,19 @@ async def _run_apply(app: AppContext, opts: dict[str, object]) -> None:
         tailored = _read_file(tailored_path) if tailored_path else None
         cover_letter = _read_file(cover_letter_path) if cover_letter_path else None
         svc = _build_application_svc(app)
+        resolver = (
+            app["store"].resolve_real_job_id
+            if hasattr(type(app["store"]), "resolve_real_job_id")
+            else None
+        )
+        real_job_id = await resolver(job_id) if resolver is not None else None
         verdict_snap, fit_snap, hooks_snap = await svc.stage_b_snapshots(job_id)
 
         req = ApplyRequest(
             job_id=job_id,
+            real_job_id=real_job_id,
+            source_job_id=job_id if real_job_id is not None else None,
+            apply_url=cast(str | None, opts.get("apply_url")),
             master_resume=master_resume,
             tailored_resume=tailored,
             cover_letter=cover_letter,

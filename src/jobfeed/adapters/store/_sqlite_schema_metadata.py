@@ -17,6 +17,16 @@ SQLITE_SCHEMA_VERSION: Final = 1
 SQLITE_TABLE_NAMES: Final = (
     *(table.name for table in CANONICAL_SCHEMA_MANIFEST_V1.tables),
     "run_leases",
+    "job_priority_snapshot",
+    "real_jobs",
+    "real_job_identifiers",
+    "real_job_review_cases",
+    "real_job_status",
+    "real_job_status_history",
+    "real_job_interview_rounds",
+    "real_job_applications",
+    "real_job_evaluations",
+    "real_job_evaluation_history",
 )
 _UTC_TIMESTAMP_SQL: Final = "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
 
@@ -115,13 +125,215 @@ def _base_metadata() -> sa.MetaData:
         sa.Column("heartbeat_at", sa.Text()),
         sa.Column("expires_at", sa.Text()),
     )
-    for name in (
-        "external_identity",
-        "enrich_attempted_at",
-        "enrich_error_code",
-        "enrich_retry_after",
-    ):
-        metadata.tables["jobs"].append_column(sa.Column(name, sa.Text()))
+    sa.Table(
+        "job_priority_snapshot",
+        metadata,
+        sa.Column("job_id", sa.Integer(), primary_key=True, nullable=False),
+        sa.Column("eligibility_status", sa.Text(), nullable=False),
+        sa.Column("eligibility_reason", sa.Text()),
+        sa.Column("eligibility_evidence", sa.Text()),
+        sa.Column("enrollment_eligibility", sa.Text(), nullable=False),
+        sa.Column("in_scope", sa.Integer(), nullable=False),
+        sa.Column("display_representative", sa.Integer(), nullable=False),
+        sa.Column("blocked_rank", sa.Integer(), nullable=False),
+        sa.Column("queue_tier", sa.Integer(), nullable=False),
+        sa.Column("pending_rank", sa.Integer(), nullable=False),
+        sa.Column("priority_score", sa.REAL(), nullable=False),
+        sa.Column("compensation_annual_midpoint", sa.Integer()),
+        sa.Column("compensation_percentile", sa.REAL()),
+        sa.Column("compensation_score", sa.REAL(), nullable=False),
+        sa.Column("company_strength_score", sa.REAL(), nullable=False),
+        sa.Column("freshness_score", sa.REAL(), nullable=False),
+        sa.Column("new_grad_clarity_score", sa.REAL(), nullable=False),
+        sa.Column("evidence_fit_score", sa.REAL()),
+        sa.Column("role_direction_score", sa.REAL(), nullable=False),
+        sa.Column("posted_sort_at", sa.Text(), nullable=False),
+        sa.Column("discovered_sort_at", sa.Text(), nullable=False),
+        sa.Column("policy_version", sa.Text(), nullable=False),
+        sa.Column("priority_input_updated_at", sa.Text(), nullable=False),
+        sa.Column("input_fingerprint", sa.Text(), nullable=False),
+        sa.Column("computed_at", sa.Text(), nullable=False),
+    )
+    metadata.tables["jobs"].append_column(sa.Column("real_job_id", sa.Integer()))
+    metadata.tables["jobs"].append_column(sa.Column("apply_url", sa.Text()))
+    sa.Table(
+        "real_jobs",
+        metadata,
+        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+        sa.Column("representative_job_id", sa.Integer()),
+        sa.Column("official_closed_at", sa.Text()),
+        sa.Column("first_discovered_at", sa.Text()),
+        sa.Column("canonical_posted_at", sa.Text()),
+        sa.Column(
+            "created_at",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text(_UTC_TIMESTAMP_SQL),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text(_UTC_TIMESTAMP_SQL),
+        ),
+        sa.Column(
+            "identity_review_state",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text("'clear'"),
+        ),
+    )
+    sa.Table(
+        "real_job_identifiers",
+        metadata,
+        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+        sa.Column("real_job_id", sa.Integer(), nullable=False),
+        sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("scope", sa.Text(), nullable=False),
+        sa.Column("native_id", sa.Text(), nullable=False),
+        sa.Column("evidence_job_id", sa.Integer(), nullable=False),
+        sa.Column("observed_url", sa.Text()),
+        sa.Column(
+            "observed_at",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text(_UTC_TIMESTAMP_SQL),
+        ),
+    )
+    sa.Table(
+        "real_job_review_cases",
+        metadata,
+        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+        sa.Column("left_real_job_id", sa.Integer(), nullable=False),
+        sa.Column("right_real_job_id", sa.Integer(), nullable=False),
+        sa.Column("left_job_id", sa.Integer(), nullable=False),
+        sa.Column("right_job_id", sa.Integer(), nullable=False),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text(_UTC_TIMESTAMP_SQL),
+        ),
+    )
+    sa.Table(
+        "real_job_status",
+        metadata,
+        sa.Column("real_job_id", sa.Integer(), primary_key=True),
+        sa.Column("status", sa.Text(), nullable=False, server_default="new"),
+        sa.Column("next_followup_at", sa.Text()),
+        sa.Column("resume_variant", sa.Text()),
+        sa.Column("notes", sa.Text()),
+        sa.Column(
+            "last_status_change_at",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text(_UTC_TIMESTAMP_SQL),
+        ),
+    )
+    sa.Table(
+        "real_job_status_history",
+        metadata,
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("real_job_id", sa.Integer(), nullable=False),
+        sa.Column("source_history_id", sa.Integer(), unique=True),
+        sa.Column("from_status", sa.Text()),
+        sa.Column("to_status", sa.Text(), nullable=False),
+        sa.Column(
+            "changed_at",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text(_UTC_TIMESTAMP_SQL),
+        ),
+        sa.Column("reason", sa.Text()),
+        sa.Column("resume_variant_at_change", sa.Text()),
+    )
+    sa.Table(
+        "real_job_interview_rounds",
+        metadata,
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("real_job_id", sa.Integer(), nullable=False),
+        sa.Column("source_round_id", sa.Integer(), unique=True),
+        sa.Column("round_index", sa.Integer(), nullable=False),
+        sa.Column("label", sa.Text(), nullable=False),
+        sa.Column("scheduled_at", sa.Text()),
+        sa.Column("completed_at", sa.Text()),
+        sa.Column("notes", sa.Text()),
+        sa.Column(
+            "created_at",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text(_UTC_TIMESTAMP_SQL),
+        ),
+        sa.UniqueConstraint("real_job_id", "round_index"),
+    )
+    sa.Table(
+        "real_job_applications",
+        metadata,
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("real_job_id", sa.Integer(), nullable=False),
+        sa.Column("source_job_id", sa.Integer()),
+        sa.Column("source_applied_job_id", sa.Integer(), unique=True),
+        sa.Column("apply_url", sa.Text()),
+        sa.Column("applied_at", sa.Text(), nullable=False),
+        sa.Column("notes", sa.Text()),
+        sa.Column("cover_letter", sa.Text()),
+        sa.Column("application_method", sa.Text()),
+        sa.Column("verdict_snapshot", sa.Text()),
+        sa.Column("fit_snapshot", sa.Text()),
+        sa.Column("hooks_snapshot", sa.Text()),
+    )
+    sa.Table(
+        "real_job_evaluations",
+        metadata,
+        sa.Column("real_job_id", sa.Integer(), primary_key=True),
+        sa.Column("source_job_id", sa.Integer(), nullable=False),
+        sa.Column("input_jd_text", sa.Text(), nullable=False),
+        sa.Column("input_facts_json", sa.Text(), nullable=False),
+        sa.Column("input_revision", sa.Integer(), nullable=False, server_default="1"),
+        sa.Column("claim_generation", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("stage_a_status", sa.Text()),
+        sa.Column("stage_a_error", sa.Text()),
+        sa.Column(
+            "stage_a_error_count", sa.Integer(), nullable=False, server_default="0"
+        ),
+        sa.Column("stage_a_score", sa.Integer()),
+        sa.Column("stage_a_one_line", sa.Text()),
+        sa.Column("stage_a_timing_eligible", sa.Text()),
+        sa.Column("stage_a_model", sa.Text()),
+        sa.Column("stage_a_cost_usd", sa.REAL()),
+        sa.Column("stage_a_at", sa.Text()),
+        sa.Column("stage_b_status", sa.Text()),
+        sa.Column("stage_b_error", sa.Text()),
+        sa.Column(
+            "stage_b_error_count", sa.Integer(), nullable=False, server_default="0"
+        ),
+        sa.Column("stage_b_verdict", sa.Text()),
+        sa.Column("stage_b_json", sa.Text()),
+        sa.Column("stage_b_model", sa.Text()),
+        sa.Column("stage_b_cost_usd", sa.REAL()),
+        sa.Column("stage_b_at", sa.Text()),
+        sa.Column("ml_gate_result", sa.Text()),
+        sa.Column("ml_gate_score", sa.REAL()),
+        sa.Column("ml_gate_json", sa.Text()),
+        sa.Column("updated_at", sa.Text(), nullable=False),
+    )
+    sa.Table(
+        "real_job_evaluation_history",
+        metadata,
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("real_job_id", sa.Integer(), nullable=False),
+        sa.Column("source_job_id", sa.Integer(), nullable=False),
+        sa.Column("input_revision", sa.Integer(), nullable=False),
+        sa.Column("stage_a_status", sa.Text()),
+        sa.Column("stage_a_score", sa.Integer()),
+        sa.Column("stage_b_status", sa.Text()),
+        sa.Column("stage_b_verdict", sa.Text()),
+        sa.Column("stage_b_json", sa.Text()),
+        sa.Column("archived_at", sa.Text(), nullable=False),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column("input_facts_json", sa.Text()),
+    )
     return metadata
 
 
@@ -139,6 +351,62 @@ def _add_relational_constraints(metadata: sa.MetaData) -> None:
                     ondelete=on_delete,
                 )
             )
+    metadata.tables["jobs"].append_constraint(
+        sa.ForeignKeyConstraint(["real_job_id"], ["real_jobs.id"])
+    )
+    metadata.tables["real_job_applications"].append_constraint(
+        sa.ForeignKeyConstraint(["source_job_id"], ["jobs.id"])
+    )
+    metadata.tables["real_job_evaluations"].append_constraint(
+        sa.ForeignKeyConstraint(["source_job_id"], ["jobs.id"])
+    )
+    metadata.tables["real_job_evaluation_history"].append_constraint(
+        sa.ForeignKeyConstraint(["source_job_id"], ["jobs.id"])
+    )
+    metadata.tables["real_job_applications"].append_constraint(
+        sa.ForeignKeyConstraint(["source_applied_job_id"], ["applied.job_id"])
+    )
+    metadata.tables["real_jobs"].append_constraint(
+        sa.UniqueConstraint("representative_job_id")
+    )
+    metadata.tables["real_job_identifiers"].append_constraint(
+        sa.UniqueConstraint("provider", "scope", "native_id")
+    )
+    for table_name, columns in {
+        "real_job_identifiers": ("real_job_id", "evidence_job_id"),
+        "real_job_review_cases": (
+            "left_real_job_id",
+            "right_real_job_id",
+            "left_job_id",
+            "right_job_id",
+        ),
+    }.items():
+        for column in columns:
+            target = "real_jobs" if "real_job" in column else "jobs"
+            metadata.tables[table_name].append_constraint(
+                sa.ForeignKeyConstraint([column], [f"{target}.id"])
+            )
+    for name in (
+        "real_job_status",
+        "real_job_status_history",
+        "real_job_interview_rounds",
+        "real_job_applications",
+        "real_job_evaluations",
+        "real_job_evaluation_history",
+    ):
+        metadata.tables[name].append_constraint(
+            sa.ForeignKeyConstraint(
+                ["real_job_id"],
+                ["real_jobs.id"],
+                ondelete="CASCADE",
+            )
+        )
+    metadata.tables["real_job_status"].append_constraint(
+        sa.ForeignKeyConstraint(
+            ["resume_variant"],
+            ["resume_variants.name"],
+        )
+    )
 
 
 def _checks() -> dict[str, tuple[str, ...]]:
@@ -187,6 +455,16 @@ def _checks() -> dict[str, tuple[str, ...]]:
             "AND expires_at IS NULL) OR (owner_id IS NOT NULL AND run_id IS NOT NULL "
             "AND heartbeat_at IS NOT NULL AND expires_at IS NOT NULL))",
         ),
+        "job_priority_snapshot": (
+            "eligibility_status IN ('pending','apply','blocked')",
+            "enrollment_eligibility IN ('eligible','uncertain','not_applicable')",
+            "in_scope IN (0,1)",
+            "display_representative IN (0,1)",
+            "blocked_rank IN (0,1)",
+            "pending_rank IN (0,1)",
+            "queue_tier >= 0",
+            "priority_score BETWEEN 0 AND 100",
+        ),
     }
 
 
@@ -217,6 +495,40 @@ def _index(
 
 def _add_indexes(metadata: sa.MetaData) -> None:
     tables = metadata.tables
+    _index("idx_real_job_status_status", (tables["real_job_status"].c.status,))
+    _index(
+        "idx_real_job_status_history_job",
+        (
+            tables["real_job_status_history"].c.real_job_id,
+            tables["real_job_status_history"].c.changed_at.desc(),
+        ),
+    )
+    _index(
+        "idx_real_job_interviews_job",
+        (tables["real_job_interview_rounds"].c.real_job_id,),
+    )
+    _index(
+        "idx_real_job_applications_parent",
+        (
+            tables["real_job_applications"].c.real_job_id,
+            tables["real_job_applications"].c.applied_at,
+        ),
+    )
+    _index("idx_jobs_real_job_id", (tables["jobs"].c.real_job_id,))
+    _index(
+        "idx_real_job_identifiers_parent",
+        (tables["real_job_identifiers"].c.real_job_id,),
+    )
+    _index("idx_jobs_external_identity", (tables["jobs"].c.external_identity,))
+    _index(
+        "idx_jobs_personal_ml",
+        (
+            tables["jobs"].c.id,
+            tables["jobs"].c.ml_gate_score,
+            tables["jobs"].c.ml_gate_fail_reason,
+            tables["jobs"].c.role_type,
+        ),
+    )
     _index(
         "idx_jobs_dedup_softkey",
         (tables["jobs"].c.company_norm, tables["jobs"].c.title_norm),
@@ -233,6 +545,15 @@ def _add_indexes(metadata: sa.MetaData) -> None:
     _index(
         "idx_eval_stage_a_score",
         (tables["evaluations"].c.stage_a_score.desc(),),
+        where="stage_a_status = 'completed'",
+    )
+    _index(
+        "idx_eval_personal_ml",
+        (
+            tables["evaluations"].c.stage_a_at,
+            tables["evaluations"].c.job_id,
+            tables["evaluations"].c.stage_a_score,
+        ),
         where="stage_a_status = 'completed'",
     )
     _index(
@@ -300,6 +621,19 @@ def _add_indexes(metadata: sa.MetaData) -> None:
     _index(
         "idx_step_timings_type_created",
         (tables["step_timings"].c.step_type, tables["step_timings"].c.created_at),
+    )
+    _index(
+        "idx_job_priority_snapshot_page",
+        (
+            tables["job_priority_snapshot"].c.in_scope,
+            tables["job_priority_snapshot"].c.display_representative,
+            tables["job_priority_snapshot"].c.blocked_rank,
+            tables["job_priority_snapshot"].c.queue_tier,
+            tables["job_priority_snapshot"].c.pending_rank,
+            tables["job_priority_snapshot"].c.priority_score.desc(),
+            tables["job_priority_snapshot"].c.posted_sort_at.desc(),
+            tables["job_priority_snapshot"].c.job_id.desc(),
+        ),
     )
 
 

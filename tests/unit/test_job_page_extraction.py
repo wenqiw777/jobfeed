@@ -1,10 +1,140 @@
+import copy
 import json
+import subprocess
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
 from jobfeed.domain.models import LLMResponse
 from jobfeed.services.job_page_extraction import JobPageExtractor
+
+
+def real_linkedin_snapshot():
+    root = Path(__file__).resolve().parents[2]
+    script = """(async()=>{const fs=require('node:fs');
+    const {Window}=await import('./web-ui/node_modules/happy-dom/lib/index.js');
+    const capture=require('./extensions/jobright-source/job-page-snapshot.js').capture;
+    const doc=new (new Window().DOMParser)().parseFromString(fs.readFileSync(
+    'tests/extension/fixtures/linkedin-repost-4188979310.html','utf8'),'text/html');
+    console.log(JSON.stringify(capture(doc,'https://www.linkedin.com/jobs/view/4188979310/')));})();"""
+    return json.loads(
+        subprocess.check_output(["node", "-e", script], cwd=root, text=True)
+    )
+
+
+def real_target():
+    return {
+        "id": "4188979310",
+        "title": "Staff Full Stack Engineer (Frontend) - Time Products",
+        "company": "Rippling",
+        "url": "https://www.linkedin.com/jobs/view/4188979310/",
+    }
+
+
+async def test_real_linkedin_header_repost_needs_no_model():
+    c = client(decision())
+    row = {"description": "Existing JD", "page_snapshot": real_linkedin_snapshot()}
+    result = await JobPageExtractor(c, model="mock").enrich_row(
+        row, target=real_target(), need_description=False
+    )
+    assert result["isRepost"] is True
+    assert "Reposted 1 day ago" in result["repostEvidence"]
+    assert result["description"] == "Existing JD"
+    c.complete.assert_not_awaited()
+
+
+async def test_recommendation_repost_does_not_belong_to_target_header():
+    s = real_linkedin_snapshot()
+    s["blocks"][2]["text"] = "New York, NY · 1 day ago"
+    s["blocks"].append(
+        {
+            "id": 8,
+            "text": "Reposted today",
+            "kind": "text",
+            "path": [1, 99],
+            "links": ["https://www.linkedin.com/jobs/view/999/"],
+        }
+    )
+    c = client(decision())
+    result = await JobPageExtractor(c, model="mock").enrich_row(
+        {"description": "Existing JD", "page_snapshot": s},
+        target=real_target(),
+        need_description=False,
+    )
+    assert result.get("isRepost") is not True
+    c.complete.assert_not_awaited()
+
+
+@pytest.mark.parametrize("change", ["company", "redirect", "truncated", "other_job"])
+async def test_uncertain_identity_never_uses_repost_fast_path(change):
+    s, target = real_linkedin_snapshot(), real_target()
+    if change == "company":
+        target["company"] = "Other Company"
+    elif change == "redirect":
+        s["url"] = "https://www.linkedin.com/jobs/view/999/"
+    elif change == "truncated":
+        s["truncated"] = True
+    else:
+        s["blocks"][2]["links"] = ["https://www.linkedin.com/jobs/view/999/"]
+    c = client(
+        {
+            "identity_status": "ambiguous",
+            "status": "unavailable",
+            "identity_block_ids": [],
+            "description_block_ids": [],
+            "repost_block_ids": [],
+        }
+    )
+    result = await JobPageExtractor(c, model="mock").enrich_row(
+        {"description": "Existing JD", "page_snapshot": s},
+        target=target,
+        need_description=False,
+    )
+    assert result.get("isRepost") is not True
+
+
+async def test_scoped_repost_cache_ignores_recommendations_but_not_target_changes():
+    s = real_linkedin_snapshot()
+    s["blocks"][2]["text"] = "This role was reposted recently"
+    state = {}
+    store = AsyncMock()
+    store.get_state.side_effect = state.get
+
+    async def save(key, value):
+        state[key] = value
+
+    store.set_state.side_effect = save
+    c = client(
+        {
+            "identity_status": "matched",
+            "status": "unavailable",
+            "identity_block_ids": [0, 1],
+            "description_block_ids": [],
+            "repost_block_ids": [2],
+        }
+    )
+    e = JobPageExtractor(c, model="mock", store=store)
+    for suffix in ["one", "two"]:
+        changed = copy.deepcopy(s)
+        changed["title"] = "Unrelated notification " + suffix
+        changed["blocks"][-1]["text"] = "Recommendation " + suffix
+        await e.enrich_row(
+            {"description": "JD", "page_snapshot": changed},
+            target=real_target(),
+            need_description=False,
+        )
+    assert c.complete.await_count == 1
+    request = c.complete.call_args.args[0]
+    assert "description_block_ids" not in request.messages[0].content
+    assert "Recommendation" not in request.messages[1].content
+    s["blocks"][2]["text"] = "This role was reposted again recently"
+    await e.enrich_row(
+        {"description": "JD", "page_snapshot": s},
+        target=real_target(),
+        need_description=False,
+    )
+    assert c.complete.await_count == len(["original target", "changed target"])
 
 
 def snapshot():

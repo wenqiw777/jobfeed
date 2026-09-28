@@ -10,8 +10,17 @@ import pytest
 from jobfeed.adapters.store.sqlite_schema import SQLITE_METADATA, ensure_sqlite_schema
 
 _EXPLICIT_INDEXES = {
+    "idx_real_job_status_status",
+    "idx_real_job_status_history_job",
+    "idx_real_job_interviews_job",
+    "idx_real_job_applications_parent",
+    "idx_jobs_real_job_id",
+    "idx_real_job_identifiers_parent",
+    "idx_jobs_external_identity",
     "idx_companies_vendor",
     "idx_eval_stage_a_score",
+    "idx_eval_personal_ml",
+    "idx_jobs_personal_ml",
     "idx_eval_stage_b_completed",
     "idx_eval_stage_b_queue",
     "idx_eval_verdict_job",
@@ -23,6 +32,7 @@ _EXPLICIT_INDEXES = {
     "idx_job_status_history_job",
     "idx_job_status_stale",
     "idx_job_status_status",
+    "idx_job_priority_snapshot_page",
     "idx_jsh_applied_at",
     "idx_llm_usage_run",
     "idx_llm_usage_timestamp",

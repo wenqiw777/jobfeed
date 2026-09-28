@@ -15,6 +15,7 @@ from typing import Literal
 from jobfeed.domain.models import JobPosting, MLGateResult, PipelineRun
 from jobfeed.ports.ml_gate import GateInput, MLGate
 from jobfeed.ports.store_claims import GateCandidate
+from jobfeed.services._evaluate_repost import confirmed_repost, eligible_jobs
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 
 GateMode = Literal["off", "shadow", "filter"]
@@ -52,6 +53,9 @@ async def gate_representatives(  # noqa: PLR0913 - live progress is an optional 
     Returns:
         Surviving job postings (all reps' jobs when the gate is off).
     """
+    representatives = [
+        c for c in representatives if not await confirmed_repost(deps.store, c.job)
+    ]
     already_pass = [c.job for c in representatives if c.ml_gate_result == "pass"]
     to_gate = [c.job for c in representatives if c.ml_gate_result is None]
     run.ml_gate_total = len(representatives)
@@ -130,11 +134,29 @@ async def resolve_gate_mode(
         quick_pass_threshold=config.stage_a_threshold,
         enabled=config.ml_gate_enabled,
     )
-    if status.state == "paused":
+    return gate_mode_for_state(
+        config.ml_gate_enabled, status.state, dry_run=dry_run
+    )
+
+
+def gate_mode_for_state(
+    enabled: bool, state: str, *, dry_run: bool = False
+) -> GateMode:
+    """Map current personal-learning state to the paid-run gate mode.
+
+    Args:
+        enabled: Whether filtering is explicitly enabled.
+        state: Personal-learning lifecycle state.
+        dry_run: Whether the caller must avoid shadow-model work.
+
+    Returns:
+        Effective gate mode used by the evaluation policy.
+    """
+    if state == "paused":
         return "shadow"
-    if config.ml_gate_enabled:
+    if enabled:
         return "filter"
-    if not dry_run and status.state in {"ranking", "shadow", "ready"}:
+    if not dry_run and state in {"ranking", "shadow", "ready"}:
         return "shadow"
     return "off"
 
@@ -154,6 +176,7 @@ async def _score_in_shadow(  # noqa: PLR0913 - persistence uses shared gate cont
         for candidate in representatives
         if candidate.ml_gate_result is None
     ]
+    to_score = await eligible_jobs(deps.store, to_score)
     run.ml_gate_total = len(representatives)
     run.ml_gate_processed = len(representatives) - len(to_score)
     if not to_score:
@@ -210,6 +233,7 @@ async def gate_unrated(  # noqa: PLR0913 - persistence needs the shared concurre
     Returns:
         Job postings that can proceed to Quick evaluation.
     """
+    to_gate = await eligible_jobs(deps.store, to_gate)
     if not to_gate:
         return []
     inputs = [

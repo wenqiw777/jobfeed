@@ -192,3 +192,18 @@ async def test_skip_is_idempotent_and_never_erases_completed_stage_b(
         assert row is not None and row["stage_b_status"] == "completed"
     finally:
         await lifecycle.close()
+
+
+async def test_ineligible_stage_b_is_not_pending_again(tmp_path: Path) -> None:
+    lifecycle, store = await open_sqlite_store(tmp_path / "ineligible.db")
+    try:
+        saved = await store.save_job(make_job("ineligible"))
+        await store.save_stage_a(saved.job_id, stage_a())
+        await store.mark_stage_b_ineligible(saved.job_id)
+
+        row = await _evaluation_row(lifecycle, saved.job_id)
+        assert row is not None and row["stage_b_status"] == "skipped_below_threshold"
+        assert row["stage_b_error"] == "ineligible"
+        assert await store.load_pending_stage_b(stage_a_threshold=0) == []
+    finally:
+        await lifecycle.close()

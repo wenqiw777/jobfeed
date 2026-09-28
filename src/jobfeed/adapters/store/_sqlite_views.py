@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
+from jobfeed.adapters.store._repost_sort import triage_sorts
 from jobfeed.adapters.store._sqlite_capability_support import (
     _fetch_row,
     _fetch_rows,
@@ -16,6 +17,7 @@ from jobfeed.adapters.store._sqlite_capability_support import (
 from jobfeed.adapters.store._sqlite_runs import _pipeline_run_from_row
 from jobfeed.adapters.store._sqlite_values import _job_from_row
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.domain.display_posting import posting_location
 from jobfeed.domain.models import PipelineRun
 from jobfeed.domain.models_views import (
     VALID_TABS,
@@ -68,7 +70,9 @@ _COLUMNS = (
     "j.id, j.platform, j.canonical_id, j.url, j.title, j.company,"
     " j.location, j.discovered_at, NULL AS jd_text, j.jd_quality,"
     " j.posted_at, NULL AS enriched_at, NULL AS enrich_source,"
-    " j.closed_at, NULL AS enrich_error, j.company_norm, j.title_norm,"
+    " j.closed_at, NULL AS enrich_error, j.external_identity,"
+    " j.is_repost, j.repost_evidence, j.repost_observed_at,"
+    " j.company_norm, j.title_norm,"
     " s.status AS status, e.stage_a_score, e.stage_b_verdict,"
     " e.stage_b_status,"
     " CAST(json_extract(e.stage_b_fit_json, '$.score_0_100') AS INTEGER)"
@@ -98,6 +102,16 @@ _SORTS = {
         "j.company_norm IS NULL, j.company_norm ASC, j.discovered_at DESC, j.id DESC"
     ),
 }
+
+_SORTS.update(
+    triage_sorts(
+        job="j",
+        score=(
+            "COALESCE(CAST(json_extract(e.stage_b_fit_json, '$.score_0_100')"
+            " AS INTEGER), e.stage_a_score)"
+        ),
+    )
+)
 
 
 def _utc_now() -> datetime:
@@ -173,10 +187,55 @@ def _jobs_view_rows_query(
     return sql, [*params, query.limit, query.offset]
 
 
+async def _hydrate_view_rows(
+    connection: aiosqlite.Connection,
+    records: list[aiosqlite.Row],
+    *,
+    include_jd_text: bool,
+) -> list[JobsViewRow]:
+    """Fetch fold bodies by selected IDs after the lightweight SQL sort."""
+    result = [_view_row(record) for record in records]
+    if include_jd_text:
+        batch_size = 500
+        for start in range(0, len(result), batch_size):
+            batch = result[start : start + batch_size]
+            ids = [int(row.job.id) for row in batch if row.job.id is not None]
+            bodies = await _fetch_rows(
+                connection,
+                f"SELECT id, jd_text FROM jobs WHERE id IN ({_placeholders(ids)})",
+                ids,
+            )
+            by_id = {str(body["id"]): body["jd_text"] for body in bodies}
+            for row in batch:
+                if row.job.id is not None:
+                    row.job.jd_text = by_id.get(row.job.id)
+    return result
+
+
 class _SqliteViews:
     """Internal mixin implementing the typed views port."""
 
     _lifecycle: SqliteLifecycle
+
+    async def load_display_bodies(self, job_ids: Sequence[str]) -> dict[str, str]:
+        """Load only bodies whose lightweight rows may be display duplicates."""
+        bodies: dict[str, str] = {}
+        async with self._lifecycle.connection() as connection:
+            for start in range(0, len(job_ids), 500):
+                batch = job_ids[start : start + 500]
+                records = await _fetch_rows(
+                    connection,
+                    f"SELECT id,jd_text FROM jobs WHERE id IN ({_placeholders(batch)})",
+                    [int(job_id) for job_id in batch],
+                )
+                bodies.update(
+                    {
+                        str(row["id"]): row["jd_text"]
+                        for row in records
+                        if row["jd_text"]
+                    }
+                )
+        return bodies
 
     async def query_jobs_view(self, query: JobsViewQuery) -> JobsViewPage:
         """Return a stable SQL-windowed jobs view and same-filter tab counts."""
@@ -184,20 +243,26 @@ class _SqliteViews:
         shared, params = _shared_filters(query, now)
         active_where = _where(_TAB_PREDICATES[query.tab], shared)
         shared_where = " AND ".join(shared) if shared else "1"
+        counts_from = _EXACT_VERDICT_FROM if query.require_verdict else _FROM
         rows_sql, rows_params = _jobs_view_rows_query(query, now)
         count_columns = ", ".join(
             f'COALESCE(SUM(CASE WHEN {predicate} THEN 1 ELSE 0 END), 0) AS "{tab}"'
             for tab, predicate in _TAB_PREDICATES.items()
         )
         async with self._lifecycle.connection() as connection:
+            # Keep the narrow sort and subsequent JD hydration on one read snapshot.
+            await connection.execute("BEGIN")
             row_records = await _fetch_rows(
                 connection,
                 rows_sql,
                 rows_params,
             )
+            view_rows = await _hydrate_view_rows(
+                connection, row_records, include_jd_text=query.include_jd_text
+            )
             if not query.include_counts:
                 return JobsViewPage(
-                    rows=[_view_row(row) for row in row_records],
+                    rows=view_rows,
                     total=len(row_records),
                     tab_counts={},
                     total_is_exact=False,
@@ -206,17 +271,17 @@ class _SqliteViews:
             if query.include_total:
                 total_row = await _fetch_row(
                     connection,
-                    f"SELECT COUNT(*) AS n{_FROM} WHERE {active_where}",
+                    f"SELECT COUNT(*) AS n{counts_from} WHERE {active_where}",
                     params,
                 )
             counts = await _fetch_row(
                 connection,
-                f"SELECT {count_columns}{_FROM} WHERE {shared_where}",
+                f"SELECT {count_columns}{counts_from} WHERE {shared_where}",
                 params,
             )
         assert counts is not None
         return JobsViewPage(
-            rows=[_view_row(row) for row in row_records],
+            rows=view_rows,
             total=(int(total_row["n"]) if total_row is not None else len(row_records)),
             tab_counts={tab: int(counts[tab]) for tab in VALID_TABS},
         )
@@ -227,6 +292,7 @@ class _SqliteViews:
         *,
         statuses: Sequence[str],
         limit: int,
+        include_jd_text: bool = True,
     ) -> list[JobsViewRow]:
         """Return bounded exact-pair twin rows in the requested statuses."""
         if not keys or not statuses:
@@ -236,13 +302,27 @@ class _SqliteViews:
         params: list[object] = [value for key in unique_keys for value in key]
         params.extend(statuses)
         params.append(limit)
+        columns = (
+            _COLUMNS.replace("NULL AS jd_text", "j.jd_text")
+            if include_jd_text
+            else _COLUMNS
+        )
         sql = (
             f"WITH twin_keys(company_norm,title_norm) AS (VALUES {key_values})"
-            f" SELECT {_COLUMNS}{_FROM}"
-            " JOIN twin_keys AS tk"
-            " ON tk.company_norm=j.company_norm AND tk.title_norm=j.title_norm"
-            " WHERE 1"
-            " AND j.company_norm <> '' AND j.title_norm <> ''"
+            f" SELECT {columns}{_FROM}"
+            " WHERE EXISTS (SELECT 1 FROM twin_keys AS tk WHERE"
+            " (tk.company_norm='__external_identity__' "
+            "AND tk.title_norm=j.external_identity)"
+            " OR (tk.company_norm='__external_identity__' "
+            "AND j.platform='jobright' "
+            "AND tk.title_norm='jobright:' || j.canonical_id)"
+            " OR (tk.company_norm='__display_title__' AND tk.title_norm=j.title_norm)"
+            " OR (tk.company_norm<>'__external_identity__' "
+            "AND j.external_identity IS NULL"
+            " AND tk.company_norm=j.company_norm AND tk.title_norm=j.title_norm)"
+            ")"
+            " AND (j.external_identity IS NOT NULL "
+            "OR (j.company_norm <> '' AND j.title_norm <> ''))"
             f" AND s.status IN ({_placeholders(statuses)})"
             " ORDER BY j.discovered_at DESC, j.id DESC LIMIT ?"
         )
@@ -255,16 +335,16 @@ class _SqliteViews:
         async with self._lifecycle.connection() as connection:
             records = await _fetch_rows(
                 connection,
-                """SELECT twin.id, twin.platform, twin.url, s.status
+                """SELECT twin.id, twin.platform, twin.url, s.status,
+                          twin.location, source.location AS source_location
                    FROM jobs AS source
                    JOIN jobs AS twin
-                     ON twin.company_norm=source.company_norm
-                    AND twin.title_norm=source.title_norm
+                     ON source.external_identity IS NOT NULL
+                     AND source.external_identity<>''
+                     AND twin.external_identity=source.external_identity
                     AND twin.id<>source.id
                    LEFT JOIN job_status AS s ON s.job_id=twin.id
                    WHERE source.id=?
-                     AND source.company_norm<>''
-                     AND source.title_norm<>''
                    ORDER BY twin.id""",
                 (int(job_id),),
             )
@@ -276,6 +356,9 @@ class _SqliteViews:
                 status=str(row["status"]),
             )
             for row in records
+            if posting_location(row["source_location"])
+            and posting_location(row["location"])
+            == posting_location(row["source_location"])
         ]
 
     async def list_pipeline_runs(
@@ -362,6 +445,44 @@ class _SqliteViews:
         return configured_source_counts(
             (str(row["platform"]), int(row["n"])) for row in records
         )
+
+    async def get_historical_run_verdict_counts(
+        self, run_id: str
+    ) -> dict[str, int] | None:
+        """Count unchanged Stage B rows first completed inside an old run."""
+        async with self._lifecycle.connection() as connection:
+            row = await _fetch_row(
+                connection,
+                """SELECT r.stage_b_scored AS expected,
+                          COUNT(e.job_id) AS actual,
+                          SUM(CASE WHEN e.job_id IS NOT NULL AND (
+                              e.stage_b_status IS NOT 'completed'
+                              OR e.stage_b_verdict IS NULL
+                              OR e.stage_b_verdict NOT IN ('apply','consider','skip')
+                              OR e.updated_at > r.finished_at
+                          ) THEN 1 ELSE 0 END) AS changed,
+                          SUM(CASE WHEN e.stage_b_verdict='apply'
+                              THEN 1 ELSE 0 END) AS apply_count,
+                          SUM(CASE WHEN e.stage_b_verdict='consider'
+                              THEN 1 ELSE 0 END) AS consider_count,
+                          SUM(CASE WHEN e.stage_b_verdict='skip'
+                              THEN 1 ELSE 0 END) AS skip_count
+                   FROM pipeline_runs AS r
+                   LEFT JOIN evaluations AS e
+                     ON e.stage_b_at >= r.started_at
+                    AND e.stage_b_at <= r.finished_at
+                   WHERE r.run_id=? AND r.source='evaluate'
+                     AND r.finished_at IS NOT NULL
+                   GROUP BY r.run_id""",
+                (run_id,),
+            )
+        if row is None or row["actual"] != row["expected"] or row["changed"]:
+            return None
+        return {
+            "apply": int(row["apply_count"]),
+            "consider": int(row["consider_count"]),
+            "skip": int(row["skip_count"]),
+        }
 
     async def list_retryable_run_error_job_ids(self, run_id: str) -> list[str]:
         """Return current retryable scoring errors attributable to one run."""

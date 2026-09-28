@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import aiosqlite
@@ -15,6 +16,7 @@ from jobfeed.adapters.store._sqlite_capability_support import (
 )
 from jobfeed.adapters.store._sqlite_run_lease_support import (
     _LEASE_TTL,
+    _clear_orphaned_stage_a_claims,
     _fail_expired_run,
     _insert_run,
     _is_claimable,
@@ -61,6 +63,8 @@ class _SqliteRunLeases:
                     finished_at=now_text,
                     kind=kind,
                 )
+            if kind == "evaluate":
+                await _clear_orphaned_stage_a_claims(connection, now_text)
             generation = int(lease["generation"]) + 1
             await connection.execute(
                 """UPDATE run_leases SET generation=?, owner_id=?, run_id=?,
@@ -149,7 +153,8 @@ class _SqliteRunLeases:
                        stage_a_scored=?, stage_b_scored=?, jobs_scored=?,
                        total_llm_cost_usd=?, errors=?, last_progress_at=?,
                        failed_stage=?, failed_source=?, restart_count=?,
-                       scan_stats_json=?
+                       scan_stats_json=?, scan_progress_json=?,
+                       verdict_counts_json=?
                    WHERE run_id=? AND status='running'""",
                 (
                     run.jobs_discovered,
@@ -169,6 +174,11 @@ class _SqliteRunLeases:
                     run.scan_source or run.source,
                     run.restart_count,
                     dump_scan_stats(run.scan_stats),
+                    json.dumps(run.scan_progress),
+                    (
+                        json.dumps(run.verdict_counts)
+                        if run.verdict_counts is not None else None
+                    ),
                     run.run_id,
                 ),
             )
@@ -220,11 +230,36 @@ class _SqliteRunLeases:
             await cursor.close()
             if cleared != 1:
                 raise RuntimeError("live run lease changed inside transaction")
+            if kind == "evaluate":
+                await _clear_orphaned_stage_a_claims(connection, now_text)
         return True
 
     async def recover_expired_run_leases(self, *, now: datetime) -> list[RecoveredRun]:
         """Fail matching running runs and clear only expired occupied leases."""
         now_text = _require_utc_timestamp(now)
+        # The usual no-work poll must remain a WAL reader. Recheck every
+        # condition below inside the write transaction before changing state.
+        async with self._lifecycle.connection() as connection:
+            work = await _fetch_rows(
+                connection,
+                """SELECT 1 FROM run_leases
+                   WHERE owner_id IS NOT NULL AND expires_at<=?
+                   UNION ALL
+                   SELECT 1 WHERE EXISTS (
+                       SELECT 1 FROM run_leases
+                       WHERE kind='evaluate' AND owner_id IS NULL
+                   ) AND (
+                       EXISTS (SELECT 1 FROM evaluations
+                               WHERE stage_a_status='in_progress'
+                               AND stage_a_score IS NULL AND stage_a_error IS NULL)
+                       OR EXISTS (SELECT 1 FROM real_job_evaluations
+                                  WHERE stage_a_status='in_progress'
+                                  AND stage_a_score IS NULL AND stage_a_error IS NULL)
+                   ) LIMIT 1""",
+                (now_text,),
+            )
+        if not work:
+            return []
         async with (
             self._lifecycle.connection() as connection,
             _immediate_transaction(connection),
@@ -251,6 +286,9 @@ class _SqliteRunLeases:
                             restart_count=int(row["restart_count"]),
                         )
                     )
+            evaluation_lease = await _lease_row(connection, "evaluate")
+            if evaluation_lease["owner_id"] is None:
+                await _clear_orphaned_stage_a_claims(connection, now_text)
         return recovered
 
     async def link_restarted_run(self, run_id: str, replacement_run_id: str) -> bool:
@@ -273,6 +311,9 @@ class _SqliteRunLeases:
             self._lifecycle.connection() as connection,
             _immediate_transaction(connection),
         ):
+            lease = await _fetch_row(
+                connection, "SELECT kind FROM run_leases WHERE run_id=?", (run_id,)
+            )
             cursor = await connection.execute(
                 """UPDATE pipeline_runs SET status='failed', finished_at=?,
                        failure_code='user_stopped',
@@ -290,6 +331,8 @@ class _SqliteRunLeases:
                    WHERE run_id=?""",
                 (run_id,),
             )
+            if lease is not None and lease["kind"] == "evaluate":
+                await _clear_orphaned_stage_a_claims(connection, now_text)
         return True
 
     async def _after_start_lease_mutation(

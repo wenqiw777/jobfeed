@@ -8,12 +8,13 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 from jobfeed.cli.scan import SOURCE_CHOICES
 from jobfeed.domain.errors import (
+    CanonicalEvaluationNotReadyError,
     ResumeNotConfiguredError,
     RunConflictError,
     SourceConfigError,
@@ -39,8 +40,18 @@ _MAX_LIMIT = 1000
 _MAX_WINDOW_DAYS = 365
 _SSE_HEARTBEAT_SECONDS = 15
 _PERSISTED_PROGRESS_POLL_SECONDS = 3
+_EVALUATION_MAX_DAYS = 30
 
 router = APIRouter()
+
+
+def _evaluation_freshness_days(request: Request) -> int:
+    """Apply the stricter of the Web ceiling and saved posting-age rule."""
+    configured = request.app.state.context["settings"].hard_filters.posted_within_days
+    if configured is None:
+        return _EVALUATION_MAX_DAYS
+    return min(_EVALUATION_MAX_DAYS, configured)
+
 
 _Store = Annotated[JobStore, Depends(get_store)]
 _Manager = Annotated[RunManager, Depends(get_run_manager)]
@@ -83,7 +94,6 @@ class _StopResponse(BaseModel):
 @router.get("/runs")
 async def list_runs(
     store: _Store,
-    run_manager: _Manager,
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
     offset: Annotated[int, Query(ge=0)] = 0,
     days: Annotated[int | None, Query(ge=1, le=_MAX_WINDOW_DAYS)] = None,
@@ -99,7 +109,6 @@ async def list_runs(
     Returns:
         Runs window plus the total count matching ``days``.
     """
-    await run_manager.recover_stale_runs()
     runs, total = await cast(StoreViewsMixin, store).list_pipeline_runs(
         limit=limit, offset=offset, days=days
     )
@@ -120,7 +129,6 @@ async def get_active_runs(
     Returns:
         Active runs keyed under ``runs``.
     """
-    await run_manager.recover_stale_runs()
     active = run_manager.get_active_runs()
     active_ids = {item.run_id for item in active}
     persisted: list[PipelineRun] = []
@@ -172,6 +180,10 @@ async def get_run(run_id: str, store: _Store) -> RunSummary:
     run = await store.get_pipeline_run(run_id)
     if run is None:
         raise ApiError(_HTTP_NOT_FOUND, "not_found", f"run {run_id} not found")
+    if run.source == "evaluate" and run.verdict_counts is None and run.finished_at:
+        run.verdict_counts = await cast(
+            StoreViewsMixin, store
+        ).get_historical_run_verdict_counts(run_id)
     return run_summary(run)
 
 
@@ -221,7 +233,7 @@ async def trigger_scan(
 
 @router.post("/runs/evaluate")
 async def trigger_evaluate(
-    body: TriggerEvaluateRequest, run_manager: _Manager
+    body: TriggerEvaluateRequest, run_manager: _Manager, request: Request
 ) -> _TriggerResponse:
     """Trigger a background evaluate run.
 
@@ -242,9 +254,14 @@ async def trigger_evaluate(
             scope=body.scope,
             corpus=body.corpus,
             limit=body.limit,
+            max_days=_evaluation_freshness_days(request),
         )
     except RunConflictError as exc:
         raise ApiError(_HTTP_CONFLICT, "evaluate_already_running", str(exc)) from exc
+    except CanonicalEvaluationNotReadyError as exc:
+        raise ApiError(
+            _HTTP_CONFLICT, "canonical_evaluation_not_ready", str(exc)
+        ) from exc
     except ResumeNotConfiguredError as exc:
         # A missing master resume is a first-run user misconfiguration;
         # other missing files (ML model, price table) stay 500s.
@@ -286,6 +303,7 @@ async def retry_run(
     run_id: str,
     run_manager: _Manager,
     store: _Store,
+    request: Request,
 ) -> _TriggerResponse:
     """Start a new run using the historical run's type and source.
 
@@ -327,6 +345,7 @@ async def retry_run(
             scope="backlog" if continue_failed else "latest_scan",
             corpus="failed" if continue_failed else "unrated",
             limit=len(retry_job_ids) if retry_job_ids is not None else None,
+            max_days=_evaluation_freshness_days(request),
             **({"job_ids": retry_job_ids} if retry_job_ids is not None else {}),
         )
         return _TriggerResponse(run_id=new_run_id)
@@ -339,7 +358,7 @@ async def retry_run(
             "unknown_source",
             f"source {source!r} cannot be retried",
         )
-    new_run_id = await run_manager.trigger_scan(source)
+    new_run_id = await run_manager.trigger_scan(source, resume_from_run_id=run_id)
     return _TriggerResponse(run_id=new_run_id)
 
 

@@ -81,8 +81,8 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
             description={`${formatLocalDateTime(run.started_at)} · ${run.run_id}`}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <LiveStatus sse={sse} />
-                <RunActionButton runId={run.run_id} isRunning />
+                <LiveStatus sse={sse} run={live} />
+                {!sse.isDone && live.status === "running" && <RunActionButton runId={run.run_id} isRunning />}
               </SpaceBetween>
             }
           >
@@ -107,9 +107,22 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
 function EvaluateProgress({ run }: { run: RunSummary }) {
   const displayStage = evaluateDisplayStage(run);
   const candidatePreparationDone = isAfter(displayStage, "preparing");
+  const candidatePreparationTotal = run.evaluation_scope === "backlog"
+    ? backlogCandidateTotal(run)
+    : run.ml_gate_total;
   const seniorityTotal = seniorityCandidateTotal(run);
+  const sdeIsDone = isAfter(displayStage, "ml_gate");
+  const sdeIsActive = isCurrent(displayStage, "ml_gate");
+  const sdeStarted = sdeIsActive || sdeIsDone;
   const seniorityIsDone = isAfter(displayStage, "seniority_gate");
   const seniorityIsActive = isCurrent(displayStage, "seniority_gate");
+  const seniorityStarted = seniorityIsActive || seniorityIsDone;
+  const quickIsDone = isAfter(displayStage, "stage_a");
+  const quickIsActive = isCurrent(displayStage, "stage_a");
+  const quickStarted = quickIsActive || quickIsDone;
+  const detailedIsDone = isAfter(displayStage, "stage_b");
+  const detailedIsActive = isCurrent(displayStage, "stage_b");
+  const detailedStarted = detailedIsActive || detailedIsDone;
   const preparationExcluded = preparationExcludedCount(run);
   return (
     <SpaceBetween size="m">
@@ -118,23 +131,27 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
         <SpaceBetween size="s">
           <StageProgress
             label="Candidate preparation"
-            processed={candidatePreparationDone ? (run.ml_gate_total ?? 0) : 0}
-            total={run.ml_gate_total}
+            processed={candidatePreparationDone
+              ? (candidatePreparationTotal ?? 0)
+              : (run.evaluation_scope === "backlog"
+                ? (candidatePreparationTotal ?? 0)
+                : 0)}
+            total={candidatePreparationDone ? candidatePreparationTotal : null}
             isDone={candidatePreparationDone}
             isActive={isCurrent(displayStage, "preparing")}
             detail={candidatePreparationDetail(run, candidatePreparationDone)}
           />
           <StageProgress
             label="SDE role filter"
-            processed={run.ml_gate_processed}
-            total={run.ml_gate_total}
-            isDone={isAfter(displayStage, "ml_gate")}
-            isActive={isCurrent(displayStage, "ml_gate")}
+            processed={sdeStarted ? run.ml_gate_processed : 0}
+            total={sdeStarted ? run.ml_gate_total : null}
+            isDone={sdeIsDone}
+            isActive={sdeIsActive}
           />
           <StageProgress
             label="Seniority filter"
             processed={seniorityIsDone ? (seniorityTotal ?? 0) : 0}
-            total={seniorityTotal}
+            total={seniorityStarted ? seniorityTotal : null}
             isDone={seniorityIsDone}
             isActive={seniorityIsActive}
             detail={seniorityIsActive && seniorityTotal !== null
@@ -143,17 +160,17 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
           />
           <StageProgress
             label="Quick evaluation"
-            processed={run.stage_a_processed}
-            total={run.stage_a_total}
-            isDone={isAfter(displayStage, "stage_a")}
-            isActive={isCurrent(displayStage, "stage_a")}
+            processed={quickStarted ? run.stage_a_processed : 0}
+            total={quickStarted ? run.stage_a_total : null}
+            isDone={quickIsDone}
+            isActive={quickIsActive}
           />
           <StageProgress
             label="Detailed review"
-            processed={run.stage_b_processed}
-            total={run.stage_b_total}
-            isDone={isAfter(displayStage, "stage_b")}
-            isActive={isCurrent(displayStage, "stage_b")}
+            processed={detailedStarted ? run.stage_b_processed : 0}
+            total={detailedStarted ? run.stage_b_total : null}
+            isDone={detailedIsDone}
+            isActive={detailedIsActive}
           />
         </SpaceBetween>
         <SpaceBetween size="s">
@@ -185,6 +202,13 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
               {run.errors} {run.errors === 1 ? "error" : "errors"}
             </Badge>
           </SpaceBetween>
+          {run.verdict_counts != null && run.stage_b_processed > 0 && (
+            <SpaceBetween direction="horizontal" size="s">
+              <Badge color="green">{run.verdict_counts.apply ?? 0} Apply</Badge>
+              <Badge color="blue">{run.verdict_counts.consider ?? 0} Consider</Badge>
+              <Badge color="grey">{run.verdict_counts.skip ?? 0} Ignore</Badge>
+            </SpaceBetween>
+          )}
           <Box color="text-body-secondary">
             Updated {formatLiveAge(run.progress_updated_at)}
           </Box>
@@ -223,6 +247,7 @@ function StageProgress({
   isDone,
   isActive,
   detail,
+  isFailed = false,
 }: {
   label: string;
   processed: number | undefined;
@@ -230,6 +255,7 @@ function StageProgress({
   isDone: boolean;
   isActive: boolean;
   detail?: string;
+  isFailed?: boolean;
 }) {
   const value = processed ?? 0;
   const knownTotal = total ?? null;
@@ -242,6 +268,7 @@ function StageProgress({
   return (
     <ProgressBar
       value={percentage}
+      status={isFailed ? "error" : "in-progress"}
       variant="key-value"
       label={label}
       additionalInfo={additionalInfo}
@@ -262,10 +289,28 @@ function ScanProgress({
   const counters = SCAN_COUNTERS.filter(({ key }) => (run[key] as number) > 0);
   const activity = scanActivity(run);
   return (
+    <SpaceBetween size="m">
+    {Object.entries(run.scan_progress ?? {}).map(([source, progress]) => (
+      <div key={source} data-testid={`scan-source-${source}`}>
+        <StageProgress
+          label={scanSourceLabel(source)}
+          processed={typeof progress.processed === "number" ? progress.processed : 0}
+          total={typeof progress.total === "number" ? progress.total : null}
+          isDone={["completed", "completed_with_warnings"].includes(String(progress.phase))}
+          isFailed={progress.phase === "failed"}
+          isActive={!["queued", "completed", "completed_with_warnings", "failed"].includes(String(progress.phase))}
+          detail={`${String(progress.phase ?? "queued").replaceAll("_", " ")} · ${progress.processed ?? 0}${progress.total == null ? "" : ` / ${progress.total}`}`}
+        />
+        {progress.message && <Box color={progress.phase === "failed" ? "text-status-error" : "text-status-warning"}>{String(progress.message)}</Box>}
+        {run.scan_stats?.[source] && <Box color="text-body-secondary">
+          {Object.entries(run.scan_stats[source]).filter(([key]) => ["reused", "native_enriched", "browser_enriched", "retry_deferred", "deduped_targets", "failed"].includes(key)).map(([key, value]) => `${value} ${key.replaceAll("_", " ")}`).join(" · ")}
+        </Box>}
+      </div>
+    ))}
     <ColumnLayout columns={3} variant="text-grid">
       <div>
         <Box variant="awsui-key-label">Progress stream</Box>
-        <Box>{isConnected ? "Receiving live counters" : "Connecting to live counters"}</Box>
+        <Box>{run.status !== "running" ? "Final counters" : isConnected ? "Receiving live counters" : "Connecting to live counters"}</Box>
       </div>
       <div>
         <Box variant="awsui-key-label">What is happening</Box>
@@ -285,18 +330,19 @@ function ScanProgress({
         </SpaceBetween>
       </div>
     </ColumnLayout>
+    </SpaceBetween>
   );
 }
 
 function scanActivity(run: RunSummary): string | null {
   if (!run.scan_source || !run.scan_phase) return null;
-  const source = {
-    jobright: "Jobright",
-    linkedin_guest: "LinkedIn Guest",
-  }[run.scan_source] ?? run.scan_source;
+  const source = run.scan_source === "linkedin_guest" ? "LinkedIn Guest" : scanSourceLabel(run.scan_source);
   const phase = {
     fetching: "Fetching listings",
     saving: "Saving listings",
+    details: "Fetching job details",
+    rate_limited: "Waiting for source rate limit",
+    interpreting: "Interpreting job page evidence",
     completed: "Source complete",
     enriching_job_descriptions: "Enriching job descriptions",
   }[run.scan_phase] ?? run.scan_phase;
@@ -304,6 +350,10 @@ function scanActivity(run: RunSummary): string | null {
     return `${source} · ${phase}`;
   }
   return `${source} · ${phase} · ${run.scan_processed} / ${run.scan_total}`;
+}
+
+function scanSourceLabel(source: string): string {
+  return ({jobright: "Jobright", "linkedin-extension": "LinkedIn", linkedin: "LinkedIn", handshake: "Handshake", speedyapply: "GitHub job lists"} as Record<string, string>)[source] ?? source;
 }
 
 function mergeProgress(polled: RunSummary, streamed: RunSummary | null): RunSummary {
@@ -346,6 +396,17 @@ function candidatePreparationDetail(
   run: RunSummary,
   isDone: boolean,
 ): string {
+  if (run.evaluation_scope === "backlog") {
+    const candidateTotal = backlogCandidateTotal(run);
+    if (!isDone) {
+      return candidateTotal === null || candidateTotal === undefined
+        ? "Scanning historical backlog"
+        : `Historical backlog: ${candidateTotal} candidates found so far`;
+    }
+    return candidateTotal === null || candidateTotal === undefined
+      ? "Historical backlog"
+      : `Historical backlog → ${candidateTotal} candidates`;
+  }
   const candidateTotal = run.ml_gate_total;
   if (run.evaluation_scope === "latest_scan") {
     const inputTotal = run.evaluation_input_total;
@@ -359,13 +420,20 @@ function candidatePreparationDetail(
       ? `Latest scan → ${candidateTotal} candidates`
       : "Preparing latest scan";
   }
-  const scopeLabel = run.evaluation_scope === "backlog"
-    ? "Historical backlog"
-    : "Evaluation candidates";
+  const scopeLabel = "Evaluation candidates";
   if (!isDone || candidateTotal === null || candidateTotal === undefined) {
     return `Preparing ${scopeLabel.toLowerCase()}`;
   }
   return `${scopeLabel} → ${candidateTotal} candidates`;
+}
+
+function backlogCandidateTotal(run: RunSummary): number | null {
+  if (run.stage_a_total === null || run.stage_a_total === undefined) return null;
+  if (!isAfter(run.progress_stage, "seniority_gate")) return run.stage_a_total;
+  return run.stage_a_total
+    + run.jobs_filtered
+    + run.jobs_ml_gated
+    + run.jobs_seniority_filtered;
 }
 
 function preparationExcludedCount(run: RunSummary): number | null {
@@ -441,8 +509,15 @@ function formatLiveAge(iso: string | null | undefined, now = new Date()): string
   return `${formatRelativeAge(iso, now)} ago`;
 }
 
-function LiveStatus({ sse }: { sse: SSEState<RunSummary> }) {
-  if (sse.isDone) return <StatusIndicator type="success">Completed</StatusIndicator>;
+function LiveStatus({ sse, run }: { sse: SSEState<RunSummary>; run: RunSummary }) {
+  if (run.status === "failed") return <StatusIndicator type="error">Failed</StatusIndicator>;
+  if (run.status === "succeeded") {
+    if (run.errors > 0 || Object.values(run.scan_progress ?? {}).some(p => p.phase === "completed_with_warnings" || p.phase === "failed")) {
+      return <StatusIndicator type="warning">Completed with issues</StatusIndicator>;
+    }
+    return <StatusIndicator type="success">Completed</StatusIndicator>;
+  }
+  if (sse.isDone) return <StatusIndicator type="warning">Finished — checking result</StatusIndicator>;
   if (sse.error !== null) return <StatusIndicator type="warning">Reconnecting</StatusIndicator>;
   return <StatusIndicator type="in-progress">Running</StatusIndicator>;
 }

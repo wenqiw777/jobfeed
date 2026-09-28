@@ -1,13 +1,13 @@
 """Add the seniority-filter counter to pipeline runs.
 
 Revision ID: 0009_seniority_filter_counter
-Revises: 0008_gate_passed_counter
+Revises: 0008
 """
 
 from alembic import op
 
 revision = "0009_seniority_filter_counter"
-down_revision = "0008_gate_passed_counter"
+down_revision = "0008"
 branch_labels = None
 depends_on = None
 

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import type { JobDetailResponse, JobSummary } from "@/api/queries";
+import type { RealJobDetailResponse, JobSummary } from "@/api/queries";
 import { DensityProvider } from "@/lib/density";
 import TriagePage from "@/routes/triage";
 
@@ -16,6 +16,7 @@ function job(
     id,
     company: "Readable Co",
     title: "Software Engineer",
+    location: "Seattle, WA",
     platform: "greenhouse",
     url: "https://example.com/1",
     status,
@@ -30,11 +31,15 @@ function job(
     posted_at: postedAt,
     discovered_at: "2026-06-16T12:00:00Z",
     closed_at: null,
+    is_repost: true,
+    repost_evidence: "Reposted 1 day ago",
   };
 }
 
-function detail(): JobDetailResponse {
+function detail(): RealJobDetailResponse {
   return {
+    real_job_id: "1",
+    identity_review_state: "clear",
     job: {
       id: "1",
       canonical_id: "canonical-1",
@@ -65,6 +70,12 @@ function detail(): JobDetailResponse {
     twins: [],
     interviews: [],
     application: null,
+    sources: [{
+      job_id: "1", platform: "greenhouse", url: "https://example.com/1",
+      apply_url: null, title: "Software Engineer", discovered_at: "2026-06-16T00:00:00Z",
+      posted_at: null, closed_at: null, is_repost: false,
+    }],
+    identity_evidence: [],
   };
 }
 
@@ -80,16 +91,16 @@ function mockApi(postedAt: string | null = "2026-06-16T00:00:00Z"): void {
     const url = String(input);
     const method = init?.method ?? "GET";
     calls.push({ url, method, body: init?.body });
-    if (method === "GET" && url.startsWith("/api/jobs?")) {
+    if (method === "GET" && url.startsWith("/api/real-jobs?")) {
       return json({
         jobs: [job("scored", "1", postedAt)],
         total: 1,
         tab_counts: { queue: 1, pending_jd: 0, all: 1, scored: 1, shortlisted: 0, archived: 0 },
       });
     }
-    if (method === "GET" && url === "/api/jobs/1") return json(detail());
-    if (url === "/api/jobs/1/transition") return json({ job_id: "1", status: "shortlisted" });
-    if (url === "/api/jobs/bulk/transition") {
+    if (method === "GET" && url === "/api/real-jobs/1") return json(detail());
+    if (url === "/api/real-jobs/1/transition") return json({ job_id: "1", status: "shortlisted" });
+    if (url === "/api/real-jobs/bulk/transition") {
       return json({ succeeded: 1, skipped: 0, failed: [], cascaded: 0 });
     }
     throw new Error(`unexpected fetch: ${method} ${url}`);
@@ -119,12 +130,105 @@ test("shows Results plus the three decision filters", async () => {
   for (const label of ["Results", "Wait", "Applied", "Ignored"]) {
     expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();
   }
+  expect(screen.getByText("Reposted")).toBeInTheDocument();
+  expect(screen.getByText("Seattle, WA")).toBeInTheDocument();
+  expect(screen.getByText("Jun 16, 2026")).toBeInTheDocument();
   expect(screen.queryByText("viewing", { exact: true })).not.toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Posted" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "First seen" })).toBeInTheDocument();
   expect(screen.queryByRole("columnheader", { name: "Added" })).not.toBeInTheDocument();
-  expect(await screen.findByText("~Jun 16, 2026")).toBeInTheDocument();
-  expect(await screen.findByText("Estimated from date added")).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /Pending JD/ })).not.toBeInTheDocument();
+  expect(calls.some(({ url }) => url.startsWith("/api/real-jobs?"))).toBe(true);
+});
+
+test("shows a held real job without a canonical score and opens source audit", async () => {
+  const held = {
+    ...job("shortlisted"),
+    identity_review_state: "evaluation_conflict",
+    stage_a_score: null,
+    stage_b_fit_score: null,
+    verdict: null,
+  };
+  const heldDetail = {
+    ...detail(),
+    identity_review_state: "evaluation_conflict",
+    evaluation: { stage_a: null, stage_b: null, stage_b_status: null },
+    status: { ...detail().status, decision: "wait", status: "shortlisted" },
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/real-jobs?")) return json({
+      jobs: [held], total: 1,
+      tab_counts: { results: 0, wait: 1, applied: 0, ignored: 0 },
+    });
+    if (url === "/api/real-jobs/1") return json(heldDetail);
+    if (url === "/api/jobs/1/audit") return json({
+      ...detail(), evaluation: { stage_a: { score: 87, one_line: "Old source score" },
+        stage_b: null, stage_b_status: null },
+    });
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+  renderPage();
+  fireEvent.click(screen.getByRole("tab", { name: "Wait" }));
+  await screen.findByTestId("job-row-1");
+  expect(screen.getAllByText(/Needs review/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/No current canonical score/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "View source audit" }));
+  expect(await screen.findByText(/Source audit score: 87/)).toBeInTheDocument();
+});
+
+test("shows preserved historical scores without a pending label", async () => {
+  const pending = {
+    ...job(), identity_review_state: "clear",
+    evaluation_stale_reason: null,
+    stage_a_score: 90, stage_b_fit_score: null, verdict: "apply",
+  };
+  const pendingDetail = {
+    ...detail(), evaluation_stale_reason: null,
+    stale_stage_a_score: null,
+    evaluation: { stage_a: { score: 90, one_line: "Fit" }, stage_b: null, stage_b_status: null },
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/real-jobs?")) return json({
+      jobs: [pending], total: 1,
+      tab_counts: { results: 1, wait: 0, applied: 0, ignored: 0 },
+    });
+    if (url === "/api/real-jobs/1") return json(pendingDetail);
+    if (url === "/api/jobs/1/audit") return json({
+      ...detail(), evaluation: { stage_a: { score: 30, one_line: "Old source fit" },
+        stage_b: null, stage_b_status: null },
+    });
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  expect(screen.queryByText(/Old score|re-evaluation pending/i)).not.toBeInTheDocument();
+  expect(screen.getAllByText("90").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button", { name: "View source audit" }));
+  expect(await screen.findByText(/Source audit score: 30/)).toBeInTheDocument();
+});
+
+test.each([
+  ["input_conflict", /inputs conflict/],
+  ["input_missing", /input is missing/],
+])("shows %s review state without a current score", async (state, message) => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/real-jobs?")) return json({
+      jobs: [{ ...job("scored"), identity_review_state: state,
+        stage_a_score: null, stage_b_fit_score: null, verdict: null }],
+      total: 1, tab_counts: { results: 1, wait: 0, applied: 0, ignored: 0 },
+    });
+    if (url === "/api/real-jobs/1") return json({
+      ...detail(), identity_review_state: state,
+      evaluation: { stage_a: null, stage_b: null, stage_b_status: null },
+    });
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  expect(screen.getByText(message)).toBeInTheDocument();
+  expect(screen.getByText("Review pending")).toBeInTheDocument();
 });
 
 test("Ignored requests one decision that includes archived workflow rows", async () => {
@@ -137,20 +241,20 @@ test("Ignored requests one decision that includes archived workflow rows", async
   expect(calls.some(({ url }) => url.includes("statuses=archived"))).toBe(false);
 });
 
-test("shows 50 results per page and paginates through the complete result set", async () => {
+test("shows 25 results per page and paginates through the complete result set", async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.startsWith("/api/jobs?")) {
+    if (url.startsWith("/api/real-jobs?")) {
       const params = new URLSearchParams(url.split("?")[1]);
       const offset = Number(params.get("offset"));
-      const id = offset === 50 ? "2" : "1";
+      const id = offset === 25 ? "2" : "1";
       return json({
         jobs: [job("scored", id)],
         total: 1938,
         tab_counts: { queue: 1938, pending_jd: 0, all: 1938, scored: 1938, shortlisted: 0, archived: 0 },
       });
     }
-    if (url === "/api/jobs/1" || url === "/api/jobs/2") return json(detail());
+    if (url === "/api/real-jobs/1" || url === "/api/real-jobs/2") return json(detail());
     throw new Error(`unexpected fetch: ${url}`);
   }));
 
@@ -163,20 +267,20 @@ test("shows 50 results per page and paginates through the complete result set", 
 
   const requests = (fetch as ReturnType<typeof vi.fn>).mock.calls.map(([input]) => String(input));
   expect(requests.some((url) =>
-    url.includes("limit=50")
-    && url.includes("offset=50")
-    && url.includes("sort=posted_desc")
+    url.includes("limit=25")
+    && url.includes("offset=25")
+    && url.includes("sort=triage_posted_desc")
   )).toBe(true);
 });
 
-test("renders the fast first page before the exact total finishes", async () => {
+test("waits for globally sorted results instead of showing a differently ordered provisional page", async () => {
   let releaseExact: (() => void) | undefined;
   const exactBlocked = new Promise<void>((resolve) => {
     releaseExact = resolve;
   });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.startsWith("/api/jobs?") && url.includes("fast=true")) {
+    if (url.startsWith("/api/real-jobs?") && url.includes("fast=true")) {
       return json({
         jobs: [job()],
         total: 1938,
@@ -184,7 +288,7 @@ test("renders the fast first page before the exact total finishes", async () => 
         tab_counts: { queue: 1938, pending_jd: 0, all: 1938, scored: 1938, shortlisted: 0, archived: 0 },
       });
     }
-    if (url.startsWith("/api/jobs?")) {
+    if (url.startsWith("/api/real-jobs?")) {
       await exactBlocked;
       return json({
         jobs: [job()],
@@ -193,18 +297,18 @@ test("renders the fast first page before the exact total finishes", async () => 
         tab_counts: { queue: 566, pending_jd: 0, all: 566, scored: 566, shortlisted: 0, archived: 0 },
       });
     }
-    if (url === "/api/jobs/1") return json(detail());
+    if (url === "/api/real-jobs/1") return json(detail());
     throw new Error(`unexpected fetch: ${url}`);
   }));
 
   renderPage();
 
-  await screen.findByTestId("job-row-1");
-  expect(screen.getByText("1938+ postings")).toBeInTheDocument();
+  expect(screen.queryByTestId("job-row-1")).not.toBeInTheDocument();
+  expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).includes("fast=true"))).toBe(false);
   expect(screen.queryByLabelText("Results pagination")).not.toBeInTheDocument();
 
   releaseExact?.();
-  expect(await screen.findByText("566 postings")).toBeInTheDocument();
+  expect(await screen.findByText("566 jobs")).toBeInTheDocument();
   expect(screen.getByLabelText("Results pagination")).toBeInTheDocument();
 });
 
@@ -212,17 +316,17 @@ test("sorts the full result set from the Fit score and Posted headers", async ()
   renderPage();
   await screen.findByTestId("job-row-1");
   await waitFor(() => {
-    expect(calls.some((call) => call.url.includes("sort=posted_desc"))).toBe(true);
+    expect(calls.some((call) => call.url.includes("sort=triage_posted_desc"))).toBe(true);
   });
 
   const table = screen.getByRole("table", { name: "Jobs" });
   fireEvent.click(within(table).getByRole("button", { name: /Fit score/ }));
   await waitFor(() => {
-    expect(calls.some((call) => call.url.includes("sort=score_asc"))).toBe(true);
+    expect(calls.some((call) => call.url.includes("sort=triage_score_asc"))).toBe(true);
   });
   fireEvent.click(within(table).getByRole("button", { name: /Fit score/ }));
   await waitFor(() => {
-    expect(calls.some((call) => call.url.includes("sort=score_desc"))).toBe(true);
+    expect(calls.some((call) => call.url.includes("sort=triage_score_desc"))).toBe(true);
   });
 });
 
@@ -231,10 +335,10 @@ test("records Applied as a lightweight status without an application dialog", as
   await screen.findByTestId("job-row-1");
   fireEvent.click(screen.getByRole("button", { name: "Mark as applied" }));
   await waitFor(() => {
-    const call = calls.find((candidate) => candidate.url === "/api/jobs/1/transition");
+    const call = calls.find((candidate) => candidate.url === "/api/real-jobs/1/transition");
     expect(JSON.parse(String(call?.body))).toMatchObject({ to: "applied" });
   });
-  expect(calls.some((call) => call.url === "/api/jobs/1/apply")).toBe(false);
+  expect(calls.some((call) => call.url === "/api/real-jobs/1/apply")).toBe(false);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -246,7 +350,7 @@ test("hides a decided Result before the transition response finishes", async () 
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (method === "GET" && url.startsWith("/api/jobs?")) {
+    if (method === "GET" && url.startsWith("/api/real-jobs?")) {
       return json({
         jobs: [job()],
         total: 1,
@@ -254,8 +358,8 @@ test("hides a decided Result before the transition response finishes", async () 
         tab_counts: { queue: 1, pending_jd: 0, all: 1, scored: 1, shortlisted: 0, archived: 0 },
       });
     }
-    if (method === "GET" && url === "/api/jobs/1") return json(detail());
-    if (method === "POST" && url === "/api/jobs/1/transition") {
+    if (method === "GET" && url === "/api/real-jobs/1") return json(detail());
+    if (method === "POST" && url === "/api/real-jobs/1/transition") {
       await transitionBlocked;
       return json({ job_id: "1", status: "applied" });
     }
@@ -269,7 +373,7 @@ test("hides a decided Result before the transition response finishes", async () 
   await waitFor(() => {
     expect(screen.queryByTestId("job-row-1")).not.toBeInTheDocument();
   });
-  expect(screen.getByText("0 postings")).toBeInTheDocument();
+  expect(screen.getByText("0 jobs")).toBeInTheDocument();
   releaseTransition?.();
 });
 
@@ -281,7 +385,7 @@ test("restores an optimistically hidden Result when the transition fails", async
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (method === "GET" && url.startsWith("/api/jobs?")) {
+    if (method === "GET" && url.startsWith("/api/real-jobs?")) {
       return json({
         jobs: [job()],
         total: 1,
@@ -289,8 +393,8 @@ test("restores an optimistically hidden Result when the transition fails", async
         tab_counts: { queue: 1, pending_jd: 0, all: 1, scored: 1, shortlisted: 0, archived: 0 },
       });
     }
-    if (method === "GET" && url === "/api/jobs/1") return json(detail());
-    if (method === "POST" && url === "/api/jobs/1/transition") {
+    if (method === "GET" && url === "/api/real-jobs/1") return json(detail());
+    if (method === "POST" && url === "/api/real-jobs/1/transition") {
       await transitionBlocked;
       return new Response(JSON.stringify({ detail: "save failed" }), {
         status: 500,
@@ -309,7 +413,7 @@ test("restores an optimistically hidden Result when the transition fails", async
 
   releaseTransition?.();
   expect(await screen.findByTestId("job-row-1")).toBeInTheDocument();
-  expect(screen.getByText("1 postings")).toBeInTheDocument();
+  expect(screen.getByText("1 jobs")).toBeInTheDocument();
 });
 
 test("Mark as applied removes the Result before the exact refresh finishes", async () => {
@@ -320,8 +424,8 @@ test("Mark as applied removes the Result before the exact refresh finishes", asy
   });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    const method = url === "/api/jobs/1/transition" ? "POST" : "GET";
-    if (url.startsWith("/api/jobs?")) {
+    const method = url === "/api/real-jobs/1/transition" ? "POST" : "GET";
+    if (url.startsWith("/api/real-jobs?")) {
       if (wasApplied) await refreshBlocked;
       return json({
         jobs: wasApplied ? [] : [job()],
@@ -329,7 +433,7 @@ test("Mark as applied removes the Result before the exact refresh finishes", asy
         tab_counts: { queue: wasApplied ? 0 : 1, pending_jd: 0, all: 1, scored: wasApplied ? 0 : 1, shortlisted: 0, archived: 0 },
       });
     }
-    if (url === "/api/jobs/1") return json(detail());
+    if (url === "/api/real-jobs/1") return json(detail());
     if (method === "POST") {
       wasApplied = true;
       return json({ job_id: "1", status: "applied" });
@@ -343,13 +447,13 @@ test("Mark as applied removes the Result before the exact refresh finishes", asy
 
   await waitFor(() => {
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(
-      ([input]) => String(input) === "/api/jobs/1/transition",
+      ([input]) => String(input) === "/api/real-jobs/1/transition",
     )).toBe(true);
   });
   await waitFor(() => {
     expect(screen.queryByTestId("job-row-1")).not.toBeInTheDocument();
   });
-  expect(screen.getByText("0 postings")).toBeInTheDocument();
+  expect(screen.getByText("0 jobs")).toBeInTheDocument();
   releaseRefresh?.();
 });
 
@@ -361,7 +465,7 @@ test.each([
   await screen.findByTestId("job-row-1");
   fireEvent.click(screen.getByRole("button", { name: label }));
   await waitFor(() => {
-    const call = calls.find((candidate) => candidate.url === "/api/jobs/1/transition");
+    const call = calls.find((candidate) => candidate.url === "/api/real-jobs/1/transition");
     expect(JSON.parse(String(call?.body))).toMatchObject({ to: expectedStatus });
   });
 });
@@ -373,6 +477,7 @@ test("decision filters send compatible status groups and allow correcting mistak
   await waitFor(() => {
     const filtered = calls.find((call) => call.url.includes("decision=applied"));
     expect(filtered?.url).toContain("decision=applied");
+    expect(filtered?.url).not.toContain("dedupe=");
     expect(filtered?.url).not.toContain("statuses=");
   });
   expect(screen.queryByRole("button", { name: "Mark as applied" })).not.toBeInTheDocument();
@@ -381,7 +486,7 @@ test("decision filters send compatible status groups and allow correcting mistak
   expect(screen.getByRole("button", { name: "Ignore" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Move to Results" }));
   await waitFor(() => {
-    const call = calls.find((candidate) => candidate.url === "/api/jobs/1/transition");
+    const call = calls.find((candidate) => candidate.url === "/api/real-jobs/1/transition");
     expect(JSON.parse(String(call?.body))).toMatchObject({ to: "scored" });
   });
 });
@@ -406,6 +511,38 @@ test("bulk actions name both the destination and affected selection", async () =
   expect(screen.queryByText("Skip")).not.toBeInTheDocument();
 });
 
+test("select all uses one canonical selection snapshot for bulk IDs", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/real-jobs?")) {
+      return json({ jobs: [job("scored", "10")], total: 3, tab_counts: { results: 3, wait: 0, applied: 0, ignored: 0 } });
+    }
+    if (url === "/api/real-jobs/10") return json(detail());
+    if (url.startsWith("/api/real-jobs/selection?")) {
+      return json({ real_job_ids: ["10", "11", "12"], total: 3 });
+    }
+    if (url === "/api/real-jobs/bulk/transition") {
+      return json({ succeeded: 3, skipped: 0, failed: [], cascaded: 0 });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+  renderPage();
+  await screen.findByTestId("job-row-10");
+  fireEvent.click(screen.getByRole("checkbox", { name: /Select Readable Co/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Select all 3 results" }));
+  await waitFor(() => {
+    expect(screen.getByRole("toolbar", { name: "Bulk actions" })).toHaveTextContent("3 selected");
+  });
+  const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
+  expect(calls.filter(([input]) => String(input).startsWith("/api/real-jobs/selection?"))).toHaveLength(1);
+  expect(calls.filter(([input]) => String(input).startsWith("/api/real-jobs?")).length).toBe(1);
+  fireEvent.click(screen.getByRole("button", { name: "Ignore selected" }));
+  await waitFor(() => {
+    const bulk = calls.find(([input]) => String(input) === "/api/real-jobs/bulk/transition");
+    expect(JSON.parse(String(bulk?.[1]?.body)).items.map(({ id }: { id: string }) => id)).toEqual(["10", "11", "12"]);
+  });
+});
+
 test("bulk actions hide the current tab's no-op destination", async () => {
   renderPage();
   await screen.findByTestId("job-row-1");
@@ -428,7 +565,7 @@ test("bulk Ignore removes successful Results immediately and updates the count",
   });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.startsWith("/api/jobs?")) {
+    if (url.startsWith("/api/real-jobs?")) {
       if (wasIgnored) await refreshBlocked;
       return json({
         jobs: wasIgnored ? [] : [job()],
@@ -436,8 +573,8 @@ test("bulk Ignore removes successful Results immediately and updates the count",
         tab_counts: { queue: wasIgnored ? 0 : 1, pending_jd: 0, all: 1, scored: wasIgnored ? 0 : 1, shortlisted: 0, archived: wasIgnored ? 1 : 0 },
       });
     }
-    if (url === "/api/jobs/1") return json(detail());
-    if (url === "/api/jobs/bulk/transition") {
+    if (url === "/api/real-jobs/1") return json(detail());
+    if (url === "/api/real-jobs/bulk/transition") {
       wasIgnored = true;
       return json({ succeeded: 1, skipped: 0, failed: [], cascaded: 0 });
     }
@@ -451,13 +588,13 @@ test("bulk Ignore removes successful Results immediately and updates the count",
 
   await waitFor(() => {
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(
-      ([input]) => String(input) === "/api/jobs/bulk/transition",
+      ([input]) => String(input) === "/api/real-jobs/bulk/transition",
     )).toBe(true);
   });
   await waitFor(() => {
     expect(screen.queryByTestId("job-row-1")).not.toBeInTheDocument();
   });
-  expect(screen.getByText("0 postings")).toBeInTheDocument();
+  expect(screen.getByText("0 jobs")).toBeInTheDocument();
   expect(screen.queryByRole("toolbar", { name: "Bulk actions" })).not.toBeInTheDocument();
   releaseRefresh?.();
 });
@@ -470,7 +607,7 @@ test("bulk Ignore retains failed selections and reports the partial failure", as
   });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.startsWith("/api/jobs?")) {
+    if (url.startsWith("/api/real-jobs?")) {
       if (wasSubmitted) await refreshBlocked;
       return json({
         jobs: [job(), job("scored", "2")],
@@ -478,8 +615,8 @@ test("bulk Ignore retains failed selections and reports the partial failure", as
         tab_counts: { queue: 2, pending_jd: 0, all: 2, scored: 2, shortlisted: 0, archived: 0 },
       });
     }
-    if (url === "/api/jobs/1" || url === "/api/jobs/2") return json(detail());
-    if (url === "/api/jobs/bulk/transition") {
+    if (url === "/api/real-jobs/1" || url === "/api/real-jobs/2") return json(detail());
+    if (url === "/api/real-jobs/bulk/transition") {
       wasSubmitted = true;
       return json({
         succeeded: 1,
@@ -503,7 +640,7 @@ test("bulk Ignore retains failed selections and reports the partial failure", as
 
   await waitFor(() => {
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(
-      ([input]) => String(input) === "/api/jobs/bulk/transition",
+      ([input]) => String(input) === "/api/real-jobs/bulk/transition",
     )).toBe(true);
   });
   await waitFor(() => {
@@ -514,19 +651,53 @@ test("bulk Ignore retains failed selections and reports the partial failure", as
   releaseRefresh?.();
 });
 
-test("select all loads every matching result, not only the current page", async () => {
+test("bulk move refreshes the selected real job detail", async () => {
+  let status = "scored";
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.startsWith("/api/jobs?")) {
-      const params = new URLSearchParams(url.split("?")[1]);
-      const jobs = params.get("limit") === "2" ? [job(), job("scored", "2")] : [job()];
+    if (url.startsWith("/api/real-jobs?")) {
+      const decision = new URLSearchParams(url.split("?")[1]).get("decision");
+      const visible = (decision === "results" && status === "scored")
+        || (decision === "wait" && status === "shortlisted");
       return json({
-        jobs,
+        jobs: visible ? [job(status)] : [], total: visible ? 1 : 0,
+        tab_counts: { results: status === "scored" ? 1 : 0, wait: status === "shortlisted" ? 1 : 0, applied: 0, ignored: 0 },
+      });
+    }
+    if (url === "/api/real-jobs/1") {
+      return json({ ...detail(), status: { ...detail().status, status, decision: status === "scored" ? "results" : "wait" } });
+    }
+    if (url === "/api/real-jobs/bulk/transition") {
+      status = "shortlisted";
+      return json({ succeeded: 1, skipped: 0, failed: [], cascaded: 0 });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+
+  renderPage();
+  await screen.findByText("Ready for decision");
+  fireEvent.click(screen.getByRole("checkbox", { name: /Select Readable Co/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Move selected to Wait" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Wait" }));
+  await screen.findByTestId("job-row-1");
+  await waitFor(() => expect(screen.getByText("Wait")).toBeInTheDocument());
+  expect(screen.queryByText("Ready for decision")).not.toBeInTheDocument();
+});
+
+test("select all loads every matching real ID, not only the current page", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/real-jobs?")) {
+      return json({
+        jobs: [job()],
         total: 2,
         tab_counts: { queue: 2, pending_jd: 0, all: 2, scored: 2, shortlisted: 0, archived: 0 },
       });
     }
-    if (url === "/api/jobs/1") return json(detail());
+    if (url.startsWith("/api/real-jobs/selection?")) {
+      return json({ real_job_ids: ["1", "2"], total: 2 });
+    }
+    if (url === "/api/real-jobs/1") return json(detail());
     throw new Error(`unexpected fetch: ${url}`);
   }));
 
@@ -541,5 +712,10 @@ test("select all loads every matching result, not only the current page", async 
     );
   });
   const requests = (fetch as ReturnType<typeof vi.fn>).mock.calls.map(([input]) => String(input));
-  expect(requests.some((url) => url.includes("limit=2") && url.includes("offset=0"))).toBe(true);
+  expect(requests.filter((url) => url.startsWith("/api/real-jobs/selection?"))).toHaveLength(1);
+  expect(requests.some((url) => {
+    if (!url.startsWith("/api/real-jobs?")) return false;
+    const params = new URLSearchParams(url.split("?")[1]);
+    return params.get("limit") === "2" && params.get("offset") === "0";
+  })).toBe(false);
 });

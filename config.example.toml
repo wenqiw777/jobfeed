@@ -2,6 +2,12 @@
 # Shared persistent SQLite file. JOBFEED_DB__PATH overrides JOBFEED_DB_PATH.
 path = "data/jobfeed.sqlite"
 
+[redis_pipeline]
+# Start compose.redis.yaml before enabling. Redis failure fails the scan visibly.
+enabled = false
+url = "redis://127.0.0.1:6379/0"
+namespace = "jobfeed"
+
 [llm]
 # Recommended: the low-latency pair. codex-cli reuses your subscription auth at
 # zero marginal token cost; openai-compat (below) serves users without a
@@ -90,6 +96,12 @@ master_resume_path = "resume.example.md"
 
 [scoring]
 stage_a_threshold = 60
+# Bump the affected explicit version when a scoring prompt or resume input
+# changes. Completed canonical scores with an older version are archived and
+# reclaimed; no content fingerprint is added.
+# stage_a_prompt_version = "v1"
+# stage_b_prompt_version = "v1"
+# resume_version = "v1"
 # ml_gate_enabled = false       # Phase 5 pre-Stage-A XGBoost filter (see [ml_gate] below)
 # Default per-stage cap for `jobfeed evaluate` when neither --limit nor --full
 # is passed. CLI flags still override this; --full ignores it entirely.
@@ -195,6 +207,7 @@ big_company_days = 90            # stale cutoff for big-company postings (defaul
 [ml_gate]
 model_dir = "models/ml_gate"
 model_version = "v20260601T170453Z"
+# policy_version = "v1"   # bump when gate decision rules change
 embedding_model = "all-MiniLM-L6-v2"
 embedding_max_chars = 2000
 # threshold_override =    # unset; when set, overrides the model's built-in threshold

@@ -263,7 +263,15 @@ class WorkflowService:
         Returns:
             Follow-up, interview prep, and going-ghosted lists.
         """
-        return await self._store.workflow_attention(
+        canonical = (
+            self._store.real_job_workflow_attention
+            if hasattr(type(self._store), "real_job_workflow_attention")
+            else None
+        )
+        attention = (
+            canonical if canonical is not None else self._store.workflow_attention
+        )
+        return await attention(
             auto_ghost_days=auto_ghost_days,
             lookahead_days=lookahead_days,
         )
@@ -283,7 +291,13 @@ class WorkflowService:
         Returns:
             Counts of ghosted and archived jobs.
         """
-        result = await self._store.auto_decay(
+        canonical = (
+            self._store.auto_decay_real_jobs
+            if hasattr(type(self._store), "auto_decay_real_jobs")
+            else None
+        )
+        decay = canonical if canonical is not None else self._store.auto_decay
+        result = await decay(
             ghost_days=ghost_days,
             archive_ignored_days=archive_ignored_days,
         )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import cast
 
 import click
 
@@ -12,6 +13,10 @@ from jobfeed.cli._scan_sources import build_scan_sources
 from jobfeed.cli.enrich import format_enrich_summary, run_guest_enrich_pass
 from jobfeed.domain.models import PipelineRun
 from jobfeed.services.enrich import EnrichSummary
+from jobfeed.services.evaluation_scope import (
+    EvaluationScopeStore,
+    persist_scan_insertions,
+)
 from jobfeed.services.scan import SourceSpec
 
 # CLI source tokens. "all" fans out to every REAL source whose config is
@@ -81,7 +86,9 @@ async def _run_scan(
         async with contextlib.AsyncExitStack() as stack:
             sources = await build_scan_sources(app, source_name, stack)
             run = await app["scan_service"].run(sources)
-            return run, await _enrich_guest_if_scanned(app, sources)
+            await persist_scan_insertions(cast(EvaluationScopeStore, app["store"]), run)
+            summary = await _enrich_guest_if_scanned(app, sources)
+            return run, summary
 
     return await run_with_store(app, action)
 

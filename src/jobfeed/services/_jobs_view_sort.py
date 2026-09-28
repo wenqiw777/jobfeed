@@ -8,10 +8,12 @@ Split out of ``services/jobs_view.py`` to keep both modules under the
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 
 # Sort vocabulary is canonical in the domain (JobsViewQuery validates it);
 # re-exported here so service-layer callers keep one import site.
 from jobfeed.domain.models_views import DEFAULT_SORT, VALID_SORTS, JobsViewRow
+from jobfeed.domain.repost import discovery_day
 
 # Verdict-group ranks: apply -> consider -> skip -> derived below-threshold
 # ("below threshold" is NOT a Verdict value; it is derived from
@@ -105,6 +107,32 @@ def _key_company_asc(row: JobsViewRow) -> tuple[str, float, int]:
     return (row.job.company.casefold(), *_tiebreak(row))
 
 
+def _triage_time(row: JobsViewRow, *, direction: int) -> tuple:
+    return (
+        direction * discovery_day(row.job.discovered_at),
+        row.job.is_repost is True,
+        direction * row.job.discovered_at.timestamp(),
+        *_tiebreak(row),
+    )
+
+
+def _triage_score(row: JobsViewRow, *, direction: int) -> tuple:
+    score = (
+        row.stage_b_fit_score
+        if row.stage_b_fit_score is not None
+        else row.stage_a_score
+    )
+    if score is None:
+        return (1, 0, row.job.is_repost is True, 0, *_tiebreak(row))
+    return (
+        0,
+        direction * min(score // 10, 9),
+        row.job.is_repost is True,
+        direction * score,
+        *_tiebreak(row),
+    )
+
+
 #: Library sort-key lookup, one entry per ``VALID_SORTS`` value.
 LIBRARY_SORT_KEYS: dict[str, Callable[[JobsViewRow], tuple[float | int | str, ...]]]
 LIBRARY_SORT_KEYS = {
@@ -114,6 +142,10 @@ LIBRARY_SORT_KEYS = {
     "score_asc": _key_score_asc,
     "score_desc": _key_score_desc,
     "company_asc": _key_company_asc,
+    "triage_posted_desc": partial(_triage_time, direction=-1),
+    "triage_posted_asc": partial(_triage_time, direction=1),
+    "triage_score_desc": partial(_triage_score, direction=-1),
+    "triage_score_asc": partial(_triage_score, direction=1),
 }
 
 

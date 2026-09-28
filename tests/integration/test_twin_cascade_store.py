@@ -16,6 +16,21 @@ from tests.support.factories import make_job
 pytestmark = pytest.mark.postgres
 
 
+@pytest.mark.parametrize("identity", [None, ""])
+async def test_missing_identity_never_links_detail_sources(
+    store: PostgresStore, identity: str | None
+) -> None:
+    first = await store.save_job(make_job("empty-identity-first"))
+    second = await store.save_job(make_job("empty-identity-second"))
+    async with store._get_pool().acquire() as connection:
+        await connection.execute(
+            "UPDATE jobs SET external_identity=$1 WHERE id=ANY($2::bigint[])",
+            identity,
+            [int(first.job_id), int(second.job_id)],
+        )
+    assert await store.list_twin_statuses(first.job_id) == []
+
+
 def _make_job(
     canonical_id: str,
     *,
@@ -32,13 +47,16 @@ def _make_job(
     Returns:
         Job posting fixture.
     """
-    return make_job(
+    job = make_job(
         canonical_id,
         jd_text="JD text",
         jd_quality=QualityBand.GOOD,
         company=company,
         title=title,
     )
+    # These fixtures explicitly represent known aliases, not guessed twins.
+    job.external_identity = f"fixture:{company}:{title}" if company else None
+    return job
 
 
 async def test_expand_twin_ids_groups_by_norms(store: PostgresStore) -> None:
@@ -80,6 +98,24 @@ async def test_expand_twin_ids_empty_input(store: PostgresStore) -> None:
     """Empty input returns empty dict."""
     result = await store.expand_twin_ids([])
     assert result == {}
+
+
+async def test_posting_alias_expansion_keeps_locations_and_unknown_ids_separate(
+    store: PostgresStore,
+) -> None:
+    jobs = [make_job(f"location-{i}") for i in range(4)]
+    for job in jobs[:3]:
+        job.external_identity = "linkedin:123"
+    jobs[0].location = "New York"
+    jobs[1].location = " new  YORK "
+    jobs[2].location = "Seattle"
+    jobs[3].location = "New York"
+    ids = [(await store.save_job(job)).job_id for job in jobs]
+    groups = await store.expand_twin_ids([int(identifier) for identifier in ids])
+    assert set(groups[int(ids[0])]) == {int(ids[0]), int(ids[1])}
+    assert groups[int(ids[2])] == [int(ids[2])]
+    assert groups[int(ids[3])] == [int(ids[3])]
+    assert [row.job_id for row in await store.list_twin_statuses(ids[0])] == [ids[1]]
 
 
 async def test_bulk_transition_cascades_to_twins(store: PostgresStore) -> None:

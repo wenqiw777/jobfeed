@@ -110,11 +110,95 @@ const RUN = {
   counters: runCounters({ source: "ats" }),
 };
 
+it("shows source warning reason without treating it as active work", () => {
+  renderRow(vi.fn(), {...RUN, counters: runCounters({source: "all", scan_progress: {
+    linkedin: {phase: "completed_with_warnings", processed: 750, total: 750,
+      message: "Unconfirmed empty page; more results may exist"},
+  }})});
+  expect(screen.getByTestId("scan-source-linkedin")).toHaveTextContent("Unconfirmed empty page; more results may exist");
+});
+
 const EVALUATE_RUN = {
   ...RUN,
   source: "evaluate",
   counters: runCounters(),
 };
+
+test("a failed terminal event never shows Completed or Stop", () => {
+  renderRow(vi.fn());
+  act(() => FakeEventSource.instances[0]!._done(JSON.stringify(runCounters({status: "failed", errors: 1}))));
+  expect(screen.getByText("Failed")).toBeVisible();
+  expect(screen.queryByText("Completed")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", {name: /stop/i})).not.toBeInTheDocument();
+});
+
+test("source warnings and interpretation phase remain visible", () => {
+  renderRow(vi.fn(), {...RUN, counters: runCounters({scan_source: "linkedin", scan_phase: "interpreting",
+    scan_processed: 2, scan_total: 5, scan_progress: {linkedin: {phase: "interpreting", processed: 2, total: 5}}})});
+  expect(screen.getByText("LinkedIn · Interpreting job page evidence · 2 / 5")).toBeVisible();
+  act(() => FakeEventSource.instances[0]!._done(JSON.stringify(runCounters({status: "succeeded",
+    scan_progress: {linkedin: {phase: "completed_with_warnings", processed: 2, total: 1000}}}))));
+  expect(screen.getByText("Completed with issues")).toBeVisible();
+  expect(screen.queryByRole("button", {name: /stop/i})).not.toBeInTheDocument();
+});
+
+test("shows backlog candidates found for the run, not rows inspected or ML-gate input", () => {
+  renderRow(vi.fn(), {
+    ...EVALUATE_RUN,
+    counters: runCounters({
+      evaluation_scope: "backlog",
+      evaluation_input_total: 131699,
+      progress_stage: "preparing",
+      stage_a_total: 48,
+      ml_gate_total: 7,
+    } as Partial<RunSummary>),
+  });
+
+  const row = screen.getByTestId("live-run-r-live-1");
+  expect(row).toHaveTextContent("Historical backlog: 48 candidates found so far");
+  expect(row).not.toHaveTextContent("131699 scanned so far");
+  expect(row).not.toHaveTextContent("7 candidates found so far");
+});
+
+test("keeps future evaluation stages waiting until their candidate set is ready", () => {
+  renderRow(vi.fn(), {
+    ...EVALUATE_RUN,
+    counters: runCounters({
+      evaluation_scope: "backlog",
+      progress_stage: "ml_gate",
+      jobs_filtered: 764,
+      stage_a_total: 3243,
+      stage_a_processed: 0,
+      ml_gate_total: 2479,
+      ml_gate_processed: 2,
+    } as Partial<RunSummary>),
+  });
+
+  expect(screen.getByRole("progressbar", {
+    name: "SDE role filter: 2 / 2479",
+  })).toBeVisible();
+  expect(screen.getByRole("progressbar", {
+    name: "Seniority filter: Waiting",
+  })).toBeVisible();
+  expect(screen.getByRole("progressbar", {
+    name: "Quick evaluation: Waiting",
+  })).toBeVisible();
+});
+
+test("shows this evaluation's recommendation counts during detailed review", () => {
+  renderRow(vi.fn(), {
+    ...EVALUATE_RUN,
+    counters: runCounters({
+      progress_stage: "stage_b",
+      stage_b_processed: 4,
+      verdict_counts: { apply: 2, consider: 1, skip: 1 },
+    }),
+  });
+  const row = screen.getByTestId("live-run-r-live-1");
+  expect(row).toHaveTextContent("2 Apply");
+  expect(row).toHaveTextContent("1 Consider");
+  expect(row).toHaveTextContent("1 Ignore");
+});
 
 function renderRow(onDone: () => void, run = RUN) {
   const queryClient = new QueryClient({
@@ -128,6 +212,20 @@ function renderRow(onDone: () => void, run = RUN) {
     </QueryClientProvider>,
   );
 }
+
+test("renders four independent source lanes simultaneously", () => {
+  renderRow(vi.fn(), {...RUN, counters: runCounters({source: "all", scan_progress: {
+    jobright: {phase: "fetching", processed: 20, total: 100},
+    "linkedin-extension": {phase: "saving", processed: 10, total: 50},
+    handshake: {phase: "completed", processed: 50, total: 50},
+    speedyapply: {phase: "browser_enrichment", processed: 3, total: 20},
+  }})});
+  for (const source of ["jobright", "linkedin-extension", "handshake", "speedyapply"]) {
+    expect(screen.getByTestId(`scan-source-${source}`)).toBeInTheDocument();
+  }
+  expect(screen.getByTestId("scan-source-speedyapply")).toHaveTextContent("browser enrichment · 3 / 20");
+  expect(screen.getByTestId("scan-source-speedyapply")).toHaveTextContent("GitHub job lists");
+});
 
 test("fires onDone once when the stream ends with event: done", () => {
   const onDone = vi.fn();

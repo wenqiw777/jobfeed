@@ -8,6 +8,7 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
+from jobfeed.adapters.store._sqlite_runs import _get_pipeline_run
 from jobfeed.adapters.store.sqlite_claims_runs import SqliteClaimsRuns
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.adapters.store.sqlite_schema import ensure_sqlite_schema
@@ -38,6 +39,35 @@ async def _open_capability(tmp_path: Path) -> tuple[SqliteLifecycle, SqliteClaim
     lifecycle = SqliteLifecycle(tmp_path / "jobfeed.db", ensure_sqlite_schema)
     await lifecycle.open()
     return lifecycle, SqliteClaimsRuns(lifecycle)
+
+
+async def test_evaluation_verdict_counts_survive_checkpoint_and_finish(
+    tmp_path: Path,
+) -> None:
+    lifecycle, leases = await _open_capability(tmp_path)
+    run = _run(60)
+    run.source = "evaluate"
+    generation = await leases.start_run_with_lease(
+        run, kind="evaluate", owner_id=_OWNER_A, now=_NOW
+    )
+    assert generation == 1
+    run.verdict_counts = {"apply": 2, "consider": 1, "skip": 3}
+    later = _NOW + timedelta(seconds=1)
+    assert await leases.checkpoint_run_with_lease(
+        run, kind="evaluate", owner_id=_OWNER_A, generation=generation, now=later
+    )
+    async with lifecycle.connection() as connection:
+        persisted = await _get_pipeline_run(connection, run.run_id)
+    assert persisted is not None and persisted.verdict_counts == run.verdict_counts
+    finished = _terminal(run, later)
+    assert await leases.finalize_run_with_lease(
+        finished, kind="evaluate", owner_id=_OWNER_A,
+        generation=generation, now=later,
+    )
+    async with lifecycle.connection() as connection:
+        persisted = await _get_pipeline_run(connection, run.run_id)
+    assert persisted is not None and persisted.verdict_counts == run.verdict_counts
+    await lifecycle.close()
 
 
 async def test_start_conflict_takeover_and_generation_fencing(tmp_path: Path) -> None:

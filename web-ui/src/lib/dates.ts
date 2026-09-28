@@ -118,3 +118,10 @@ export function dateTimeInputToIso(value: string): string | null {
   }
   return parsed.toISOString();
 }
+
+/** Same calendar timezone as the server's Triage day buckets. */
+export function formatFirstSeenDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Detroit", month: "short", day: "numeric", year: "numeric",
+  }).format(new Date(iso));
+}

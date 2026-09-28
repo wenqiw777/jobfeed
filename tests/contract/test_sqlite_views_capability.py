@@ -7,6 +7,8 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from jobfeed.adapters.store._sqlite_views import _jobs_view_rows_query
 from jobfeed.domain.models import PipelineRun
 from jobfeed.domain.models_views import VALID_TABS, JobsViewQuery
@@ -38,11 +40,34 @@ async def test_jobs_view_default_query_uses_bounded_discovery_index(
         await lifecycle.close()
 
 
+@pytest.mark.parametrize("identity", [None, ""])
+async def test_missing_identity_never_links_detail_sources(
+    tmp_path: Path, identity: str | None
+) -> None:
+    lifecycle, store = await open_views_performance(tmp_path / "missing-identity.db")
+    try:
+        first = await insert_job(lifecycle, "first", discovered_at=utc_text(NOW))
+        await insert_job(lifecycle, "second", discovered_at=utc_text(NOW))
+        async with lifecycle.connection() as connection:
+            await connection.execute("UPDATE jobs SET external_identity=?", (identity,))
+            await connection.commit()
+        assert await store.list_twin_statuses(str(first)) == []
+    finally:
+        await lifecycle.close()
+
+
 def test_jobs_view_page_query_does_not_materialize_full_job_descriptions() -> None:
     """List pages hydrate summaries, not thousands of complete JD payloads."""
     sql, _ = _jobs_view_rows_query(JobsViewQuery(tab="queue"), NOW)
 
     assert "j.*" not in sql
+    assert "j.jd_text" not in sql
+
+
+def test_content_fold_query_keeps_bodies_out_of_sort_workspace() -> None:
+    sql, _ = _jobs_view_rows_query(
+        JobsViewQuery(tab="queue", sort="triage_posted_desc", include_jd_text=True), NOW
+    )
     assert "j.jd_text" not in sql
 
 
@@ -341,6 +366,14 @@ async def test_twin_queries_use_exact_pairs_and_stable_order(tmp_path: Path) -> 
             statuses=["applied"],
             limit=10,
         )
+        async with lifecycle.connection() as connection:
+            await connection.execute(
+                "UPDATE jobs SET external_identity='greenhouse:123', "
+                "location='New York' "
+                "WHERE id IN (?,?)",
+                (main, twin),
+            )
+            await connection.commit()
         statuses = await store.list_twin_statuses(str(main))
 
         assert [row.job.id for row in rows] == [str(twin)]
@@ -350,7 +383,7 @@ async def test_twin_queries_use_exact_pairs_and_stable_order(tmp_path: Path) -> 
         assert empty == []
 
         large_keys = [("missing", str(index)) for index in range(1_100)]
-        large_keys.append(("alpha", "engineer"))
+        large_keys.append(("__external_identity__", "greenhouse:123"))
         large = await store.list_twin_rows_by_status(
             large_keys,
             statuses=["applied"],

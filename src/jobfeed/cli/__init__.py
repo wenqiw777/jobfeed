@@ -91,6 +91,10 @@ def create_app(config_path: Path | None = None) -> AppContext:
             store,
             logger,
             run_orchestrator,
+            redis_url=settings.redis_pipeline.url
+            if settings.redis_pipeline.enabled
+            else None,
+            redis_namespace=settings.redis_pipeline.namespace,
         ),
         run_orchestrator=run_orchestrator,
         stage_b_threshold_sync=store,

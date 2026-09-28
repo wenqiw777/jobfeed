@@ -2,10 +2,13 @@
 
 import asyncio
 import json
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+import structlog
 
 from jobfeed.adapters.sources._http import html_to_text
 from jobfeed.adapters.sources._linkedin_company_filter import blocked_linkedin_company
@@ -174,8 +177,15 @@ class JobboardExtensionSource:
                     on_progress(
                         SourceFetchProgress(
                             processed=accepted + update.processed,
-                            total=None if bootstrap else accepted + budget,
+                            total=(
+                                None
+                                if bootstrap or update.total is None
+                                else accepted + update.total
+                            )
+                            if update.phase != "fetching"
+                            else (None if bootstrap else accepted + budget),
                             current_job_id=update.current_job_id,
+                            phase=update.phase,
                         )
                     )
 
@@ -202,23 +212,7 @@ class JobboardExtensionSource:
                         str(exc), list(postings.values()), warning=exc.warning
                     ) from exc
                 if self.page_extractor is not None:
-                    rows = await asyncio.gather(
-                        *(
-                            self.page_extractor.enrich_row(
-                                row,
-                                target={
-                                    "id": row.get("id"),
-                                    "title": row.get("title"),
-                                    "company": (row.get("employer") or {}).get("name"),
-                                    "url": row.get("url"),
-                                },
-                                need_description=not bool(
-                                    row.get("description") or row.get("_stored_posting")
-                                ),
-                            )
-                            for row in rows
-                        )
-                    )
+                    rows = await self._interpret_rows(rows, query, on_progress)
                 for row in rows:
                     job = map_board_job(row, discovered_at=datetime.now(UTC))
                     if not blocked(job.company):
@@ -236,8 +230,81 @@ class JobboardExtensionSource:
                         await self.store.set_state(
                             key, json.dumps([str(row["id"]) for row in rows])
                         )
-                on_progress(SourceFetchProgress(processed=len(postings)))
+                on_progress(
+                    SourceFetchProgress(processed=len(postings), phase="fetched")
+                )
         return list(postings.values())
+
+    async def _interpret_rows(
+        self,
+        rows: list[dict[str, Any]],
+        query: str,
+        on_progress: SourceFetchProgressCallback,
+    ) -> list[dict[str, Any]]:
+        """Report the bounded model stage separately from browser requests."""
+        extractor = self.page_extractor
+        assert extractor is not None
+        prepared = []
+        for row in rows:
+            target = {
+                "id": row.get("id"),
+                "title": row.get("title"),
+                "company": (row.get("employer") or {}).get("name"),
+                "url": row.get("url"),
+            }
+            need_description = not bool(
+                row.get("description") or row.get("_stored_posting")
+            )
+            candidate = JobPageExtractor.needs_interpretation(
+                row, target, need_description=need_description
+            )
+            prepared.append((row, target, need_description, candidate))
+        total = sum(item[3] for item in prepared)
+        processed = 0
+        started = time.monotonic()
+        logger = structlog.get_logger(__name__)
+        logger.info(
+            "scan_interpreting_started",
+            source=self.source,
+            query=query,
+            candidate_count=total,
+        )
+        if total:
+            on_progress(
+                SourceFetchProgress(phase="interpreting", processed=0, total=total)
+            )
+
+        async def interpret(
+            item: tuple[dict[str, Any], dict[str, Any], bool, bool],
+        ) -> dict[str, Any]:
+            nonlocal processed
+            row, target, need_description, candidate = item
+            result = await extractor.enrich_row(
+                row, target=target, need_description=need_description
+            )
+            if candidate:
+                processed += 1
+                on_progress(
+                    SourceFetchProgress(
+                        phase="interpreting",
+                        processed=processed,
+                        total=total,
+                        current_job_id=str(row["id"]),
+                    )
+                )
+            return result
+
+        try:
+            return await asyncio.gather(*(interpret(item) for item in prepared))
+        finally:
+            logger.info(
+                "scan_interpreting_finished",
+                source=self.source,
+                query=query,
+                candidate_count=total,
+                processed=processed,
+                elapsed_ms=round((time.monotonic() - started) * 1000),
+            )
 
     async def _bootstrap_persisted(self, key: str) -> bool:
         if self.store is None:

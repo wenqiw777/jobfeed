@@ -73,6 +73,9 @@ class _CountingLLM:
 
 
 class _Store:
+    async def get_job(self, _job_id: str) -> JobPosting | None:
+        return None
+
     def __init__(self, lease: _LeaseProbe) -> None:
         self._lease = lease
         self.lose_during_save_stage_a = False

@@ -307,6 +307,17 @@ async def test_health_reports_db_error_as_503() -> None:
     assert response.json() == {"status": "degraded", "db": "error"}
 
 
+async def test_health_reports_enabled_redis_outage() -> None:
+    context = fake_context()
+    context["settings"].redis_pipeline.enabled = True
+    context["settings"].redis_pipeline.url = "redis://127.0.0.1:1/0"
+    app = build_web_app(context)
+    async with open_client(app) as client:
+        response = await client.get("/api/health")
+    assert response.status_code == HTTP_SERVICE_UNAVAILABLE
+    assert response.json() == {"status": "degraded", "db": "ok", "redis": "error"}
+
+
 async def test_store_connected_once_for_many_requests() -> None:
     """The store must be built and connected per process, not per request."""
     store = FakeStore()
@@ -321,7 +332,7 @@ async def test_store_connected_once_for_many_requests() -> None:
     assert second.status_code == HTTP_OK
     assert store.connect_calls == 1
     assert store.roundtrip_calls == REQUEST_COUNT
-    assert store.last_limit == 1
+    assert store.last_limit == 0
     assert store.close_calls == 1
     logged_ids = [
         entry["request_id"] for entry in logs if entry["event"] == "http_request"

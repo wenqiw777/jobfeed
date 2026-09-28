@@ -11,7 +11,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 
-import { type RunSummary, useRunNewJobSources } from "@/api/queries";
+import { type RunSummary, useRunDetail, useRunNewJobSources } from "@/api/queries";
 import { RunActionButton } from "@/components/runs/RunActionButton";
 import { formatLocalDateTime } from "@/lib/dates";
 import { useDensity } from "@/lib/density";
@@ -199,6 +199,11 @@ function StartedCell({ run, isExpanded, onToggle }: { run: RunSummary; isExpande
 }
 
 function RunDetail({ run }: { run: RunSummary }) {
+  const historical = useRunDetail(
+    run.run_id,
+    run.source === "evaluate" && run.verdict_counts == null && run.finished_at != null,
+  );
+  const verdicts = run.verdict_counts ?? historical.data?.verdict_counts;
   return (
     <Box margin={{ top: "s" }}>
       <SpaceBetween size="s">
@@ -206,6 +211,16 @@ function RunDetail({ run }: { run: RunSummary }) {
           {FULL_COUNTERS.map(({ key, label }) => (
             <div key={key}><Box variant="awsui-key-label">{label}</Box><Box>{run[key]}</Box></div>
           ))}
+          {run.source === "evaluate" && (
+            <>
+              {(["apply", "consider", "skip"] as const).map((key) => (
+                <div key={key} data-testid={`run-verdict-${key}`}>
+                  <Box variant="awsui-key-label">{key === "skip" ? "Ignore" : key === "apply" ? "Apply" : "Consider"}</Box>
+                  <Box>{verdicts?.[key] ?? "—"}</Box>
+                </div>
+              ))}
+            </>
+          )}
           <div><Box variant="awsui-key-label">finished</Box><Box>{formatLocalDateTime(run.finished_at)}</Box></div>
           {run.status === "failed" && (
             <>
@@ -222,6 +237,15 @@ function RunDetail({ run }: { run: RunSummary }) {
             </>
           )}
         </ColumnLayout>
+        {Object.entries(run.scan_progress ?? {}).map(([source, progress]) => (
+          <div key={source}>
+            <Box variant="awsui-key-label">{sourceLabel(source)}</Box>
+            <StatusIndicator type={progress.phase === "failed" ? "error" : progress.phase === "completed_with_warnings" ? "warning" : "success"}>
+              {String(progress.phase ?? "unknown").replaceAll("_", " ")} · {progress.processed ?? 0} processed
+            </StatusIndicator>
+            {progress.message && <Box>{String(progress.message)}</Box>}
+          </div>
+        ))}
         {run.source !== "evaluate" && run.jobs_inserted > 0 && (
           <NewJobsBySource run={run} />
         )}
@@ -287,8 +311,11 @@ function RunStatus({ run }: { run: RunSummary }) {
       </StatusIndicator>
     );
   }
-  if (run.errors > 0) return <StatusIndicator type="warning">Completed with errors</StatusIndicator>;
   if (run.finished_at === null) return <StatusIndicator type="in-progress">Running</StatusIndicator>;
+  if (run.errors > 0) return <StatusIndicator type="warning">Completed with errors</StatusIndicator>;
+  if (Object.values(run.scan_progress ?? {}).some(progress => progress.phase === "completed_with_warnings")) {
+    return <StatusIndicator type="warning">Completed with warnings</StatusIndicator>;
+  }
   return <StatusIndicator type="success">Succeeded</StatusIndicator>;
 }
 
@@ -329,7 +356,7 @@ function sourceLabel(source: string): string {
     jobright: "Jobright",
     linkedin: "LinkedIn",
     linkedin_guest: "LinkedIn guest",
-    speedyapply: "SpeedyApply",
+    speedyapply: "GitHub job lists",
   };
   return labels[source] ?? source.replaceAll("_", " ");
 }

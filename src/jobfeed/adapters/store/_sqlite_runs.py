@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import aiosqlite
 
 from jobfeed.adapters.store._run_scan_stats import load_scan_stats
@@ -45,6 +47,8 @@ def _pipeline_run_from_row(row: aiosqlite.Row) -> PipelineRun:
         stage_a_scored=int(row["stage_a_scored"]),
         stage_b_scored=int(row["stage_b_scored"]),
         jobs_scored=int(row["jobs_scored"]),
+        verdict_counts=json.loads(row["verdict_counts_json"])
+        if row["verdict_counts_json"] is not None else None,
         total_llm_cost_usd=float(row["total_llm_cost_usd"]),
         errors=int(row["errors"]),
         finished_at=(
@@ -62,4 +66,5 @@ def _pipeline_run_from_row(row: aiosqlite.Row) -> PipelineRun:
         restart_count=int(row["restart_count"]),
         restarted_by_run_id=row["restarted_by_run_id"],
         scan_stats=load_scan_stats(row["scan_stats_json"]),
+        scan_progress=json.loads(row["scan_progress_json"] or "{}"),
     )

@@ -15,6 +15,7 @@ from jobfeed.domain.models import (
     AutoDecayResult,
     JobPosting,
     LLMResponse,
+    Message,
     MLGateResult,
     PipelineRun,
     StageAResult,
@@ -48,6 +49,9 @@ SPLIT_GATE_FAIL_SCORE = 0.1
 
 
 class FakeStore(SuccessfulRunLeaseMixin):
+    async def get_job(self, job_id: str) -> JobPosting | None:
+        return next((job for job in self._candidates if job.id == job_id), None)
+
     """In-memory store covering the funnel + Stage A claim/score surface."""
 
     def __init__(self, candidates: list[JobPosting]) -> None:
@@ -128,7 +132,22 @@ class StubPromptRenderer:
         return PromptBundle(messages=[], prompt_hash="ph", resume_hash="rh")
 
     def render_stage_b(self, **_kw: object) -> PromptBundle:
-        return PromptBundle(messages=[], prompt_hash="ph", resume_hash="rh")
+        # Stage A score is a real Stage B input; distinct scores must not collapse.
+        return PromptBundle(
+            messages=[
+                Message(
+                    role="user",
+                    content=str(
+                        (
+                            getattr(_kw.get("job"), "title", None),
+                            _kw.get("stage_a_score"),
+                        )
+                    ),
+                )
+            ],
+            prompt_hash="ph",
+            resume_hash="rh",
+        )
 
 
 class StageALLM:
@@ -316,7 +335,7 @@ def test_progress_snapshot_keeps_completed_evaluation_count() -> None:
 async def test_stage_b_exception_drains_workers_and_releases_owned_claims() -> None:  # noqa: C901
     """Run finalization cannot race ahead of sibling workers after one escapes."""
     first = _job("a")
-    second = _job("b")
+    second = _job("b", title="Different evaluation input")
     second_started = asyncio.Event()
     second_cancelled = asyncio.Event()
 

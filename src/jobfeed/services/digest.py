@@ -57,6 +57,7 @@ class DigestService:
         """
         effective_cutoff = cutoff_at if cutoff_at is not None else await self._cutoff()
         evaluations = await self.store.list_evaluated_jobs()
+        evaluations = await self._canonical_evaluations(evaluations)
         stats = _stats_for(evaluations)
         digest = render_digest(evaluations, stats, cutoff_at=effective_cutoff, top=top)
         digest = await self._append_footer(digest)
@@ -69,6 +70,32 @@ class DigestService:
             stage_b_evaluated=stats["stage_b_evaluated"],
         )
         return digest
+
+    async def _canonical_evaluations(
+        self, evaluations: list[JobEvaluation]
+    ) -> list[JobEvaluation]:
+        """Keep one actionable evaluated source per canonical job."""
+        if not hasattr(type(self.store), "resolve_real_job_id"):
+            return evaluations
+        seen: set[str] = set()
+        selected: list[JobEvaluation] = []
+        actionable = {"new", "scored", "shortlisted", "awaiting_referral"}
+        for evaluation in evaluations:
+            source_id = evaluation.job.id
+            if source_id is None:
+                continue
+            real_id = await self.store.resolve_real_job_id(source_id)
+            if real_id is None:
+                selected.append(evaluation)
+                continue
+            if real_id in seen:
+                continue
+            status = await self.store.get_real_job_status(real_id)
+            if status is None or status.status not in actionable:
+                continue
+            seen.add(real_id)
+            selected.append(evaluation)
+        return selected
 
     async def _cutoff(self) -> datetime | None:
         """Read the stored KV cutoff; malformed or missing values mean None."""
@@ -87,7 +114,16 @@ class DigestService:
 
     async def _append_footer(self, digest: str) -> str:
         """Append the attention footer when any bucket has items."""
-        attention = await self.store.workflow_attention()
+        canonical = (
+            self.store.real_job_workflow_attention
+            if hasattr(type(self.store), "real_job_workflow_attention")
+            else None
+        )
+        attention = (
+            await canonical()
+            if canonical is not None
+            else await self.store.workflow_attention()
+        )
         report = await self.store.needs_attention()
         footer = render_attention_footer(attention, report)
         if not footer:

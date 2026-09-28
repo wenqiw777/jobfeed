@@ -42,6 +42,7 @@ _INTEGER_BOOL_COLUMNS = {
     ("jobs", "clearance_required"),
     ("jobs", "school_restricted"),
     ("jobs", "is_swe_role"),
+    ("jobs", "is_repost"),
     ("companies", "ats_override"),
 }
 
@@ -151,10 +152,29 @@ def _create_table_columns() -> dict[str, list[dict[str, object]]]:
                     ("restart_count", "integer", False),
                     ("restarted_by_run_id", "text", True),
                     ("scan_stats_json", "jsonb", True),
+                    ("scan_progress_json", "jsonb", True),
+                    ("verdict_counts_json", "jsonb", True),
                 )
             ],
         ]
     )
+    for name, source_type in (
+        ("external_identity", "text"),
+        ("enrich_attempted_at", "timestamp with time zone"),
+        ("enrich_error_code", "text"),
+        ("is_repost", "integer"),
+        ("repost_evidence", "text"),
+        ("repost_observed_at", "timestamp with time zone"),
+        ("enrich_retry_after", "timestamp with time zone"),
+    ):
+        tables["jobs"].append(
+            {
+                "name": name,
+                "source_sql_type": source_type,
+                "nullable": True,
+                "primary_key": False,
+            }
+        )
     return tables
 
 
@@ -185,7 +205,7 @@ def test_manifest_matches_every_alembic_0011_table_and_column() -> None:
     alembic = _create_table_columns()
     manifest = CANONICAL_SCHEMA_MANIFEST_V1
 
-    assert manifest.alembic_revision == "0011"
+    assert manifest.alembic_revision == "0015"
     assert tuple(table.name for table in manifest.tables) == _TABLE_ORDER
     assert tuple(schema.name for schema in CANONICAL_ROW_SCHEMAS_V1) == tuple(
         f"{name}-v1" for name in _TABLE_ORDER

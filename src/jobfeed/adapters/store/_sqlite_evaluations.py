@@ -101,8 +101,20 @@ async def _save_stage_b(
 ) -> None:
     """Persist a complete Stage B result using canonical structured JSON."""
     numeric_id = int(job_id)
-    blocks = _stage_b_blocks(result)
     now = _utc_now_text()
+    blocks = _stage_b_blocks(result)
+    values = (
+        numeric_id,
+        result.verdict.value,
+        result.jd_summary,
+        *(_canonical_json(blocks[key]) for key in _BLOCK_KEYS),
+        result.model,
+        result.cost_usd,
+        result.prompt_hash,
+        result.resume_hash,
+        now,
+        now,
+    )
     async with lifecycle.connection() as connection:
         await connection.execute(
             """INSERT INTO evaluations (
@@ -126,18 +138,7 @@ async def _save_stage_b(
                 stage_b_resume_hash=excluded.stage_b_resume_hash,
                 stage_b_at=COALESCE(evaluations.stage_b_at, excluded.stage_b_at),
                 updated_at=excluded.updated_at""",
-            (
-                numeric_id,
-                result.verdict.value,
-                result.jd_summary,
-                *(_canonical_json(blocks[key]) for key in _BLOCK_KEYS),
-                result.model,
-                result.cost_usd,
-                result.prompt_hash,
-                result.resume_hash,
-                now,
-                now,
-            ),
+            values,
         )
 
 
@@ -184,6 +185,20 @@ async def _mark_stage_b_skipped(
             "updated_at=? WHERE job_id=? "
             "AND (stage_b_status IS NULL OR stage_b_status<>'completed')",
             (_utc_now_text(), numeric_id),
+        )
+
+
+async def _mark_stage_b_ineligible(
+    lifecycle: SqliteLifecycle,
+    job_id: str,
+) -> None:
+    """Persist a hard-eligibility skip unless evidence was already completed."""
+    async with lifecycle.connection() as connection:
+        await connection.execute(
+            "UPDATE evaluations SET stage_b_status='skipped_below_threshold', "
+            "stage_b_error='ineligible', updated_at=? WHERE job_id=? "
+            "AND (stage_b_status IS NULL OR stage_b_status<>'completed')",
+            (_utc_now_text(), int(job_id)),
         )
 
 

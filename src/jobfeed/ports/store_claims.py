@@ -129,6 +129,7 @@ class StoreEvaluationClaimMixin(Protocol):
         limit: int = 100,
         max_days: int | None = None,
         stage_a_threshold: int | None = None,
+        require_stage_a: bool = True,
         job_ids: list[str] | None = None,
     ) -> list[JobPosting]:
         """Claim Stage B jobs for one real evaluation run.
@@ -137,6 +138,7 @@ class StoreEvaluationClaimMixin(Protocol):
             limit: Max jobs.
             max_days: Freshness filter.
             stage_a_threshold: Optional minimum Stage A score.
+            require_stage_a: Whether a completed legacy Stage A row is required.
             job_ids: Optional store identities restricting the claim.
 
         Returns:

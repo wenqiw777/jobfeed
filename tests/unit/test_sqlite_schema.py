@@ -13,12 +13,15 @@ from jobfeed.adapters.migration.canonical_schema_manifest import (
     CANONICAL_SCHEMA_MANIFEST_V1,
 )
 from jobfeed.adapters.store import sqlite_schema
+from jobfeed.adapters.store._sqlite_jobs import _save_job_on_connection
+from jobfeed.adapters.store._sqlite_schema_metadata import schema_ddl_statements
 from jobfeed.adapters.store.sqlite_schema import (
     SQLITE_METADATA,
     SQLITE_SCHEMA_VERSION,
     SQLITE_TABLE_NAMES,
     ensure_sqlite_schema,
 )
+from tests.support.sqlite_jobs_evaluations import make_job
 
 _RUN_LEASE_ROWS = [
     ("evaluate", 0, None, None, None, None),
@@ -26,6 +29,7 @@ _RUN_LEASE_ROWS = [
 ]
 _INJECTED_FAILURE_CALL = 4
 _DATA_REPAIR_FAILURE_CALL = 2
+_TWO_SOURCE_PARENTS = 2
 
 
 async def _scalar(connection: aiosqlite.Connection, sql: str) -> Any:
@@ -45,33 +49,33 @@ async def _table_names(connection: aiosqlite.Connection) -> tuple[str, ...]:
     return tuple(row[0] for row in rows)
 
 
-def test_metadata_matches_frozen_registry_plus_leases_and_retry_columns() -> None:
-    """Core metadata preserves the frozen registry and explicit additive columns."""
+def test_metadata_matches_frozen_0008_registry_plus_run_leases() -> None:
+    """Core metadata has the exact migrated columns and one lease table."""
     migrated = CANONICAL_SCHEMA_MANIFEST_V1.tables
 
     assert SQLITE_SCHEMA_VERSION == 1
-    expected_names = (*(table.name for table in migrated), "run_leases")
+    expected_names = (
+        *(table.name for table in migrated),
+        "run_leases",
+        "job_priority_snapshot",
+        "real_jobs",
+        "real_job_identifiers",
+        "real_job_review_cases",
+        "real_job_status",
+        "real_job_status_history",
+        "real_job_interview_rounds",
+        "real_job_applications",
+        "real_job_evaluations",
+        "real_job_evaluation_history",
+    )
     assert expected_names == SQLITE_TABLE_NAMES
     assert tuple(SQLITE_METADATA.tables) == SQLITE_TABLE_NAMES
     for expected in migrated:
         actual = SQLITE_METADATA.tables[expected.name]
-        additive = (
-            (
-                "external_identity",
-                "enrich_attempted_at",
-                "enrich_error_code",
-                "enrich_retry_after",
-            )
-            if expected.name == "jobs"
-            else ()
-        )
-        assert tuple(column.name for column in actual.columns) == (
-            *(column.name for column in expected.columns),
-            *additive,
-        )
-        for name in additive:
-            assert str(actual.columns[name].type) == "TEXT"
-            assert actual.columns[name].nullable
+        expected_columns = tuple(column.name for column in expected.columns)
+        if expected.name == "jobs":
+            expected_columns += ("real_job_id", "apply_url")
+        assert tuple(column.name for column in actual.columns) == expected_columns
         assert (
             tuple(column.name for column in actual.primary_key) == expected.primary_key
         )
@@ -102,6 +106,127 @@ async def test_empty_database_migrates_atomically_to_v1_and_reopens() -> None:
         assert (
             await _scalar(connection, "SELECT value FROM state WHERE key='kept'")
             == "yes"
+        )
+
+
+@pytest.mark.asyncio
+async def test_explicit_reconcile_preserves_child_history() -> None:
+    async with aiosqlite.connect(":memory:") as connection:
+        await connection.execute("PRAGMA foreign_keys=ON")
+        await ensure_sqlite_schema(connection)
+        await connection.execute(
+            "INSERT INTO jobs("
+            "platform,canonical_id,url,title,company,location,discovered_at) "
+            "VALUES('linkedin','old','https://example.test/old','Engineer','Example','',"
+            "'2026-09-24T00:00:00.000000Z')"
+        )
+        await connection.commit()
+        assert await _scalar(connection, "SELECT real_job_id FROM jobs") is None
+        before = await _scalar(connection, "SELECT COUNT(*) FROM job_status_history")
+
+        await sqlite_schema.migrate_real_jobs_schema(connection)
+        parent = await _scalar(connection, "SELECT real_job_id FROM jobs")
+        assert parent is not None
+        assert await _scalar(connection, "SELECT COUNT(*) FROM real_jobs") == 1
+        assert (
+            await _scalar(connection, "SELECT COUNT(*) FROM real_job_identifiers")
+            == 1
+        )
+        assert (
+            await _scalar(connection, "SELECT COUNT(*) FROM job_status_history")
+            == before
+        )
+        await ensure_sqlite_schema(connection)
+        assert await _scalar(connection, "SELECT COUNT(*) FROM real_jobs") == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_v1_schema_requires_explicit_real_job_migration() -> None:
+    """Startup and source writes leave a pre-feature live DB untouched."""
+    async with aiosqlite.connect(":memory:") as connection:
+        for statement in schema_ddl_statements():
+            if any(
+                name in statement
+                for name in (
+                    "CREATE TABLE real_jobs",
+                    "CREATE TABLE real_job_identifiers",
+                    "CREATE TABLE real_job_review_cases",
+                    "CREATE TABLE real_job_status",
+                    "CREATE TABLE real_job_status_history",
+                    "CREATE TABLE real_job_interview_rounds",
+                    "CREATE TABLE real_job_applications",
+                    "CREATE TABLE real_job_evaluations",
+                    "CREATE TABLE real_job_evaluation_history",
+                    "CREATE INDEX idx_jobs_real_job_id",
+                    "CREATE INDEX idx_real_job_identifiers_parent",
+                    "CREATE INDEX idx_real_job_status_status",
+                    "CREATE INDEX idx_real_job_status_history_job",
+                    "CREATE INDEX idx_real_job_interviews_job",
+                    "CREATE INDEX idx_real_job_applications_parent",
+                )
+            ):
+                continue
+            legacy_statement = statement
+            if "CREATE TABLE jobs" in statement:
+                legacy_statement = legacy_statement.replace(
+                    "\treal_job_id INTEGER, \n", ""
+                )
+                legacy_statement = legacy_statement.replace(
+                    "\tapply_url TEXT, \n", ""
+                )
+                legacy_statement = legacy_statement.replace(
+                    "\tFOREIGN KEY(real_job_id) REFERENCES real_jobs (id), \n", ""
+                )
+            await connection.execute(legacy_statement)
+        await connection.execute(
+            "INSERT INTO run_leases(kind,generation) VALUES('scan',0),('evaluate',0)"
+        )
+        await connection.execute("PRAGMA user_version=1")
+        await connection.execute(
+            "INSERT INTO jobs("
+            "platform,canonical_id,url,title,company,location,discovered_at) "
+            "VALUES('linkedin','old','https://example.test','Engineer','Example','',"
+            "'2026-09-24T00:00:00.000000Z')"
+        )
+        await connection.commit()
+        before = await _scalar(connection, "SELECT COUNT(*) FROM job_status_history")
+
+        await ensure_sqlite_schema(connection)
+        assert await _scalar(
+            connection,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name='real_jobs'",
+        ) == 0
+        assert await _scalar(
+            connection,
+            "SELECT COUNT(*) FROM pragma_table_info('jobs') "
+            "WHERE name='real_job_id'",
+        ) == 0
+        connection.row_factory = aiosqlite.Row
+        await connection.execute("BEGIN IMMEDIATE")
+        saved = await _save_job_on_connection(connection, make_job("new-source"))
+        await connection.commit()
+        assert saved.inserted
+        assert await _scalar(
+            connection,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name='real_jobs'",
+        ) == 0
+        await sqlite_schema.migrate_real_jobs_schema(connection)
+        assert (
+            await _scalar(connection, "SELECT COUNT(*) FROM real_jobs")
+            == _TWO_SOURCE_PARENTS
+        )
+        assert (
+            await _scalar(connection, "SELECT COUNT(*) FROM real_job_identifiers")
+            == _TWO_SOURCE_PARENTS
+        )
+        assert (
+            await _scalar(connection, "SELECT COUNT(*) FROM job_status_history")
+            == before + 1
+        )
+        await sqlite_schema.migrate_real_jobs_schema(connection)
+        assert (
+            await _scalar(connection, "SELECT COUNT(*) FROM real_jobs")
+            == _TWO_SOURCE_PARENTS
         )
 
 
@@ -139,6 +264,10 @@ async def test_current_data_repair_backfills_completed_evaluation_times() -> Non
     """Existing completed evaluations gain stable dates without a DDL migration."""
     async with aiosqlite.connect(":memory:") as connection:
         await ensure_sqlite_schema(connection)
+        await connection.execute(
+            "DELETE FROM state WHERE key=?",
+            (sqlite_schema._DATA_REPAIR_STATE_KEY,),
+        )
         await connection.execute("PRAGMA user_version=1")
         await connection.execute(
             """INSERT INTO jobs(
@@ -203,6 +332,31 @@ async def test_current_data_repair_backfills_completed_evaluation_times() -> Non
             )
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_completed_data_repair_is_not_repeated_on_every_reopen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A current database does not rescan legacy rows after repair completes."""
+    async with aiosqlite.connect(":memory:") as connection:
+        await ensure_sqlite_schema(connection)
+        calls = 0
+        original = sqlite_schema._backfill_external_identities
+
+        async def count_backfill(candidate: aiosqlite.Connection) -> None:
+            nonlocal calls
+            calls += 1
+            await original(candidate)
+
+        monkeypatch.setattr(
+            sqlite_schema, "_backfill_external_identities", count_backfill
+        )
+
+        await ensure_sqlite_schema(connection)
+        await ensure_sqlite_schema(connection)
+
+        assert calls == 0
 
 
 @pytest.mark.asyncio
@@ -324,6 +478,7 @@ async def test_v1_reopen_installs_the_additive_seniority_counter() -> None:
             "VALUES('kept', '2026-08-27T00:00:00Z', 'evaluate', 'succeeded')"
         )
         for column in (
+            "scan_progress_json",
             "scan_stats_json",
             "restarted_by_run_id",
             "restart_count",
@@ -380,6 +535,10 @@ async def test_data_repair_failure_rolls_back_every_change(
     async with aiosqlite.connect(":memory:") as connection:
         await ensure_sqlite_schema(connection)
         await connection.execute(
+            "DELETE FROM state WHERE key=?",
+            (sqlite_schema._DATA_REPAIR_STATE_KEY,),
+        )
+        await connection.execute(
             """INSERT INTO jobs(
                    platform, canonical_id, url, title, company, location,
                    discovered_at
@@ -432,3 +591,42 @@ async def test_data_repair_failure_rolls_back_every_change(
             == 1
         )
         assert await _scalar(connection, "SELECT COUNT(*) FROM job_status_history") == 1
+
+
+@pytest.mark.asyncio
+async def test_repost_columns_upgrade_after_existing_enrichment_columns() -> None:
+    """Adding repost metadata preserves old job data and accepts ALTER order."""
+    async with aiosqlite.connect(":memory:") as connection:
+        await ensure_sqlite_schema(connection)
+        await connection.execute(
+            "INSERT INTO jobs(platform,canonical_id,url,title,company,location,"
+            "discovered_at,jd_text,enrich_retry_after) VALUES"
+            "('speedyapply','kept','https://example.com/job','Engineer','Example',"
+            "'Remote','2026-09-20','Existing complete description','2026-09-27')"
+        )
+        for column in ("is_repost", "repost_evidence", "repost_observed_at"):
+            await connection.execute(f"ALTER TABLE jobs DROP COLUMN {column}")
+        await connection.commit()
+        await ensure_sqlite_schema(connection)
+        await ensure_sqlite_schema(connection)
+        cursor = await connection.execute(
+            "SELECT jd_text,enrich_retry_after,is_repost FROM jobs "
+            "WHERE canonical_id='kept'"
+        )
+        assert await cursor.fetchone() == (
+            "Existing complete description",
+            "2026-09-27",
+            None,
+        )
+
+
+def test_additive_order_normalization_keeps_type_mismatches_visible() -> None:
+    normalize = sqlite_schema._normalize_sql
+    assert normalize(
+        "CREATE TABLE jobs (id INTEGER, is_repost INTEGER, enrich_retry_after TEXT)"
+    ) == normalize(
+        "CREATE TABLE jobs (id INTEGER, enrich_retry_after TEXT, is_repost INTEGER)"
+    )
+    assert normalize("CREATE TABLE jobs (id INTEGER, is_repost TEXT)") != normalize(
+        "CREATE TABLE jobs (id INTEGER, is_repost INTEGER)"
+    )

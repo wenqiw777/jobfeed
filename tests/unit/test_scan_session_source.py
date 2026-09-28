@@ -181,8 +181,13 @@ async def test_session_source_needs_reauth_counts_as_source_error() -> None:
     store = RecordingStore()
     logger = RecordingLogger()
 
-    run = await ScanService(store, logger).run([("linkedin", source, {})])
-
+    observed = []
+    with pytest.raises(RuntimeError, match="failed source work"):
+        await ScanService(store, logger).run(
+            [("linkedin", source, {})], on_progress=observed.append
+        )
+    run = observed[-1]
+    assert run.status == "failed"
     assert store.jobs == []
     assert source.session_closed is True  # session opened to run discover, then closed
     assert run.errors == 1
@@ -227,13 +232,15 @@ async def test_session_generic_failure_preserves_sibling_source() -> None:
     simple_source = StaticSimpleSource([_posting("mock-1", platform="mock")])
     store = RecordingStore()
 
-    run = await ScanService(store, RecordingLogger()).run(
-        [
-            ("linkedin", session_source, {}),
-            ("mock", simple_source, {}),
-        ]
-    )
-
+    observed = []
+    with pytest.raises(RuntimeError, match="failed source work"):
+        await ScanService(store, RecordingLogger()).run(
+            [("linkedin", session_source, {}), ("mock", simple_source, {})],
+            on_progress=observed.append,
+        )
+    run = observed[-1]
+    assert run.status == "failed"
+    assert run.jobs_inserted == 1
     assert [job.canonical_id for job in store.jobs] == ["mock-1"]
     assert run.errors == 1
 

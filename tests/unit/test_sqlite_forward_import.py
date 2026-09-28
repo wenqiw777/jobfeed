@@ -15,6 +15,7 @@ from jobfeed.adapters.migration.canonical_schema_manifest import (
 from jobfeed.adapters.migration.sqlite_forward_import import (
     import_postgres_snapshot_to_sqlite,
 )
+from jobfeed.adapters.store._sqlite_schema_metadata import SQLITE_TABLE_NAMES
 from tests.unit._sqlite_forward_import_fixture import (
     FakeSnapshotSource,
     canonical_source_rows,
@@ -64,7 +65,7 @@ def test_imports_exact_14_tables_then_installs_trigger_and_preserves_identity(
                 "AND name NOT LIKE 'sqlite_%'"
             )
         }
-        assert names == {*MIGRATED_TABLE_ORDER_V1, "run_leases"}
+        assert names == set(SQLITE_TABLE_NAMES)
         for table_name in MIGRATED_TABLE_ORDER_V1:
             assert _scalar(connection, f'SELECT COUNT(*) FROM "{table_name}"') == 1
         assert connection.execute(

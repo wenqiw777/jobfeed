@@ -19,6 +19,7 @@ from jobfeed.domain.models import (
     FitAnalysis,
     JobEvaluation,
     StageBResult,
+    StatusInfo,
     Verdict,
     WorkflowAttention,
     WorkflowAttentionItem,
@@ -253,6 +254,46 @@ class TestDigestServiceCutoff:
         assert key == LAST_RENDERED_KEY
         written = datetime.fromisoformat(value)
         assert written.tzinfo is not None
+
+    def test_canonical_digest_emits_one_actionable_parent(self) -> None:
+        evaluations = [
+            make_evaluation("alias-a", Verdict.APPLY),
+            make_evaluation("alias-b", Verdict.APPLY),
+            make_evaluation("ignored", Verdict.APPLY),
+        ]
+        for index, evaluation in enumerate(evaluations, start=1):
+            evaluation.job.id = str(index)
+
+        class CanonicalDigestStore:
+            async def list_evaluated_jobs(self) -> list[JobEvaluation]:
+                return evaluations
+
+            async def resolve_real_job_id(self, source_id: str) -> str:
+                return {"1": "10", "2": "10", "3": "30"}[source_id]
+
+            async def get_real_job_status(self, real_id: str) -> StatusInfo:
+                return StatusInfo(
+                    job_id=real_id,
+                    status="ignored" if real_id == "30" else "scored",
+                    last_status_change_at=datetime.now(UTC),
+                )
+
+            async def get_state(self, _key: str) -> None:
+                return None
+
+            async def set_state(self, _key: str, _value: str) -> None:
+                return None
+
+            async def real_job_workflow_attention(self) -> WorkflowAttention:
+                return empty_attention()
+
+            async def needs_attention(self) -> AttentionReport:
+                return AttentionReport()
+
+        digest = asyncio.run(DigestService(CanonicalDigestStore(), MagicMock()).run())
+        assert digest.count("Summary for alias-a") == 1
+        assert "Summary for alias-b" not in digest
+        assert "Summary for ignored" not in digest
 
     def test_second_run_splits_on_stored_timestamp(self) -> None:
         """A stored KV timestamp should act as the cutoff."""

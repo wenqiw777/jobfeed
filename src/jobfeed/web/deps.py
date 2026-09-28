@@ -19,6 +19,10 @@ from jobfeed.onboarding_resume import ResumeOnboardingService
 from jobfeed.onboarding_searches import OnboardingSearchService
 from jobfeed.personal_ml_learning import PersonalMLLearningService
 from jobfeed.ports.store import JobStore
+from jobfeed.services._evaluate_canonical import (
+    _PolicySnapshot,
+    current_policy_for_settings,
+)
 from jobfeed.services.application import ApplicationService
 from jobfeed.services.insights import InsightsService
 from jobfeed.services.jobs_view import JobsViewService
@@ -52,6 +56,21 @@ def get_store(request: Request) -> JobStore:
         Job store whose connection is owned by the app lifespan.
     """
     return get_context(request)["store"]
+
+
+async def get_current_scoring_policy(request: Request) -> _PolicySnapshot:
+    """Resolve the effective paid policy before canonical score reads.
+
+    Args:
+        request: Current request carrying settings and learning state.
+
+    Returns:
+        Immutable policy snapshot shared across list, detail, and priority.
+    """
+    context = get_context(request)
+    return await current_policy_for_settings(
+        context["settings"], get_personal_ml_service(request)
+    )
 
 
 def get_configuration_editor(request: Request) -> ConfigurationEditor:

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TypeAlias
 from uuid import UUID, uuid4
+
+import structlog
 
 from jobfeed.domain.errors import RunConflictError, RunLeaseLostError
 from jobfeed.domain.models import PipelineRun
@@ -24,6 +27,7 @@ DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
 # of declaring the fence lost after only a few busy timeouts.
 _HEARTBEAT_RENEW_ATTEMPTS = 20
 _HEARTBEAT_RETRY_DELAY_SECONDS = 1.0
+_LOG = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -94,15 +98,30 @@ class RunLeaseSession:
     async def _renew_with_transient_retry(self) -> bool | None:
         """Renew once, retrying bounded store exceptions but not fence rejection."""
         for attempt in range(_HEARTBEAT_RENEW_ATTEMPTS):
+            started = time.monotonic()
             try:
-                return await self._store.renew_run_lease(
+                renewed = await self._store.renew_run_lease(
                     kind=self.kind,
                     owner_id=self.owner_id,
                     run_id=self.run.run_id,
                     generation=self.generation,
                     now=_aware_utc(self._clock()),
                 )
-            except Exception:
+                if not renewed:
+                    _LOG.warning(
+                        "run_lease_fence_rejected", run_id=self.run.run_id,
+                        kind=self.kind, generation=self.generation,
+                        attempt=attempt + 1,
+                    )
+                return renewed
+            except Exception as exc:
+                _LOG.warning(
+                    "run_lease_renewal_error", run_id=self.run.run_id,
+                    kind=self.kind, generation=self.generation,
+                    attempt=attempt + 1, error_type=type(exc).__name__,
+                    error=_SECRET.sub(r"\1\2[redacted]", str(exc))[:300],
+                    duration_seconds=round(time.monotonic() - started, 3),
+                )
                 if attempt + 1 == _HEARTBEAT_RENEW_ATTEMPTS:
                     return False
                 retry_delay = min(
@@ -330,8 +349,12 @@ _SECRET = re.compile(r"(?i)(authorization|api[_-]?key|token|password)(\s*[:=]\s*
 def _record_failure(session: RunLeaseSession, exc: BaseException) -> None:
     run = session.run
     if isinstance(exc, asyncio.CancelledError):
-        run.failure_code = "user_stopped"
-        run.failure_message = "Run stopped by user"
+        shutting_down = exc.args == ("service_shutdown",)
+        run.failure_code = "interrupted" if shutting_down else "user_stopped"
+        run.failure_message = (
+            "Run interrupted by service shutdown" if shutting_down
+            else "Run stopped by user"
+        )
     elif isinstance(exc, RunLeaseLostError):
         run.failure_code = "interrupted"
         run.failure_message = "Run interrupted after its worker stopped responding"
@@ -339,8 +362,17 @@ def _record_failure(session: RunLeaseSession, exc: BaseException) -> None:
         run.failure_code = "runtime_error"
         message = " ".join(str(exc).split()) or type(exc).__name__
         run.failure_message = _SECRET.sub(r"\1\2[redacted]", message)[:300]
-    run.failed_stage = run.progress_stage or run.scan_phase or session.kind
-    run.failed_source = run.scan_source or run.source
+    failed = [
+        name
+        for name, progress in run.scan_progress.items()
+        if progress.get("phase") == "failed"
+    ]
+    if str(exc) != "Scan has failed source work; inspect source progress":
+        failed = []  # A new infrastructure failure is not a source aggregate.
+    run.failed_stage = (
+        "source" if failed else run.progress_stage or run.scan_phase or session.kind
+    )
+    run.failed_source = ", ".join(failed) if failed else run.scan_source or run.source
 
 
 __all__ = ["RunLeaseOrchestrator", "RunLeaseSession"]

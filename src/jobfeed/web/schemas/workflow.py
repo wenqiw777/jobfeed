@@ -47,6 +47,7 @@ class TransitionResponse(BaseModel):
 
     job_id: str
     status: str
+    real_job_id: str | None = None
 
 
 class BulkTransitionItem(BaseModel):
@@ -99,6 +100,7 @@ class OkResponse(BaseModel):
     """Generic acknowledgement for side-effect-only routes."""
 
     ok: bool = True
+    real_job_id: str | None = None
 
 
 class RestoreResponse(BaseModel):
@@ -106,6 +108,7 @@ class RestoreResponse(BaseModel):
 
     job_id: str
     status: str
+    real_job_id: str | None = None
 
 
 class JdPasteBody(BaseModel):

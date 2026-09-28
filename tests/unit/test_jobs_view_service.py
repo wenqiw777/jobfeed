@@ -99,13 +99,22 @@ class _RecordingStore:
         self.queries.append(query)
         return JobsViewPage(rows=list(self.rows), total=len(self.rows), tab_counts={})
 
+    async def load_display_bodies(self, job_ids: list[str]) -> dict[str, str]:
+        return {
+            row.job.id: row.job.jd_text
+            for row in self.rows + self.twin_rows
+            if row.job.id in job_ids and row.job.jd_text is not None
+        }
+
     async def list_twin_rows_by_status(
         self,
         keys: list[tuple[str, str]],
         *,
         statuses: list[str],
         limit: int,
+        include_jd_text: bool = True,
     ) -> list[JobsViewRow]:
+        assert include_jd_text is False
         self.twin_calls.append((list(keys), tuple(statuses), limit))
         return list(self.twin_rows)
 
@@ -191,6 +200,9 @@ async def test_fast_triage_page_reads_only_a_small_candidate_window() -> None:
     store = _RecordingStore(
         rows=[_posted_row(str(index), _DISCOVERED) for index in range(80)]
     )
+    # Keep 80 genuinely distinct roles; first paint now folds local duplicates.
+    for index, row in enumerate(store.rows):
+        row.job.title = f"Backend Engineer team {index}"
 
     page = await _service(store).list_jobs(
         JobsViewQuery(tab="queue", limit=page_size, offset=0),
@@ -221,7 +233,7 @@ async def test_exact_triage_skips_unused_store_total_but_keeps_tab_counts() -> N
     sent = store.queries[0]
     assert sent.include_counts is True
     assert sent.include_total is False
-    assert page.total == 1
+    assert page.total == len(store.rows)  # Same title is not proof of identity.
 
 
 async def test_dedupe_pulls_inflight_twins_and_suppresses_their_clusters() -> None:
@@ -231,6 +243,8 @@ async def test_dedupe_pulls_inflight_twins_and_suppresses_their_clusters() -> No
     queue_twin = _row("1", platform="greenhouse", jd_quality=QualityBand.FULL)
     control = _row("2", company="Datadog")
     applied_twin = _row("3", platform="indeed", status="applied")
+    queue_twin.job.external_identity = "greenhouse:123"
+    applied_twin.job.external_identity = "greenhouse:123"
     store = _RecordingStore(rows=[queue_twin, control], twin_rows=[applied_twin])
 
     page = await _service(store).list_jobs(JobsViewQuery(tab="queue"), dedupe=True)
@@ -239,10 +253,9 @@ async def test_dedupe_pulls_inflight_twins_and_suppresses_their_clusters() -> No
     assert page.total == 1
     keys, statuses, limit = store.twin_calls[0]
     assert keys == [
-        ("datadog", "backend engineer"),
-        ("stripe", "backend engineer"),
+        ("__external_identity__", "greenhouse:123"),
     ]
-    assert statuses == tuple(sorted(INFLIGHT_STATUSES))
+    assert statuses == tuple(sorted(INFLIGHT_STATUSES | {"ignored", "archived"}))
     assert limit == JOBS_VIEW_CORPUS_LIMIT
 
 

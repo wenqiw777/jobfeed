@@ -750,6 +750,46 @@ async def test_evaluation_checkpoints_are_bounded_while_progress_stays_live() ->
 
 
 @pytest.mark.asyncio
+async def test_scan_progress_burst_has_one_pending_writer_and_flushes_latest():
+    ready = asyncio.Event()
+    release = asyncio.Event()
+    snapshots = []
+
+    class BurstStore(RecordingStore):
+        async def checkpoint_run_with_lease(self, run, **_kwargs):
+            snapshots.append(run.scan_processed)
+            return True
+
+    class BurstScan:
+        async def run(self, _sources, **kwargs):
+            run = kwargs["lease_session"].run
+            for processed in range(5000):
+                run.scan_processed = processed
+                kwargs["on_progress"](run)
+            ready.set()
+            await release.wait()
+            run.scan_processed = 5000
+            kwargs["on_progress"](run)
+            return run
+
+    manager = RunManager(
+        store=BurstStore(),
+        logger=RecordingLogger(),
+        scan_service_factory=BurstScan,
+        evaluate_service_factory=lambda **_kw: FakeEvaluateService(),
+    )
+    run_id = await manager.trigger_scan([("mock", object(), {})])
+    task = manager._tasks[run_id]
+    await ready.wait()
+    pending = len(manager._checkpoint_tasks.get(run_id, ()))
+    release.set()
+    await asyncio.wait_for(task, timeout=3)
+    assert pending == 1
+    assert snapshots == [5000]
+    assert run_id not in manager._checkpoint_tasks
+
+
+@pytest.mark.asyncio
 async def test_recover_stale_runs_leaves_recovery_to_store_connect() -> None:
     """RunManager must not scan or overwrite unexpired running rows."""
     store = RecordingStore()
@@ -841,6 +881,53 @@ async def test_interrupted_scan_is_automatically_restarted_once() -> None:
 # ---------------------------------------------------------------------------
 # get_active_runs tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("failure", ["interrupted", "user_stopped"])
+async def test_redis_recovery_waits_for_extension_and_never_resumes_manual_stop(
+    failure,
+):
+    class Store(RecordingStore):
+        async def get_state(self, _key):
+            return "root"
+
+        async def link_restarted_run(self, old, replacement):
+            self.link = (old, replacement)
+            return True
+
+    store = Store()
+    store._runs = [
+        PipelineRun(
+            run_id="old",
+            source="all",
+            started_at=datetime.now(UTC),
+            status="failed",
+            failure_code=failure,
+        )
+    ]
+    ready = False
+
+    async def resolve(_source, _stack):
+        return [("mock", object(), {})]
+
+    manager = RunManager(
+        store=store,
+        logger=RecordingLogger(),
+        scan_service_factory=FakeScanService,
+        evaluate_service_factory=lambda **_: FakeEvaluateService(),
+        scan_source_resolver=resolve,
+        auto_restart_allowed=lambda _: ready,
+    )
+    assert await manager.resume_interrupted_redis_scan() is None
+    ready = True
+    replacement = await manager.resume_interrupted_redis_scan()
+    if failure == "user_stopped":
+        assert replacement is None
+    else:
+        assert replacement
+        assert store.link == ("old", replacement)
+        assert store._runs[-1].resume_from_run_id == "old"
+        await manager._tasks[replacement]
 
 
 @pytest.mark.asyncio

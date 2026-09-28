@@ -34,6 +34,7 @@ async def apply_seniority_gate(
     Raises:
         ValueError: If the gate returns a result count different from its input.
     """
+    jobs = [job for job in jobs if job.is_repost is not True]
     if not jobs or mode == "off":
         return jobs, 0
     decisions = await gate.predict_batch(

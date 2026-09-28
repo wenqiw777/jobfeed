@@ -30,7 +30,7 @@ const TABS: { value: LibraryTab; label: string }[] = [
   { value: "ignored", label: "Ignored" },
 ];
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 const SEARCH_DEBOUNCE_MS = 250;
 
 interface LibraryQueryState {
@@ -77,6 +77,7 @@ export default function LibraryPage() {
   const query: JobsQuery = useMemo(
     () => ({
       tab: "all",
+      canonical: true,
       decision: state.tab === "all" ? undefined : state.tab,
       sort: state.sort,
       search: state.search === "" ? undefined : state.search,

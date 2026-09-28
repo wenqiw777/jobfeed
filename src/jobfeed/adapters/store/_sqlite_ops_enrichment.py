@@ -10,7 +10,11 @@ import aiosqlite
 from jobfeed.adapters.store._sqlite_capability_support import (
     _fetch_row,
     _fetch_rows,
+    _immediate_transaction,
     _placeholders,
+)
+from jobfeed.adapters.store._sqlite_real_job_evaluation import (
+    sync_sqlite_real_job_input,
 )
 from jobfeed.adapters.store._sqlite_values import _datetime_from_text, _utc_text
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
@@ -34,7 +38,7 @@ async def _record_enrichment(  # noqa: PLR0913
     posted_at: datetime | None,
 ) -> None:
     numeric_id = int(job_id)
-    async with lifecycle.connection() as connection:
+    async with lifecycle.connection() as connection, _immediate_transaction(connection):
         row = await _fetch_row(
             connection, "SELECT title FROM jobs WHERE id=?", (numeric_id,)
         )
@@ -57,6 +61,7 @@ async def _record_enrichment(  # noqa: PLR0913
                 numeric_id,
             ),
         )
+        await sync_sqlite_real_job_input(connection, numeric_id)
 
 
 async def _list_unenriched_jobs(
@@ -100,12 +105,13 @@ async def _mark_job_closed(
     closed_at: datetime,
     reason: str | None,
 ) -> None:
-    async with lifecycle.connection() as connection:
+    async with lifecycle.connection() as connection, _immediate_transaction(connection):
         await connection.execute(
             "UPDATE jobs SET closed_at=?,enrich_error=COALESCE(?,enrich_error) "
             "WHERE id=?",
             (_utc_text(closed_at), reason, int(job_id)),
         )
+        await sync_sqlite_real_job_input(connection, int(job_id))
 
 
 async def _enrich_paste(
