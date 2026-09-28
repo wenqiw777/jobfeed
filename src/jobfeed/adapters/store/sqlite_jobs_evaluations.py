@@ -44,6 +44,14 @@ class SqliteJobsEvaluations:
         """
         return await _sqlite_jobs._get_job(self._lifecycle, job_id)
 
+    async def get_jobs_by_canonical_ids(
+        self, *, platform: str, canonical_ids: list[str]
+    ) -> dict[str, JobPosting]:
+        """Bulk native-ID lookup before source detail requests."""
+        return await _sqlite_jobs._get_jobs_by_canonical_ids(
+            self._lifecycle, platform=platform, canonical_ids=canonical_ids
+        )
+
     async def list_jobs(self, limit: int = 100) -> list[JobPosting]:
         """List recent jobs in stable descending order.
 

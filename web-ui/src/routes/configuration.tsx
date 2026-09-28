@@ -198,6 +198,33 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                     <ListField label="Indeed search URLs" value={sources.indeed!.search_urls} onChange={(value) => updateSource("indeed", { ...sources.indeed!, search_urls: value })} />
                   </SpaceBetween>
                 </SourceToggle>
+                  <SourceToggle label="LinkedIn · browser profile" detail="Uses your local browser profile" checked={sources.linkedin!.enabled} onChange={(enabled) => updateSource("linkedin", { ...sources.linkedin!, enabled })}>
+                    <SpaceBetween size="m">
+                      <NumberField label="Authenticated LinkedIn maximum jobs per scan" value={sources.linkedin!.max_jobs} min={1} onChange={(value) => updateSource("linkedin", { ...sources.linkedin!, max_jobs: value })} />
+                      <ListField label="Authenticated LinkedIn search URLs" value={linkedinValues(sources.linkedin!.search_urls)} onChange={(value) => updateSource("linkedin", { ...sources.linkedin!, search_urls: value })} />
+                    </SpaceBetween>
+                  </SourceToggle>
+                {(["linkedin_extension", "handshake"] as const).map((key) => {
+                  const source = sources[key]!;
+                  const linkedin = key === "linkedin_extension";
+                  const label = linkedin ? "LinkedIn" : "Handshake";
+                  return (
+                    <SourceToggle key={key} label={`${label} · signed in`} detail="Uses your signed-in Chrome session through the Jobfeed extension" checked={source.enabled} onChange={(enabled) => updateSource(key, { ...source, enabled })}>
+                      <SpaceBetween size="m">
+                        <NumberField label={`${label} ${linkedin ? "signed-in " : ""}maximum jobs per scan`} value={source.max_jobs} min={1} max={1000} onChange={(max_jobs) => updateSource(key, { ...source, max_jobs })} />
+                        <ListField label={`${label} search queries`} value={source.queries} onChange={(queries) => updateSource(key, { ...source, queries })} />
+                        {linkedin ? (
+                          <ListField label="LinkedIn signed-in search URLs" value={source.search_urls} onChange={(search_urls) => updateSource(key, { ...source, search_urls })} />
+                        ) : (
+                          <Field label="Handshake search URL (optional)">
+                            <Input value={source.search_url ?? ""} onChange={({ detail }) => updateSource(key, { ...source, search_url: detail.value.trim() || null })} />
+                          </Field>
+                        )}
+                        <Box variant="small" color="text-body-secondary">{linkedin ? "Optional LinkedIn search-results URLs with keywords override search queries." : "An optional Handshake category search URL sorted by newest overrides search queries."}</Box>
+                      </SpaceBetween>
+                    </SourceToggle>
+                  );
+                })}
                 <SourceToggle label="Jobright recommendations" detail="Uses your signed-in Chrome session through the Jobfeed extension" checked={sources.jobright!.enabled} onChange={(enabled) => updateSource("jobright", { ...sources.jobright!, enabled })}>
                   <SpaceBetween size="m">
                     <NumberField label="Jobright maximum jobs per scan" value={sources.jobright!.max_jobs} min={1} onChange={(value) => updateSource("jobright", { ...sources.jobright!, max_jobs: value })} />
@@ -205,10 +232,10 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                     <Box variant="small" color="text-body-secondary">Requires the local Jobfeed Jobright Source Chrome extension. The default one-second spacing is the verified safe operating rate.</Box>
                   </SpaceBetween>
                 </SourceToggle>
-                <SourceToggle label="SpeedyApply lists" detail="Curated GitHub markdown feeds" checked={sources.speedyapply!.enabled} onChange={(enabled) => updateSource("speedyapply", { ...sources.speedyapply!, enabled })}>
+                <SourceToggle label="GitHub job lists" detail="SpeedyApply, SimplifyJobs and Jobright GitHub lists" checked={sources.speedyapply!.enabled} onChange={(enabled) => updateSource("speedyapply", { ...sources.speedyapply!, enabled })}>
                   <SpaceBetween size="m">
-                    <NumberField label="SpeedyApply maximum jobs per scan" value={sources.speedyapply!.max_jobs} min={1} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, max_jobs: value })} />
-                    <ListField label="SpeedyApply URLs" value={sources.speedyapply!.search_urls} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, search_urls: value })} />
+                    <NumberField label="GitHub job lists maximum jobs per scan" value={sources.speedyapply!.max_jobs} min={1} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, max_jobs: value })} />
+                    <ListField label="GitHub job list URLs" value={sources.speedyapply!.search_urls} onChange={(value) => updateSource("speedyapply", { ...sources.speedyapply!, search_urls: value })} />
                   </SpaceBetween>
                 </SourceToggle>
               </SettingsSection>
@@ -270,12 +297,7 @@ function WorkspaceSettings({ current }: { current: ConfigurationResponse }) {
                     <NumberField label="Maximum unique jobs to evaluate per run" value={scoring.default_eval_limit} min={1} onChange={(value) => updateSection("scoring", { ...scoring, default_eval_limit: value })} />
                     <NumberField label="Local filter candidate limit" value={form.ml_gate!.max_candidates} min={1} onChange={(value) => updateSection("ml_gate", { ...form.ml_gate!, max_candidates: value })} />
                   </ColumnLayout>
-                  <SourceToggle label="Authenticated LinkedIn search" detail="Uses your local browser profile" checked={sources.linkedin!.enabled} onChange={(enabled) => updateSource("linkedin", { ...sources.linkedin!, enabled })}>
-                    <SpaceBetween size="m">
-                      <NumberField label="Authenticated LinkedIn maximum jobs per scan" value={sources.linkedin!.max_jobs} min={1} onChange={(value) => updateSource("linkedin", { ...sources.linkedin!, max_jobs: value })} />
-                      <ListField label="Authenticated LinkedIn search URLs" value={linkedinValues(sources.linkedin!.search_urls)} onChange={(value) => updateSource("linkedin", { ...sources.linkedin!, search_urls: value })} />
-                    </SpaceBetween>
-                  </SourceToggle>
+
                 </SpaceBetween>
               </ExpandableSection>
             </SpaceBetween>
@@ -345,7 +367,7 @@ function parseLines(value: string) { return value.split("\n").map((item) => item
 function validateSources(sources: Sources): string | null {
   if (sources.linkedin_guest?.enabled && !sources.linkedin_guest.search_urls?.length) return "Add at least one LinkedIn search URL.";
   if (sources.indeed?.enabled && !sources.indeed.search_urls?.length) return "Add at least one Indeed search URL.";
-  if (sources.speedyapply?.enabled && !sources.speedyapply.search_urls?.length) return "Add at least one SpeedyApply list URL.";
+  if (sources.speedyapply?.enabled && !sources.speedyapply.search_urls?.length) return "Add at least one GitHub job list URL.";
   if (sources.linkedin?.enabled && !sources.linkedin.search_urls?.length) return "Add at least one authenticated LinkedIn search URL.";
   return null;
 }

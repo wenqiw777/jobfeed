@@ -41,6 +41,8 @@ const CONFIG = {
     default_eval_limit: 150,
   },
   sources: {
+    linkedin_extension: { enabled: false, queries: ["Software Engineer New Grad"], search_urls: [], search_url: null, max_jobs: 500, batch_size: 25, pacing_s: 1, timeout_s: 900 },
+    handshake: { enabled: false, queries: ["Software Engineer New Grad"], search_urls: [], search_url: null, max_jobs: 500, batch_size: 25, pacing_s: 1, timeout_s: 900 },
     ats: {
       enabled: true,
       max_jobs: 1000,
@@ -473,6 +475,8 @@ function mockApi(): void {
               title: "Backend Engineer",
               company: "Real Systems",
               jd_quality: "full",
+              location: "Remote",
+              discovered_at: "2026-09-20T12:00:00Z",
             },
           ] : [],
           total: hasStoredCalibrationJob ? 1 : 0,
@@ -1133,13 +1137,22 @@ test("configured workspace settings still save and return to triage", async () =
   fireEvent.change(screen.getByLabelText("Indeed maximum jobs per scan"), {
     target: { value: "400" },
   });
-  fireEvent.change(screen.getByLabelText("SpeedyApply maximum jobs per scan"), {
+  fireEvent.change(screen.getByLabelText("GitHub job lists maximum jobs per scan"), {
     target: { value: "300" },
   });
   fireEvent.change(screen.getByLabelText("Jobright maximum jobs per scan"), {
     target: { value: "250" },
   });
-  fireEvent.click(screen.getByRole("button", { name: /Advanced settings/ }));
+  expect(screen.getByRole("checkbox", { name: "LinkedIn · browser profile" })).toBeVisible();
+  fireEvent.click(screen.getByRole("checkbox", { name: "LinkedIn · signed in" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Handshake · signed in" }));
+  fireEvent.change(screen.getByLabelText("LinkedIn signed-in search URLs"), {
+    target: { value: "https://www.linkedin.com/jobs/search-results/?keywords=platform" },
+  });
+  fireEvent.change(screen.getByLabelText("Handshake search URL (optional)"), {
+    target: { value: "https://app.joinhandshake.com/job-search?jobRoleGroups=1&employmentTypes=1&jobType=1&sort=posted_date_desc" },
+  });
+  fireEvent.change(screen.getByLabelText("Handshake maximum jobs per scan"), { target: { value: "400" } });
   fireEvent.change(screen.getByLabelText("Authenticated LinkedIn maximum jobs per scan"), {
     target: { value: "200" },
   });
@@ -1158,6 +1171,8 @@ test("configured workspace settings still save and return to triage", async () =
     expect((request?.body as typeof CONFIG).sources.speedyapply.max_jobs).toBe(300);
     expect((request?.body as typeof CONFIG).sources.jobright.max_jobs).toBe(250);
     expect((request?.body as typeof CONFIG).sources.linkedin.max_jobs).toBe(200);
+    expect((request?.body as typeof CONFIG).sources.linkedin_extension).toEqual(expect.objectContaining({ enabled: true, search_urls: ["https://www.linkedin.com/jobs/search-results/?keywords=platform"], batch_size: 25 }));
+    expect((request?.body as typeof CONFIG).sources.handshake).toEqual(expect.objectContaining({ enabled: true, max_jobs: 400, search_url: "https://app.joinhandshake.com/job-search?jobRoleGroups=1&employmentTypes=1&jobType=1&sort=posted_date_desc", queries: ["Software Engineer New Grad"] }));
   });
   expect(await screen.findByRole("heading", { name: "Triage" })).toBeVisible();
 });

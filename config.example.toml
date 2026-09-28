@@ -199,3 +199,21 @@ embedding_model = "all-MiniLM-L6-v2"
 embedding_max_chars = 2000
 # threshold_override =    # unset; when set, overrides the model's built-in threshold
 max_candidates = 5000
+
+# Uses your signed-in Chrome through the existing Jobfeed extension.
+[sources.linkedin_extension]
+enabled = false
+queries = ["Software Engineer New Grad", "AI Engineer New Grad"]
+max_jobs = 500
+batch_size = 25
+pacing_s = 1.0
+timeout_s = 900.0
+
+[sources.handshake]
+enabled = false
+queries = ["Software Engineer New Grad", "AI Engineer New Grad"]
+# Initial Most Relevant backfill precedes newest-first incremental scans.
+max_jobs = 500
+batch_size = 25
+pacing_s = 1.0
+timeout_s = 900.0
