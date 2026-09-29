@@ -8,6 +8,7 @@ import aiosqlite
 
 from jobfeed.adapters.store._sqlite_errors import UnsupportedSqliteVersionError
 from jobfeed.domain.filtering import _matches_location_allowlist
+from jobfeed.domain.intermediary import intermediary_values
 from jobfeed.domain.repost import discovery_day
 
 _MINIMUM_SQLITE_VERSION = (3, 35, 0)
@@ -78,6 +79,9 @@ async def _register_connection_features(connection: aiosqlite.Connection) -> Non
         1,
         _unicode_casefold,
         deterministic=True,
+    )
+    await connection.create_function(
+        "jobfeed_intermediary", 3, intermediary_values, deterministic=True
     )
     await connection.create_function(
         "jobfeed_us_location",

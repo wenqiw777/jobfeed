@@ -27,6 +27,7 @@ _EXPLICIT_INDEXES = {
     "idx_interview_rounds_job",
     "idx_interview_rounds_upcoming",
     "idx_jobs_dedup_softkey",
+    "idx_jobs_title_lookup",
     "idx_jobs_discovered_at",
     "idx_job_status_followup",
     "idx_job_status_history_job",

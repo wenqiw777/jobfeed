@@ -1,17 +1,25 @@
 """Construct scan services with optional durable Redis journaling."""
 
+from typing import cast
+
+from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.queue.scan_journal import RedisScanJournal
+from jobfeed.adapters.sources.official_search import CodexWebSearch, OfficialSearch
+from jobfeed.config import IntermediarySettings
 from jobfeed.observability import JobfeedLogger
+from jobfeed.ports.intermediary import IntermediaryStore
 from jobfeed.ports.store import JobStore
+from jobfeed.services.intermediary_resolution import IntermediaryResolver
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator
 from jobfeed.services.scan import ScanService
 
 
-def build_scan_service(
+def build_scan_service(  # noqa: PLR0913 - existing runtime wiring plus resolution policy
     store: JobStore,
     logger: JobfeedLogger,
     run_orchestrator: RunLeaseOrchestrator | None = None,
     *,
+    intermediary: IntermediarySettings | None = None,
     redis_url: str | None = None,
     redis_namespace: str = "jobfeed",
 ) -> ScanService:
@@ -32,4 +40,30 @@ def build_scan_service(
         if redis_url is not None
         else None
     )
-    return ScanService(store, logger, run_orchestrator, journal=journal)
+    resolver = None
+    if (
+        intermediary is not None
+        and intermediary.enabled
+        and hasattr(store, "official_candidates")
+    ):
+        capable = cast(IntermediaryStore, store)
+        search = None
+        if intermediary.external_search:
+            llm = CodexWebSearch(
+                model=intermediary.search_model,
+                timeout_s=intermediary.search_timeout_s
+                - min(5, intermediary.search_timeout_s / 2),
+                max_retries=0,
+                price_table=load_price_table(),
+                logger=logger,
+            )
+            search = OfficialSearch(llm, capable, model=intermediary.search_model)
+        resolver = IntermediaryResolver(
+            capable,
+            search=search,
+            max_searches=intermediary.max_searches_per_scan,
+            timeout_s=intermediary.search_timeout_s,
+        )
+    return ScanService(
+        store, logger, run_orchestrator, journal=journal, intermediary=resolver
+    )

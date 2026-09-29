@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from jobfeed.domain.external_identity import observed_identifier
+from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.models import JobPosting, MLGateResult, QualityBand, StageBResult
 from jobfeed.domain.real_job_identity import (
     compatible_role_facts,
@@ -57,7 +58,11 @@ def select_real_job_input(
         The selected scoring input, or none when the group is ambiguous.
     """
     del now  # Closure is based on official evidence, not the time of evaluation.
-    complete = [job for job in sources if job.jd_text and job.jd_quality in _QUALITY]
+    complete = [
+        job
+        for job in sources
+        if job.jd_text and job.jd_quality in _QUALITY and not intermediary_posting(job)
+    ]
     if not complete or any(job.id is None for job in complete):
         return None
     complete = [job for job in complete if _is_ats(job)] or complete

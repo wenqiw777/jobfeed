@@ -38,6 +38,7 @@ _ADDITIVE_TABLES = frozenset(
 )
 _ADDITIVE_INDEXES = frozenset(
     {
+        ("index", "idx_jobs_title_lookup"),
         ("index", "idx_eval_personal_ml"),
         ("index", "idx_jobs_personal_ml"),
         ("index", "idx_eval_verdict_job"),

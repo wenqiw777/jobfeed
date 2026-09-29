@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from jobfeed.domain.filtering import _US_NAMES, _US_STATE_CODES, HardFilters
+from jobfeed.domain.intermediary import DOMAINS, PUBLISHERS
+from jobfeed.domain.normalize import normalize_company
 
 _US_PATTERN = r"\m(" + "|".join(sorted(_US_STATE_CODES)) + r")\M"
 _SQLITE_COMPANY = (
@@ -29,6 +31,23 @@ PG_CANONICAL_DATE = (
 )
 SQLITE_FIRST_SEEN = _SQLITE_FIRST_SEEN
 PG_FIRST_SEEN = _PG_FIRST_SEEN
+
+
+def _direct_source_predicate() -> str:
+    """Exclude intermediary representatives.
+
+    Time complexity: O(d) for d configured intermediary domains.
+    """
+    names = ",".join("'" + normalize_company(name) + "'" for name in PUBLISHERS)
+    clauses = [f"COALESCE(j.company_norm,'') NOT IN ({names})"]
+    for field in ("j.url", "j.apply_url"):
+        for domain in DOMAINS:
+            for scheme in ("https", "http"):
+                for authority in (domain, "%." + domain):
+                    clauses.append(
+                        f"lower(COALESCE({field},'')) NOT LIKE '{scheme}://{authority}/%'"
+                    )
+    return " AND ".join(clauses)
 
 
 def _active(filters: HardFilters | None) -> bool:
@@ -56,9 +75,9 @@ def sqlite_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
         A SQL predicate and its positional bind values in placeholder order.
     """
     if not _active(filters):
-        return "1=1", []
+        return "jobfeed_intermediary(j.company,j.url,j.apply_url)=0", []
     assert filters is not None
-    clauses: list[str] = []
+    clauses: list[str] = ["jobfeed_intermediary(j.company,j.url,j.apply_url)=0"]
     args: list[object] = []
     for item in filters.company_blocklist:
         if item:
@@ -131,9 +150,9 @@ def postgres_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
         A SQL predicate and its ordered PostgreSQL bind values.
     """
     if not _active(filters):
-        return "1=1", []
+        return _direct_source_predicate(), []
     assert filters is not None
-    clauses: list[str] = []
+    clauses: list[str] = [_direct_source_predicate()]
     args: list[object] = []
 
     def param(value: object) -> str:

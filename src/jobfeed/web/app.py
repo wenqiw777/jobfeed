@@ -137,6 +137,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
             store,
             logger,
             context.get("run_orchestrator"),
+            intermediary=context["settings"].intermediary,
             redis_url=context["settings"].redis_pipeline.url
             if context["settings"].redis_pipeline.enabled
             else None,

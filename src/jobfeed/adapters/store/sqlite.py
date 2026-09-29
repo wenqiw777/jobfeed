@@ -10,6 +10,7 @@ from pathlib import Path
 
 import aiosqlite
 
+from jobfeed.adapters.store._sqlite_intermediary import SqliteIntermediary
 from jobfeed.adapters.store._sqlite_real_job_evaluation import (
     SqliteRealJobEvaluation,
     sync_sqlite_real_job_input,
@@ -96,6 +97,7 @@ async def _refresh_backfilled_real_job_display(
 
 
 class SQLiteStore(
+    SqliteIntermediary,
     SqliteRealJobEvaluation,
     SqliteRealJobWorkflow,
     SqliteRealJobViews,

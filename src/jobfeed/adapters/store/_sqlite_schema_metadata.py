@@ -529,6 +529,7 @@ def _add_indexes(metadata: sa.MetaData) -> None:
             tables["jobs"].c.role_type,
         ),
     )
+    _index("idx_jobs_title_lookup", (tables["jobs"].c.title_norm, tables["jobs"].c.id))
     _index(
         "idx_jobs_dedup_softkey",
         (tables["jobs"].c.company_norm, tables["jobs"].c.title_norm),

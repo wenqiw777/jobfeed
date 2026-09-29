@@ -244,6 +244,17 @@ class RedisPipelineSettings(BaseModel):
     namespace: str = Field(default="jobfeed", pattern=r"^[A-Za-z0-9:_.-]+$")
 
 
+class IntermediarySettings(BaseModel):
+    """Internal attribution and bounded official search for intermediary sources."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    external_search: bool = True
+    search_model: str = "gpt-5.6-luna"
+    max_searches_per_scan: int = Field(default=3, ge=0, le=20)
+    search_timeout_s: float = Field(default=60, gt=0, le=180)
+
+
 class Settings(BaseModel):
     """Validated top-level application settings."""
 
@@ -257,6 +268,7 @@ class Settings(BaseModel):
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
+    intermediary: IntermediarySettings = Field(default_factory=IntermediarySettings)
     ml_gate: MLGateSettings = Field(default_factory=MLGateSettings)
     seniority_gate: SeniorityGateSettings = Field(default_factory=SeniorityGateSettings)
     hard_filters: HardFiltersSettings = Field(default_factory=HardFiltersSettings)

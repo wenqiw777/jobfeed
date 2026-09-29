@@ -92,6 +92,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
             store,
             logger,
             run_orchestrator,
+            intermediary=settings.intermediary,
             redis_url=settings.redis_pipeline.url
             if settings.redis_pipeline.enabled
             else None,

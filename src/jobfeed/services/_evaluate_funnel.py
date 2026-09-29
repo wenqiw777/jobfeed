@@ -186,7 +186,7 @@ async def _apply_hard_filters(
         Candidates passing every hard filter (input order preserved).
     """
     if filters is None:
-        return candidates
+        filters = HardFilters()
     kept: list[GateCandidate] = []
     rejected: dict[str, str] = {}
     for candidate in candidates:

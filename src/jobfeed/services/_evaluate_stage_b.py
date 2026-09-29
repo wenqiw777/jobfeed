@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, cast
 
 from jobfeed.domain.errors import RunLeaseLostError, ScoringParseError
+from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.models import JobPosting, LLMRequest, PipelineRun, StageBResult
 from jobfeed.domain.scoring_parse import parse_stage_b_response
 from jobfeed.ports.llm import LLMClient
@@ -158,9 +159,15 @@ async def _score_stage_b(  # noqa: PLR0913 - scorer inputs plus lease guard
     """Score one Stage B job without writing after lease ownership loss."""
     lease_session.ensure_active()
     job_id = require_job_id(job)
-    if await confirmed_repost(service._deps.store, job):
+    if intermediary_posting(job) or await confirmed_repost(service._deps.store, job):
         await release_stage_b_for_run(service._deps.store, job_id)
-        service._logger.info("scoring_skipped_repost", job_id=job_id, stage="b")
+        service._logger.info(
+            "scoring_skipped_intermediary"
+            if intermediary_posting(job)
+            else "scoring_skipped_repost",
+            job_id=job_id,
+            stage="b",
+        )
         return "skipped"
     bundle = service._deps.prompt_renderer.render_stage_b(
         resume_text=service._config.resume_text,

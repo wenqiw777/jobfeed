@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from jobfeed.domain.errors import RunLeaseLostError, ScoringParseError
+from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.models import JobPosting, LLMRequest, PipelineRun, StageAResult
 from jobfeed.domain.scoring_parse import parse_stage_a_response
 from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
@@ -302,9 +303,15 @@ class EvaluateService:
     ) -> None:
         lease_session.ensure_active()
         job_id = require_job_id(job)
-        if await confirmed_repost(self._deps.store, job):
+        if intermediary_posting(job) or await confirmed_repost(self._deps.store, job):
             await release_stage_a_for_run(self._deps.store, job_id)
-            self._logger.info("scoring_skipped_repost", job_id=job_id, stage="a")
+            self._logger.info(
+                "scoring_skipped_intermediary"
+                if intermediary_posting(job)
+                else "scoring_skipped_repost",
+                job_id=job_id,
+                stage="a",
+            )
             return
         if len(job.jd_text or "") < SHORT_JD_THRESHOLD:
             await self._deps.store.save_stage_a_error(

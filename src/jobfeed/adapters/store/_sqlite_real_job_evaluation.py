@@ -18,6 +18,7 @@ from jobfeed.adapters.store._sqlite_values import (
     _utc_text,
 )
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.models import (
     JobPosting,
     MLGateResult,
@@ -1138,6 +1139,8 @@ def _select_input_with_override(
     now: datetime,
 ) -> RealJobEvaluationInput | None:
     """Select from a transaction-consistent source and manual-choice snapshot."""
+    if override is not None and intermediary_posting(override):
+        return None
     if override is None:
         return select_real_job_input(str(real_id), jobs, now=now)
     first_discovery = min(job.discovered_at for job in jobs)

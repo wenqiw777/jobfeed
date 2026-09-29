@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.job_age import effective_job_date
 from jobfeed.domain.models import JobPosting
 
@@ -108,6 +109,8 @@ def apply_hard_filters(
     Returns:
         None when the job passes; otherwise a human-readable filter reason.
     """
+    if intermediary_posting(job):
+        return "unresolved_intermediary"
     reason = _company_reason(job.company, filters.company_blocklist)
     if reason is not None:
         return reason

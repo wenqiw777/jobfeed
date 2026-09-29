@@ -5,6 +5,7 @@ from __future__ import annotations
 import aiosqlite
 
 from jobfeed.adapters.store._sqlite_values import _job_from_row, _utc_text
+from jobfeed.domain.intermediary import intermediary_posting, trusted_ats_url
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.normalize import normalize, normalize_company
 from jobfeed.domain.real_job_evaluation import (
@@ -93,9 +94,17 @@ async def resolve_sqlite_real_job(
                 "explicit_status_conflict",
             )
             return merged
-        await _merge(connection, source_parent, other_parent)
+        other = await _source_row(connection, other_source)
+        prefer_official = (
+            intermediary_posting(source_job)
+            and other is not None
+            and trusted_ats_url(str(other["url"]))
+        )
+        winner = other_parent if prefer_official else min(source_parent, other_parent)
+        loser = source_parent if winner == other_parent else other_parent
+        await _merge(connection, winner, loser)
         merged = True
-        source_parent = min(source_parent, other_parent)
+        source_parent = winner
     raise RuntimeError("identity resolution exceeded candidate bound")
 
 
@@ -238,7 +247,7 @@ async def _review(
 
 
 async def _merge(connection: aiosqlite.Connection, left: int, right: int) -> None:
-    winner, loser = sorted((left, right))
+    winner, loser = left, right
     winner_status = await _source_row_status(connection, winner)
     loser_status = await _source_row_status(connection, loser)
     if winner_status is None and loser_status is not None:
@@ -344,7 +353,7 @@ async def _rehome_reviews(
     await connection.execute(
         "DELETE FROM real_job_review_cases WHERE "
         "left_real_job_id=? AND right_real_job_id=?",
-        (winner, loser),
+        tuple(sorted((winner, loser))),
     )
     cursor = await connection.execute(
         "SELECT id,left_real_job_id,right_real_job_id FROM real_job_review_cases "

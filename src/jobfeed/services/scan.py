@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from jobfeed.domain.errors import RunLeaseLostError, SourceBusyError
+from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.models import JobPosting, PipelineRun, SaveJobResult
 from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
@@ -26,6 +27,7 @@ from jobfeed.ports.source import (
 from jobfeed.ports.store import JobStore
 from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.error_handler import ServiceErrorHandler
+from jobfeed.services.intermediary_resolution import IntermediaryResolver
 from jobfeed.services.pipeline_context import POSTINGS, current_pipeline
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
 
@@ -47,6 +49,7 @@ class ScanService:
         run_orchestrator: RunLeaseOrchestrator | None = None,
         *,
         journal: ScanJournal | None = None,
+        intermediary: IntermediaryResolver | None = None,
     ) -> None:
         """Create a scan service with injected ports.
 
@@ -54,6 +57,8 @@ class ScanService:
             store: Persistence port used to save jobs and pipeline metrics.
             logger: Structured logger for scan events.
         """
+        self._intermediary = intermediary
+        self._intermediary_jobs: list[JobPosting] = []
         self.store = store
         self._journal = journal
         self._source_write_generations: dict[str, str | None] = {}
@@ -135,6 +140,7 @@ class ScanService:
     ) -> None:
         """Perform scan work under a heartbeat session owned by the caller."""
         run = lease_session.run
+        self._intermediary_jobs = []
         bind_run_id(run.run_id)
         self._tracer = get_tracer("jobfeed.scan")
         self._perf_store = get_perf_store(self.store)
@@ -155,6 +161,40 @@ class ScanService:
                 if not work.done():
                     await self._run_orchestrator.checkpoint(lease_session)
             await work
+            if self._intermediary is not None and self._intermediary_jobs:
+
+                def progress(done: int, total: int) -> None:
+                    lease_session.ensure_active()
+                    self._publish_scan_progress(
+                        run,
+                        source="intermediary",
+                        phase="enriching",
+                        total=total,
+                        processed=done,
+                    )
+                    if self._on_progress:
+                        self._on_progress(run)
+
+                resolution = asyncio.create_task(
+                    self._intermediary.resolve(
+                        self._intermediary_jobs,
+                        run_id=run.run_id,
+                        ensure_active=lease_session.ensure_active,
+                        on_progress=progress,
+                    )
+                )
+                tasks.append(resolution)
+                while not resolution.done():
+                    await asyncio.wait({resolution}, timeout=5)
+                    await self._run_orchestrator.checkpoint(lease_session)
+                await resolution
+                self._publish_scan_progress(
+                    run,
+                    source="intermediary",
+                    phase="completed",
+                    total=len(self._intermediary_jobs),
+                    processed=len(self._intermediary_jobs),
+                )
         finally:
             for task in tasks:
                 if not task.done():
@@ -343,6 +383,7 @@ class ScanService:
         *,
         completed: bool = True,
     ) -> None:
+        self._intermediary_jobs.extend(job for job in jobs if intermediary_posting(job))
         before_inserted = run.jobs_inserted
         before_updated = run.jobs_updated
         await self._save_jobs(lease_session, run, name, jobs)
