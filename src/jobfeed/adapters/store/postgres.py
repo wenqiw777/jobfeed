@@ -1966,12 +1966,14 @@ class PostgresStore(
         stage_a = (
             "(e.real_job_id IS NULL OR e.stage_a_status IS DISTINCT FROM 'completed' "
             "OR (p.a IS NOT NULL AND "
+            "e.input_facts_json::jsonb->'stage_a_policy' IS NOT NULL AND "
             "e.input_facts_json::jsonb->'stage_a_policy' IS DISTINCT FROM p.a))"
         )
         stage_b = (
             "(e.stage_a_status='completed' AND e.stage_a_score>=p.threshold "
             "AND (e.stage_b_status IS DISTINCT FROM 'completed' OR "
             "(p.b IS NOT NULL AND "
+            "e.input_facts_json::jsonb->'stage_b_policy' IS NOT NULL AND "
             "e.input_facts_json::jsonb->'stage_b_policy' IS DISTINCT FROM p.b)))"
         )
         predicate = {
@@ -2077,10 +2079,13 @@ class PostgresStore(
                 "WITH p AS (SELECT $1::jsonb AS a,$2::jsonb AS b) "
                 "SELECT "
                 "COUNT(*) FILTER (WHERE e.stage_a_status='completed' AND "
+                "e.input_facts_json::jsonb->'stage_a_policy' IS NOT NULL AND "
                 "e.input_facts_json::jsonb->'stage_a_policy' IS DISTINCT FROM p.a) "
                 "AS stage_a_pending,"
                 "COUNT(*) FILTER (WHERE e.stage_b_status='completed' AND "
-                "e.input_facts_json::jsonb->'stage_a_policy'=p.a AND "
+                "(e.input_facts_json::jsonb->'stage_a_policy' IS NULL OR "
+                "e.input_facts_json::jsonb->'stage_a_policy'=p.a) AND "
+                "e.input_facts_json::jsonb->'stage_b_policy' IS NOT NULL AND "
                 "e.input_facts_json::jsonb->'stage_b_policy' IS DISTINCT FROM p.b) "
                 "AS stage_b_pending,"
                 "COUNT(*) FILTER (WHERE e.stage_a_status='completed' AND "

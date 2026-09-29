@@ -46,7 +46,7 @@ def select_real_job_input(
     *,
     now: datetime,
 ) -> RealJobEvaluationInput | None:
-    """Choose a deterministic scoring source only when complete JDs agree.
+    """Choose trusted official input before comparing lower-trust sources.
 
     Args:
         real_job_id: Canonical parent identifier.
@@ -60,6 +60,7 @@ def select_real_job_input(
     complete = [job for job in sources if job.jd_text and job.jd_quality in _QUALITY]
     if not complete or any(job.id is None for job in complete):
         return None
+    complete = [job for job in complete if _is_ats(job)] or complete
     for index, left in enumerate(complete):
         if any(
             not strict_content_equivalent(left, right)
@@ -183,6 +184,7 @@ def conflicting_complete_sources(
         and job.jd_quality in _QUALITY
         and len(normalized_jd_body(job.jd_text)) >= _MIN_COMPLETE_BODY_CHARS
     ]
+    complete = [job for job in complete if _is_ats(job)] or complete
     for index, left in enumerate(complete):
         for right in complete[index + 1 :]:
             if compatible_role_facts(left, right) and not strict_content_equivalent(
@@ -218,15 +220,8 @@ def legacy_evaluation_input_hold(
             if any(job.jd_text and job.jd_quality in _QUALITY for job in sources)
             else "evaluation_input_missing"
         )
-    for source_id, scored_at in evaluated_sources:
-        job = by_id[source_id]
-        if (
-            job.enriched_at is None
-            or scored_at is None
-            or job.enriched_at > scored_at
-            or not strict_content_equivalent(job, selected.job)
-        ):
-            return "evaluation_input_conflict"
+    # Historical scores are explicitly reusable; timestamps do not prove a
+    # material input change. Current input selection already resolves trust.
     return None
 
 
@@ -294,7 +289,11 @@ def same_evaluation_input(
     expected = json.loads(input_facts_json(selected))
     return (
         stored == expected
-        and (stage_a_policy is None or stored_a_policy == stage_a_policy)
+        and (
+            stage_a_policy is None
+            or stored_a_policy is None
+            or stored_a_policy == stage_a_policy
+        )
         and normalized_jd_body(stored_jd_text)
         == normalized_jd_body(selected.job.jd_text)
     )

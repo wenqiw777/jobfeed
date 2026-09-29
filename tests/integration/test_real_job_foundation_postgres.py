@@ -117,7 +117,7 @@ async def test_scoped_ats_alias_and_explicit_conflict(fresh_pg_dsn: str) -> None
         await store.close()
 
 
-async def test_shared_ats_with_conflicting_complete_jds_holds_without_score(
+async def test_shared_ats_overrides_conflicting_aggregator_without_score(
     fresh_pg_dsn: str,
 ) -> None:
     store = PostgresStore(fresh_pg_dsn)
@@ -163,16 +163,14 @@ async def test_shared_ats_with_conflicting_complete_jds_holds_without_score(
                 await conn.fetchval(
                     "SELECT identity_review_state FROM real_jobs WHERE id=$1", parent
                 )
-                == "requirements_conflict"
+                == "clear"
             )
             cases = await conn.fetch(
                 "SELECT left_job_id,right_job_id,reason FROM real_job_review_cases "
                 "WHERE left_real_job_id=$1 AND right_real_job_id=$1",
                 parent,
             )
-            assert [tuple(case.values()) for case in cases] == [
-                (int(first.job_id), int(second.job_id), "requirements_conflict")
-            ]
+            assert cases == []
             assert (
                 await conn.fetchval(
                     "SELECT 1 FROM real_job_evaluations WHERE real_job_id=$1", parent

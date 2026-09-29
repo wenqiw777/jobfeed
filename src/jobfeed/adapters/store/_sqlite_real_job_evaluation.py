@@ -458,6 +458,8 @@ class SqliteRealJobEvaluation:
                 if (
                     stage_b_policy is not None
                     and json.loads(current["input_facts_json"]).get("stage_b_policy")
+                    is not None
+                    and json.loads(current["input_facts_json"]).get("stage_b_policy")
                     != stage_b_policy
                 ):
                     if current["stage_b_status"] is not None:
@@ -823,114 +825,125 @@ class SqliteRealJobEvaluation:
                     "SELECT * FROM jobs WHERE real_job_id=? ORDER BY id",
                     (real_id,),
                 )
-                evaluations = await _all(
+                if await _adopt_sqlite_legacy_score(
                     connection,
-                    "SELECT e.* FROM evaluations e JOIN jobs j ON j.id=e.job_id "
-                    "WHERE j.real_job_id=? AND e.stage_a_status='completed' "
-                    "ORDER BY e.job_id",
-                    (real_id,),
-                )
-                if not evaluations:
-                    continue
-                jobs = [_job_from_row(row) for row in sources]
-                selected = await _select_sqlite_real_job_input(
-                    connection, real_id, jobs, now=self._now()
-                )
-                variants = {
-                    (
-                        row["stage_a_score"],
-                        row["stage_a_one_line"],
-                        row["stage_a_timing_eligible"],
-                        row["stage_a_model"],
-                        row["stage_b_status"],
-                        _legacy_stage_b_json(row),
-                    )
-                    for row in evaluations
-                }
-                if len(variants) > 1:
-                    await connection.execute(
-                        (
-                            "UPDATE real_jobs SET "
-                            "identity_review_state='evaluation_conflict' WHERE id=?"
-                        ),
-                        (real_id,),
-                    )
-                    continue
-                hold = legacy_evaluation_input_hold(
-                    selected,
-                    jobs,
-                    [
-                        (int(row["job_id"]), _datetime_from_text(row["stage_a_at"]))
-                        for row in evaluations
-                    ],
-                )
-                if hold is not None:
-                    await connection.execute(
-                        "UPDATE real_jobs SET identity_review_state=? WHERE id=?",
-                        (hold, real_id),
-                    )
-                    continue
-                assert selected is not None
-                chosen = next(
-                    (
-                        row
-                        for row in evaluations
-                        if row["job_id"] == int(selected.source_job_id)
-                    ),
-                    evaluations[0],
-                )
-                await connection.execute(
-                    """INSERT INTO real_job_evaluations(
-                           real_job_id,source_job_id,input_jd_text,
-                           input_facts_json,input_revision,stage_a_status,
-                           stage_a_score,stage_a_one_line,
-                           stage_a_timing_eligible,stage_a_model,
-                           stage_a_cost_usd,stage_a_at,stage_b_status,
-                           stage_b_verdict,stage_b_json,stage_b_model,
-                           stage_b_cost_usd,stage_b_at,updated_at)
-                       VALUES(?,?,?, ?,1,'completed',?,?,?,?,?, ?,?,?,?,?,?,?,?)""",
-                    (
-                        real_id,
-                        int(selected.source_job_id),
-                        selected.job.jd_text,
-                        input_facts_json(selected),
-                        chosen["stage_a_score"],
-                        chosen["stage_a_one_line"],
-                        chosen["stage_a_timing_eligible"],
-                        chosen["stage_a_model"],
-                        chosen["stage_a_cost_usd"],
-                        chosen["stage_a_at"],
-                        chosen["stage_b_status"],
-                        chosen["stage_b_verdict"],
-                        _legacy_stage_b_json(chosen),
-                        chosen["stage_b_model"],
-                        chosen["stage_b_cost_usd"],
-                        chosen["stage_b_at"],
-                        _utc_text(self._now()),
-                    ),
-                )
-                copied += 1
-                cursor = await connection.execute(
-                    (
-                        "UPDATE real_job_status SET status='scored',"
-                        "last_status_change_at=? WHERE real_job_id=? AND "
-                        "status='new'"
-                    ),
-                    (_utc_text(self._now()), real_id),
-                )
-                advanced = cursor.rowcount == 1
-                await cursor.close()
-                if advanced:
-                    await connection.execute(
-                        (
-                            "INSERT INTO real_job_status_history(real_job_id,"
-                            "from_status,to_status,changed_at,reason) "
-                            "VALUES(?,'new','scored',?,"
-                            "'legacy_evaluation_backfill')"
-                        ),
-                        (real_id, _utc_text(self._now())),
-                    )
+                    real_id,
+                    [_job_from_row(row) for row in sources],
+                    self._now(),
+                ):
+                    copied += 1
         return (int(parents[-1]["id"]) if parents else after_id, copied)
+
+
+async def _adopt_sqlite_legacy_score(
+    connection: aiosqlite.Connection,
+    real_id: int,
+    jobs: list[JobPosting],
+    now: datetime,
+) -> bool:
+    """Adopt one whole historical answer, recording its original source."""
+    evaluations = await _all(
+        connection,
+        "SELECT e.* FROM evaluations e JOIN jobs j ON j.id=e.job_id "
+        "WHERE j.real_job_id=? AND e.stage_a_status='completed' "
+        "ORDER BY e.job_id",
+        (real_id,),
+    )
+    if not evaluations:
+        return False
+    selected = await _select_sqlite_real_job_input(connection, real_id, jobs, now=now)
+    hold = legacy_evaluation_input_hold(
+        selected,
+        jobs,
+        [
+            (int(row["job_id"]), _datetime_from_text(row["stage_a_at"]))
+            for row in evaluations
+        ],
+    )
+    if hold is not None:
+        await connection.execute(
+            "UPDATE real_jobs SET identity_review_state=? WHERE id=?",
+            (hold, real_id),
+        )
+        return False
+    assert selected is not None
+    chosen = max(
+        evaluations,
+        key=lambda row: (
+            row["stage_a_score"] if row["stage_a_score"] is not None else -1,
+            _datetime_from_text(row["stage_a_at"]) or datetime.min.replace(tzinfo=UTC),
+            int(row["job_id"]),
+        ),
+    )
+    await connection.execute(
+        """INSERT INTO real_job_evaluations(
+               real_job_id,source_job_id,input_jd_text,
+               input_facts_json,input_revision,stage_a_status,
+               stage_a_score,stage_a_one_line,
+               stage_a_timing_eligible,stage_a_model,
+               stage_a_cost_usd,stage_a_at,stage_b_status,
+               stage_b_verdict,stage_b_json,stage_b_model,
+               stage_b_cost_usd,stage_b_at,updated_at)
+           VALUES(?,?,?, ?,1,'completed',?,?,?,?,?, ?,?,?,?,?,?,?,?)""",
+        (
+            real_id,
+            int(selected.source_job_id),
+            selected.job.jd_text,
+            input_facts_json(selected),
+            chosen["stage_a_score"],
+            chosen["stage_a_one_line"],
+            chosen["stage_a_timing_eligible"],
+            chosen["stage_a_model"],
+            chosen["stage_a_cost_usd"],
+            chosen["stage_a_at"],
+            chosen["stage_b_status"],
+            chosen["stage_b_verdict"],
+            _legacy_stage_b_json(chosen),
+            chosen["stage_b_model"],
+            chosen["stage_b_cost_usd"],
+            chosen["stage_b_at"],
+            _utc_text(now),
+        ),
+    )
+    cursor = await connection.execute(
+        (
+            "UPDATE real_job_status SET status='scored',"
+            "last_status_change_at=? WHERE real_job_id=? AND "
+            "status='new'"
+        ),
+        (_utc_text(now), real_id),
+    )
+    advanced = cursor.rowcount == 1
+    await cursor.close()
+    if advanced:
+        await connection.execute(
+            (
+                "INSERT INTO real_job_status_history(real_job_id,"
+                "from_status,to_status,changed_at,reason) "
+                "VALUES(?,'new','scored',?,"
+                "'legacy_evaluation_backfill')"
+            ),
+            (real_id, _utc_text(now)),
+        )
+    await connection.execute(
+        "INSERT INTO state(key,value) VALUES(?,?) ON CONFLICT(key) DO "
+        "UPDATE SET value=excluded.value",
+        (
+            f"real-job-legacy-adoption:{real_id}:1",
+            json.dumps(
+                {
+                    "reason": "user_approved_legacy_score_reuse",
+                    "input_revision": 1,
+                    "score_source_job_id": int(chosen["job_id"]),
+                    "input_source_job_id": int(selected.source_job_id),
+                    "stage_a_score": chosen["stage_a_score"],
+                    "adopted_at": _utc_text(now),
+                },
+                sort_keys=True,
+            ),
+        ),
+    )
+    return True
 
 
 @asynccontextmanager
@@ -981,24 +994,7 @@ async def _resolve_sqlite_requirements_hold(
         "AND status NOT IN ('new','scored'))",
         (real_id, real_id),
     )
-    evaluated = await _all(
-        connection,
-        "SELECT e.stage_a_score,e.stage_b_status,e.stage_b_verdict "
-        "FROM evaluations e JOIN jobs j ON j.id=e.job_id "
-        "WHERE j.real_job_id=? AND e.stage_a_status='completed'",
-        (real_id,),
-    )
-    answers = {
-        (row["stage_a_score"], row["stage_b_status"], row["stage_b_verdict"])
-        for row in evaluated
-    }
-    if len(answers) > 1:
-        await connection.execute(
-            "UPDATE real_jobs SET identity_review_state='evaluation_conflict' "
-            "WHERE id=?",
-            (real_id,),
-        )
-    elif (
+    if (
         other_review is None
         and status_conflict is not None
         and status_conflict["n"] <= 1
@@ -1179,48 +1175,7 @@ async def _hold_unbackfilled_source_scores(
         return
     if await _review_source_override(connection, real_id, jobs) is not None:
         return
-    evaluations = await _all(
-        connection,
-        "SELECT e.* FROM evaluations e JOIN jobs j ON j.id=e.job_id "
-        "WHERE j.real_job_id=? AND e.stage_a_status='completed' "
-        "ORDER BY e.job_id",
-        (real_id,),
-    )
-    if not evaluations:
-        return
-    variants = {
-        (
-            row["stage_a_score"],
-            row["stage_a_one_line"],
-            row["stage_a_timing_eligible"],
-            row["stage_a_model"],
-            row["stage_b_status"],
-            _legacy_stage_b_json(row),
-        )
-        for row in evaluations
-    }
-    if len(variants) > 1:
-        hold = "evaluation_conflict"
-    else:
-        selected = await _select_sqlite_real_job_input(
-            connection, real_id, jobs, now=datetime.now(UTC)
-        )
-        hold = (
-            legacy_evaluation_input_hold(
-                selected,
-                jobs,
-                [
-                    (int(row["job_id"]), _datetime_from_text(row["stage_a_at"]))
-                    for row in evaluations
-                ],
-            )
-            or "evaluation_input_conflict"
-        )
-    await connection.execute(
-        "UPDATE real_jobs SET identity_review_state=? WHERE id=? "
-        "AND identity_review_state='clear'",
-        (hold, real_id),
-    )
+    await _adopt_sqlite_legacy_score(connection, real_id, jobs, datetime.now(UTC))
 
 
 async def _select_sqlite_real_job_input(
@@ -1328,3 +1283,175 @@ def _required_updated_at(value: str) -> datetime:
     timestamp = _datetime_from_text(value)
     assert timestamp is not None
     return timestamp
+
+
+async def reconcile_legacy_review_page(
+    connection: aiosqlite.Connection,
+    *,
+    after_id: int = 0,
+    limit: int = 100,
+    apply: bool = False,
+) -> list[dict[str, object]]:
+    """Preview or apply the approved policy to existing holds in a bounded page.
+
+    Source postings and source evaluations are never edited. Callers applying
+    this migration must stop writers and retain a backup; read-only callers may
+    use a SQLite mode=ro connection. Missing descriptions remain held.
+
+    Args:
+        connection: Existing SQLite connection; read-only is valid for preview.
+        after_id: Exclusive canonical ID cursor for the next page.
+        limit: Maximum held parents to inspect, from 1 through 1000.
+        apply: Persist approved decisions when true; otherwise only inspect.
+
+    Returns:
+        Per-parent actions, retained-hold reasons and legacy score provenance.
+
+    Raises:
+        ValueError: If limit is outside the supported range.
+    """
+    if not 1 <= limit <= _MAX_BACKFILL_PAGE:
+        raise ValueError("limit must be between 1 and 1000")
+    connection.row_factory = aiosqlite.Row
+    parents = await _all(
+        connection,
+        "SELECT id FROM real_jobs WHERE id>? AND identity_review_state IN "
+        "('evaluation_conflict','evaluation_input_conflict','requirements_conflict',"
+        "'evaluation_input_missing') ORDER BY id LIMIT ?",
+        (after_id, limit),
+    )
+    report = []
+    for parent in parents:
+        if apply:
+            async with _immediate_transaction(connection):
+                report.append(
+                    await _reconcile_legacy_review(
+                        connection, int(parent["id"]), apply=True
+                    )
+                )
+        else:
+            report.append(
+                await _reconcile_legacy_review(
+                    connection, int(parent["id"]), apply=False
+                )
+            )
+    return report
+
+
+async def _reconcile_legacy_review(
+    connection: aiosqlite.Connection, real_id: int, *, apply: bool
+) -> dict[str, object]:
+    parent = await _one(
+        connection, "SELECT identity_review_state FROM real_jobs WHERE id=?", (real_id,)
+    )
+    assert parent is not None
+    report: dict[str, object] = {
+        "real_job_id": real_id,
+        "previous_state": parent["identity_review_state"],
+        "action": "keep_hold",
+    }
+    if parent["identity_review_state"] == "evaluation_input_missing":
+        report["reason"] = "missing_input_requires_separate_decision"
+        return report
+    rows = await _all(
+        connection, "SELECT * FROM jobs WHERE real_job_id=? ORDER BY id", (real_id,)
+    )
+    jobs = [_job_from_row(row) for row in rows]
+    selected = await _select_sqlite_real_job_input(
+        connection, real_id, jobs, now=datetime.now(UTC)
+    )
+    if selected is None:
+        report["reason"] = "no_unambiguous_complete_input"
+        return report
+    other = await _one(
+        connection,
+        "SELECT 1 FROM real_job_review_cases WHERE "
+        "(left_real_job_id=? OR right_real_job_id=?) "
+        "AND reason!='requirements_conflict' LIMIT 1",
+        (real_id, real_id),
+    )
+    statuses = await _one(
+        connection,
+        "SELECT COUNT(DISTINCT status) AS n FROM (SELECT s.status "
+        "FROM job_status s JOIN jobs j "
+        "ON j.id=s.job_id WHERE j.real_job_id=? AND s.status NOT IN "
+        "('new','scored') UNION ALL "
+        "SELECT status FROM real_job_status WHERE real_job_id=? AND "
+        "status NOT IN ('new','scored'))",
+        (real_id, real_id),
+    )
+    if other is not None or (statuses is not None and statuses["n"] > 1):
+        report["reason"] = "other_identity_or_workflow_conflict"
+        return report
+    current = await _one(
+        connection, "SELECT * FROM real_job_evaluations WHERE real_job_id=?", (real_id,)
+    )
+    if current is not None and "in_progress" in (
+        current["stage_a_status"],
+        current["stage_b_status"],
+    ):
+        report["reason"] = "active_canonical_claim"
+        return report
+    evaluations = await _all(
+        connection,
+        "SELECT e.* FROM evaluations e JOIN jobs j ON j.id=e.job_id "
+        "WHERE j.real_job_id=? "
+        "AND e.stage_a_status='completed'",
+        (real_id,),
+    )
+    if current is None and evaluations:
+        hold = legacy_evaluation_input_hold(
+            selected,
+            jobs,
+            [
+                (int(row["job_id"]), _datetime_from_text(row["stage_a_at"]))
+                for row in evaluations
+            ],
+        )
+        if hold is not None:
+            report["reason"] = hold
+            return report
+        chosen = max(
+            evaluations,
+            key=lambda row: (
+                row["stage_a_score"] if row["stage_a_score"] is not None else -1,
+                _datetime_from_text(row["stage_a_at"])
+                or datetime.min.replace(tzinfo=UTC),
+                int(row["job_id"]),
+            ),
+        )
+        report.update(
+            action="adopt_legacy",
+            score_source_job_id=int(chosen["job_id"]),
+            stage_a_score=chosen["stage_a_score"],
+        )
+    else:
+        report["action"] = "clear_hold_pending"
+        if current is not None:
+            unchanged = same_evaluation_input(
+                current["input_jd_text"], current["input_facts_json"], selected
+            )
+            report["action"] = (
+                "clear_hold_keep_canonical"
+                if unchanged
+                else "clear_hold_invalidate_changed_input"
+            )
+            report["previous_input_revision"] = current["input_revision"]
+            report["previous_stage_a_score"] = current["stage_a_score"]
+    report["input_source_job_id"] = int(selected.source_job_id)
+    if apply:
+        await connection.execute(
+            "UPDATE real_jobs SET identity_review_state='clear' WHERE id=?", (real_id,)
+        )
+        await connection.execute(
+            "DELETE FROM real_job_review_cases WHERE left_real_job_id=? "
+            "AND right_real_job_id=? AND reason='requirements_conflict'",
+            (real_id, real_id),
+        )
+        if current is None and evaluations:
+            await _adopt_sqlite_legacy_score(
+                connection, real_id, jobs, datetime.now(UTC)
+            )
+        else:
+            await sync_sqlite_real_job_input(connection, int(selected.source_job_id))
+    return report

@@ -10,6 +10,7 @@ import asyncpg  # type: ignore[import-untyped]
 
 from jobfeed.domain.models import JobPosting, MLGateResult, StageAResult, StageBResult
 from jobfeed.domain.real_job_evaluation import (
+    EVALUATION_ACTIVATION_KEY,
     RealJobEvaluationInput,
     conflicting_complete_sources,
     input_facts_json,
@@ -398,6 +399,8 @@ class PostgresRealJobEvaluation:
                 if (
                     stage_b_policy is not None
                     and json.loads(current["input_facts_json"]).get("stage_b_policy")
+                    is not None
+                    and json.loads(current["input_facts_json"]).get("stage_b_policy")
                     != stage_b_policy
                 ):
                     if current["stage_b_status"] is not None:
@@ -738,111 +741,114 @@ class PostgresRealJobEvaluation:
                 source_rows = await db.fetch(
                     "SELECT * FROM jobs WHERE real_job_id=$1 ORDER BY id", real_id
                 )
-                evaluations = await db.fetch(
-                    "SELECT e.* FROM evaluations e JOIN jobs j ON j.id=e.job_id "
-                    "WHERE j.real_job_id=$1 AND e.stage_a_status='completed' "
-                    "ORDER BY e.job_id",
-                    real_id,
-                )
-                if not evaluations:
-                    continue
-                jobs = [_job_from_record(row) for row in source_rows]
-                selected = select_real_job_input(
-                    str(real_id), jobs, now=datetime.now(UTC)
-                )
-                variants = {
-                    (
-                        row["stage_a_score"],
-                        row["stage_a_one_line"],
-                        row["stage_a_timing_eligible"],
-                        row["stage_a_model"],
-                        row["stage_b_status"],
-                        _legacy_stage_b_json(row),
-                    )
-                    for row in evaluations
-                }
-                if len(variants) > 1:
-                    await db.execute(
-                        (
-                            "UPDATE real_jobs SET "
-                            "identity_review_state='evaluation_conflict' WHERE id=$1"
-                        ),
-                        real_id,
-                    )
-                    continue
-                hold = legacy_evaluation_input_hold(
-                    selected,
-                    jobs,
-                    [(int(row["job_id"]), row["stage_a_at"]) for row in evaluations],
-                )
-                if hold is not None:
-                    await db.execute(
-                        "UPDATE real_jobs SET identity_review_state=$1 WHERE id=$2",
-                        hold,
-                        real_id,
-                    )
-                    continue
-                assert selected is not None
-                chosen = next(
-                    (
-                        row
-                        for row in evaluations
-                        if row["job_id"] == int(selected.source_job_id)
-                    ),
-                    evaluations[0],
-                )
-                now = datetime.now(UTC)
-                await db.execute(
-                    """INSERT INTO real_job_evaluations(
-                           real_job_id,source_job_id,input_jd_text,
-                           input_facts_json,input_revision,stage_a_status,
-                           stage_a_score,stage_a_one_line,
-                           stage_a_timing_eligible,stage_a_model,
-                           stage_a_cost_usd,stage_a_at,stage_b_status,
-                           stage_b_verdict,stage_b_json,stage_b_model,
-                           stage_b_cost_usd,stage_b_at,updated_at)
-                       VALUES($1,$2,$3,$4,1,'completed',$5,$6,$7,$8,$9,$10,
-                              $11,$12,$13,$14,$15,$16,$17)""",
-                    real_id,
-                    int(selected.source_job_id),
-                    selected.job.jd_text,
-                    input_facts_json(selected),
-                    chosen["stage_a_score"],
-                    chosen["stage_a_one_line"],
-                    chosen["stage_a_timing_eligible"],
-                    chosen["stage_a_model"],
-                    chosen["stage_a_cost_usd"],
-                    chosen["stage_a_at"],
-                    chosen["stage_b_status"],
-                    chosen["stage_b_verdict"],
-                    _legacy_stage_b_json(chosen),
-                    chosen["stage_b_model"],
-                    chosen["stage_b_cost_usd"],
-                    chosen["stage_b_at"],
-                    now,
-                )
-                copied += 1
-                advanced = await db.fetchval(
-                    (
-                        "UPDATE real_job_status SET status='scored',"
-                        "last_status_change_at=$1 WHERE real_job_id=$2 "
-                        "AND status='new' RETURNING real_job_id"
-                    ),
-                    now,
-                    real_id,
-                )
-                if advanced is not None:
-                    await db.execute(
-                        (
-                            "INSERT INTO real_job_status_history(real_job_id,"
-                            "from_status,to_status,changed_at,reason) "
-                            "VALUES($1,'new','scored',$2,"
-                            "'legacy_evaluation_backfill')"
-                        ),
-                        real_id,
-                        now,
-                    )
+                if await _adopt_postgres_legacy_score(
+                    db, real_id, [_job_from_record(row) for row in source_rows]
+                ):
+                    copied += 1
         return (int(parents[-1]["id"]) if parents else after_id, copied)
+
+
+async def _adopt_postgres_legacy_score(
+    db: asyncpg.Connection, real_id: int, jobs: list[JobPosting]
+) -> bool:
+    """Reuse one historical answer with explicit source/revision provenance."""
+    evaluations = await db.fetch(
+        "SELECT e.* FROM evaluations e JOIN jobs j ON j.id=e.job_id "
+        "WHERE j.real_job_id=$1 AND e.stage_a_status='completed' "
+        "ORDER BY e.job_id",
+        real_id,
+    )
+    if not evaluations:
+        return False
+    selected = select_real_job_input(str(real_id), jobs, now=datetime.now(UTC))
+    hold = legacy_evaluation_input_hold(
+        selected,
+        jobs,
+        [(int(row["job_id"]), row["stage_a_at"]) for row in evaluations],
+    )
+    if hold is not None:
+        await db.execute(
+            "UPDATE real_jobs SET identity_review_state=$1 WHERE id=$2",
+            hold,
+            real_id,
+        )
+        return False
+    assert selected is not None
+    chosen = max(
+        evaluations,
+        key=lambda row: (
+            row["stage_a_score"] if row["stage_a_score"] is not None else -1,
+            row["stage_a_at"] or datetime.min.replace(tzinfo=UTC),
+            int(row["job_id"]),
+        ),
+    )
+    now = datetime.now(UTC)
+    await db.execute(
+        """INSERT INTO real_job_evaluations(
+               real_job_id,source_job_id,input_jd_text,
+               input_facts_json,input_revision,stage_a_status,
+               stage_a_score,stage_a_one_line,
+               stage_a_timing_eligible,stage_a_model,
+               stage_a_cost_usd,stage_a_at,stage_b_status,
+               stage_b_verdict,stage_b_json,stage_b_model,
+               stage_b_cost_usd,stage_b_at,updated_at)
+           VALUES($1,$2,$3,$4,1,'completed',$5,$6,$7,$8,$9,$10,
+                  $11,$12,$13,$14,$15,$16,$17)""",
+        real_id,
+        int(selected.source_job_id),
+        selected.job.jd_text,
+        input_facts_json(selected),
+        chosen["stage_a_score"],
+        chosen["stage_a_one_line"],
+        chosen["stage_a_timing_eligible"],
+        chosen["stage_a_model"],
+        chosen["stage_a_cost_usd"],
+        chosen["stage_a_at"],
+        chosen["stage_b_status"],
+        chosen["stage_b_verdict"],
+        _legacy_stage_b_json(chosen),
+        chosen["stage_b_model"],
+        chosen["stage_b_cost_usd"],
+        chosen["stage_b_at"],
+        now,
+    )
+    await db.execute(
+        "INSERT INTO state(key,value) VALUES($1,$2) ON CONFLICT(key) "
+        "DO UPDATE SET value=excluded.value",
+        f"real-job-legacy-adoption:{real_id}:1",
+        json.dumps(
+            {
+                "reason": "user_approved_legacy_score_reuse",
+                "input_revision": 1,
+                "score_source_job_id": int(chosen["job_id"]),
+                "input_source_job_id": int(selected.source_job_id),
+                "stage_a_score": chosen["stage_a_score"],
+                "adopted_at": now.isoformat(),
+            },
+            sort_keys=True,
+        ),
+    )
+    advanced = await db.fetchval(
+        (
+            "UPDATE real_job_status SET status='scored',"
+            "last_status_change_at=$1 WHERE real_job_id=$2 "
+            "AND status='new' RETURNING real_job_id"
+        ),
+        now,
+        real_id,
+    )
+    if advanced is not None:
+        await db.execute(
+            (
+                "INSERT INTO real_job_status_history(real_job_id,"
+                "from_status,to_status,changed_at,reason) "
+                "VALUES($1,'new','scored',$2,"
+                "'legacy_evaluation_backfill')"
+            ),
+            real_id,
+            now,
+        )
+    return True
 
 
 async def _resolve_postgres_requirements_hold(
@@ -867,23 +873,7 @@ async def _resolve_postgres_requirements_hold(
         "AND status NOT IN ('new','scored')) statuses",
         real_id,
     )
-    evaluated = await db.fetch(
-        "SELECT e.stage_a_score,e.stage_b_status,e.stage_b_verdict "
-        "FROM evaluations e JOIN jobs j ON j.id=e.job_id "
-        "WHERE j.real_job_id=$1 AND e.stage_a_status='completed'",
-        real_id,
-    )
-    answers = {
-        (row["stage_a_score"], row["stage_b_status"], row["stage_b_verdict"])
-        for row in evaluated
-    }
-    if len(answers) > 1:
-        await db.execute(
-            "UPDATE real_jobs SET identity_review_state='evaluation_conflict' "
-            "WHERE id=$1",
-            real_id,
-        )
-    elif (
+    if (
         other_review is None
         and status_count <= 1
         and select_real_job_input(str(real_id), jobs, now=datetime.now(UTC)) is not None
@@ -894,7 +884,7 @@ async def _resolve_postgres_requirements_hold(
         )
 
 
-async def sync_postgres_real_job_input(
+async def sync_postgres_real_job_input(  # noqa: C901 - atomic source synchronization
     db: asyncpg.Connection,
     source_id: int,
     hydrate: Callable[[asyncpg.Record], JobPosting],
@@ -957,6 +947,14 @@ async def sync_postgres_real_job_input(
         "SELECT * FROM real_job_evaluations WHERE real_job_id=$1 FOR UPDATE", real_id
     )
     if current is None:
+        activation = await db.fetchval(
+            "SELECT value FROM state WHERE key=$1", EVALUATION_ACTIVATION_KEY
+        )
+        review_state = await db.fetchval(
+            "SELECT identity_review_state FROM real_jobs WHERE id=$1", real_id
+        )
+        if activation == "enabled" and review_state == "clear":
+            await _adopt_postgres_legacy_score(db, real_id, jobs)
         return
     selected = select_real_job_input(str(real_id), jobs, now=datetime.now(UTC))
     if selected is not None:
