@@ -26,7 +26,7 @@ A second evaluated flag would duplicate that state.
   checks, duplicate exclusion, retry limits, and revision/generation fences.
   Selected-source reconstruction is still required by the existing model and is
   now bounded; this change does not claim to materialize all eligibility fields.
-- [ ] Root review, Air full-data-copy benchmark and full quality checks.
+- [x] Root review, Air full-data-copy benchmark and full quality checks.
 - [ ] Authorized shipping and Mini inactive-run reload verification.
 
 ## Verification evidence
@@ -78,3 +78,19 @@ calls or production DB changes are needed.
 Frontend verification: new multi-batch regression failed on premature 100% before
 fix; 16 LiveRunRow tests now pass. TypeScript, ESLint, production Vite build passed;
 tracked SPA artifacts rebuilt. Existing large-chunk Vite warning is informational.
+
+## Final Air verification (2026-09-28)
+
+- Frozen 148,029-source-row copy: time to first scoring call improved from
+  95.292 s (137,653 IDs discovered first) to 0.997 s (page bounded to 100).
+  Calls were mocked; this measures preparation, not LLM throughput.
+- Final isolated committed-tree quality: 2,614 passed, 18 skipped, 477
+  deselected, 8 expected failures; Ruff/format/mypy passed.
+- Frontend: 187 passed; lint, TypeScript and production build passed.
+- Restored-bars browser run e328c1ef-8308-41c5-b8ff-746b56bbc913:
+  120 Stage A + 120 Stage B, zero errors, mock models on an Air-only copy.
+  Observed cumulative candidates grow 59 to 113 while scoring progressed;
+  Stage A discovery completion then marked preparation complete at 120.
+- Independent final read-only review found no release blocker.
+- Screenshot saved locally as artifacts/canonical-backlog-performance/
+  air-progress-restored.png; user confirmation is pending before merge.
