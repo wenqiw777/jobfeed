@@ -65,9 +65,11 @@ calls or production DB changes are needed.
   still return unclaimable parents, but preparation releases control and updates
   progress between bounded pages instead of waiting on the entire historical set.
 - Review found the old UI inferred global completion from stage order. Added a
-  conservative cumulative counter display without percentages for running stages;
-  preparation and local gates remain in progress until A discovery is finished,
-  and detailed review remains cumulative until finalizing. Scan display unchanged.
+  cumulative counters while preserving the existing five progress bars and layout.
+  User rejected replacing bars with spinners; that presentation was reverted.
+  Percentages describe only discovered work and an explicit note says totals may
+  grow. Preparation and local gates remain in progress on the rail until A
+  discovery is finished. Scan display unchanged.
   Root must obtain screenshot approval before merge.
 - Cancellation benchmark exposed an asynchronous-generator cleanup race at store
   shutdown. Regression reproduced Stage B active-connection failure; both stage
