@@ -373,10 +373,15 @@ async def _update_job(
         else existing["enrich_source"]
     )
     gate_changed = job.title != existing["title"] or jd_text != existing["jd_text"]
+    posted_at = (
+        existing["posted_at"] or _time(job.posted_at)
+        if job.platform == "speedyapply"
+        else _time(job.posted_at) or existing["posted_at"]
+    )
     hard_filter_input_changed = (
         company != existing["company"]
         or job.location != existing["location"]
-        or (_time(job.posted_at) or existing["posted_at"]) != existing["posted_at"]
+        or posted_at != existing["posted_at"]
     )
     role_type = classify_role_type(job.title, jd_text or "")
     closed_at = (
@@ -417,7 +422,7 @@ async def _update_job(
             job.location,
             jd_text,
             jd_quality,
-            _time(job.posted_at) or existing["posted_at"],
+            posted_at,
             existing["discovered_at"],
             _time(job.enriched_at) or existing["enriched_at"],
             enrich_source,

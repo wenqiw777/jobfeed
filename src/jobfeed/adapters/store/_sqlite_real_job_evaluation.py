@@ -147,6 +147,9 @@ class SqliteRealJobEvaluation:
                                     timestamp,
                                 ),
                             )
+                        elif current["stage_a_status"] == "completed":
+                            # Never automatically re-evaluate completed jobs.
+                            continue
                         elif not same_evaluation_input(
                             current["input_jd_text"],
                             current["input_facts_json"],
@@ -200,19 +203,6 @@ class SqliteRealJobEvaluation:
                                     real_id,
                                 ),
                             )
-                        elif current["stage_a_status"] == "completed":
-                            await connection.execute(
-                                (
-                                    "UPDATE real_job_evaluations SET source_job_id=?,"
-                                    "input_jd_text=? WHERE real_job_id=?"
-                                ),
-                                (
-                                    int(selected.source_job_id),
-                                    selected.job.jd_text,
-                                    real_id,
-                                ),
-                            )
-                            continue
                         elif (
                             current["stage_a_status"] == "error"
                             and current["stage_a_error_count"] >= MAX_STAGE_RETRIES
@@ -1036,6 +1026,11 @@ async def sync_sqlite_real_job_input(
     if current is None:
         await _hold_unbackfilled_source_scores(connection, real_id, jobs)
         return
+    if current["stage_a_status"] == "completed" or (
+        current["stage_a_status"] is None and current["stage_b_status"] is None
+    ):
+        # Keep the paid result and its original input as an audit snapshot.
+        return
     selected = await _select_sqlite_real_job_input(
         connection, real_id, jobs, now=datetime.now(UTC)
     )
@@ -1055,8 +1050,6 @@ async def sync_sqlite_real_job_input(
                 (int(selected.source_job_id), selected.job.jd_text, real_id),
             )
             return
-    if current["stage_a_status"] is None and current["stage_b_status"] is None:
-        return
     now = _utc_text(datetime.now(UTC))
     await connection.execute(
         """INSERT INTO real_job_evaluation_history(
@@ -1391,7 +1384,7 @@ async def _reconcile_legacy_review(
             )
             report["action"] = (
                 "clear_hold_keep_canonical"
-                if unchanged
+                if unchanged or current["stage_a_status"] == "completed"
                 else "clear_hold_invalidate_changed_input"
             )
             report["previous_input_revision"] = current["input_revision"]

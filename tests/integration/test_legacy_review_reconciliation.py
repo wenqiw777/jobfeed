@@ -170,7 +170,7 @@ async def test_reconcile_keeps_highest_whole_answer_and_is_idempotent(
 @pytest.mark.parametrize(
     "case", ["missing", "official_conflict", "manual_conflict", "canonical_changed"]
 )
-async def test_reconcile_preserves_unresolved_holds_and_actual_input_invalidation(
+async def test_reconcile_preserves_unresolved_holds_and_completed_scores(
     tmp_path: Path, case: str
 ) -> None:
     store = SQLiteStore(tmp_path / "preserve.db")
@@ -240,7 +240,7 @@ async def test_reconcile_preserves_unresolved_holds_and_actual_input_invalidatio
             applied = await reconcile_legacy_review_page(db, apply=True)
             assert applied == preview
             if case == "canonical_changed":
-                assert applied[0]["action"] == "clear_hold_invalidate_changed_input"
+                assert applied[0]["action"] == "clear_hold_keep_canonical"
                 current = await (
                     await db.execute(
                         "SELECT stage_a_status,stage_a_score FROM real_job_evaluation"
@@ -248,7 +248,7 @@ async def test_reconcile_preserves_unresolved_holds_and_actual_input_invalidatio
                         (rid,),
                     )
                 ).fetchone()
-                assert tuple(current) == (None, None)
+                assert tuple(current) == ("completed", 90)
                 assert (
                     await (
                         await db.execute(
@@ -257,7 +257,7 @@ async def test_reconcile_preserves_unresolved_holds_and_actual_input_invalidatio
                             (rid,),
                         )
                     ).fetchone()
-                )[0] == "input_changed"
+                ) is None
             else:
                 assert applied[0]["action"] == "keep_hold"
                 assert (

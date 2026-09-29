@@ -396,21 +396,24 @@ async def test_substantive_input_change_fences_old_paid_response(
 
 
 @pytest.mark.asyncio
-async def test_source_writer_invalidates_current_score_before_next_run(
+@pytest.mark.parametrize("change", ["jd", "date", "location"])
+async def test_source_writer_preserves_completed_score_before_next_run(
     tmp_path: Path,
+    change: str,
 ) -> None:
     path = tmp_path / "invalidate.db"
     store = SQLiteStore(path)
     await store.connect()
     try:
         source = JobPosting(
-            platform="linkedin",
+            platform="speedyapply",
             canonical_id="changed",
             url="https://example.test/changed",
             title="Engineer",
             company="Acme",
             location="Remote",
             discovered_at=datetime.now(UTC),
+            posted_at=datetime.now(UTC) - timedelta(days=3),
             jd_text="Build Java services and APIs. " * 15,
             jd_quality=QualityBand.FULL,
         )
@@ -430,9 +433,16 @@ async def test_source_writer_invalidates_current_score_before_next_run(
             expected_revision=claim.input_revision,
             expected_generation=claim.claim_generation,
         )
-        await store.save_job(
-            replace(source, jd_text="Build Python services and APIs. " * 15)
-        )
+        changes = {
+            "jd": {"jd_text": "Build Python services and APIs. " * 15},
+            "date": {"posted_at": source.discovered_at + timedelta(hours=3)},
+            "location": {"location": "New York"},
+        }
+        await store.save_job(replace(source, **changes[change]))
+        stored = await store.get_job(saved.job_id)
+        assert stored.posted_at == source.posted_at
+
+        assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
         async with aiosqlite.connect(path) as db:
             row = await (
                 await db.execute(
@@ -441,12 +451,12 @@ async def test_source_writer_invalidates_current_score_before_next_run(
                     (int(real_id),),
                 )
             ).fetchone()
-            assert row == (None, None)
+            assert row == (90, "completed")
             assert (
                 await (
                     await db.execute("SELECT COUNT(*) FROM real_job_evaluation_history")
                 ).fetchone()
-            )[0] == 1
+            )[0] == 0
     finally:
         await store.close()
 

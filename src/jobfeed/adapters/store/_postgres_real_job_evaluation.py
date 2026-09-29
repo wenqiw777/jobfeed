@@ -119,6 +119,9 @@ class PostgresRealJobEvaluation:
                         revision,
                         now,
                     )
+                elif current["stage_a_status"] == "completed":
+                    # Never automatically re-evaluate completed jobs.
+                    continue
                 elif not same_evaluation_input(
                     current["input_jd_text"],
                     current["input_facts_json"],
@@ -170,18 +173,6 @@ class PostgresRealJobEvaluation:
                         now,
                         real_id,
                     )
-                elif current["stage_a_status"] == "completed":
-                    await db.execute(
-                        (
-                            "UPDATE real_job_evaluations SET "
-                            "source_job_id=$1,input_jd_text=$2 WHERE "
-                            "real_job_id=$3"
-                        ),
-                        int(selected.source_job_id),
-                        selected.job.jd_text,
-                        real_id,
-                    )
-                    continue
                 elif (
                     current["stage_a_status"] == "error"
                     and current["stage_a_error_count"] >= MAX_STAGE_RETRIES
@@ -910,6 +901,11 @@ async def sync_postgres_real_job_input(  # noqa: C901 - atomic source synchroniz
         if activation == "enabled" and review_state == "clear":
             await _adopt_postgres_legacy_score(db, real_id, jobs)
         return
+    if current["stage_a_status"] == "completed" or (
+        current["stage_a_status"] is None and current["stage_b_status"] is None
+    ):
+        # Keep the paid result and its original input as an audit snapshot.
+        return
     selected = select_real_job_input(str(real_id), jobs, now=datetime.now(UTC))
     if selected is not None:
         stored_policy = json.loads(current["input_facts_json"])
@@ -929,8 +925,6 @@ async def sync_postgres_real_job_input(  # noqa: C901 - atomic source synchroniz
                 real_id,
             )
             return
-    if current["stage_a_status"] is None and current["stage_b_status"] is None:
-        return
     now = datetime.now(UTC)
     await db.execute(
         """INSERT INTO real_job_evaluation_history(

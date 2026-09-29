@@ -105,27 +105,21 @@ async def test_postgres_aliases_claim_once_and_source_audit_stays_empty(
                 "Build Python production services and APIs. " * 8,
                 int(ids[1]),
             )
-        # The official input wins, but its changed JD invalidates the old score.
-        changed_claims = await store.claim_real_job_stage_a_by_ids([real_id])
-        assert len(changed_claims) == 1
-        assert changed_claims[0].source_job_id == ids[1]
-        assert changed_claims[0].input_revision == claims[0].input_revision + 1
-        assert changed_claims[0].job.jd_text == (
-            "Build Python production services and APIs. " * 8
-        )
+        # Even a new official JD does not authorize re-scoring a completed job.
+        assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
         async with store._get_pool().acquire() as db:
             current = await db.fetchrow(
                 "SELECT stage_a_status,stage_a_score,stage_b_status "
                 "FROM real_job_evaluations WHERE real_job_id=$1",
                 int(real_id),
             )
-            assert tuple(current.values()) == ("in_progress", None, None)
+            assert tuple(current.values()) == ("completed", EXPECTED_SCORE, "completed")
             history = await db.fetchrow(
                 "SELECT stage_a_score,stage_b_verdict,reason "
                 "FROM real_job_evaluation_history WHERE real_job_id=$1",
                 int(real_id),
             )
-            assert tuple(history.values()) == (EXPECTED_SCORE, "apply", "input_changed")
+            assert history is None
             assert (
                 await db.fetchval(
                     "SELECT COUNT(*) FROM evaluations WHERE job_id=ANY($1::int[])",
@@ -197,7 +191,7 @@ async def test_postgres_failed_claim_is_retryable(fresh_pg_dsn: str) -> None:
         await store.close()
 
 
-async def test_postgres_source_write_invalidates_current_score(
+async def test_postgres_source_write_preserves_completed_score(
     fresh_pg_dsn: str,
 ) -> None:
     store = PostgresStore(fresh_pg_dsn)
@@ -239,11 +233,11 @@ async def test_postgres_source_write_invalidates_current_score(
                 "WHERE real_job_id=$1",
                 int(real_id),
             )
-            assert row["stage_a_score"] is None
-            assert row["stage_a_status"] is None
+            assert row["stage_a_score"] == 90  # noqa: PLR2004 - saved result above
+            assert row["stage_a_status"] == "completed"
             assert (
                 await db.fetchval("SELECT COUNT(*) FROM real_job_evaluation_history")
-                == 1
+                == 0
             )
     finally:
         await store.close()

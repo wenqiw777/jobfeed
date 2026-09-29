@@ -2813,7 +2813,9 @@ class PostgresStore(
                                ELSE -1 END)
                            THEN COALESCE(EXCLUDED.jd_quality, jobs.jd_quality)
                            ELSE jobs.jd_quality END,
-                       posted_at = COALESCE(EXCLUDED.posted_at, jobs.posted_at),
+                       posted_at = CASE WHEN jobs.platform = 'speedyapply'
+                           THEN COALESCE(jobs.posted_at, EXCLUDED.posted_at)
+                           ELSE COALESCE(EXCLUDED.posted_at, jobs.posted_at) END,
                        discovered_at = jobs.discovered_at,
                        enriched_at = COALESCE(EXCLUDED.enriched_at, jobs.enriched_at),
                        -- enrich_source must track whichever jd_text actually
