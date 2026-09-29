@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import aclosing, asynccontextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, cast
@@ -135,6 +135,9 @@ def _snapshot_for_config(config: EvaluateRuntimeConfig, mode: str) -> _PolicySna
     )
 
 
+_CANONICAL_BATCH_SIZE = 100
+
+
 async def _real_id_pages(
     service: EvaluateService,
     *,
@@ -144,10 +147,10 @@ async def _real_id_pages(
 ) -> AsyncIterator[list[str]]:
     store = service._deps.store
     if explicit_real_ids is not None:
-        if explicit_real_ids:
-            yield explicit_real_ids
+        for offset in range(0, len(explicit_real_ids), _CANONICAL_BATCH_SIZE):
+            yield explicit_real_ids[offset : offset + _CANONICAL_BATCH_SIZE]
         return
-    page_size = policy.config.ml_gate_max_candidates
+    page_size = min(_CANONICAL_BATCH_SIZE, policy.config.ml_gate_max_candidates)
     if page_size <= 0:
         return
     before_id: int | None = None
@@ -379,7 +382,7 @@ async def run_canonical_evaluation(  # noqa: PLR0913 - claim funnel
     if stage != "b" and limit > 0 and await service._budget.has_budget():
         run.stage_a_total = 0
         service._emit_progress(run)
-        stage_a_claims = await _claim_stage_a_candidates(
+        batches = _claim_stage_a_candidates(
             service,
             run,
             session,
@@ -389,39 +392,41 @@ async def run_canonical_evaluation(  # noqa: PLR0913 - claim funnel
             max_days=max_days,
             policy=policy,
         )
-        run.stage_a_total = len(stage_a_claims)
-        service._emit_progress(run)
-        try:
-            quick_claims = await _prepare_stage_a_claims(
-                service,
-                run,
-                session,
-                stage_a_claims,
-                policy=policy,
-            )
-            run.stage_a_total = len(quick_claims)
-            run.stage_a_processed = 0
-            run.progress_stage = "stage_a"
-            service._emit_progress(run)
-            await _score_stage_a_claims(
-                service,
-                run,
-                session,
-                quick_claims,
-                policy=policy,
-            )
-        except BaseException:
-            await _release_stage_a_claims(
-                store,
-                stage_a_claims,
-                max_concurrent=policy.config.llm.max_concurrent,
-            )
-            raise
+        async with aclosing(batches):
+            async for stage_a_claims in batches:
+                try:
+                    quick_claims = await _prepare_stage_a_claims(
+                        service,
+                        run,
+                        session,
+                        stage_a_claims,
+                        policy=policy,
+                    )
+                    if run.stage_a_processed:
+                        run.stage_a_total += len(quick_claims)
+                    else:
+                        run.stage_a_total -= len(stage_a_claims) - len(quick_claims)
+                    run.progress_stage = "stage_a"
+                    service._emit_progress(run)
+                    await _score_stage_a_claims(
+                        service,
+                        run,
+                        session,
+                        quick_claims,
+                        policy=policy,
+                    )
+                except BaseException:
+                    await _release_stage_a_claims(
+                        store,
+                        stage_a_claims,
+                        max_concurrent=policy.config.llm.max_concurrent,
+                    )
+                    raise
     if stage != "a" and limit > 0 and await service._budget.has_budget():
         run.progress_stage = "stage_b"
         run.stage_b_total = 0
         service._emit_progress(run)
-        stage_b_claims = await _claim_stage_b_candidates(
+        batches = _claim_stage_b_candidates(
             service,
             run,
             session,
@@ -431,15 +436,17 @@ async def run_canonical_evaluation(  # noqa: PLR0913 - claim funnel
             max_days=max_days,
             policy=policy,
         )
-        run.stage_b_total = len(stage_b_claims)
-        service._emit_progress(run)
-        await _score_stage_b_claims(
-            service,
-            run,
-            session,
-            stage_b_claims,
-            policy=policy,
-        )
+        async with aclosing(batches):
+            async for stage_b_claims in batches:
+                run.stage_b_total = (run.stage_b_total or 0) + len(stage_b_claims)
+                service._emit_progress(run)
+                await _score_stage_b_claims(
+                    service,
+                    run,
+                    session,
+                    stage_b_claims,
+                    policy=policy,
+                )
 
 
 async def _claim_stage_a_candidates(  # noqa: PLR0913 - bounded claim context
@@ -452,14 +459,17 @@ async def _claim_stage_a_candidates(  # noqa: PLR0913 - bounded claim context
     limit: int,
     max_days: int | None,
     policy: _PolicySnapshot,
-) -> list[RealJobEvaluationInput]:
-    """Discover and claim the complete bounded Stage A candidate set."""
+) -> AsyncGenerator[list[RealJobEvaluationInput], None]:
+    """Yield bounded claims so scoring starts before the backlog is exhausted."""
     store = service._deps.store
     claimed: list[RealJobEvaluationInput] = []
+    total_claimed = 0
     try:
         async for page in _real_id_pages(
             service, stage="a", explicit_real_ids=explicit_ids, policy=policy
         ):
+            if not run.stage_a_processed:
+                run.progress_stage = "preparing"
             assert run.evaluation_input_total is not None
             run.evaluation_input_total += len(page)
             if corpus == "failed":
@@ -475,22 +485,25 @@ async def _claim_stage_a_candidates(  # noqa: PLR0913 - bounded claim context
             else:
                 candidates = page
             session.ensure_active()
-            claimed.extend(
-                await cast(
-                    CanonicalEvaluationStore, store
-                ).claim_real_job_stage_a_by_ids(
-                    candidates,
-                    limit=limit - len(claimed),
-                    max_days=max_days,
-                    stage_a_policy=policy.stage_a(),
-                    stage_b_policy=policy.stage_b(),
-                )
-            )
-            run.stage_a_total = len(claimed)
             service._emit_progress(run)
-            if len(claimed) >= limit:
+            claimed = await cast(
+                CanonicalEvaluationStore, store
+            ).claim_real_job_stage_a_by_ids(
+                candidates,
+                limit=limit - total_claimed,
+                max_days=max_days,
+                stage_a_policy=policy.stage_a(),
+                stage_b_policy=policy.stage_b(),
+            )
+            total_claimed += len(claimed)
+            if not run.stage_a_processed:
+                run.stage_a_total = (run.stage_a_total or 0) + len(claimed)
+            service._emit_progress(run)
+            if claimed:
+                yield claimed
+                claimed = []
+            if total_claimed >= limit or not await service._budget.has_budget():
                 break
-        return claimed
     except BaseException:
         await _release_stage_a_claims(
             store,
@@ -571,7 +584,8 @@ async def _prepare_stage_a_claims(
         max_concurrent=policy.config.llm.max_concurrent,
     )
 
-    run.progress_stage = "ml_gate"
+    if not run.stage_a_processed:
+        run.progress_stage = "ml_gate"
     service._emit_progress(run)
     gate_survivors = await _gate_stage_a_claims(
         service,
@@ -581,7 +595,8 @@ async def _prepare_stage_a_claims(
         policy=policy,
     )
 
-    run.progress_stage = "seniority_gate"
+    if not run.stage_a_processed:
+        run.progress_stage = "seniority_gate"
     service._emit_progress(run)
     if service._deps.seniority_gate is None:
         return gate_survivors
@@ -614,13 +629,13 @@ async def _gate_stage_a_claims(
 ) -> list[RealJobEvaluationInput]:
     """Run the SDE gate once for the complete post-rule candidate set."""
     store = service._deps.store
-    run.ml_gate_total = len(claims)
+    run.ml_gate_total = (run.ml_gate_total or 0) + len(claims)
     already_passed = [item for item in claims if item.ml_gate_result == "pass"]
     to_predict = [item for item in claims if item.ml_gate_result != "pass"]
-    run.ml_gate_processed = len(already_passed)
+    run.ml_gate_processed += len(already_passed)
     service._emit_progress(run)
     if policy.gate_mode == "off" or service._deps.ml_gate is None:
-        run.ml_gate_processed = len(claims)
+        run.ml_gate_processed += len(to_predict)
         run.jobs_gate_passed += len(claims)
         service._emit_progress(run)
         return claims
@@ -720,10 +735,11 @@ async def _claim_stage_b_candidates(  # noqa: PLR0913 - bounded claim context
     limit: int,
     max_days: int | None,
     policy: _PolicySnapshot,
-) -> list[RealJobEvaluationInput]:
-    """Discover and claim the complete bounded Stage B candidate set."""
+) -> AsyncGenerator[list[RealJobEvaluationInput], None]:
+    """Yield bounded Stage B claims for incremental scoring."""
     store = service._deps.store
     claimed: list[RealJobEvaluationInput] = []
+    total_claimed = 0
     try:
         async for page in _real_id_pages(
             service, stage="b", explicit_real_ids=explicit_ids, policy=policy
@@ -732,21 +748,23 @@ async def _claim_stage_b_candidates(  # noqa: PLR0913 - bounded claim context
                 assert run.evaluation_input_total is not None
                 run.evaluation_input_total += len(page)
             session.ensure_active()
-            claimed.extend(
-                await cast(
-                    CanonicalEvaluationStore, store
-                ).claim_real_job_stage_b_by_ids(
-                    page,
-                    stage_a_threshold=policy.config.stage_a_threshold,
-                    limit=limit - len(claimed),
-                    max_days=max_days,
-                    stage_a_policy=policy.stage_a(),
-                    stage_b_policy=policy.stage_b(),
-                )
+            service._emit_progress(run)
+            claimed = await cast(
+                CanonicalEvaluationStore, store
+            ).claim_real_job_stage_b_by_ids(
+                page,
+                stage_a_threshold=policy.config.stage_a_threshold,
+                limit=limit - total_claimed,
+                max_days=max_days,
+                stage_a_policy=policy.stage_a(),
+                stage_b_policy=policy.stage_b(),
             )
-            if len(claimed) >= limit:
+            total_claimed += len(claimed)
+            if claimed:
+                yield claimed
+                claimed = []
+            if total_claimed >= limit or not await service._budget.has_budget():
                 break
-        return claimed
     except BaseException:
         await _release_stage_b_claims(
             store,

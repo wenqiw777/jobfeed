@@ -275,12 +275,10 @@ test("explains how the latest scan becomes the evaluation candidate set", async 
   renderRuns();
 
   const active = await screen.findByTestId("live-run-eval-active");
-  expect(active).toHaveTextContent("Latest scan: 2141 listings → 1290 candidates");
+  expect(active).toHaveTextContent("Preparing 2141 latest-scan listings");
   expect(active).toHaveTextContent("754 not eligible or duplicate");
   expect(active).toHaveTextContent("97 excluded by job rules");
-  expect(within(active).getByRole("progressbar", {
-    name: "Candidate preparation: Latest scan: 2141 listings → 1290 candidates",
-  })).toBeVisible();
+  expect(within(active).getByText("Preparing 2141 latest-scan listings")).toBeVisible();
 });
 
 test("labels a backlog evaluation from its own scope, not the preceding scan", async () => {
@@ -319,7 +317,7 @@ test("labels a backlog evaluation from its own scope, not the preceding scan", a
   renderRuns();
 
   const active = await screen.findByTestId("live-run-eval-backlog");
-  expect(active).toHaveTextContent("Historical backlog → 7000 candidates");
+  expect(active).toHaveTextContent("Historical backlog: 7000 candidates found so far");
   expect(active).not.toHaveTextContent("2411 new listings");
   expect(active).not.toHaveTextContent("already evaluated or duplicate");
 });
