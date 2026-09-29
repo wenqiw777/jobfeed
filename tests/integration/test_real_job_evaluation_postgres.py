@@ -105,17 +105,27 @@ async def test_postgres_aliases_claim_once_and_source_audit_stays_empty(
                 "Build Python production services and APIs. " * 8,
                 int(ids[1]),
             )
-        # Materially conflicting aliases hold instead of silently replacing a score.
-        assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
+        # The official input wins, but its changed JD invalidates the old score.
+        changed_claims = await store.claim_real_job_stage_a_by_ids([real_id])
+        assert len(changed_claims) == 1
+        assert changed_claims[0].source_job_id == ids[1]
+        assert changed_claims[0].input_revision == claims[0].input_revision + 1
+        assert changed_claims[0].job.jd_text == (
+            "Build Python production services and APIs. " * 8
+        )
         async with store._get_pool().acquire() as db:
-            assert (
-                await db.fetchval(
-                    "SELECT stage_a_score FROM real_job_evaluations "
-                    "WHERE real_job_id=$1",
-                    int(real_id),
-                )
-                == EXPECTED_SCORE
+            current = await db.fetchrow(
+                "SELECT stage_a_status,stage_a_score,stage_b_status "
+                "FROM real_job_evaluations WHERE real_job_id=$1",
+                int(real_id),
             )
+            assert tuple(current.values()) == ("in_progress", None, None)
+            history = await db.fetchrow(
+                "SELECT stage_a_score,stage_b_verdict,reason "
+                "FROM real_job_evaluation_history WHERE real_job_id=$1",
+                int(real_id),
+            )
+            assert tuple(history.values()) == (EXPECTED_SCORE, "apply", "input_changed")
             assert (
                 await db.fetchval(
                     "SELECT COUNT(*) FROM evaluations WHERE job_id=ANY($1::int[])",
@@ -524,12 +534,12 @@ async def test_postgres_reclaimed_stage_b_rejects_old_worker_same_input(
 @pytest.mark.parametrize(
     ("case", "expected_hold"),
     [
-        ("different_jd", "evaluation_input_conflict"),
-        ("different_scores", "evaluation_conflict"),
+        ("different_jd", "clear"),
+        ("different_scores", "clear"),
         ("empty_jd", "evaluation_input_missing"),
         ("scored_empty_alias", "evaluation_input_missing"),
-        ("jd_changed_after_score", "evaluation_input_conflict"),
-        ("unknown_input_time", "evaluation_input_conflict"),
+        ("jd_changed_after_score", "clear"),
+        ("unknown_input_time", "clear"),
     ],
 )
 async def test_postgres_unverifiable_legacy_score_is_held(
@@ -623,8 +633,17 @@ async def test_postgres_unverifiable_legacy_score_is_held(
         await store.set_state("real_job_evaluation_activation_v1", "enabled")
         with pytest.raises(ValueError, match="evaluation backfill"):
             await store.canonical_evaluation_ready()
-        assert (await store.backfill_real_job_evaluations(limit=100))[1] == 0
+        assert (await store.backfill_real_job_evaluations(limit=100))[1] == int(
+            expected_hold == "clear"
+        )
         assert await store.canonical_evaluation_ready()
+        if expected_hold == "clear":
+            detail = await store.get_real_job_view(real_id)
+            assert detail is not None
+            assert detail["row"]["identity_review_state"] == "clear"
+            assert detail["row"]["stage_a_score"] == 84  # noqa: PLR2004 - fixture score
+            assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
+            return
         assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
         assert (
             await store.claim_real_job_stage_b_by_ids([real_id], stage_a_threshold=80)
@@ -715,7 +734,7 @@ async def test_postgres_corrected_source_jd_clears_requirements_hold(
         first = JobPosting(
             platform="linkedin",
             canonical_id="corrected-first",
-            url="https://example.test/corrected-first",
+            url="https://jobs.lever.co/acme/12345678-1234-1234-1234-123456789012",
             apply_url=ats,
             title="Engineer",
             company="Acme",
@@ -921,7 +940,7 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
             stage_b_policy=b1,
         )
         assert legacy == {
-            "stage_a_pending": 1,
+            "stage_a_pending": 0,
             "stage_b_pending": 0,
             "legacy_stage_a": 1,
             "legacy_stage_b": 1,

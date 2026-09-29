@@ -250,7 +250,7 @@ async def test_merge_of_legacy_scores_keeps_activation_ready(tmp_path: Path) -> 
                     (int(real_ids[0]),),
                 )
             ).fetchone()
-            assert state[0] == "evaluation_conflict"
+            assert state[0] == "evaluation_input_conflict"
         assert await store.canonical_evaluation_ready()
     finally:
         await store.close()
@@ -780,12 +780,12 @@ async def test_reclaimed_stage_a_rejects_old_worker_same_input(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("case", "expected_hold"),
     [
-        ("different_jd", "evaluation_input_conflict"),
-        ("different_scores", "evaluation_conflict"),
+        ("different_jd", "clear"),
+        ("different_scores", "clear"),
         ("empty_jd", "evaluation_input_missing"),
         ("scored_empty_alias", "evaluation_input_missing"),
-        ("jd_changed_after_score", "evaluation_input_conflict"),
-        ("unknown_input_time", "evaluation_input_conflict"),
+        ("jd_changed_after_score", "clear"),
+        ("unknown_input_time", "clear"),
     ],
 )
 async def test_legacy_score_without_verified_input_is_held_not_reused(
@@ -883,8 +883,17 @@ async def test_legacy_score_without_verified_input_is_held_not_reused(
         await store.set_state("real_job_evaluation_activation_v1", "enabled")
         with pytest.raises(ValueError, match="evaluation backfill"):
             await store.canonical_evaluation_ready()
-        assert (await store.backfill_real_job_evaluations(limit=100))[1] == 0
+        assert (await store.backfill_real_job_evaluations(limit=100))[1] == int(
+            expected_hold == "clear"
+        )
         assert await store.canonical_evaluation_ready()
+        if expected_hold == "clear":
+            detail = await store.get_real_job_view(real_id)
+            assert detail is not None
+            assert detail["row"]["identity_review_state"] == "clear"
+            assert detail["row"]["stage_a_score"] == 84  # noqa: PLR2004 - fixture score
+            assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
+            return
         assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
         assert (
             await store.claim_real_job_stage_b_by_ids([real_id], stage_a_threshold=80)
@@ -990,7 +999,7 @@ async def test_corrected_source_jd_clears_requirements_hold(tmp_path: Path) -> N
         first = JobPosting(
             platform="linkedin",
             canonical_id="corrected-first",
-            url="https://example.test/corrected-first",
+            url="https://jobs.lever.co/acme/12345678-1234-1234-1234-123456789012",
             apply_url=ats,
             title="Engineer",
             company="Acme",

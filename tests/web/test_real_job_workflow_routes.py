@@ -173,16 +173,15 @@ async def test_policy_change_hides_unverified_api_scores_before_next_evaluate(
                 stage_b_policy=new_policy.stage_b(),
             )
             assert counts == {
-                "stage_a_pending": 1,
+                "stage_a_pending": 0,
                 "stage_b_pending": 0,
                 "legacy_stage_a": 1,
                 "legacy_stage_b": 1,
             }
-            with pytest.raises(ValueError, match="legacy_stage_a=1"):
-                await store.canonical_policy_cutover_ready(
-                    stage_a_policy=new_policy.stage_a(),
-                    stage_b_policy=new_policy.stage_b(),
-                )
+            assert await store.canonical_policy_cutover_ready(
+                stage_a_policy=new_policy.stage_a(),
+                stage_b_policy=new_policy.stage_b(),
+            )
     finally:
         await store.close()
 

@@ -250,12 +250,14 @@ class SQLiteStore(
             "(e.real_job_id IS NULL OR "
             "COALESCE(e.stage_a_status,'pending')!='completed' OR "
             "(? IS NOT NULL AND json_extract(e.input_facts_json,"
+            "'$.stage_a_policy') IS NOT NULL AND json_extract(e.input_facts_json,"
             "'$.stage_a_policy') IS NOT ?))"
         )
         stage_b = (
             "(e.stage_a_status='completed' AND e.stage_a_score>=? "
             "AND (COALESCE(e.stage_b_status,'pending')!='completed' OR "
             "(? IS NOT NULL AND json_extract(e.input_facts_json,"
+            "'$.stage_b_policy') IS NOT NULL AND json_extract(e.input_facts_json,"
             "'$.stage_b_policy') IS NOT ?)))"
         )
         predicate = {
@@ -364,10 +366,13 @@ class SQLiteStore(
                 "WITH p AS (SELECT json(?) AS a,json(?) AS b) "
                 "SELECT "
                 "SUM(CASE WHEN e.stage_a_status='completed' AND "
+                "json_extract(e.input_facts_json,'$.stage_a_policy') IS NOT NULL AND "
                 "json_extract(e.input_facts_json,'$.stage_a_policy') IS NOT p.a "
                 "THEN 1 ELSE 0 END),"
                 "SUM(CASE WHEN e.stage_b_status='completed' AND "
-                "json_extract(e.input_facts_json,'$.stage_a_policy') IS p.a "
+                "(json_extract(e.input_facts_json,'$.stage_a_policy') IS NULL OR "
+                "json_extract(e.input_facts_json,'$.stage_a_policy') IS p.a) "
+                "AND json_extract(e.input_facts_json,'$.stage_b_policy') IS NOT NULL "
                 "AND json_extract(e.input_facts_json,'$.stage_b_policy') IS NOT p.b "
                 "THEN 1 ELSE 0 END),"
                 "SUM(CASE WHEN e.stage_a_status='completed' AND "

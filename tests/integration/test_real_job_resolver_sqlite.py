@@ -134,7 +134,7 @@ async def test_shared_scoped_ats_id_joins_despite_different_jd(tmp_path: Path) -
         await lifecycle.close()
 
 
-async def test_shared_ats_with_conflicting_complete_jds_holds_without_score(
+async def test_shared_ats_overrides_conflicting_aggregator_without_score(
     tmp_path: Path,
 ) -> None:
     lifecycle, store = await open_sqlite_store(tmp_path / "requirements-conflict.db")
@@ -180,10 +180,8 @@ async def test_shared_ats_with_conflicting_complete_jds_holds_without_score(
                     "SELECT 1 FROM real_job_evaluations WHERE real_job_id=?", (parent,)
                 )
             ).fetchone()
-        assert state[0] == "requirements_conflict"
-        assert cases == [
-            (int(first.job_id), int(second.job_id), "requirements_conflict")
-        ]
+        assert state[0] == "clear"
+        assert cases == []
         assert evaluation is None
     finally:
         await lifecycle.close()

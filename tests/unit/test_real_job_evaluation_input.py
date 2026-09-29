@@ -4,7 +4,12 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from jobfeed.domain.models import JobPosting, QualityBand
-from jobfeed.domain.real_job_evaluation import input_facts_json, select_real_job_input
+from jobfeed.domain.real_job_evaluation import (
+    conflicting_complete_sources,
+    input_facts_json,
+    legacy_evaluation_input_hold,
+    select_real_job_input,
+)
 
 NOW = datetime(2026, 9, 24, tzinfo=UTC)
 
@@ -82,3 +87,29 @@ def test_original_posted_date_is_a_scoring_input_fact() -> None:
     first = select_real_job_input("5", [source], now=NOW)
     second = select_real_job_input("5", [earlier], now=NOW)
     assert input_facts_json(first) != input_facts_json(second)
+
+
+def test_official_input_wins_over_divergent_aggregator() -> None:
+    official = _source("1", url="https://boards.greenhouse.io/acme/jobs/1234567")
+    aggregator = _source("2", jd="Build unrelated FPGA circuits and verify RTL. " * 15)
+    selected = select_real_job_input("1", [official, aggregator], now=NOW)
+    assert selected is not None
+    assert selected.source_job_id == "1"
+    assert conflicting_complete_sources([official, aggregator]) is None
+
+
+def test_conflicting_official_inputs_stay_held() -> None:
+    first = _source("1", url="https://boards.greenhouse.io/acme/jobs/1234567")
+    second = _source(
+        "2",
+        url="https://jobs.lever.co/acme/12345678-1234-1234-1234-123456789012",
+        jd="Build FPGA circuits and verify RTL. " * 15,
+    )
+    assert select_real_job_input("1", [first, second], now=NOW) is None
+
+
+def test_legacy_score_time_uncertainty_does_not_require_review() -> None:
+    for enriched in (None, NOW + timedelta(days=1)):
+        source = replace(_source("1"), enriched_at=enriched)
+        selected = select_real_job_input("1", [source], now=NOW)
+        assert legacy_evaluation_input_hold(selected, [source], [(1, NOW)]) is None
