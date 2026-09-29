@@ -597,3 +597,178 @@ async def test_canonical_service_scores_two_aliases_once(
         )
     finally:
         await store.close()
+
+
+@pytest.mark.parametrize("stage", ["a", "b"])
+async def test_backlog_scores_first_batch_before_discovering_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """Large configured scan windows must not delay the first paid batch."""
+    batch_size = 2
+    total = 3
+    monkeypatch.setattr(canonical_evaluate, "_CANONICAL_BATCH_SIZE", batch_size)
+    store = SQLiteStore(tmp_path / "stream.db")
+    await store.connect()
+    try:
+        for index in range(3):
+            await store.save_job(
+                JobPosting(
+                    platform="linkedin",
+                    canonical_id=f"stream-{index}",
+                    url=f"https://example.test/stream-{index}",
+                    title="Engineer",
+                    company=f"Company {index}",
+                    location="Remote",
+                    discovered_at=datetime.now(UTC),
+                    jd_text="Build production software services and APIs. " * 10,
+                    jd_quality=QualityBand.FULL,
+                )
+            )
+        llm = _PaidFake()
+        original = store.list_real_job_ids_for_evaluation
+        pages = []
+
+        async def observe(**kwargs):
+            assert kwargs["limit"] <= batch_size
+            if pages:
+                assert llm.calls == batch_size, (
+                    "next page fetched before first batch scored"
+                )
+            page = await original(**kwargs)
+            pages.append(page)
+            return page
+
+        template, _, _ = _service(_LeaseProbe())
+        service = EvaluateService(
+            deps=EvaluateDependencies(
+                store=store,
+                store_ops=store,
+                store_status=store,
+                prompt_renderer=JinjaPromptRenderer(Path("src/jobfeed/templates")),
+                llm_stage_a=llm,
+                llm_stage_b=llm,
+            ),
+            config=replace(template._config, ml_gate_max_candidates=1_000_000),
+            logger=template._logger,
+        )
+        if stage == "b":
+            await service.run(stage="a", limit=total, canonical=True)
+            llm.calls = 0
+        monkeypatch.setattr(store, "list_real_job_ids_for_evaluation", observe)
+        progress = []
+        run = await service.run(
+            stage=stage,
+            limit=total,
+            canonical=True,
+            on_progress=lambda run: progress.append(
+                (run.progress_stage, run.stage_a_processed)
+            ),
+        )
+        assert llm.calls == total
+        assert getattr(run, f"stage_{stage}_processed") == total
+        assert getattr(run, f"stage_{stage}_total") == total
+        assert len(pages) == batch_size
+        if stage == "a":
+            assert all(
+                phase in {"stage_a", "finalizing"} for phase, done in progress if done
+            )
+    finally:
+        await store.close()
+
+
+async def test_canonical_claim_preserves_new_first_and_reuses_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SQLiteStore(tmp_path / "claim-order.db")
+    await store.connect()
+    try:
+        ids = []
+        for index in range(3):
+            saved = await store.save_job(
+                JobPosting(
+                    platform="linkedin",
+                    canonical_id=f"claim-{index}",
+                    url=f"https://example.test/claim-{index}",
+                    title="Engineer",
+                    company=f"Company {index}",
+                    location="Remote",
+                    discovered_at=datetime.now(UTC),
+                    jd_text="Build production software services and APIs. " * 10,
+                    jd_quality=QualityBand.FULL,
+                )
+            )
+            ids.append(await store.resolve_real_job_id(saved.job_id))
+        calls = 0
+        original = store._lifecycle.connection
+
+        def count_connections():
+            nonlocal calls
+            calls += 1
+            return original()
+
+        monkeypatch.setattr(store._lifecycle, "connection", count_connections)
+        claims = await store.claim_real_job_stage_a_by_ids(list(reversed(ids)))
+        assert [claim.real_job_id for claim in claims] == list(reversed(ids))
+        assert calls == 1
+        assert await store.claim_real_job_stage_a_by_ids(ids) == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("stage", ["a", "b"])
+async def test_cancelled_stream_releases_all_claims_before_store_close(
+    tmp_path: Path, stage: str
+) -> None:
+    path = tmp_path / "cancel-stream.db"
+    store = SQLiteStore(path)
+    await store.connect()
+    saved = await store.save_job(
+        JobPosting(
+            platform="linkedin",
+            canonical_id="cancel-stream",
+            url="https://example.test/cancel-stream",
+            title="Engineer",
+            company="Acme",
+            location="Remote",
+            discovered_at=datetime.now(UTC),
+            jd_text="Build production software services and APIs. " * 10,
+            jd_quality=QualityBand.FULL,
+        )
+    )
+    template, _, _ = _service(_LeaseProbe())
+
+    class CancelLLM(_PaidFake):
+        cancel = False
+
+        async def complete(self, request):
+            if self.cancel:
+                raise asyncio.CancelledError
+            return await super().complete(request)
+
+    llm = CancelLLM()
+    service = EvaluateService(
+        deps=EvaluateDependencies(
+            store=store,
+            store_ops=store,
+            store_status=store,
+            prompt_renderer=JinjaPromptRenderer(Path("src/jobfeed/templates")),
+            llm_stage_a=llm,
+            llm_stage_b=llm,
+        ),
+        config=template._config,
+        logger=template._logger,
+    )
+    if stage == "b":
+        await service.run(stage="a", limit=1, job_ids=[saved.job_id], canonical=True)
+    llm.cancel = True
+    with pytest.raises(asyncio.CancelledError):
+        await service.run(stage=stage, limit=1, job_ids=[saved.job_id], canonical=True)
+    await store.close()
+    async with aiosqlite.connect(path) as db:
+        row = await (
+            await db.execute(
+                "SELECT COUNT(*) FROM real_job_evaluations "
+                f"WHERE stage_{stage}_status='in_progress'"
+            )
+        ).fetchone()
+        assert row == (0,)

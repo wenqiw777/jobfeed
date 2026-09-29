@@ -174,9 +174,7 @@ test("keeps future evaluation stages waiting until their candidate set is ready"
     } as Partial<RunSummary>),
   });
 
-  expect(screen.getByRole("progressbar", {
-    name: "SDE role filter: 2 / 2479",
-  })).toBeVisible();
+  expect(screen.getByText("2 screened so far")).toBeVisible();
   expect(screen.getByRole("progressbar", {
     name: "Seniority filter: Waiting",
   })).toBeVisible();
@@ -309,7 +307,7 @@ test("renders the real evaluate phase, denominators, cost, and errors", () => {
   const row = screen.getByTestId("live-run-r-live-1");
   expect(row).toHaveTextContent("Running detailed review");
   expect(row).toHaveTextContent("150 / 150");
-  expect(row).toHaveTextContent("20 / 62");
+  expect(row).toHaveTextContent("20 reviewed so far");
   expect(row).not.toHaveTextContent("0 processed");
   expect(row).toHaveTextContent("$4.25");
   expect(row).toHaveTextContent("1 error");
@@ -330,12 +328,10 @@ test("shows seniority as its own active phase after the SDE role filter", () => 
   const row = screen.getByTestId("live-run-r-live-1");
   expect(row).toHaveTextContent("Seniority filter");
   expect(row).toHaveTextContent("Applying seniority filter");
-  expect(screen.getByRole("progressbar", {
-    name: "Seniority filter: Screening 970 candidates",
-  })).toBeVisible();
+  expect(screen.getByText("0 excluded so far; screening in batches")).toBeVisible();
 });
 
-test("shows seniority progress complete when quick evaluation starts", () => {
+test("does not mark seniority complete while quick batches are still being discovered", () => {
   renderRow(vi.fn(), {
     ...EVALUATE_RUN,
     counters: runCounters({
@@ -349,9 +345,8 @@ test("shows seniority progress complete when quick evaluation starts", () => {
     } as Partial<RunSummary>),
   });
 
-  expect(screen.getByRole("progressbar", {
-    name: "Seniority filter: 970 / 970",
-  })).toBeVisible();
+  expect(screen.getByText("481 excluded so far; screening in batches")).toBeVisible();
+  expect(screen.getByTestId("live-run-r-live-1")).not.toHaveTextContent("100%");
 });
 
 test("merges a newer SSE update with polled active-run counters", () => {
@@ -382,6 +377,36 @@ test("merges a newer SSE update with polled active-run counters", () => {
   })));
 
   const row = screen.getByTestId("live-run-r-live-1");
-  expect(row).toHaveTextContent("25 / 62");
+  expect(row).toHaveTextContent("25 reviewed so far");
   expect(row).toHaveTextContent("$5.50");
+});
+
+test("growing evaluation batches show cumulative work without premature completion", () => {
+  renderRow(vi.fn(), {
+    ...EVALUATE_RUN,
+    counters: runCounters({
+      evaluation_scope: "backlog", progress_stage: "stage_a",
+      stage_a_total: 100, stage_a_processed: 100,
+      ml_gate_total: 100, ml_gate_processed: 100,
+    }),
+  });
+  expect(screen.getByTestId("live-run-r-live-1")).not.toHaveTextContent("100%");
+  expect(screen.getByText("100 processed so far")).toBeVisible();
+  act(() => FakeEventSource.instances[0]!._message(JSON.stringify(runCounters({
+    evaluation_scope: "backlog", progress_stage: "stage_a",
+    stage_a_total: 200, stage_a_processed: 101,
+    ml_gate_total: 200, ml_gate_processed: 200,
+    progress_updated_at: "2026-06-10T08:00:01Z",
+  }))));
+  expect(screen.getByText("101 processed so far")).toBeVisible();
+  expect(screen.getByTestId("live-run-r-live-1")).not.toHaveTextContent("100%");
+  act(() => FakeEventSource.instances[0]!._message(JSON.stringify(runCounters({
+    evaluation_scope: "backlog", progress_stage: "stage_b",
+    stage_a_total: 200, stage_a_processed: 200,
+    ml_gate_total: 200, ml_gate_processed: 200,
+    stage_b_total: 100, stage_b_processed: 100,
+    progress_updated_at: "2026-06-10T08:00:02Z",
+  }))));
+  expect(screen.getByText("100 reviewed so far")).toBeVisible();
+  expect(screen.queryByRole("progressbar", {name: /Detailed review/})).not.toBeInTheDocument();
 });

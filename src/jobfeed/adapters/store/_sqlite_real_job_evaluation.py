@@ -79,183 +79,190 @@ class SqliteRealJobEvaluation:
         """
         if limit <= 0:
             return []
-        ids = sorted({int(value) for value in real_job_ids})
+        ids = list(dict.fromkeys(int(value) for value in real_job_ids))
         if not ids:
             return []
         now = self._now()
         timestamp = _utc_text(now)
         claimed: list[RealJobEvaluationInput] = []
-        for real_id in ids:
-            if len(claimed) >= limit:
-                break
-            # Release the writer between candidates, including skipped ones.
-            # Every input/version check and its claim remain atomic together.
-            async with (
-                _release_unreturned_claims(self, claimed, "a"),
-                self._lifecycle.connection() as connection,
-                _immediate_transaction(connection),
-            ):
-                connection.row_factory = aiosqlite.Row
-                state = await _one(
-                    connection,
-                    "SELECT identity_review_state FROM real_jobs WHERE id=?",
-                    (real_id,),
-                )
-                if state is None or state["identity_review_state"] != "clear":
-                    continue
-                rows = await _all(
-                    connection,
-                    "SELECT * FROM jobs WHERE real_job_id=? ORDER BY id",
-                    (real_id,),
-                )
-                selected = await _select_sqlite_real_job_input(
-                    connection,
-                    real_id,
-                    [_job_from_row(row) for row in rows],
-                    now=now,
-                )
-                if (
-                    selected is None
-                    or selected.job.closed_at is not None
-                    or selected.job.is_repost is True
-                    or _too_old(selected, now, max_days)
+        async with self._lifecycle.connection() as connection:
+            for real_id in ids:
+                if len(claimed) >= limit:
+                    break
+                # Release the writer between candidates, including skipped ones.
+                # Every input/version check and its claim remain atomic together.
+                async with (
+                    _release_unreturned_claims(self, claimed, "a"),
+                    _immediate_transaction(connection),
                 ):
-                    continue
-                facts = input_facts_json(
-                    selected,
-                    stage_a_policy=stage_a_policy,
-                    stage_b_policy=stage_b_policy,
-                )
-                current = await _one(
-                    connection,
-                    "SELECT * FROM real_job_evaluations WHERE real_job_id=?",
-                    (real_id,),
-                )
-                if current is None:
-                    revision = 1
-                    generation = 1
-                    await connection.execute(
-                        (
-                            "INSERT INTO real_job_evaluations(real_job_id,"
-                            "source_job_id,input_jd_text,input_facts_json,"
-                            "input_revision,claim_generation,"
-                            "stage_a_status,updated_at) "
-                            "VALUES(?,?,?,?,?,1,'in_progress',?)"
-                        ),
-                        (
-                            real_id,
-                            int(selected.source_job_id),
-                            selected.job.jd_text,
-                            facts,
-                            revision,
-                            timestamp,
-                        ),
+                    connection.row_factory = aiosqlite.Row
+                    state = await _one(
+                        connection,
+                        "SELECT identity_review_state FROM real_jobs WHERE id=?",
+                        (real_id,),
                     )
-                elif not same_evaluation_input(
-                    current["input_jd_text"],
-                    current["input_facts_json"],
-                    selected,
-                    stage_a_policy=stage_a_policy,
-                ):
-                    revision = int(current["input_revision"]) + 1
-                    generation = int(current["claim_generation"]) + 1
-                    reason = (
-                        "policy_changed"
-                        if same_evaluation_input(
-                            current["input_jd_text"],
-                            current["input_facts_json"],
-                            selected,
+                    if state is None or state["identity_review_state"] != "clear":
+                        continue
+                    rows = await _all(
+                        connection,
+                        "SELECT * FROM jobs WHERE real_job_id=? ORDER BY id",
+                        (real_id,),
+                    )
+                    selected = await _select_sqlite_real_job_input(
+                        connection,
+                        real_id,
+                        [_job_from_row(row) for row in rows],
+                        now=now,
+                    )
+                    if (
+                        selected is None
+                        or selected.job.closed_at is not None
+                        or selected.job.is_repost is True
+                        or _too_old(selected, now, max_days)
+                    ):
+                        continue
+                    facts = input_facts_json(
+                        selected,
+                        stage_a_policy=stage_a_policy,
+                        stage_b_policy=stage_b_policy,
+                    )
+                    current = await _one(
+                        connection,
+                        "SELECT * FROM real_job_evaluations WHERE real_job_id=?",
+                        (real_id,),
+                    )
+                    if current is None:
+                        revision = 1
+                        generation = 1
+                        await connection.execute(
+                            (
+                                "INSERT INTO real_job_evaluations(real_job_id,"
+                                "source_job_id,input_jd_text,input_facts_json,"
+                                "input_revision,claim_generation,"
+                                "stage_a_status,updated_at) "
+                                "VALUES(?,?,?,?,?,1,'in_progress',?)"
+                            ),
+                            (
+                                real_id,
+                                int(selected.source_job_id),
+                                selected.job.jd_text,
+                                facts,
+                                revision,
+                                timestamp,
+                            ),
                         )
-                        else "input_changed"
-                    )
-                    await connection.execute(
-                        """INSERT INTO real_job_evaluation_history(
-                               real_job_id,source_job_id,input_revision,input_facts_json,
-                               stage_a_status,stage_a_score,stage_b_status,
-                               stage_b_verdict,stage_b_json,archived_at,reason
-                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                        (
-                            real_id,
-                            current["source_job_id"],
-                            current["input_revision"],
-                            current["input_facts_json"],
-                            current["stage_a_status"],
-                            current["stage_a_score"],
-                            current["stage_b_status"],
-                            current["stage_b_verdict"],
-                            current["stage_b_json"],
-                            timestamp,
-                            reason,
-                        ),
-                    )
-                    await connection.execute(
-                        (
-                            "UPDATE real_job_evaluations SET source_job_id=?,"
-                            "input_jd_text=?,input_facts_json=?,"
-                            "input_revision=?,claim_generation=claim_generation+1,"
-                            "stage_a_status='in_progress',"
-                            "stage_a_score=NULL,stage_a_one_line=NULL,"
-                            "stage_a_timing_eligible=NULL,stage_a_model=NULL,"
-                            "stage_a_cost_usd=NULL,stage_a_at=NULL,"
-                            "stage_b_status=NULL,stage_b_verdict=NULL,"
-                            "stage_b_json=NULL,stage_b_model=NULL,"
-                            "stage_b_cost_usd=NULL,stage_b_at=NULL,"
-                            "ml_gate_result=NULL,ml_gate_score=NULL,"
-                            "updated_at=? WHERE real_job_id=?"
-                        ),
-                        (
-                            int(selected.source_job_id),
-                            selected.job.jd_text,
-                            facts,
+                    elif not same_evaluation_input(
+                        current["input_jd_text"],
+                        current["input_facts_json"],
+                        selected,
+                        stage_a_policy=stage_a_policy,
+                    ):
+                        revision = int(current["input_revision"]) + 1
+                        generation = int(current["claim_generation"]) + 1
+                        reason = (
+                            "policy_changed"
+                            if same_evaluation_input(
+                                current["input_jd_text"],
+                                current["input_facts_json"],
+                                selected,
+                            )
+                            else "input_changed"
+                        )
+                        await connection.execute(
+                            """INSERT INTO real_job_evaluation_history(
+                                   real_job_id,source_job_id,input_revision,input_facts_json,
+                                   stage_a_status,stage_a_score,stage_b_status,
+                                   stage_b_verdict,stage_b_json,archived_at,reason
+                               ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                            (
+                                real_id,
+                                current["source_job_id"],
+                                current["input_revision"],
+                                current["input_facts_json"],
+                                current["stage_a_status"],
+                                current["stage_a_score"],
+                                current["stage_b_status"],
+                                current["stage_b_verdict"],
+                                current["stage_b_json"],
+                                timestamp,
+                                reason,
+                            ),
+                        )
+                        await connection.execute(
+                            (
+                                "UPDATE real_job_evaluations SET source_job_id=?,"
+                                "input_jd_text=?,input_facts_json=?,"
+                                "input_revision=?,claim_generation=claim_generation+1,"
+                                "stage_a_status='in_progress',"
+                                "stage_a_score=NULL,stage_a_one_line=NULL,"
+                                "stage_a_timing_eligible=NULL,stage_a_model=NULL,"
+                                "stage_a_cost_usd=NULL,stage_a_at=NULL,"
+                                "stage_b_status=NULL,stage_b_verdict=NULL,"
+                                "stage_b_json=NULL,stage_b_model=NULL,"
+                                "stage_b_cost_usd=NULL,stage_b_at=NULL,"
+                                "ml_gate_result=NULL,ml_gate_score=NULL,"
+                                "updated_at=? WHERE real_job_id=?"
+                            ),
+                            (
+                                int(selected.source_job_id),
+                                selected.job.jd_text,
+                                facts,
+                                revision,
+                                timestamp,
+                                real_id,
+                            ),
+                        )
+                    elif current["stage_a_status"] == "completed":
+                        await connection.execute(
+                            (
+                                "UPDATE real_job_evaluations SET source_job_id=?,"
+                                "input_jd_text=? WHERE real_job_id=?"
+                            ),
+                            (
+                                int(selected.source_job_id),
+                                selected.job.jd_text,
+                                real_id,
+                            ),
+                        )
+                        continue
+                    elif (
+                        current["stage_a_status"] == "error"
+                        and current["stage_a_error_count"] >= MAX_STAGE_RETRIES
+                    ) or (
+                        current["stage_a_status"] == "in_progress"
+                        and (
+                            _required_updated_at(current["updated_at"])
+                            >= now - timedelta(hours=1)
+                        )
+                    ):
+                        continue
+                    else:
+                        revision = int(current["input_revision"])
+                        generation = int(current["claim_generation"]) + 1
+                        await connection.execute(
+                            (
+                                "UPDATE real_job_evaluations SET "
+                                "stage_a_status='in_progress',"
+                                "claim_generation=claim_generation+1,"
+                                "updated_at=? WHERE "
+                                "real_job_id=?"
+                            ),
+                            (timestamp, real_id),
+                        )
+                    claimed.append(
+                        RealJobEvaluationInput(
+                            selected.real_job_id,
+                            selected.source_job_id,
+                            selected.job,
                             revision,
-                            timestamp,
-                            real_id,
-                        ),
+                            ml_gate_result=(
+                                current["ml_gate_result"]
+                                if current is not None
+                                else None
+                            ),
+                            claim_generation=generation,
+                        )
                     )
-                elif current["stage_a_status"] == "completed":
-                    await connection.execute(
-                        (
-                            "UPDATE real_job_evaluations SET source_job_id=?,"
-                            "input_jd_text=? WHERE real_job_id=?"
-                        ),
-                        (int(selected.source_job_id), selected.job.jd_text, real_id),
-                    )
-                    continue
-                elif (
-                    current["stage_a_status"] == "error"
-                    and current["stage_a_error_count"] >= MAX_STAGE_RETRIES
-                ) or (
-                    current["stage_a_status"] == "in_progress"
-                    and (
-                        _required_updated_at(current["updated_at"])
-                        >= now - timedelta(hours=1)
-                    )
-                ):
-                    continue
-                else:
-                    revision = int(current["input_revision"])
-                    generation = int(current["claim_generation"]) + 1
-                    await connection.execute(
-                        (
-                            "UPDATE real_job_evaluations SET "
-                            "stage_a_status='in_progress',"
-                            "claim_generation=claim_generation+1,updated_at=? WHERE "
-                            "real_job_id=?"
-                        ),
-                        (timestamp, real_id),
-                    )
-                claimed.append(
-                    RealJobEvaluationInput(
-                        selected.real_job_id,
-                        selected.source_job_id,
-                        selected.job,
-                        revision,
-                        ml_gate_result=(
-                            current["ml_gate_result"] if current is not None else None
-                        ),
-                        claim_generation=generation,
-                    )
-                )
         return claimed
 
     async def save_real_job_stage_a(

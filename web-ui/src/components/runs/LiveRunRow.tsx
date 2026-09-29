@@ -106,17 +106,18 @@ export function LiveRunRow({ run, onDone }: LiveRunRowProps) {
 
 function EvaluateProgress({ run }: { run: RunSummary }) {
   const displayStage = evaluateDisplayStage(run);
-  const candidatePreparationDone = isAfter(displayStage, "preparing");
+  const stageADiscoveryDone = isAfter(displayStage, "stage_a");
+  const candidatePreparationDone = stageADiscoveryDone;
   const candidatePreparationTotal = run.evaluation_scope === "backlog"
     ? backlogCandidateTotal(run)
     : run.ml_gate_total;
   const seniorityTotal = seniorityCandidateTotal(run);
-  const sdeIsDone = isAfter(displayStage, "ml_gate");
+  const sdeIsDone = stageADiscoveryDone;
   const sdeIsActive = isCurrent(displayStage, "ml_gate");
-  const sdeStarted = sdeIsActive || sdeIsDone;
-  const seniorityIsDone = isAfter(displayStage, "seniority_gate");
+  const sdeStarted = sdeIsActive || isAfter(displayStage, "ml_gate");
+  const seniorityIsDone = stageADiscoveryDone;
   const seniorityIsActive = isCurrent(displayStage, "seniority_gate");
-  const seniorityStarted = seniorityIsActive || seniorityIsDone;
+  const seniorityStarted = seniorityIsActive || isAfter(displayStage, "seniority_gate");
   const quickIsDone = isAfter(displayStage, "stage_a");
   const quickIsActive = isCurrent(displayStage, "stage_a");
   const quickStarted = quickIsActive || quickIsDone;
@@ -130,6 +131,7 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
       <ColumnLayout columns={2} variant="text-grid">
         <SpaceBetween size="s">
           <StageProgress
+            cumulative={!candidatePreparationDone ? candidatePreparationDetail(run, false) : undefined}
             label="Candidate preparation"
             processed={candidatePreparationDone
               ? (candidatePreparationTotal ?? 0)
@@ -142,6 +144,7 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
             detail={candidatePreparationDetail(run, candidatePreparationDone)}
           />
           <StageProgress
+            cumulative={sdeStarted && !sdeIsDone ? `${run.ml_gate_processed ?? 0} screened so far` : undefined}
             label="SDE role filter"
             processed={sdeStarted ? run.ml_gate_processed : 0}
             total={sdeStarted ? run.ml_gate_total : null}
@@ -149,6 +152,7 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
             isActive={sdeIsActive}
           />
           <StageProgress
+            cumulative={seniorityStarted && !seniorityIsDone ? `${run.jobs_seniority_filtered} excluded so far; screening in batches` : undefined}
             label="Seniority filter"
             processed={seniorityIsDone ? (seniorityTotal ?? 0) : 0}
             total={seniorityStarted ? seniorityTotal : null}
@@ -159,6 +163,7 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
               : seniorityIsActive ? "Preparing candidates" : undefined}
           />
           <StageProgress
+            cumulative={quickStarted && !quickIsDone ? `${run.stage_a_processed} processed so far` : undefined}
             label="Quick evaluation"
             processed={quickStarted ? run.stage_a_processed : 0}
             total={quickStarted ? run.stage_a_total : null}
@@ -166,6 +171,7 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
             isActive={quickIsActive}
           />
           <StageProgress
+            cumulative={detailedStarted && !detailedIsDone ? `${run.stage_b_processed} reviewed so far` : undefined}
             label="Detailed review"
             processed={detailedStarted ? run.stage_b_processed : 0}
             total={detailedStarted ? run.stage_b_total : null}
@@ -233,7 +239,8 @@ function ProgressRail({ stage }: { stage: string | null | undefined }) {
       orientation="horizontal"
       connectorLines="visible"
       steps={steps.map(([key, label]) => ({
-        status: stepStatus(stage, key),
+        status: !isAfter(stage, "stage_a") && isAfter(stage, key)
+          ? "in-progress" : stepStatus(stage, key),
         header: label,
       }))}
     />
@@ -248,6 +255,7 @@ function StageProgress({
   isActive,
   detail,
   isFailed = false,
+  cumulative,
 }: {
   label: string;
   processed: number | undefined;
@@ -256,7 +264,16 @@ function StageProgress({
   isActive: boolean;
   detail?: string;
   isFailed?: boolean;
+  cumulative?: string;
 }) {
+  if (cumulative !== undefined) {
+    return (
+      <div>
+        <Box variant="awsui-key-label">{label}</Box>
+        <StatusIndicator type="in-progress">{cumulative}</StatusIndicator>
+      </div>
+    );
+  }
   const value = processed ?? 0;
   const knownTotal = total ?? null;
   const percentage = knownTotal === null || knownTotal === 0
