@@ -31,6 +31,7 @@ from jobfeed.services.canonical_priority import CanonicalPriorityInput
 from jobfeed.services.evaluate_types import (
     EvaluateRuntimeConfig,
 )
+from jobfeed.services.evaluation_parse_evidence import save_parse_failure
 from jobfeed.services.run_orchestration import RunLeaseSession
 
 if TYPE_CHECKING:
@@ -916,6 +917,20 @@ async def _score_a(
                 run.stage_a_scored += 1
             return
         except ScoringParseError as error:
+            evidence_key = await save_parse_failure(
+                service._deps.store_ops,
+                response,
+                error,
+                run_id=run.run_id,
+                job_id=item.source_job_id,
+                stage="a",
+                attempt=attempt + 1,
+                real_job_id=real_id,
+                input_revision=revision,
+            )
+            service._logger.warning(
+                "evaluation_parse_evidence_saved", evidence_key=evidence_key
+            )
             if attempt == 0:
                 continue
             await cast(CanonicalEvaluationStore, store).save_real_job_stage_a_error(
@@ -1002,6 +1017,20 @@ async def _score_b(
                     run.verdict_counts[result.verdict.value] += 1
             return
         except ScoringParseError as error:
+            evidence_key = await save_parse_failure(
+                service._deps.store_ops,
+                response,
+                error,
+                run_id=run.run_id,
+                job_id=item.source_job_id,
+                stage="b",
+                attempt=attempt + 1,
+                real_job_id=real_id,
+                input_revision=revision,
+            )
+            service._logger.warning(
+                "evaluation_parse_evidence_saved", evidence_key=evidence_key
+            )
             if attempt == 0:
                 continue
             await cast(CanonicalEvaluationStore, store).save_real_job_stage_b_error(

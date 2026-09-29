@@ -25,6 +25,7 @@ from jobfeed.services._evaluate_helpers import (
 from jobfeed.services._evaluate_repost import confirmed_repost
 from jobfeed.services._evaluate_reuse import ReuseEntry
 from jobfeed.services._evaluate_sweep import sweep_stage_b
+from jobfeed.services.evaluation_parse_evidence import save_parse_failure
 from jobfeed.services.run_orchestration import RunLeaseSession
 
 if TYPE_CHECKING:
@@ -244,6 +245,18 @@ async def _complete_stage_b(  # noqa: PLR0913 - one locked scoring attempt conte
                 cost_usd=resp.cost_usd,
             )
         except ScoringParseError as exc:
+            evidence_key = await save_parse_failure(
+                service._deps.store_ops,
+                resp,
+                exc,
+                run_id=run.run_id,
+                job_id=job_id,
+                stage="b",
+                attempt=attempt + 1,
+            )
+            service._logger.warning(
+                "evaluation_parse_evidence_saved", evidence_key=evidence_key
+            )
             if attempt + 1 < parse_attempts:
                 service._logger.warning(
                     "stage_b_parse_retry", job_id=job_id, error=str(exc)

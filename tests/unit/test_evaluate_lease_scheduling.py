@@ -118,6 +118,9 @@ class _Store:
 
 
 class _StoreOps:
+    async def set_state(self, _key: str, _value: str) -> None:
+        pass
+
     async def get_cost(self, _day: str) -> None:
         return None
 

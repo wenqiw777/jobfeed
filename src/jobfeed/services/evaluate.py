@@ -37,6 +37,7 @@ from jobfeed.services._evaluate_reuse import EvaluationReuse
 from jobfeed.services._evaluate_stage_b import _run_stage_b
 from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
+from jobfeed.services.evaluation_parse_evidence import save_parse_failure
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
 
 
@@ -395,6 +396,18 @@ class EvaluateService:
                     cost_usd=resp.cost_usd,
                 )
             except ScoringParseError as exc:
+                evidence_key = await save_parse_failure(
+                    self._deps.store_ops,
+                    resp,
+                    exc,
+                    run_id=run.run_id,
+                    job_id=job_id,
+                    stage="a",
+                    attempt=attempt + 1,
+                )
+                self._logger.warning(
+                    "evaluation_parse_evidence_saved", evidence_key=evidence_key
+                )
                 if attempt == 0:
                     self._logger.warning(
                         "stage_a_parse_retry", job_id=job_id, error=str(exc)
