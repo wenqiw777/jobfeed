@@ -456,3 +456,40 @@ async def test_start_new_session_is_true() -> None:
 
     opts = mock_run.call_args[1]["options"]
     assert opts.start_new_session is True
+
+
+async def test_recovered_403_returns_answer_without_retry() -> None:
+    """A reconnect recovered by terminal success must not repeat paid work."""
+    stdout = _build_jsonl(
+        {"type": "error", "message": "Reconnecting... 2/5 (403 Forbidden)"},
+        _agent_message_event(),
+        _turn_completed_event(),
+    )
+    runner = AsyncMock(return_value=_make_subprocess_result(stdout))
+    with patch("jobfeed.adapters.llm.codex.run_with_retry", runner):
+        response = await _make_adapter().complete(_make_request())
+    assert response.content == AGENT_RESPONSE_TEXT
+    assert response.input_tokens == INPUT_TOKENS
+    runner.assert_awaited_once()
+
+
+@pytest.mark.parametrize("terminal_type", ["error", "turn.failed"])
+def test_terminal_failure_after_answer_is_not_success(terminal_type: str) -> None:
+    """Neither partial answers nor earlier success may mask a final failure."""
+    failure = {"type": terminal_type}
+    if terminal_type == "error":
+        failure["message"] = "final connection failure"
+    else:
+        failure["error"] = {"message": "final connection failure"}
+    stdout = _build_jsonl(_agent_message_event(), _turn_completed_event(), failure)
+    with pytest.raises(CodexApiError, match="final connection failure"):
+        _make_adapter()._parse_response(stdout, ELAPSED_MS)
+
+
+def test_unrecovered_reconnect_preserves_error() -> None:
+    stdout = _build_jsonl(
+        {"type": "error", "message": "Reconnecting... 5/5 (403 Forbidden)"},
+        _agent_message_event(),
+    )
+    with pytest.raises(CodexApiError, match="403 Forbidden"):
+        _make_adapter()._parse_response(stdout, ELAPSED_MS)

@@ -167,10 +167,11 @@ class CodexCliLLM:
             Parsed response with content, token counts, and cost.
 
         Raises:
-            CodexApiError: On error events or missing agent message.
+            CodexApiError: On unresolved errors, malformed output or missing answer.
         """
         agent_text: str | None = None
         usage: dict[str, int] = {}
+        pending_error: str | None = None
 
         for line in stdout.splitlines():
             stripped = line.strip()
@@ -183,9 +184,26 @@ class CodexCliLLM:
                 raise CodexApiError(msg) from exc
             if not isinstance(event, dict):
                 raise CodexApiError("malformed JSONL event in Codex response")
+            event_type = event.get("type")
+            if event_type == _EVENT_ERROR:
+                pending_error = str(event.get("message", "unknown error"))
+            elif event_type == "turn.failed":
+                error = event.get("error")
+                pending_error = (
+                    str(error.get("message", "turn failed"))
+                    if isinstance(error, dict)
+                    else str(error or "turn failed")
+                )
+            elif event_type == _EVENT_TURN_COMPLETED:
+                # CLI can recover internally after emitting reconnect errors.
+                # Only terminal completion clears them, never a partial answer.
+                pending_error = None
+                usage.clear()
             self._handle_event(event, agent_text_ref := [agent_text], usage)
             agent_text = agent_text_ref[0]
 
+        if pending_error is not None:
+            raise CodexApiError(pending_error)
         if agent_text is None:
             raise CodexApiError("no agent_message in response")
         _require_usage(usage)
@@ -204,13 +222,8 @@ class CodexCliLLM:
             event: Parsed JSON event dict.
             agent_text_ref: Mutable single-element list for agent text.
             usage: Mutable dict accumulating usage tokens.
-
-        Raises:
-            CodexApiError: When the event is an error event.
         """
         event_type = event.get("type")
-        if event_type == _EVENT_ERROR:
-            raise CodexApiError(str(event.get("message", "unknown error")))
         if event_type == _EVENT_ITEM_COMPLETED:
             item = event.get("item", {})
             if isinstance(item, dict) and item.get("type") == _ITEM_TYPE_AGENT_MESSAGE:
