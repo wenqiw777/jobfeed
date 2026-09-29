@@ -108,14 +108,20 @@ rows still missing a description after existing native collectors finish.
 It preserves each original job ID and URL and sends bodies back through Scan's
 existing persistence path. No company-specific target filter is applied.
 
-`github-jd-hosts.json` records the 400 destination hosts in the current 2,379-row
-GitHub input. The manifest also includes exact destination origins added from
-subsequent missing-permission reports; the inventory is a historical snapshot.
-Reload the extension after manifest permission changes. Unexpected redirects
-to unrelated sites must be investigated before granting access.
-A newly encountered host without permission produces an explicit per-job error.
-Reload this original unpacked extension once to activate the updated worker and
-host permissions.
+The extension declares HTTP/HTTPS host permissions because GitHub job targets
+and their ATS redirects can introduce new company domains on every scan.
+`github-jd-hosts.json` is a historical inventory, not an access allowlist.
+Reload the original unpacked extension once after upgrading to 0.8.3 and approve
+Chrome's expanded website access if prompted; individual company domains no
+longer require manifest edits. Chrome site-access restrictions can still deny
+access and are reported as per-job permission errors.
+
+Broad host permission does not install automatic content scripts on every page.
+The GitHub worker still opens only explicit scan targets and follows their page
+navigation and supported ATS frames. Existing request-header observation remains
+limited to the LinkedIn and Handshake API endpoints. The local backend connection
+CSP is unchanged. Previously permission-blocked jobs are checked again during the
+next scan, without resetting completed evaluations or editing stored scores.
 
 The scan owns at most four real background tabs across all permitted hosts.
 Each worker loads one target, waits for page completion, then extracts JobPosting

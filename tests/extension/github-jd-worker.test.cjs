@@ -3,12 +3,19 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 
-function harness({cancel=false,fail=false,missing=false,holdCooldown=false,scriptLost=false,iframeDelay=false,finalUrl=null,vanishedTab=false,snapshotOnly=false,emptySnapshot=false,lateRedirect=false,slowHydration=false,bootstrapOnly=false}={}) {
+function harness({cancel=false,fail=false,missing=false,manifestPermissions=false,holdCooldown=false,scriptLost=false,iframeDelay=false,finalUrl=null,vanishedTab=false,snapshotOnly=false,emptySnapshot=false,lateRedirect=false,slowHydration=false,bootstrapOnly=false}={}) {
   const events=[],sent=[],live=new Set(),task={cancelled:false},cooldowns=[];
   let next=0,peak=0;
   const frameTabs=new Map(),reads=new Map();
   const chrome={
-    permissions:{contains:async()=>!missing},
+    permissions:{contains:async({origins})=>!missing&&(!manifestPermissions||origins.every(origin=>{
+      const requested=new URL(origin);
+      return JSON.parse(fs.readFileSync('extensions/jobright-source/manifest.json','utf8')).host_permissions.some(pattern=>{
+        const [scheme,rest]=pattern.split('://');
+        const host=rest?.split('/')[0];
+        return (scheme==='*'||scheme+':'===requested.protocol)&&(host==='*'||host===requested.hostname);
+      });
+    }))},
     tabs:{
       async get(){return finalUrl?{url:finalUrl}:{};},
       async create(){const id=++next;live.add(id);peak=Math.max(peak,live.size);events.push(['create',id]);return {id};},
@@ -145,4 +152,14 @@ test('bootstrap metadata survives timeout without navigating to JavaScript',asyn
  const h=harness({bootstrapOnly:true});await h.run();
  assert.ok(h.sent.flatMap(m=>m.jobs||[]).every(r=>r.ats_urls?.length===1));
  assert.ok(!h.events.some(e=>e[0]==='navigate'));
+});
+
+// Exercise the worker with the real manifest, including a previously unseen redirect.
+test('manifest permits new company targets and their HTTPS redirects without per-host edits',async()=>{
+ const h=harness({manifestPermissions:true,finalUrl:'https://www.redventures.com/careers/positions/open?gh_jid=8233284'});
+ await h.run();
+ const rows=h.sent.flatMap(m=>m.jobs||[]);
+ assert.equal(rows.length,9);
+ assert.ok(rows.every(r=>r.description),'new origins must reach extraction');
+ assert.equal(h.live.size,0);
 });
