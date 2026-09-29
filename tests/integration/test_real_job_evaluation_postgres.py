@@ -1,6 +1,5 @@
 """Postgres canonical evaluation matches SQLite ownership behavior."""
 
-import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -20,6 +19,7 @@ from jobfeed.domain.models import (
 pytestmark = pytest.mark.postgres
 EXPECTED_SCORE = 94
 BACKFILL_SCORE = 88
+EXPECTED_FIT_SCORE = 90
 
 
 async def test_postgres_aliases_claim_once_and_source_audit_stays_empty(
@@ -767,7 +767,7 @@ async def test_postgres_corrected_source_jd_clears_requirements_hold(
         await store.close()
 
 
-async def test_policy_change_reclaims_only_affected_stage_postgres(
+async def test_policy_change_preserves_completed_stages_postgres(
     fresh_pg_dsn: str,
 ) -> None:
     store = PostgresStore(fresh_pg_dsn)
@@ -815,9 +815,12 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
             )
             == []
         )
-        assert await store.list_real_job_ids_for_evaluation(
-            limit=10, stage="a", stage_a_policy=a2
-        ) == [real_id]
+        assert (
+            await store.list_real_job_ids_for_evaluation(
+                limit=10, stage="a", stage_a_policy=a2
+            )
+            == []
+        )
         detailed = (
             await store.claim_real_job_stage_b_by_ids(
                 [real_id],
@@ -854,21 +857,19 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
         )
         assert stale_b is not None
         assert stale_b["row"]["stage_a_score"] == BACKFILL_SCORE
-        assert stale_b["row"]["stage_b_verdict"] is None
+        assert stale_b["row"]["stage_b_verdict"] == "apply"
         stale_a = await store.get_real_job_view(
             real_id, stage_a_policy=a2, stage_b_policy=b1
         )
         assert stale_a is not None
-        assert stale_a["row"]["stage_a_score"] is None
-        assert stale_a["row"]["stage_b_verdict"] is None
+        assert stale_a["row"]["stage_a_score"] == BACKFILL_SCORE
+        assert stale_a["row"]["stage_b_verdict"] == "apply"
         stale_list = await store.query_real_jobs_view(
             decision="results", stage_a_policy=a2, stage_b_policy=b1
         )
-        assert stale_list["jobs"][0]["stage_a_score"] is None
-        assert stale_list["jobs"][0]["score"] is None
-        assert stale_list["jobs"][0]["evaluation_stale_reason"] == (
-            "stage_a_policy_changed"
-        )
+        assert stale_list["jobs"][0]["stage_a_score"] == BACKFILL_SCORE
+        assert stale_list["jobs"][0]["score"] == EXPECTED_FIT_SCORE
+        assert stale_list["jobs"][0]["evaluation_stale_reason"] is None
         pending_results = await store.query_real_jobs_view(
             decision="results",
             require_verdict=True,
@@ -883,7 +884,7 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
             stage_b_policy=b1,
         )
         assert searched["total"] == 1
-        assert searched["jobs"][0]["stage_a_score"] is None
+        assert searched["jobs"][0]["stage_a_score"] == BACKFILL_SCORE
         stale_library = await store.query_source_library(
             decision=None,
             sort="score_desc",
@@ -893,20 +894,19 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
             stage_a_policy=a2,
             stage_b_policy=b1,
         )
-        assert stale_library["jobs"][0]["score"] is None
+        assert stale_library["jobs"][0]["score"] == EXPECTED_FIT_SCORE
         stale_priority = await store.load_real_job_priority_inputs(
             [real_id], stage_a_policy=a2, stage_b_policy=b1
         )
-        assert stale_priority[0].stage_a_score is None
-        assert stale_priority[0].stage_b_fit_score is None
+        assert stale_priority[0].stage_a_score == BACKFILL_SCORE
+        assert stale_priority[0].stage_b_fit_score == EXPECTED_FIT_SCORE
         pending = await store.canonical_policy_pending_counts(
             stage_a_policy=a2, stage_b_policy=b1
         )
-        assert pending["stage_a_pending"] == 1
-        with pytest.raises(ValueError, match="stage_a_pending=1"):
-            await store.canonical_policy_cutover_ready(
-                stage_a_policy=a2, stage_b_policy=b1
-            )
+        assert pending["stage_a_pending"] == 0
+        assert await store.canonical_policy_cutover_ready(
+            stage_a_policy=a2, stage_b_policy=b1
+        )
         async with store._get_pool().acquire() as db:
             previous_facts = await db.fetchval(
                 "SELECT input_facts_json FROM real_job_evaluations "
@@ -952,57 +952,23 @@ async def test_policy_change_reclaims_only_affected_stage_postgres(
                 previous_facts,
                 int(real_id),
             )
-        next_b = (
+        assert (
             await store.claim_real_job_stage_b_by_ids(
-                [real_id],
-                stage_a_threshold=80,
-                stage_a_policy=a1,
-                stage_b_policy=b2,
+                [real_id], stage_a_threshold=80, stage_a_policy=a2, stage_b_policy=b2
             )
-        )[0]
-        assert next_b.input_revision == first.input_revision
-        async with store._get_pool().acquire() as db:
-            history = await db.fetch(
-                "SELECT stage_b_verdict,reason,input_facts_json "
-                "FROM real_job_evaluation_history "
-                "WHERE real_job_id=$1 ORDER BY id",
-                int(real_id),
-            )
-        assert [(row["stage_b_verdict"], row["reason"]) for row in history] == [
-            ("apply", "policy_changed")
-        ]
-        assert json.loads(history[0]["input_facts_json"])["stage_b_policy"] == b1
-        assert await store.release_real_job_stage_b_claim(
-            real_id,
-            expected_revision=next_b.input_revision,
-            expected_generation=next_b.claim_generation,
+            == []
         )
-        next_a = (
+        assert (
             await store.claim_real_job_stage_a_by_ids(
                 [real_id], stage_a_policy=a2, stage_b_policy=b2
             )
-        )[0]
-        assert next_a.input_revision == first.input_revision + 1
-        assert await store.save_real_job_stage_a(
-            real_id,
-            StageAResult(
-                score=EXPECTED_SCORE,
-                one_line="Updated fit",
-                timing_eligible="yes",
-                model="quick-v2",
-                prompt_hash="existing",
-                resume_hash="existing",
-            ),
-            expected_revision=next_a.input_revision,
-            expected_generation=next_a.claim_generation,
+            == []
         )
-        refreshed = await store.get_real_job_view(
-            real_id,
-            stage_a_policy=a2,
-            stage_b_policy=b2,
+        unchanged = await store.get_real_job_view(
+            real_id, stage_a_policy=a2, stage_b_policy=b2
         )
-        assert refreshed is not None
-        assert refreshed["row"]["stage_a_score"] == EXPECTED_SCORE
-        assert refreshed["row"]["evaluation_stale_reason"] is None
+        assert unchanged is not None
+        assert unchanged["row"]["stage_a_score"] == BACKFILL_SCORE
+        assert unchanged["row"]["stage_b_verdict"] == "apply"
     finally:
         await store.close()

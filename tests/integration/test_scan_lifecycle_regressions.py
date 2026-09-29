@@ -21,7 +21,9 @@ from tests.unit.test_run_manager import _build_manager, _make_gated_scan
 from tests.unit.test_run_orchestration import LeaseStore, _orchestrator
 from tests.web.test_app_skeleton import FakeStore, fake_context, open_client
 
-SKIPPED_COUNT = 20
+SKIPPED_COUNT = 201
+CLAIM_PAGE_SIZE = 100
+BULK_READS_PER_PAGE = 4
 HTTP_OK = 200
 RENEWALS = 2
 
@@ -45,7 +47,7 @@ async def test_idle_recovery_does_not_wait_for_a_writer(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("stage", ["a", "b"])
-async def test_skipped_candidates_release_writer_between_candidates(
+async def test_skipped_candidates_release_writer_between_bounded_pages(
     tmp_path: Path, monkeypatch, stage: str
 ) -> None:
     store = SQLiteStore(tmp_path / "claims.db")
@@ -54,12 +56,18 @@ async def test_skipped_candidates_release_writer_between_candidates(
     reads_per_transaction = []
     competing_writes = []
     active_reads = 0
-    original_one = claims_module._one
+    original_all = claims_module._all
+    page_sizes = []
+    original_inputs = claims_module._claim_inputs
 
-    async def counted_one(*args, **kwargs):
+    async def counted_all(*args, **kwargs):
         nonlocal active_reads
         active_reads += 1
-        return await original_one(*args, **kwargs)
+        return await original_all(*args, **kwargs)
+
+    async def track_page(connection, ids):
+        page_sizes.append(len(ids))
+        return await original_inputs(connection, ids)
 
     @asynccontextmanager
     async def tracked(connection):
@@ -68,7 +76,7 @@ async def test_skipped_candidates_release_writer_between_candidates(
         async with original(connection):
             yield
         reads_per_transaction.append(active_reads)
-        # Another connection can acquire the writer before the next candidate.
+        # Another connection can acquire the writer before the next bounded page.
         async with store._lifecycle.connection() as writer, original(writer):
             await writer.execute(
                 "INSERT OR REPLACE INTO state(key,value) VALUES (?,?)",
@@ -76,16 +84,17 @@ async def test_skipped_candidates_release_writer_between_candidates(
             )
             competing_writes.append(True)
 
-    monkeypatch.setattr(claims_module, "_one", counted_one)
+    monkeypatch.setattr(claims_module, "_all", counted_all)
+    monkeypatch.setattr(claims_module, "_claim_inputs", track_page)
     monkeypatch.setattr(claims_module, "_immediate_transaction", tracked)
     try:
         claim = getattr(store, f"claim_real_job_stage_{stage}_by_ids")
         kwargs = {"stage_a_threshold": 80} if stage == "b" else {}
         ids = [str(i) for i in range(1, SKIPPED_COUNT + 1)]
         assert await claim(ids, **kwargs) == []
-        assert max(reads_per_transaction) == 1
-        assert len(reads_per_transaction) == SKIPPED_COUNT
-        assert len(competing_writes) == SKIPPED_COUNT
+        assert page_sizes == [CLAIM_PAGE_SIZE, CLAIM_PAGE_SIZE, 1]
+        assert reads_per_transaction == [BULK_READS_PER_PAGE] * len(page_sizes)
+        assert len(competing_writes) == len(page_sizes)
     finally:
         await store.close()
 
@@ -206,41 +215,61 @@ async def test_short_claims_keep_two_workers_exclusive(
 
 @pytest.mark.parametrize("stage", ["a", "b"])
 @pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+@pytest.mark.parametrize("failure_page", ["same", "next"])
 async def test_failed_claim_batch_releases_only_unreturned_claims(
-    tmp_path: Path, monkeypatch, stage: str, failure
+    tmp_path: Path, monkeypatch, stage: str, failure, failure_page: str
 ) -> None:
     store = SQLiteStore(tmp_path / "interrupted-claims.db")
     await store.connect()
     try:
-        saved = await store.save_job(
-            make_job(
-                platform="linkedin",
-                jd_text="Build services and production APIs. " * 20,
-                jd_quality=QualityBand.FULL,
+        ids = []
+        for key in ("returned", "unreturned", "failure"):
+            saved = await store.save_job(
+                make_job(
+                    platform="linkedin",
+                    canonical_id=key,
+                    url=f"https://example.test/{key}",
+                    company=key,
+                    jd_text="Build services and production APIs. " * 20,
+                    jd_quality=QualityBand.FULL,
+                )
             )
-        )
-        real_id = await store.resolve_real_job_id(saved.job_id)
+            ids.append(await store.resolve_real_job_id(saved.job_id))
         if stage == "b":
-            await store.claim_real_job_stage_a_by_ids([real_id])
+            await store.claim_real_job_stage_a_by_ids(ids)
             async with store._lifecycle.connection() as connection:
                 await connection.execute(
                     "UPDATE real_job_evaluations SET stage_a_status='completed',"
-                    "stage_a_score=90 WHERE real_job_id=?",
-                    (int(real_id),),
+                    "stage_a_score=90"
                 )
-        original_one = claims_module._one
-
-        async def fail_second(connection, sql, params):
-            if params == (int(real_id) + 1,) and "identity_review_state" in sql:
-                raise failure("second candidate failed")
-            return await original_one(connection, sql, params)
-
-        monkeypatch.setattr(claims_module, "_one", fail_second)
         claim = getattr(store, f"claim_real_job_stage_{stage}_by_ids")
         kwargs = {"stage_a_threshold": 80} if stage == "b" else {}
+        returned = await claim([ids[0]], **kwargs)
+        assert len(returned) == 1
+        original_select = claims_module._select_input_with_override
+
+        def fail_selected(real_id, *args, **kwargs):
+            if real_id == int(ids[2]):
+                raise failure("candidate source selection failed")
+            return original_select(real_id, *args, **kwargs)
+
+        monkeypatch.setattr(claims_module, "_select_input_with_override", fail_selected)
+        batch = [ids[1]]
+        if failure_page == "next":
+            batch.extend(
+                str(value) for value in range(1000, 1000 + CLAIM_PAGE_SIZE - 1)
+            )
+        batch.append(ids[2])
         with pytest.raises(failure):
-            await claim([real_id, str(int(real_id) + 1)], **kwargs)
-        assert len(await claim([real_id], **kwargs)) == 1
+            await claim(batch, **kwargs)
+        monkeypatch.setattr(
+            claims_module, "_select_input_with_override", original_select
+        )
+        # Previously returned claims remain fenced/owned. Both this call's
+        # committed earlier page and its rolled-back current page are reusable.
+        assert await claim([ids[0]], **kwargs) == []
+        assert len(await claim([ids[1]], **kwargs)) == 1
+        assert len(await claim([ids[2]], **kwargs)) == 1
     finally:
         await store.close()
 

@@ -11,6 +11,7 @@ from typing import cast
 import aiosqlite
 import pytest
 
+import jobfeed.adapters.store._sqlite_real_job_evaluation as sqlite_canonical
 import jobfeed.services._evaluate_canonical as canonical_evaluate
 from jobfeed.adapters.llm._prompts import JinjaPromptRenderer
 from jobfeed.adapters.store.sqlite import SQLiteStore
@@ -163,6 +164,7 @@ async def test_canonical_runner_discovers_candidates_before_concurrent_scoring(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(canonical_evaluate, "_CANONICAL_BATCH_SIZE", 1)
     path = tmp_path / "queued.db"
     monkeypatch.setattr(
         canonical_evaluate,
@@ -357,7 +359,7 @@ async def test_canonical_runner_reaches_claimable_job_after_twenty_pages(
         await store.close()
 
 
-async def test_canonical_runner_reclaims_when_model_or_gate_policy_changes(
+async def test_canonical_runner_preserves_scores_when_model_or_gate_policy_changes(
     tmp_path: Path,
 ) -> None:
     store = SQLiteStore(tmp_path / "policy-service.db")
@@ -412,15 +414,13 @@ async def test_canonical_runner_reclaims_when_model_or_gate_policy_changes(
             canonical=True,
             dry_run=True,
         )
-        assert [item.job_id for item in stale_preview.dry_run_preview] == [
-            await store.resolve_real_job_id(saved.job_id)
-        ]
+        assert stale_preview.dry_run_preview == []
         await service.run(stage="a", limit=1, job_ids=[saved.job_id], canonical=True)
-        expected_after_model_change = 2
+        expected_after_model_change = 1
         assert llm.calls == expected_after_model_change
         service._config = replace(service._config, ml_gate_model_version="gate-v2")
         await service.run(stage="a", limit=1, job_ids=[saved.job_id], canonical=True)
-        expected_after_gate_change = 3
+        expected_after_gate_change = 1
         assert llm.calls == expected_after_gate_change
         real_id = await store.resolve_real_job_id(saved.job_id)
         async with aiosqlite.connect(tmp_path / "policy-service.db") as db:
@@ -431,7 +431,7 @@ async def test_canonical_runner_reclaims_when_model_or_gate_policy_changes(
                     (int(real_id),),
                 )
             ).fetchall()
-        assert reasons == [("policy_changed",), ("policy_changed",)]
+        assert reasons == []
     finally:
         await store.close()
 
@@ -600,10 +600,10 @@ async def test_canonical_service_scores_two_aliases_once(
 
 
 @pytest.mark.parametrize("stage", ["a", "b"])
-async def test_backlog_scores_first_batch_before_discovering_next(
+async def test_backlog_finishes_preparation_before_any_scoring(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
-    """Large configured scan windows must not delay the first paid batch."""
+    """All candidate pages must finish before any paid scoring starts."""
     batch_size = 2
     total = 3
     monkeypatch.setattr(canonical_evaluate, "_CANONICAL_BATCH_SIZE", batch_size)
@@ -630,10 +630,7 @@ async def test_backlog_scores_first_batch_before_discovering_next(
 
         async def observe(**kwargs):
             assert kwargs["limit"] <= batch_size
-            if pages:
-                assert llm.calls == batch_size, (
-                    "next page fetched before first batch scored"
-                )
+            assert llm.calls == 0, "scoring started before candidate preparation ended"
             page = await original(**kwargs)
             pages.append(page)
             return page
@@ -698,6 +695,15 @@ async def test_canonical_claim_preserves_new_first_and_reuses_connection(
                 )
             )
             ids.append(await store.resolve_real_job_id(saved.job_id))
+        source_queries = []
+        original_all = sqlite_canonical._all
+
+        async def track_source_queries(connection, sql, params):
+            if sql.startswith("SELECT * FROM jobs"):
+                source_queries.append(sql)
+            return await original_all(connection, sql, params)
+
+        monkeypatch.setattr(sqlite_canonical, "_all", track_source_queries)
         calls = 0
         original = store._lifecycle.connection
 
@@ -710,6 +716,7 @@ async def test_canonical_claim_preserves_new_first_and_reuses_connection(
         claims = await store.claim_real_job_stage_a_by_ids(list(reversed(ids)))
         assert [claim.real_job_id for claim in claims] == list(reversed(ids))
         assert calls == 1
+        assert len(source_queries) == 1
         assert await store.claim_real_job_stage_a_by_ids(ids) == []
     finally:
         await store.close()

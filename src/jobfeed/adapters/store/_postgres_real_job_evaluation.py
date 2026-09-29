@@ -127,15 +127,7 @@ class PostgresRealJobEvaluation:
                 ):
                     revision = int(current["input_revision"]) + 1
                     generation = int(current["claim_generation"]) + 1
-                    reason = (
-                        "policy_changed"
-                        if same_evaluation_input(
-                            current["input_jd_text"],
-                            current["input_facts_json"],
-                            selected,
-                        )
-                        else "input_changed"
-                    )
+                    reason = "input_changed"
                     await db.execute(
                         """INSERT INTO real_job_evaluation_history(
                                real_job_id,source_job_id,input_revision,input_facts_json,
@@ -325,7 +317,7 @@ class PostgresRealJobEvaluation:
             )
             return changed is not None
 
-    async def claim_real_job_stage_b_by_ids(  # noqa: C901, PLR0913 - atomic policy claim
+    async def claim_real_job_stage_b_by_ids(  # noqa: PLR0913 - atomic policy claim
         self,
         real_job_ids: list[str],
         *,
@@ -397,47 +389,6 @@ class PostgresRealJobEvaluation:
                 ):
                     continue
                 if (
-                    stage_b_policy is not None
-                    and json.loads(current["input_facts_json"]).get("stage_b_policy")
-                    is not None
-                    and json.loads(current["input_facts_json"]).get("stage_b_policy")
-                    != stage_b_policy
-                ):
-                    if current["stage_b_status"] is not None:
-                        await db.execute(
-                            """INSERT INTO real_job_evaluation_history(
-                                   real_job_id,source_job_id,input_revision,input_facts_json,
-                                   stage_a_status,stage_a_score,stage_b_status,
-                                   stage_b_verdict,stage_b_json,archived_at,reason)
-                               VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'policy_changed')""",
-                            real_id,
-                            current["source_job_id"],
-                            current["input_revision"],
-                            current["input_facts_json"],
-                            current["stage_a_status"],
-                            current["stage_a_score"],
-                            current["stage_b_status"],
-                            current["stage_b_verdict"],
-                            current["stage_b_json"],
-                            now,
-                        )
-                    await db.execute(
-                        "UPDATE real_job_evaluations SET input_facts_json=$1,"
-                        "claim_generation=claim_generation+1,stage_b_status=NULL,"
-                        "stage_b_verdict=NULL,stage_b_json=NULL,stage_b_model=NULL,"
-                        "stage_b_cost_usd=NULL,stage_b_at=NULL,updated_at=$2 "
-                        "WHERE real_job_id=$3",
-                        replace_evaluation_policies(
-                            current["input_facts_json"], stage_b_policy=stage_b_policy
-                        ),
-                        now,
-                        real_id,
-                    )
-                    current = await db.fetchrow(
-                        "SELECT * FROM real_job_evaluations WHERE real_job_id=$1",
-                        real_id,
-                    )
-                if (
                     current["stage_b_status"] == "completed"
                     or (
                         current["stage_b_status"] == "error"
@@ -452,12 +403,15 @@ class PostgresRealJobEvaluation:
                 await db.execute(
                     (
                         "UPDATE real_job_evaluations SET "
-                        "stage_b_status='in_progress',"
+                        "stage_b_status='in_progress',input_facts_json=$3,"
                         "claim_generation=claim_generation+1,updated_at=$1 "
                         "WHERE real_job_id=$2"
                     ),
                     now,
                     real_id,
+                    replace_evaluation_policies(
+                        current["input_facts_json"], stage_b_policy=stage_b_policy
+                    ),
                 )
                 claimed.append(
                     RealJobEvaluationInput(
