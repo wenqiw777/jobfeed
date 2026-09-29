@@ -1940,6 +1940,7 @@ class PostgresStore(
         stage: str = "both",
         threshold: int = 0,
         before_id: int | None = None,
+        max_days: int | None = None,
         stage_a_policy: dict[str, object] | None = None,
         stage_b_policy: dict[str, object] | None = None,
     ) -> list[str]:
@@ -1950,6 +1951,7 @@ class PostgresStore(
             stage: Evaluation stage: a, b, or both.
             threshold: Minimum Stage A score for Stage B eligibility.
             before_id: Exclusive canonical-ID bound for descending pagination.
+            max_days: Conservative source-age prefilter; claims verify exact age.
             stage_a_policy: Configured Stage A policy used to verify stored scores.
             stage_b_policy: Configured Stage B policy used to verify stored scores.
 
@@ -1963,45 +1965,46 @@ class PostgresStore(
             return []
         if stage not in {"a", "b", "both"}:
             raise ValueError("unknown canonical evaluation stage")
-        stage_a = (
-            "(e.real_job_id IS NULL OR e.stage_a_status IS DISTINCT FROM 'completed' "
-            "OR (p.a IS NOT NULL AND "
-            "e.input_facts_json::jsonb->'stage_a_policy' IS NOT NULL AND "
-            "e.input_facts_json::jsonb->'stage_a_policy' IS DISTINCT FROM p.a))"
-        )
+        del stage_a_policy, stage_b_policy
+
+        def pending(stage_name: str) -> str:
+            return (
+                f"(COALESCE(e.{stage_name}_status,'pending') NOT IN "
+                "('completed','in_progress','error') OR "
+                f"(e.{stage_name}_status='error' AND "
+                f"e.{stage_name}_error_count < {MAX_STAGE_RETRIES}) OR "
+                f"(e.{stage_name}_status='in_progress' AND "
+                "e.updated_at < CURRENT_TIMESTAMP - INTERVAL '1 hour'))"
+            )
+
+        stage_a = pending("stage_a")
         stage_b = (
-            "(e.stage_a_status='completed' AND e.stage_a_score>=p.threshold "
-            "AND (e.stage_b_status IS DISTINCT FROM 'completed' OR "
-            "(p.b IS NOT NULL AND "
-            "e.input_facts_json::jsonb->'stage_b_policy' IS NOT NULL AND "
-            "e.input_facts_json::jsonb->'stage_b_policy' IS DISTINCT FROM p.b)))"
+            "(e.stage_a_status='completed' AND e.stage_a_score>=$1 AND "
+            + pending("stage_b")
+            + ")"
         )
-        predicate = {
-            "a": stage_a,
-            "b": stage_b,
-            "both": f"({stage_a} OR {stage_b})",
-        }[stage]
-        args = (
-            json.dumps(stage_a_policy, sort_keys=True)
-            if stage_a_policy is not None
-            else None,
-            threshold,
-            json.dumps(stage_b_policy, sort_keys=True)
-            if stage_b_policy is not None
-            else None,
-            before_id,
-            limit,
-        )
+        predicate = {"a": stage_a, "b": stage_b, "both": f"({stage_a} OR {stage_b})"}[
+            stage
+        ]
         async with self._get_pool().acquire() as db:
             rows = await db.fetch(
-                "WITH p AS (SELECT $1::jsonb AS a,$2::int AS threshold,"
-                "$3::jsonb AS b,$4::bigint AS before,$5::int AS lim) "
                 "SELECT r.id FROM real_jobs r LEFT JOIN real_job_evaluations e "
-                "ON e.real_job_id=r.id CROSS JOIN p "
-                "WHERE r.identity_review_state='clear' "
-                f"AND {predicate} AND (p.before IS NULL "
-                "OR r.id < p.before) ORDER BY r.id DESC LIMIT (SELECT lim FROM p)",
-                *args,
+                "ON e.real_job_id=r.id WHERE r.identity_review_state='clear' "
+                "AND r.official_closed_at IS NULL "
+                "AND EXISTS(SELECT 1 FROM jobs j WHERE j.real_job_id=r.id "
+                "AND j.jd_quality IN ('full','good') AND COALESCE(j.jd_text,'')!='') "
+                "AND EXISTS(SELECT 1 FROM jobs j WHERE j.real_job_id=r.id "
+                "AND COALESCE(j.is_repost,0)=0) "
+                f"AND {predicate} AND $1::int IS NOT NULL "
+                "AND ($4::int IS NULL OR EXISTS(SELECT 1 FROM jobs d "
+                "WHERE d.real_job_id=r.id AND (d.discovered_at >= "
+                "CURRENT_TIMESTAMP - $4 * INTERVAL '1 day' OR d.posted_at BETWEEN "
+                "CURRENT_TIMESTAMP - $4 * INTERVAL '1 day' AND CURRENT_TIMESTAMP))) "
+                "AND ($2::bigint IS NULL OR r.id < $2) ORDER BY r.id DESC LIMIT $3",
+                threshold,
+                before_id,
+                limit,
+                max_days,
             )
         return [str(row["id"]) for row in rows]
 
@@ -2078,16 +2081,7 @@ class PostgresStore(
             row = await db.fetchrow(
                 "WITH p AS (SELECT $1::jsonb AS a,$2::jsonb AS b) "
                 "SELECT "
-                "COUNT(*) FILTER (WHERE e.stage_a_status='completed' AND "
-                "e.input_facts_json::jsonb->'stage_a_policy' IS NOT NULL AND "
-                "e.input_facts_json::jsonb->'stage_a_policy' IS DISTINCT FROM p.a) "
-                "AS stage_a_pending,"
-                "COUNT(*) FILTER (WHERE e.stage_b_status='completed' AND "
-                "(e.input_facts_json::jsonb->'stage_a_policy' IS NULL OR "
-                "e.input_facts_json::jsonb->'stage_a_policy'=p.a) AND "
-                "e.input_facts_json::jsonb->'stage_b_policy' IS NOT NULL AND "
-                "e.input_facts_json::jsonb->'stage_b_policy' IS DISTINCT FROM p.b) "
-                "AS stage_b_pending,"
+                "0 AS stage_a_pending,0 AS stage_b_pending,"
                 "COUNT(*) FILTER (WHERE e.stage_a_status='completed' AND "
                 "e.input_facts_json::jsonb->'stage_a_policy' IS NULL) "
                 "AS legacy_stage_a,"

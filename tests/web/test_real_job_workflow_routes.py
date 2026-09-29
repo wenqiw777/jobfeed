@@ -35,7 +35,7 @@ CURRENT_QUICK_SCORE = 90
 
 
 @pytest.mark.asyncio
-async def test_policy_change_hides_unverified_api_scores_before_next_evaluate(
+async def test_policy_change_preserves_api_scores_without_reevaluation(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "policy-api.db"
@@ -116,23 +116,25 @@ async def test_policy_change_hides_unverified_api_scores_before_next_evaluate(
             settings.llm.stage_b = "detail-v2"
             stale_b = await client.get("/api/real-jobs", params={"decision": "results"})
             assert stale_b.json()["jobs"][0]["stage_a_score"] == CURRENT_QUICK_SCORE
-            assert stale_b.json()["jobs"][0]["verdict"] is None
-            assert stale_b.json()["jobs"][0]["evaluation_stale_reason"] == (
-                "stage_b_policy_changed"
-            )
+            assert stale_b.json()["jobs"][0]["verdict"] == "apply"
+            assert stale_b.json()["jobs"][0]["evaluation_stale_reason"] is None
             settings.llm.stage_a = "quick-v2"
             stale_a = await client.get("/api/real-jobs", params={"decision": "results"})
             row = stale_a.json()["jobs"][0]
-            assert row["stage_a_score"] is None
-            assert row["priority_score"] < current.json()["jobs"][0]["priority_score"]
-            assert row["evaluation_stale_reason"] == "stage_a_policy_changed"
+            assert row["stage_a_score"] == CURRENT_QUICK_SCORE
+            assert row["priority_score"] == current.json()["jobs"][0]["priority_score"]
+            assert row["evaluation_stale_reason"] is None
             detail = await client.get(f"/api/real-jobs/{real_id}")
-            assert detail.json()["evaluation"]["stage_a"] is None
-            assert detail.json()["stale_stage_a_score"] == CURRENT_QUICK_SCORE
+            assert (
+                detail.json()["evaluation"]["stage_a"]["score"] == CURRENT_QUICK_SCORE
+            )
+            assert detail.json()["stale_stage_a_score"] is None
             library = await client.get("/api/jobs", params={"canonical": "true"})
-            assert library.json()["jobs"][0]["stage_a_score"] is None
+            assert library.json()["jobs"][0]["stage_a_score"] == CURRENT_QUICK_SCORE
             source = await client.get(f"/api/jobs/{saved.job_id}")
-            assert source.json()["evaluation"]["stage_a"] is None
+            assert (
+                source.json()["evaluation"]["stage_a"]["score"] == CURRENT_QUICK_SCORE
+            )
             audit = await client.get(f"/api/jobs/{saved.job_id}/audit")
             assert audit.json()["evaluation"]["stage_a"]["score"] == SOURCE_AUDIT_SCORE
             async with aiosqlite.connect(path) as db:

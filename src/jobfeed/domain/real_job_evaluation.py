@@ -284,19 +284,13 @@ def same_evaluation_input(
         Whether the substantive JD and scoring facts are unchanged.
     """
     stored = json.loads(stored_facts_json)
-    stored_a_policy = stored.pop("stage_a_policy", None)
+    stored.pop("stage_a_policy", None)
+    del stage_a_policy
     stored.pop("stage_b_policy", None)
     expected = json.loads(input_facts_json(selected))
-    return (
-        stored == expected
-        and (
-            stage_a_policy is None
-            or stored_a_policy is None
-            or stored_a_policy == stage_a_policy
-        )
-        and normalized_jd_body(stored_jd_text)
-        == normalized_jd_body(selected.job.jd_text)
-    )
+    return stored == expected and normalized_jd_body(
+        stored_jd_text
+    ) == normalized_jd_body(selected.job.jd_text)
 
 
 def replace_evaluation_policies(
@@ -339,24 +333,8 @@ def policy_visibility(
     Returns:
         Quick visibility, detailed visibility, and a pending reason code.
     """
-    if stage_a_policy is None and stage_b_policy is None:
-        return True, True, None
-    facts = json.loads(stored_facts_json or "{}")
-    stored_a = facts.get("stage_a_policy")
-    stored_b = facts.get("stage_b_policy")
-    # Missing historical policy records do not invalidate an existing score.
-    if (
-        stored_a is not None
-        and stage_a_policy is not None
-        and stored_a != stage_a_policy
-    ):
-        return False, False, "stage_a_policy_changed"
-    if (
-        stored_b is not None
-        and stage_b_policy is not None
-        and stored_b != stage_b_policy
-    ):
-        return True, False, "stage_b_policy_changed"
+    # Configuration changes are not authorization to hide or repeat paid work.
+    del stored_facts_json, stage_a_policy, stage_b_policy
     return True, True, None
 
 

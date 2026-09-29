@@ -51,6 +51,7 @@ class CanonicalEvaluationStore(Protocol):
         stage: str = "both",
         threshold: int = 0,
         before_id: int | None = None,
+        max_days: int | None = None,
         stage_a_policy: dict[str, object] | None = None,
         stage_b_policy: dict[str, object] | None = None,
     ) -> list[str]:
@@ -61,6 +62,7 @@ class CanonicalEvaluationStore(Protocol):
             stage: Evaluation stage: a, b, or both.
             threshold: Minimum Stage A score for Stage B eligibility.
             before_id: Exclusive canonical-ID bound for descending pagination.
+            max_days: Conservative source-age prefilter.
             stage_a_policy: Configured Stage A policy used to verify stored scores.
             stage_b_policy: Configured Stage B policy used to verify stored scores.
 

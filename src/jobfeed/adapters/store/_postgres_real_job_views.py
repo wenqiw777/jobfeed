@@ -26,15 +26,8 @@ _BASE = (
     "LEFT JOIN real_job_evaluations e ON e.real_job_id=r.id "
     "CROSS JOIN policy p "
 )
-_A_VISIBLE = (
-    "(p.a IS NULL OR e.input_facts_json::jsonb->>'stage_a_policy' IS NULL OR "
-    "e.input_facts_json::jsonb->'stage_a_policy'=p.a)"
-)
-_B_VISIBLE = (
-    f"({_A_VISIBLE} AND (p.b IS NULL OR "
-    "e.input_facts_json::jsonb->>'stage_b_policy' IS NULL OR "
-    "e.input_facts_json::jsonb->'stage_b_policy'=p.b))"
-)
+_A_VISIBLE = "1=1"
+_B_VISIBLE = "1=1"
 _A_SCORE = f"CASE WHEN {_A_VISIBLE} THEN e.stage_a_score END"
 _B_STATUS = f"CASE WHEN {_B_VISIBLE} THEN e.stage_b_status END"
 _B_VERDICT = f"CASE WHEN {_B_VISIBLE} THEN e.stage_b_verdict END"

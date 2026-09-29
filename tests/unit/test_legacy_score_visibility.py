@@ -25,9 +25,9 @@ def test_missing_policy_keeps_scores_visible(facts: str | None) -> None:
     ) == (True, True, None)
 
 
-def test_recorded_policy_change_remains_distinct_from_missing_policy() -> None:
+def test_recorded_policy_change_does_not_authorize_invalidation() -> None:
     assert policy_visibility(
         json.dumps({"stage_b_policy": {"model": "old-detail"}}),
         stage_a_policy={"model": "quick"},
         stage_b_policy={"model": "detail"},
-    ) == (True, False, "stage_b_policy_changed")
+    ) == (True, True, None)

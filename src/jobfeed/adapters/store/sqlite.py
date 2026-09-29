@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import aiosqlite
@@ -38,6 +38,7 @@ from jobfeed.domain.real_job_evaluation import (
     policy_visibility,
     representative_source_id,
 )
+from jobfeed.domain.scoring import MAX_STAGE_RETRIES
 from jobfeed.services.canonical_priority import (
     CanonicalPriorityInput,
     priority_input_for_sources,
@@ -213,6 +214,7 @@ class SQLiteStore(
         stage: str = "both",
         threshold: int = 0,
         before_id: int | None = None,
+        max_days: int | None = None,
         stage_a_policy: dict[str, object] | None = None,
         stage_b_policy: dict[str, object] | None = None,
     ) -> list[str]:
@@ -223,6 +225,7 @@ class SQLiteStore(
             stage: Evaluation stage: a, b, or both.
             threshold: Minimum Stage A score for Stage B eligibility.
             before_id: Exclusive canonical-ID bound for descending pagination.
+            max_days: Conservative source-age prefilter; claims verify exact age.
             stage_a_policy: Configured Stage A policy used to verify stored scores.
             stage_b_policy: Configured Stage B policy used to verify stored scores.
 
@@ -236,47 +239,58 @@ class SQLiteStore(
             return []
         if stage not in {"a", "b", "both"}:
             raise ValueError("unknown canonical evaluation stage")
-        policy_a = (
-            json.dumps(stage_a_policy, sort_keys=True, separators=(",", ":"))
-            if stage_a_policy is not None
-            else None
-        )
-        policy_b = (
-            json.dumps(stage_b_policy, sort_keys=True, separators=(",", ":"))
-            if stage_b_policy is not None
-            else None
-        )
-        stage_a = (
-            "(e.real_job_id IS NULL OR "
-            "COALESCE(e.stage_a_status,'pending')!='completed' OR "
-            "(? IS NOT NULL AND json_extract(e.input_facts_json,"
-            "'$.stage_a_policy') IS NOT NULL AND json_extract(e.input_facts_json,"
-            "'$.stage_a_policy') IS NOT ?))"
-        )
+        # A configuration change does not authorize another paid evaluation.
+        del stage_a_policy, stage_b_policy
+        now = self._now()
+        stale = _utc_text(now - timedelta(hours=1))
+
+        def pending(stage_name: str) -> str:
+            return (
+                f"(COALESCE(e.{stage_name}_status,'pending') NOT IN "
+                "('completed','in_progress','error') OR "
+                f"(e.{stage_name}_status='error' AND "
+                f"e.{stage_name}_error_count < {MAX_STAGE_RETRIES}) OR "
+                f"(e.{stage_name}_status='in_progress' AND e.updated_at < ?))"
+            )
+
+        stage_a = pending("stage_a")
         stage_b = (
-            "(e.stage_a_status='completed' AND e.stage_a_score>=? "
-            "AND (COALESCE(e.stage_b_status,'pending')!='completed' OR "
-            "(? IS NOT NULL AND json_extract(e.input_facts_json,"
-            "'$.stage_b_policy') IS NOT NULL AND json_extract(e.input_facts_json,"
-            "'$.stage_b_policy') IS NOT ?)))"
+            "(e.stage_a_status='completed' AND e.stage_a_score>=? AND "
+            + pending("stage_b")
+            + ")"
         )
-        predicate = {
-            "a": stage_a,
-            "b": stage_b,
-            "both": f"({stage_a} OR {stage_b})",
-        }[stage]
-        a_args = (policy_a, policy_a)
-        b_args = (threshold, policy_b, policy_b)
-        params = (
-            a_args if stage == "a" else b_args if stage == "b" else (*a_args, *b_args)
-        ) + (before_id, before_id, limit)
+        predicate = {"a": stage_a, "b": stage_b, "both": f"({stage_a} OR {stage_b})"}[
+            stage
+        ]
+        args: list[object] = (
+            [stale]
+            if stage == "a"
+            else [threshold, stale]
+            if stage == "b"
+            else [stale, threshold, stale]
+        )
+        age_clause = ""
+        if max_days is not None:
+            cutoff = _utc_text(now - timedelta(days=max_days))
+            age_clause = (
+                "AND EXISTS(SELECT 1 FROM jobs d WHERE d.real_job_id=r.id AND "
+                "(julianday(d.discovered_at)>=julianday(?) OR "
+                "julianday(d.posted_at) BETWEEN julianday(?) AND julianday(?))) "
+            )
+            args.extend((cutoff, cutoff, _utc_text(now)))
+        args.extend((before_id, before_id, limit))
         async with self._lifecycle.connection() as connection:
             cursor = await connection.execute(
                 "SELECT r.id FROM real_jobs r LEFT JOIN real_job_evaluations e "
                 "ON e.real_job_id=r.id WHERE r.identity_review_state='clear' "
-                f"AND {predicate} AND (? IS NULL OR r.id < ?) "
+                "AND r.official_closed_at IS NULL "
+                "AND EXISTS(SELECT 1 FROM jobs j WHERE j.real_job_id=r.id "
+                "AND j.jd_quality IN ('full','good') AND COALESCE(j.jd_text,'')!='') "
+                "AND EXISTS(SELECT 1 FROM jobs j WHERE j.real_job_id=r.id "
+                "AND COALESCE(j.is_repost,0)=0) "
+                f"AND {predicate} {age_clause} AND (? IS NULL OR r.id < ?) "
                 "ORDER BY r.id DESC LIMIT ?",
-                params,
+                args,
             )
             rows = list(await cursor.fetchall())
             await cursor.close()
@@ -365,16 +379,7 @@ class SQLiteStore(
             cursor = await connection.execute(
                 "WITH p AS (SELECT json(?) AS a,json(?) AS b) "
                 "SELECT "
-                "SUM(CASE WHEN e.stage_a_status='completed' AND "
-                "json_extract(e.input_facts_json,'$.stage_a_policy') IS NOT NULL AND "
-                "json_extract(e.input_facts_json,'$.stage_a_policy') IS NOT p.a "
-                "THEN 1 ELSE 0 END),"
-                "SUM(CASE WHEN e.stage_b_status='completed' AND "
-                "(json_extract(e.input_facts_json,'$.stage_a_policy') IS NULL OR "
-                "json_extract(e.input_facts_json,'$.stage_a_policy') IS p.a) "
-                "AND json_extract(e.input_facts_json,'$.stage_b_policy') IS NOT NULL "
-                "AND json_extract(e.input_facts_json,'$.stage_b_policy') IS NOT p.b "
-                "THEN 1 ELSE 0 END),"
+                "0,0,"
                 "SUM(CASE WHEN e.stage_a_status='completed' AND "
                 "json_extract(e.input_facts_json,'$.stage_a_policy') IS NULL "
                 "THEN 1 ELSE 0 END),"
