@@ -128,6 +128,11 @@ function EvaluateProgress({ run }: { run: RunSummary }) {
   return (
     <SpaceBetween size="m">
       <ProgressRail stage={displayStage} />
+      {displayStage !== "finalizing" && (
+        <Box color="text-body-secondary">
+          Percentages describe currently discovered work; totals may grow as more batches are prepared.
+        </Box>
+      )}
       <ColumnLayout columns={2} variant="text-grid">
         <SpaceBetween size="s">
           <StageProgress
@@ -266,20 +271,12 @@ function StageProgress({
   isFailed?: boolean;
   cumulative?: string;
 }) {
-  if (cumulative !== undefined) {
-    return (
-      <div>
-        <Box variant="awsui-key-label">{label}</Box>
-        <StatusIndicator type="in-progress">{cumulative}</StatusIndicator>
-      </div>
-    );
-  }
   const value = processed ?? 0;
   const knownTotal = total ?? null;
   const percentage = knownTotal === null || knownTotal === 0
     ? (isDone ? 100 : 0)
     : Math.min(100, value / knownTotal * 100);
-  const additionalInfo = detail ?? (knownTotal === null
+  const additionalInfo = cumulative ?? detail ?? (knownTotal === null
     ? (isActive ? "Preparing queue" : "Waiting")
     : `${value} / ${knownTotal}`);
   return (

@@ -346,7 +346,7 @@ test("does not mark seniority complete while quick batches are still being disco
   });
 
   expect(screen.getByText("481 excluded so far; screening in batches")).toBeVisible();
-  expect(screen.getByTestId("live-run-r-live-1")).not.toHaveTextContent("100%");
+  expect(screen.getAllByRole("progressbar")).toHaveLength(5);
 });
 
 test("merges a newer SSE update with polled active-run counters", () => {
@@ -390,7 +390,7 @@ test("growing evaluation batches show cumulative work without premature completi
       ml_gate_total: 100, ml_gate_processed: 100,
     }),
   });
-  expect(screen.getByTestId("live-run-r-live-1")).not.toHaveTextContent("100%");
+  expect(screen.getAllByRole("progressbar")).toHaveLength(5);
   expect(screen.getByText("100 processed so far")).toBeVisible();
   act(() => FakeEventSource.instances[0]!._message(JSON.stringify(runCounters({
     evaluation_scope: "backlog", progress_stage: "stage_a",
@@ -399,7 +399,7 @@ test("growing evaluation batches show cumulative work without premature completi
     progress_updated_at: "2026-06-10T08:00:01Z",
   }))));
   expect(screen.getByText("101 processed so far")).toBeVisible();
-  expect(screen.getByTestId("live-run-r-live-1")).not.toHaveTextContent("100%");
+  expect(screen.getAllByRole("progressbar")).toHaveLength(5);
   act(() => FakeEventSource.instances[0]!._message(JSON.stringify(runCounters({
     evaluation_scope: "backlog", progress_stage: "stage_b",
     stage_a_total: 200, stage_a_processed: 200,
@@ -408,5 +408,6 @@ test("growing evaluation batches show cumulative work without premature completi
     progress_updated_at: "2026-06-10T08:00:02Z",
   }))));
   expect(screen.getByText("100 reviewed so far")).toBeVisible();
-  expect(screen.queryByRole("progressbar", {name: /Detailed review/})).not.toBeInTheDocument();
+  expect(screen.getByRole("progressbar", {name: /Detailed review/})).toBeVisible();
+  expect(screen.getByText(/Percentages describe currently discovered work/)).toBeVisible();
 });
