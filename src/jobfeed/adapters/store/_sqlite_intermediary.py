@@ -25,7 +25,10 @@ class SqliteIntermediary:
         async with self._lifecycle.connection() as connection:
             connection.row_factory = aiosqlite.Row
             cursor = await connection.execute(
-                "SELECT * FROM jobs WHERE title_norm=? ORDER BY id LIMIT 201",
+                "SELECT * FROM jobs WHERE title_norm=? "
+                "AND jobfeed_trusted_ats_url(url)=1 "
+                "AND jobfeed_intermediary(company,url,apply_url)=0 "
+                "ORDER BY id LIMIT 201",
                 (normalize(title),),
             )
             return [

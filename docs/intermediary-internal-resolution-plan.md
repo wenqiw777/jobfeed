@@ -92,3 +92,24 @@ format checking, mypy (359 source files), and 2,663 tests; 18 skipped,
 The final review fixed hostname/path false positives, preserved official parent IDs
 when the intermediary was older, fenced post-search writes after lease loss, and
 verified actual merge success before reporting a match.
+
+## 2026-09-30 deployment and backfill verification
+
+User authorized main push, Mini deployment, historical backfill, and completeness
+verification. Commit 10267f9 passed CI 36760356627 and was deployed to Mini.
+Health DB/Redis/extension checks passed. One-time Mini launchd backfill uses the
+existing resolver and run lease; no new recurring schedule or evaluation calls.
+Online SQLite backup and a full-copy migration test preceded production.
+The initial 837-source internal pass matched 45 records. All 30,027 completed
+evaluations remained present in active rows or existing merge history. Direct
+checks found no missing original jobs, changed original title/company/URL/JD,
+orphan source links, or matches lacking an official source in the same parent.
+
+Verification found 317 premature candidate-overflow dispositions: the indexed
+lookup limited all same-title rows before rejecting non-official sources. A
+regression with 201 publisher rows preceding one official record failed with
+candidate_overflow. The lookup now filters trusted ATS URLs and intermediary
+publishers before the existing 201-row bound. The regression and 28 related
+tests pass. Actual ambiguity and excessive official candidates still fail closed.
+Backfill is not declared complete while searches or incomplete dispositions remain.
+Operational evidence is in artifacts/intermediary-backfill-20260930/.

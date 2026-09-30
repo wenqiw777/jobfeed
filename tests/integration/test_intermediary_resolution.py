@@ -16,6 +16,36 @@ from tests.unit.test_intermediary_resolution import official, posting
 EXPECTED_SOURCES = 3
 
 
+async def test_non_official_rows_do_not_exhaust_official_candidate_limit(tmp_path):
+    store = SQLiteStore(tmp_path / "candidate-limit.sqlite")
+    await store.connect()
+    try:
+        for index in range(201):
+            await store.save_job(
+                posting(
+                    id=None,
+                    canonical_id=f"noise-{index}",
+                    url=f"https://www.dice.com/job-detail/noise-{index}",
+                    jd_text=f"Unrelated publisher listing {index}",
+                )
+            )
+        target = await store.save_job(official(id=None))
+        source = posting(id=None)
+        search = AsyncMock(return_value=[])
+        await IntermediaryResolver(store, search=search).resolve(
+            [source], run_id="limit"
+        )
+        result = json.loads(
+            await store.get_state("intermediary-resolution:jobright:one")
+        )
+        assert result["outcome"] == "matched_internal"
+        assert len(await store.official_candidates(source.title)) == 1
+        assert (await store.official_candidates(source.title))[0][1].id == target.job_id
+        search.assert_not_called()
+    finally:
+        await store.close()
+
+
 @pytest.mark.parametrize("source_first", [False, True])
 async def test_internal_first_reuses_official_parent(tmp_path, source_first):
     store = SQLiteStore(tmp_path / "demo.sqlite")

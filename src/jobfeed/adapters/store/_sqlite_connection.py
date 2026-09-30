@@ -8,7 +8,7 @@ import aiosqlite
 
 from jobfeed.adapters.store._sqlite_errors import UnsupportedSqliteVersionError
 from jobfeed.domain.filtering import _matches_location_allowlist
-from jobfeed.domain.intermediary import intermediary_values
+from jobfeed.domain.intermediary import intermediary_values, trusted_ats_url
 from jobfeed.domain.repost import discovery_day
 
 _MINIMUM_SQLITE_VERSION = (3, 35, 0)
@@ -64,6 +64,9 @@ async def _scalar(connection: aiosqlite.Connection, statement: str) -> object:
 
 
 async def _register_connection_features(connection: aiosqlite.Connection) -> None:
+    await connection.create_function(
+        "jobfeed_trusted_ats_url", 1, trusted_ats_url, deterministic=True
+    )
     raw_version = await _scalar(connection, "SELECT sqlite_version()")
     version = _parse_version(raw_version)
     if version < _MINIMUM_SQLITE_VERSION:
