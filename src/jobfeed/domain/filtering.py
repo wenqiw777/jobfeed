@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from jobfeed.domain.ai_data_work import ai_data_work_reason
 from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.job_age import effective_job_date
 from jobfeed.domain.models import JobPosting
@@ -97,7 +98,7 @@ def apply_hard_filters(
 ) -> str | None:
     """Apply hard filters to one job posting.
 
-    Order: company blocklist → location allow/block → freshness.
+    Order: contributor-work exclusion → company → location → freshness.
     title_blocklist is intentionally not checked here; it moved to the ML gate.
 
     Args:
@@ -111,6 +112,8 @@ def apply_hard_filters(
     """
     if intermediary_posting(job):
         return "unresolved_intermediary"
+    if reason := ai_data_work_reason(job.title, job.company):
+        return reason
     reason = _company_reason(job.company, filters.company_blocklist)
     if reason is not None:
         return reason

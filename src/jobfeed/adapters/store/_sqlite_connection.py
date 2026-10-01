@@ -7,6 +7,7 @@ from pathlib import Path
 import aiosqlite
 
 from jobfeed.adapters.store._sqlite_errors import UnsupportedSqliteVersionError
+from jobfeed.domain.ai_data_work import ai_data_work_reason
 from jobfeed.domain.filtering import _matches_location_allowlist
 from jobfeed.domain.intermediary import intermediary_values, trusted_ats_url
 from jobfeed.domain.repost import discovery_day
@@ -64,6 +65,9 @@ async def _scalar(connection: aiosqlite.Connection, statement: str) -> object:
 
 
 async def _register_connection_features(connection: aiosqlite.Connection) -> None:
+    await connection.create_function(
+        "jobfeed_ai_data_work", 2, ai_data_work_reason, deterministic=True
+    )
     await connection.create_function(
         "jobfeed_trusted_ats_url", 1, trusted_ats_url, deterministic=True
     )

@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from jobfeed.domain.ai_data_work import ai_data_work_reason
 from jobfeed.domain.ml_features import (
     classify_clearance_status,
     classify_role_type,
@@ -155,6 +156,10 @@ def evaluate_eligibility(job: JobPosting) -> EligibilityResult:  # noqa: C901
     """
     jd = job.jd_text or ""
     normalized_jd = " ".join(jd.split())
+    if contributor_work := ai_data_work_reason(job.title, job.company):
+        return EligibilityResult(
+            status="blocked", reason=contributor_work, evidence=job.title
+        )
     if foreign_market := _FOREIGN_MARKET_TITLE.search(job.title):
         return EligibilityResult(
             status="blocked",

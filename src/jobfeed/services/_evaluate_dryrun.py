@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from jobfeed.domain.ai_data_work import ai_data_work_reason
 from jobfeed.domain.models import DryRunPreviewItem, JobPosting, PipelineRun
 from jobfeed.domain.types import StageName
 from jobfeed.observability import JobfeedLogger
@@ -81,7 +82,11 @@ async def build_dry_run_preview(
         jobs_b = await load_stage_b_dry_run(
             deps.store, request.limit, request.max_days, config.stage_a_threshold
         )
-        run.dry_run_preview.extend(log_dry_run(request.logger, "stage_b", jobs_b))
+        survivors = [
+            job for job in jobs_b if not ai_data_work_reason(job.title, job.company)
+        ]
+        run.jobs_filtered += len(jobs_b) - len(survivors)
+        run.dry_run_preview.extend(log_dry_run(request.logger, "stage_b", survivors))
     return run.dry_run_preview
 
 

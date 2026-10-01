@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from jobfeed.domain.ai_data_work import AI_DATA_COMPANY_PATTERN, AI_DATA_TITLE_PATTERN
 from jobfeed.domain.filtering import _US_NAMES, _US_STATE_CODES, HardFilters
 from jobfeed.domain.intermediary import DOMAINS, PUBLISHERS
 from jobfeed.domain.normalize import normalize_company
@@ -62,6 +63,15 @@ def _active(filters: HardFilters | None) -> bool:
     )
 
 
+def _postgres_contributor_predicate() -> str:
+    """Translate Python word boundaries to PostgreSQL's equivalent syntax."""
+    title = AI_DATA_TITLE_PATTERN.replace(r"\b", r"\y")
+    return (
+        f"COALESCE(j.title,'') !~* '{title}' AND "
+        f"COALESCE(j.company,'') !~* '{AI_DATA_COMPANY_PATTERN}'"
+    )
+
+
 def sqlite_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
     filters: HardFilters | None, now: datetime
 ) -> tuple[str, list[object]]:
@@ -74,10 +84,14 @@ def sqlite_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
     Returns:
         A SQL predicate and its positional bind values in placeholder order.
     """
+    intrinsic = (
+        "jobfeed_intermediary(j.company,j.url,j.apply_url)=0 AND "
+        "jobfeed_ai_data_work(j.title,j.company) IS NULL"
+    )
     if not _active(filters):
-        return "jobfeed_intermediary(j.company,j.url,j.apply_url)=0", []
+        return intrinsic, []
     assert filters is not None
-    clauses: list[str] = ["jobfeed_intermediary(j.company,j.url,j.apply_url)=0"]
+    clauses: list[str] = [intrinsic]
     args: list[object] = []
     for item in filters.company_blocklist:
         if item:
@@ -149,10 +163,11 @@ def postgres_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
     Returns:
         A SQL predicate and its ordered PostgreSQL bind values.
     """
+    intrinsic = f"{_direct_source_predicate()} AND {_postgres_contributor_predicate()}"
     if not _active(filters):
-        return _direct_source_predicate(), []
+        return intrinsic, []
     assert filters is not None
-    clauses: list[str] = [_direct_source_predicate()]
+    clauses: list[str] = [intrinsic]
     args: list[object] = []
 
     def param(value: object) -> str:

@@ -10,8 +10,9 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, cast
 
+from jobfeed.domain.ai_data_work import ai_data_work_reason
 from jobfeed.domain.errors import ScoringParseError
-from jobfeed.domain.filtering import apply_hard_filters
+from jobfeed.domain.filtering import HardFilters, apply_hard_filters
 from jobfeed.domain.models import (
     DryRunPreviewItem,
     LLMRequest,
@@ -287,23 +288,26 @@ def _append_preview_page(  # noqa: PLR0913 - preview decision facts
             continue
         if not _preview_eligible(item, max_days):
             continue
-        if target_stage == "a" and item.stage_a_status != "completed":
-            if (
-                service._deps.hard_filters is not None
-                and apply_hard_filters(item.job, service._deps.hard_filters) is not None
-            ):
-                run.jobs_filtered += 1
-            else:
-                run.dry_run_preview.append(_preview_item("stage_a", item))
-                previewed += 1
-        if (
-            target_stage == "b"
-            and item.stage_a_score is not None
-            and item.stage_a_score >= policy.config.stage_a_threshold
-            and item.stage_b_status != "completed"
+        if target_stage == "a" and item.stage_a_status == "completed":
+            continue
+        if target_stage == "b" and (
+            item.stage_a_score is None
+            or item.stage_a_score < policy.config.stage_a_threshold
+            or item.stage_b_status == "completed"
         ):
-            run.dry_run_preview.append(_preview_item("stage_b", item))
-            previewed += 1
+            continue
+        if ai_data_work_reason(item.job.title, item.job.company):
+            run.jobs_filtered += 1
+            continue
+        if (
+            target_stage == "a"
+            and service._deps.hard_filters is not None
+            and apply_hard_filters(item.job, service._deps.hard_filters) is not None
+        ):
+            run.jobs_filtered += 1
+            continue
+        run.dry_run_preview.append(_preview_item(f"stage_{target_stage}", item))
+        previewed += 1
         if previewed >= limit:
             return
 
@@ -549,10 +553,8 @@ async def _prepare_stage_a_claims(
     hard_filter_survivors: list[RealJobEvaluationInput] = []
     hard_filter_rejected: list[RealJobEvaluationInput] = []
     for item in claims:
-        reason = (
-            apply_hard_filters(item.job, service._deps.hard_filters)
-            if service._deps.hard_filters is not None
-            else None
+        reason = apply_hard_filters(
+            item.job, service._deps.hard_filters or HardFilters()
         )
         if reason is None:
             hard_filter_survivors.append(item)
@@ -790,6 +792,16 @@ async def _score_stage_b_claims(
         try:
             async with semaphore:
                 session.ensure_active()
+                if ai_data_work_reason(item.job.title, item.job.company):
+                    run.jobs_filtered += 1
+                    await cast(
+                        CanonicalEvaluationStore, store
+                    ).release_real_job_stage_b_claim(
+                        item.real_job_id,
+                        expected_revision=item.input_revision,
+                        expected_generation=item.claim_generation,
+                    )
+                    return
                 async with _maintain_real_job_stage_b_claim(
                     cast(CanonicalEvaluationStore, store), item
                 ) as active:
