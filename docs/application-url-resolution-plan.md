@@ -386,3 +386,25 @@ full historical backfill or the installed browser worker validated yet.
 - This proves the reported Equifax route and canonical merge in new code. It
   does not claim the running production service has loaded the new extension or
   that the dedicated three-tab worker pool has been exercised live after reload.
+
+## Live Mini reload follow-up
+
+The user reloaded extension 0.8.4. The real Mini sample
+`0e8e6bd5-cb73-4044-af08-30dc55d7715c` processed both Equifax sources but did
+not reconcile them: LinkedIn receipt followed the genuine employer wrapper,
+then returned `target_apply_link_missing`. The one-off continuation correctly
+stopped before launching the 90,000-source bulk run.
+
+Root cause observed in the actual public DOM: `#js-apply-external` is inside
+`div.job-sidebar`, itself inside generic `aside.col-lg-4.sidebar`. The parser
+accepted the inner current-job region but rejected the outer aside. Earlier
+projection evidence omitted that ancestor, so it did not verify this real layout.
+
+Task: preserve recognized current-job region context while walking outer
+containers; still reject recommendations, conflicting job IDs, nav and footer.
+Test-first evidence: nested-sidebar positive failed before fix; the four
+negative ancestor cases passed. After fix, 48 resolver checks and 18 hygiene
+checks passed; Ruff and mypy passed. The actual captured public sidebar inserted
+into its original ancestor structure yields the genuine J00179159 Apply URL.
+Release acceptance remains the real Mini parent-ID comparison, then full open
+backfill launch and direct DB source/evaluation preservation checks.

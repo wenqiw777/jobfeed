@@ -72,6 +72,7 @@ def _excluded(node: Tag, requisitions: tuple[str, ...] = ()) -> bool:
 
     Time complexity: O(d * a) for ancestor depth d and four ID attributes a.
     """
+    in_job_region = False
     for ancestor in (node, *node.parents):
         if not isinstance(ancestor, Tag):
             continue
@@ -81,8 +82,9 @@ def _excluded(node: Tag, requisitions: tuple[str, ...] = ()) -> bool:
         if _EXCLUDED.search(labels):
             return True
         job_region = bool(re.search(r"job[-_ ]?(?:sidebar|apply|header)", labels, re.I))
+        in_job_region = in_job_region or job_region
         if ancestor.name in {"nav", "footer"} or (
-            ancestor.name in {"header", "aside"} and not job_region
+            ancestor.name in {"header", "aside"} and not in_job_region
         ):
             return True
         for name in ("data-job-id", "data-jobid", "data-requisition-id", "data-req-id"):

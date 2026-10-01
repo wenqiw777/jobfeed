@@ -602,3 +602,33 @@ def test_linkedin_recommended_aria_region_is_not_an_application_candidate():
     doc = parse_route_document(job.url, markup, job)
     assert doc.owned
     assert doc.candidates == ()
+
+
+async def test_target_apply_in_nested_job_sidebar_survives_generic_outer_aside():
+    html = page() + (
+        '<aside class="col-lg-4 sidebar"><div class="job-sidebar">'
+        f'<a id="js-apply-external" href="{ATS}">Apply Now</a></div></aside>'
+    )
+    result, calls = await resolve({WRAPPER: html, ATS: page()})
+    assert result.status == "resolved"
+    assert calls == [WRAPPER, ATS]
+
+
+@pytest.mark.parametrize(
+    "outer",
+    [
+        '<aside class="col-lg-4 sidebar related-jobs">',
+        '<aside class="col-lg-4 sidebar" data-job-id="999">',
+        '<nav class="sidebar">',
+        '<footer class="sidebar">',
+    ],
+)
+async def test_nested_job_sidebar_does_not_override_unrelated_ancestors(outer):
+    closing = "</" + outer.split()[0].removeprefix("<") + ">"
+    html = page() + (
+        outer + '<div class="job-sidebar">'
+        f'<a href="{ATS}">Apply Now</a></div>' + closing
+    )
+    result, calls = await resolve({WRAPPER: html})
+    assert result.status != "resolved"
+    assert calls == [WRAPPER]
