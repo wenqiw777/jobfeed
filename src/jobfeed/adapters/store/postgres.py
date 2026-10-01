@@ -4388,22 +4388,38 @@ class PostgresStore(
         pool = self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT e.job_id
-                   FROM pipeline_runs AS r
-                   JOIN evaluations AS e
-                     ON e.updated_at >= r.started_at
-                    AND e.updated_at <= r.finished_at
-                   WHERE r.run_id = $1
-                     AND r.source = 'evaluate'
-                     AND r.finished_at IS NOT NULL
-                     AND (
-                       (e.stage_a_status = 'error'
-                        AND e.stage_a_error_count < $2)
-                       OR
-                       (e.stage_b_status = 'error'
-                        AND e.stage_b_error_count < $2)
-                     )
-                   ORDER BY e.updated_at, e.job_id""",
+                """SELECT job_id FROM (
+                    SELECT e.job_id, e.updated_at
+                    FROM pipeline_runs AS r
+                    JOIN evaluations AS e
+                      ON e.updated_at >= r.started_at
+                     AND e.updated_at <= r.finished_at
+                    WHERE r.run_id=$1
+                      AND r.source='evaluate'
+                      AND r.finished_at IS NOT NULL
+                      AND (
+                        (e.stage_a_status='error'
+                         AND e.stage_a_error_count < $2)
+                        OR (e.stage_b_status='error'
+                            AND e.stage_b_error_count < $2)
+                      )
+                    UNION ALL
+                    SELECT e.source_job_id AS job_id, e.updated_at
+                    FROM pipeline_runs AS r
+                    JOIN real_job_evaluations AS e
+                      ON e.updated_at >= r.started_at
+                     AND e.updated_at <= r.finished_at
+                    WHERE r.run_id=$1
+                      AND r.source='evaluate'
+                      AND r.finished_at IS NOT NULL
+                      AND (
+                        (e.stage_a_status='error'
+                         AND e.stage_a_error_count < $2)
+                        OR (e.stage_b_status='error'
+                            AND e.stage_b_error_count < $2)
+                      )
+                ) AS retry_errors
+                GROUP BY job_id ORDER BY MIN(updated_at), job_id""",
                 run_id,
                 MAX_STAGE_RETRIES,
             )

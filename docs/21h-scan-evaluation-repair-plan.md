@@ -32,3 +32,33 @@ Verification evidence:
 Disposition: local implementation complete. No deployment or paid retry performed.
 Mini browser verification remains a release check, not a claim of live recovery.
 Historical warning/error rows remain truthful; prior results are not reset.
+
+## Authorized release and live verification
+
+User authorized main publication, Mini deployment, and targeted paid verification.
+Initial main publication: 681a24e; CI found a missing Returns docstring,
+fixed in d9dd32e; rerun 36808207391 passed.
+
+Perchwell 487176: canonical Stage B run c52c10b3-9eec-4b9a-96e6-3822d8150dfc
+completed one Stage B, zero Stage A, zero errors, cost $0.05742. Direct DB check
+confirms stage_b_status=completed and stage_b_verdict=apply; original Stage A
+completion time is unchanged. Historical error text remains audit data.
+
+Real browser check discovered an additional ADP cause: SFC-SHELL has computed
+visibility:hidden, while its job descendants are visible. The old snapshot
+pruned the whole subtree. A failing regression now passes after visibility is
+checked per text node, retaining hidden-subtree and form-control exclusion.
+Mini extension recaptured Society Insurance 487140 (3204 characters) and
+Forrest Logistics 487111 (3924 characters). Both are full; errors and retry
+cooldowns cleared through normal store persistence. Workday IDEXX still
+returns its official maintenance page; this is transient, not a complete JD.
+Browser evidence is on Mini in artifacts/21h-repair-verification/.
+
+Retry lookup also missed canonical errors because it read only evaluations.
+Add real_job_evaluations with the existing run time boundary, retry cap,
+resolved-status exclusion and deduplication; SQLite and PostgreSQL queries
+stay equivalent. Two failing canonical cases became passing; 61 retry, route,
+views and hygiene checks passed. All 95 extension checks passed; mypy and
+Ruff passed on changed query modules.
+
+Final publication and Mini/CI verification pending the two follow-up commits.

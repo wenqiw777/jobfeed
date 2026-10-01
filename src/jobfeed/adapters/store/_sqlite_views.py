@@ -493,7 +493,8 @@ class _SqliteViews:
         async with self._lifecycle.connection() as connection:
             records = await _fetch_rows(
                 connection,
-                f"""SELECT e.job_id
+                f"""SELECT job_id FROM (
+                    SELECT e.job_id, e.updated_at
                     FROM pipeline_runs AS r
                     JOIN evaluations AS e
                       ON e.updated_at >= r.started_at
@@ -504,11 +505,26 @@ class _SqliteViews:
                       AND (
                         (e.stage_a_status='error'
                          AND e.stage_a_error_count < {MAX_STAGE_RETRIES})
-                        OR
-                        (e.stage_b_status='error'
-                         AND e.stage_b_error_count < {MAX_STAGE_RETRIES})
+                        OR (e.stage_b_status='error'
+                            AND e.stage_b_error_count < {MAX_STAGE_RETRIES})
                       )
-                    ORDER BY e.updated_at, e.job_id""",
-                (run_id,),
+                    UNION ALL
+                    SELECT e.source_job_id AS job_id, e.updated_at
+                    FROM pipeline_runs AS r
+                    JOIN real_job_evaluations AS e
+                      ON e.updated_at >= r.started_at
+                     AND e.updated_at <= r.finished_at
+                    WHERE r.run_id=?
+                      AND r.source='evaluate'
+                      AND r.finished_at IS NOT NULL
+                      AND (
+                        (e.stage_a_status='error'
+                         AND e.stage_a_error_count < {MAX_STAGE_RETRIES})
+                        OR (e.stage_b_status='error'
+                            AND e.stage_b_error_count < {MAX_STAGE_RETRIES})
+                      )
+                ) AS retry_errors
+                GROUP BY job_id ORDER BY MIN(updated_at), job_id""",
+                (run_id, run_id),
             )
         return [str(row["job_id"]) for row in records]
