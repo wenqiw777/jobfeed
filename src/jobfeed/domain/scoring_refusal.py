@@ -6,8 +6,6 @@ from jobfeed.domain.errors import ScoringParseError
 
 _REFUSAL_PREFIXES = ("i cannot", "i'm sorry", "i apologize")
 _REFUSAL_PHRASES = ("as an ai assistant", "as an ai language model")
-_TRUNCATION_RATIO = 0.9
-_DEFAULT_MAX_TOKENS = 4096
 
 
 def _detect_refusal(raw: str) -> None:
@@ -39,9 +37,7 @@ def _detect_structured_refusal(raw: str) -> None:
 
 
 def _detect_truncation(raw: str) -> None:
-    if len(raw) > _DEFAULT_MAX_TOKENS * _TRUNCATION_RATIO:
-        raise ScoringParseError("response likely truncated", raw_response=raw)
-    if _has_unbalanced_braces(raw):
+    if not raw.rstrip().endswith("}") and _has_unbalanced_braces(raw):
         raise ScoringParseError(
             "incomplete JSON -- possible token limit", raw_response=raw
         )
@@ -49,7 +45,18 @@ def _detect_truncation(raw: str) -> None:
 
 def _has_unbalanced_braces(raw: str) -> bool:
     depth = 0
+    in_string = escaped = False
     for ch in raw:
+        if escaped:
+            escaped = False
+            continue
+        if in_string and ch == "\\":
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+        if in_string:
+            continue
         if ch == "{":
             depth += 1
         elif ch == "}":

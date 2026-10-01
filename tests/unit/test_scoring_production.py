@@ -250,10 +250,10 @@ class TestParseStageATruncationDetection:
         with pytest.raises(ScoringParseError, match="incomplete JSON"):
             parse_stage_a_response(raw, model="m", prompt_hash="p", resume_hash="r")
 
-    def test_long_response_detected_as_truncated(self) -> None:
-        """Response exceeding 90% of max_tokens should raise truncation."""
+    def test_long_incomplete_response_detected_as_incomplete(self) -> None:
+        """A missing closing brace is incomplete regardless of text length."""
         raw = '{"score": 85, ' + '"padding": "' + "x" * 4000 + '"'
-        with pytest.raises(ScoringParseError, match="truncated"):
+        with pytest.raises(ScoringParseError, match="incomplete JSON"):
             parse_stage_a_response(raw, model="m", prompt_hash="p", resume_hash="r")
 
 
@@ -383,3 +383,16 @@ def _make_legacy_b_payload() -> dict[str, object]:
             "avoid_mentioning": [],
         },
     }
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"text":"' + "x" * 4000 + '","broken":"value”}',
+        '{"text":"literal {", "broken": nope}',
+    ],
+    ids=["long-invalid-quotation", "brace-inside-string"],
+)
+def test_malformed_json_is_not_inferred_truncated_from_characters(raw):
+    with pytest.raises(ScoringParseError, match="response is not valid JSON"):
+        parse_stage_b_response(raw, model="m", prompt_hash="p", resume_hash="r")
