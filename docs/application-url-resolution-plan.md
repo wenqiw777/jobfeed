@@ -408,3 +408,14 @@ checks passed; Ruff and mypy passed. The actual captured public sidebar inserted
 into its original ancestor structure yields the genuine J00179159 Apply URL.
 Release acceptance remains the real Mini parent-ID comparison, then full open
 backfill launch and direct DB source/evaluation preservation checks.
+
+Fidelity follow-up: observed Jobright page `6abd5471d9621c5b2838b9ca`
+labels its genuine Workday `2133859-1` destination "Original Job Post".
+The prior Apply-label matcher did not recognize that observed anchor. Added
+that exact label (and "Original Job Posting") within already-owned current
+job regions; recommendation ancestors still reject it. RED: positive failed,
+negative passed. GREEN: 69 resolver/browser/backfill tests passed. Source
+company "Fidelity Bank" is incorrect on Jobright; this patch does not silently
+alias that separate company to Fidelity Investments. For the reported pair,
+the exact existing Workday ID and independently observed source link permit
+a scoped evidence backfill while preserving the original company metadata.

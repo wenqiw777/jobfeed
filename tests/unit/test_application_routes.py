@@ -632,3 +632,22 @@ async def test_nested_job_sidebar_does_not_override_unrelated_ancestors(outer):
     result, calls = await resolve({WRAPPER: html})
     assert result.status != "resolved"
     assert calls == [WRAPPER]
+
+
+async def test_current_job_original_post_link_is_observed_application_target():
+    html = page(extra=f'<a href="{ATS}">Original Job Post</a>')
+    result, calls = await resolve({WRAPPER: html, ATS: page()})
+    assert result.status == "resolved"
+    assert calls == [WRAPPER, ATS]
+
+
+async def test_recommended_original_post_link_is_not_current_application_target():
+    html = page(
+        extra=(
+            '<section aria-label="Related jobs">'
+            f'<a href="{ATS}">Original Job Post</a></section>'
+        )
+    )
+    result, calls = await resolve({WRAPPER: html})
+    assert result.status != "resolved"
+    assert calls == [WRAPPER]

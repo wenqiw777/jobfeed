@@ -21,7 +21,7 @@ _MIN_JD_CHARS = 300
 _MAX_JD_WORDS = 5000
 _MIN_JD_COVERAGE = 0.80
 _EXCLUDED = re.compile(r"recommend|related|similar|other.jobs|talent|job.alert", re.I)
-_APPLY = re.compile(r"\bapply\b|\bapplication\b", re.I)
+_APPLY = re.compile(r"\bapply\b|\bapplication\b|\boriginal job post(?:ing)?\b", re.I)
 _REQUISITION = re.compile(
     r"\b(?:requisition|req|job)(?:\s*(?:id|number|#))?\s*[:#]\s*([A-Z0-9-]+)",
     re.I,
