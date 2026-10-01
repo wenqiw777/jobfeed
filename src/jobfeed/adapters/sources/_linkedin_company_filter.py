@@ -1,7 +1,16 @@
 """User-excluded intermediary publishers in LinkedIn discovery."""
 
+from jobfeed.domain.intermediary import BLOCKED_PUBLISHERS
+
 _BLOCKED_COMPANIES = frozenset(
-    {"jobright.ai", "jobright", "jobwright", "yara ai", "jobs via dice", "dice"}
+    {
+        "jobright.ai",
+        "jobright",
+        "jobwright",
+        "jobs via dice",
+        "dice",
+        *BLOCKED_PUBLISHERS,
+    }
 )
 
 

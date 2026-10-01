@@ -10,7 +10,15 @@ from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.normalize import normalize, normalize_company
 
-PUBLISHERS = ("dice", "jobs via dice", "haystack", "jobverse", "jobverse.io")
+BLOCKED_PUBLISHERS = ("yara ai", "remotehunter", "remote hunter", "torentify")
+PUBLISHERS = (
+    "dice",
+    "jobs via dice",
+    "haystack",
+    "jobverse",
+    "jobverse.io",
+    *BLOCKED_PUBLISHERS,
+)
 DOMAINS = ("dice.com", "jobverse.io")
 _MIN_WORDS = 80
 _MIN_DISTINCT_WORDS = 60
@@ -18,6 +26,18 @@ _MAX_WORDS = 5000
 _MIN_SIMILARITY = 0.90
 _MIN_SOURCE_COVERAGE = 0.98
 _MIN_OFFICIAL_COVERAGE = 0.70
+
+
+def blocked_publisher_company(company: str | None) -> bool:
+    """Match publishers excluded before persistence, resolution and scoring.
+
+    Args:
+        company: Observed publisher name.
+
+    Returns:
+        Whether the whole name matches a blocked publisher.
+    """
+    return " ".join((company or "").casefold().split()) in BLOCKED_PUBLISHERS
 
 
 def intermediary_values(company: str, url: str, apply_url: str | None = None) -> bool:

@@ -341,3 +341,71 @@ async def test_conflicting_user_decisions_are_not_reported_as_a_match(tmp_path):
         )
     finally:
         await store.close()
+
+
+@pytest.mark.parametrize(
+    "company", [" YARA  AI ", "RemoteHunter", "Remote Hunter", "Torentify"]
+)
+async def test_blocked_publishers_are_not_saved_or_resolved(tmp_path, company):
+    class Source:
+        async def fetch_jobs(self, _config):
+            return [
+                posting(
+                    id=None, company=company, url="https://www.linkedin.com/jobs/view/1"
+                ),
+                official(id=None),
+            ]
+
+    store = SQLiteStore(tmp_path / "blocked.sqlite")
+    await store.connect()
+    resolver = AsyncMock()
+    try:
+        run = await ScanService(store, get_logger(), intermediary=resolver).run(
+            [("jobright", Source(), {})]
+        )
+        assert run.errors == 0
+        assert run.jobs_inserted == 1
+        assert [j.company for j in await store.list_jobs()] == ["Acme"]
+        resolver.resolve.assert_not_awaited()
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("company", ["Yara AI", "RemoteHunter", "Torentify"])
+async def test_blocked_publishers_never_trigger_resolution_search(tmp_path, company):
+    store = SQLiteStore(tmp_path / "blocked-resolver.sqlite")
+    await store.connect()
+    search = AsyncMock(return_value=[])
+    try:
+        await IntermediaryResolver(store, search=search).resolve(
+            [posting(id=None, company=company)], run_id="blocked"
+        )
+        search.assert_not_awaited()
+        assert await store.list_jobs() == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("company", ["Yara AI", "RemoteHunter", "Torentify"])
+async def test_existing_blocked_publishers_are_hidden_and_not_evaluation_candidates(
+    tmp_path, company
+):
+    store = SQLiteStore(tmp_path / "history.sqlite")
+    await store.connect()
+    try:
+        historical = await store.save_job(
+            posting(
+                id=None, company=company, url="https://www.linkedin.com/jobs/view/1"
+            )
+        )
+        direct = await store.save_job(official(id=None))
+        historical_id = await store.resolve_real_job_id(historical.job_id)
+        assert await store.claim_real_job_stage_a_by_ids([historical_id]) == []
+        direct_id = await store.resolve_real_job_id(direct.job_id)
+        assert len(await store.claim_real_job_stage_a_by_ids([direct_id])) == 1
+        page = await store.query_real_jobs_view(decision="results")
+        assert page["total"] == 1
+        assert page["jobs"][0]["company"] == "Acme"
+        assert await store.get_job(historical.job_id) is not None
+    finally:
+        await store.close()

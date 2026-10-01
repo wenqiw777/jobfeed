@@ -49,6 +49,10 @@ def official(**changes):
     [
         {"company": "Haystack", "url": "https://www.linkedin.com/jobs/view/1"},
         {"company": "Jobverse.io"},
+        {"company": " YARA  AI ", "url": "https://www.linkedin.com/jobs/view/1"},
+        {"company": "RemoteHunter", "url": "https://www.linkedin.com/jobs/view/1"},
+        {"company": "Remote Hunter", "url": "https://jobright.ai/jobs/info/1"},
+        {"company": "Torentify", "url": "https://jobright.ai/jobs/info/1"},
         {"company": "Actual Employer"},
         {
             "url": "https://jobright.ai/jobs/info/1",
@@ -114,3 +118,16 @@ def test_official_extra_text_is_allowed_but_short_generic_excerpt_is_not():
     )
     assert matches_official(posting(), official(jd_text=BODY + extra))
     assert not matches_official(posting(jd_text="Acme engineer " * 100), official())
+
+
+@pytest.mark.parametrize(
+    "company",
+    [
+        "Yara International",
+        "Hunter Engineering Company",
+        "Tenstorrent",
+        "Dice Therapeutics",
+    ],
+)
+def test_similar_employer_names_remain_eligible(company):
+    assert not intermediary_posting(official(company=company))

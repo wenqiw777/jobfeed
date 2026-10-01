@@ -9,7 +9,11 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from jobfeed.domain.errors import RunLeaseLostError
-from jobfeed.domain.intermediary import intermediary_posting, matches_official
+from jobfeed.domain.intermediary import (
+    blocked_publisher_company,
+    intermediary_posting,
+    matches_official,
+)
 from jobfeed.domain.models import JobPosting
 from jobfeed.ports.intermediary import IntermediaryStore
 
@@ -49,7 +53,9 @@ class IntermediaryResolver:
         """
         searches = 0
         unique = {
-            (j.platform, j.canonical_id): j for j in jobs if intermediary_posting(j)
+            (j.platform, j.canonical_id): j
+            for j in jobs
+            if intermediary_posting(j) and not blocked_publisher_company(j.company)
         }
         for index, incoming in enumerate(unique.values()):
             ensure_active()

@@ -27,7 +27,17 @@ def source(bridge, store=None, platform="linkedin"):
 
 @pytest.mark.parametrize(
     "company",
-    ["Jobright.ai", "Jobright", "Jobwright", " YARA  AI ", "Jobs via Dice", "DICE"],
+    [
+        "Jobright.ai",
+        "Jobright",
+        "Jobwright",
+        " YARA  AI ",
+        "Jobs via Dice",
+        "DICE",
+        "RemoteHunter",
+        "Remote Hunter",
+        "Torentify",
+    ],
 )
 async def test_blocked_discovery_skips_detail_and_cache_lookup(company):
     bridge, store = AsyncMock(), AsyncMock()

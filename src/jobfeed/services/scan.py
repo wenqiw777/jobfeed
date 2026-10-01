@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from jobfeed.domain.errors import RunLeaseLostError, SourceBusyError
-from jobfeed.domain.intermediary import intermediary_posting
+from jobfeed.domain.intermediary import blocked_publisher_company, intermediary_posting
 from jobfeed.domain.models import JobPosting, PipelineRun, SaveJobResult
 from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
@@ -534,6 +534,8 @@ class ScanService:
         jobs: list[JobPosting] = []
         for posting in postings:
             lease_session.ensure_active()
+            if blocked_publisher_company(posting.company):
+                continue
             result = await session.enrich(posting)
             if result.error is not None:
                 self.logger.error(
@@ -557,6 +559,12 @@ class ScanService:
         *,
         completed: bool = True,
     ) -> None:
+        allowed = [job for job in jobs if not blocked_publisher_company(job.company)]
+        if len(allowed) != len(jobs):
+            self.logger.info(
+                "scan_publishers_blocked", source=name, count=len(jobs) - len(allowed)
+            )
+        jobs = allowed
         self._intermediary_jobs.extend(job for job in jobs if intermediary_posting(job))
         before_inserted = run.jobs_inserted
         before_updated = run.jobs_updated
