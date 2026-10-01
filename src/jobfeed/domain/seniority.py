@@ -13,7 +13,6 @@ from typing import Literal
 
 SeniorityResult = Literal["in_scope", "out_of_scope", "unclear"]
 SCOPE_EXPERIENCE_YEARS = 3
-_NON_INTERNSHIP_REASON = "minimum non-internship experience is at least 3 years"
 
 _YEAR_REQUIREMENT = re.compile(
     r"(?<!\d)(?P<minimum>\d{1,2})\s*(?:\+|[-\u2013]\s*\d{1,2}\+?)?\s+years?"
@@ -85,27 +84,6 @@ _JUNIOR_JD_PATH = re.compile(
     r"\bnew[\s-]?grads?(?:uates?)?\b.{0,55}\b(?:considered|welcome)\b|"
     r"\bentry[\s-]?level\s+experience\b|"
     r"\b0\s*[-\u2013]\s*3\s+years?\s+of\s+(?:\w+\s+){0,3}experience\b",
-    re.IGNORECASE,
-)
-_NON_INTERNSHIP_TAIL = re.compile(
-    r"^\s*(?:of\s+)?non[\s\-\u2011\u2013]+internship\s+"
-    r"(?:(?:[\w/-]+\s+){0,5}|"
-    r"design\s+or\s+architecture\s+(?:\([^)]{0,100}\)\s+)?"
-    r"of\s+new\s+and\s+existing\s+systems\s+)experience\b",
-    re.IGNORECASE,
-)
-_QUALIFICATION_SECTION = re.compile(
-    r"\b(basic|required|minimum|preferred|desired)\s+"
-    r"(?:qualifications?|requirements?)\b",
-    re.IGNORECASE,
-)
-_NON_INTERNSHIP_ALTERNATIVE = re.compile(
-    r"\bor\s+(?:an?\s+)?(?:bachelor'?s?|master'?s?|ph\.?d\.?|degree|diploma)\b|"
-    r"\b(?:any|equivalent)\s+combination\b",
-    re.IGNORECASE,
-)
-_NON_REQUIRED_EXPERIENCE = re.compile(
-    r"\b(?:not\s+required|(?:do|does)\s+not\s+require|no\s+requirement)\b",
     re.IGNORECASE,
 )
 
@@ -243,22 +221,6 @@ def _entry_title_decision(jd_text: str) -> SeniorityDecision:
     )
 
 
-def non_internship_experience_reason(title: str, jd_text: str) -> str | None:
-    """Return only the explicit non-internship block, preserving other policies.
-
-    Args:
-        title: Job title, including any junior or mixed-level band.
-        jd_text: Posting requirements and their alternatives.
-
-    Returns:
-        A reason for an explicit mismatch, otherwise None.
-    """
-    if "internship" not in jd_text.casefold():
-        return None
-    decision = classify_seniority_rule(title, jd_text)
-    return decision.reason if decision.reason == _NON_INTERNSHIP_REASON else None
-
-
 def _junior_or_mts_decision(
     jd_text: str,
     *,
@@ -267,14 +229,6 @@ def _junior_or_mts_decision(
     senior_title: bool,
 ) -> SeniorityDecision | None:
     """Keep explicit junior paths and neutral MTS titles out of model ambiguity."""
-    non_internship_years = _required_non_internship_min(jd_text)
-    if non_internship_years is not None and not _JUNIOR_JD_PATH.search(jd_text):
-        return SeniorityDecision(
-            result="out_of_scope",
-            reason=_NON_INTERNSHIP_REASON,
-            yoe_min=non_internship_years,
-            confidence=1.0,
-        )
     junior_years = (
         required_years is not None and required_years <= SCOPE_EXPERIENCE_YEARS
     )
@@ -326,57 +280,12 @@ def _required_yoe_min(jd_text: str) -> int | None:
     return max(min(item[0] for item in group) for group in groups)
 
 
-def _required_non_internship_min(jd_text: str) -> int | None:
-    """Block explicit non-internship minimums without overriding viable paths."""
-    matches = list(_YEAR_REQUIREMENT.finditer(jd_text))
-    for match in matches:
-        minimum = int(match.group("minimum"))
-        if minimum < SCOPE_EXPERIENCE_YEARS:
-            continue
-        if match.start() and jd_text[match.start() - 1] == ".":
-            continue
-        if not _NON_INTERNSHIP_TAIL.match(jd_text[match.end() :]):
-            continue
-        sections = list(_QUALIFICATION_SECTION.finditer(jd_text[: match.start()]))
-        if sections and sections[-1].group(1).casefold() in {"preferred", "desired"}:
-            continue
-        if not _is_required_experience(
-            jd_text, match, experience_tail=_NON_INTERNSHIP_TAIL, tail_limit=240
-        ):
-            continue
-        before = jd_text[max(0, match.start() - 180) : match.start()]
-        vicinity = before + jd_text[match.start() : match.end() + 240]
-        if _NON_REQUIRED_EXPERIENCE.search(vicinity):
-            continue
-        if _NON_INTERNSHIP_ALTERNATIVE.search(vicinity) or re.search(
-            r"\b(?:degree|diploma)\s*(?:[,;]\s*)?or\s*$", before, re.IGNORECASE
-        ):
-            continue
-        # Adjacent OR experience routes must not become independent requirements.
-        if any(
-            re.search(r"\bor\s*$", jd_text[left.end() : right.start()], re.IGNORECASE)
-            # Domain import policy excludes itertools.
-            for left, right in zip(matches, matches[1:], strict=False)  # noqa: RUF007
-            if (left is match or right is match)
-            and right.start() - left.end() <= _MAX_ALTERNATIVE_GAP
-        ):
-            continue
-        return minimum
-    return None
-
-
-def _is_required_experience(
-    jd_text: str,
-    match: re.Match[str],
-    *,
-    experience_tail: re.Pattern[str] | None = None,
-    tail_limit: int = 90,
-) -> bool:
+def _is_required_experience(jd_text: str, match: re.Match[str]) -> bool:
     context = jd_text[max(0, match.start() - 120) : match.start()]
     if re.search(r"\bup\s+to\s*$", context, re.IGNORECASE):
         return False
-    tail = jd_text[match.end() : min(len(jd_text), match.end() + tail_limit)]
-    if not ((experience_tail or _YOE_TAIL).match(tail) or _DEGREE_TAIL.match(tail)):
+    tail = jd_text[match.end() : min(len(jd_text), match.end() + 90)]
+    if not (_YOE_TAIL.match(tail) or _DEGREE_TAIL.match(tail)):
         return False
     sentence_start = (
         max(
@@ -428,5 +337,4 @@ __all__ = [
     "SeniorityInput",
     "SeniorityResult",
     "classify_seniority_rule",
-    "non_internship_experience_reason",
 ]

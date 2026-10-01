@@ -10,7 +10,6 @@ from jobfeed.domain.errors import RunLeaseLostError, ScoringParseError
 from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.models import JobPosting, LLMRequest, PipelineRun, StageBResult
 from jobfeed.domain.scoring_parse import parse_stage_b_response
-from jobfeed.domain.seniority import non_internship_experience_reason
 from jobfeed.ports.llm import LLMClient
 from jobfeed.ports.prompts import PromptBundle
 from jobfeed.services._evaluate_claims import (
@@ -174,13 +173,6 @@ async def _score_stage_b(  # noqa: PLR0913 - scorer inputs plus lease guard
             job_id=job_id,
             stage="b",
         )
-        return "skipped"
-    if (
-        service._config.seniority_gate_mode == "filter"
-        and non_internship_experience_reason(job.title, job.jd_text or "")
-    ):
-        run.jobs_seniority_filtered += 1
-        await release_stage_b_for_run(service._deps.store, job_id)
         return "skipped"
     bundle = service._deps.prompt_renderer.render_stage_b(
         resume_text=service._config.resume_text,

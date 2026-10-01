@@ -22,7 +22,6 @@ from jobfeed.domain.models import (
 from jobfeed.domain.real_job_evaluation import RealJobEvaluationInput
 from jobfeed.domain.scoring_parse import parse_stage_a_response, parse_stage_b_response
 from jobfeed.domain.scoring_response_schema import stage_b_response_schema
-from jobfeed.domain.seniority import non_internship_experience_reason
 from jobfeed.ports.ml_gate import GateInput
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_canonical import CanonicalEvaluationStore
@@ -299,12 +298,6 @@ def _append_preview_page(  # noqa: PLR0913 - preview decision facts
             continue
         if ai_data_work_reason(item.job.title, item.job.company):
             run.jobs_filtered += 1
-            continue
-        if (
-            policy.config.seniority_gate_mode == "filter"
-            and non_internship_experience_reason(item.job.title, item.job.jd_text or "")
-        ):
-            run.jobs_seniority_filtered += 1
             continue
         if (
             target_stage == "a"
@@ -801,21 +794,6 @@ async def _score_stage_b_claims(
                 session.ensure_active()
                 if ai_data_work_reason(item.job.title, item.job.company):
                     run.jobs_filtered += 1
-                    await cast(
-                        CanonicalEvaluationStore, store
-                    ).release_real_job_stage_b_claim(
-                        item.real_job_id,
-                        expected_revision=item.input_revision,
-                        expected_generation=item.claim_generation,
-                    )
-                    return
-                if (
-                    policy.config.seniority_gate_mode == "filter"
-                    and non_internship_experience_reason(
-                        item.job.title, item.job.jd_text or ""
-                    )
-                ):
-                    run.jobs_seniority_filtered += 1
                     await cast(
                         CanonicalEvaluationStore, store
                     ).release_real_job_stage_b_claim(
