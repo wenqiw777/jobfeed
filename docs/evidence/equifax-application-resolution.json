@@ -1,0 +1,22 @@
+{
+  "source_count": 3,
+  "parents_before": 2,
+  "parents_after": 1,
+  "workday_identifiers": [
+    [
+      "workday",
+      "",
+      "J00179159"
+    ],
+    [
+      "workday",
+      "equifax",
+      "J00179159"
+    ]
+  ],
+  "source_urls_and_jds_preserved": true,
+  "outcomes": "all_resolved",
+  "chrome_snapshot_projection_reads": 2,
+  "browser_observed_apply": "https://equifax.wd5.myworkdayjobs.com/External/job/USA---Georgia---Alpharetta---30005/Generative-AI-Engineer_J00179159/apply?source=Applied_LinkedIn",
+  "mode": "real Chrome extension DOM capture; public live HTTP/CXS; isolated SQLite; no production DB write"
+}

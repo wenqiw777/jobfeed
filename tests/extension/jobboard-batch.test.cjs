@@ -37,6 +37,17 @@ test('a recommendation Apply link inside Primary content cannot become the curre
  const doc=parser.parseFromString('<section aria-label="Primary content"><h1>Engineer</h1><section aria-label="Recommended jobs"><h2>Recommended jobs</h2><a class="jobs-apply-button" href="https://jobs.lever.co/other/2">Apply</a></section></section>','text/html');
  assert.equal(board.linkedInPostingEvidence(doc,'https://www.linkedin.com/jobs/view/1/').applyUrl,null);
 });
+test('observed LinkedIn SDUI Apply control decodes the safety redirect and ignores recommendations',async()=>{
+ const {Window}=await import('../../web-ui/node_modules/happy-dom/lib/index.js');
+ const board=require('../../extensions/jobright-source/jobboard-batch.js');
+ const parser=new (new Window().DOMParser)();
+ const destination='https://careers.equifax.com/en/jobs/j00179159/generative-ai-engineer/?source=Applied_LinkedIn';
+ const anchor=`<a aria-label="Apply on company website" href="https://www.linkedin.com/safety/go/?url=${encodeURIComponent(destination)}">Apply</a>`;
+ const doc=parser.parseFromString(`<section aria-label="Primary content"><h1>Generative AI Engineer</h1>${anchor}<section aria-label="Recommended jobs">${anchor.replace('j00179159','j00178092')}</section></section>`,'text/html');
+ assert.equal(board.linkedInPostingEvidence(doc,'https://www.linkedin.com/jobs/view/4473979895/').applyUrl,destination);
+ const recommendation=parser.parseFromString(`<section aria-label="Primary content"><section aria-label="Recommended jobs">${anchor}</section></section>`,'text/html');
+ assert.equal(board.linkedInPostingEvidence(recommendation,'https://www.linkedin.com/jobs/view/4473979895/').applyUrl,null);
+});
 test('LinkedIn detail workers are bounded and report completed jobs before a slow peer',async()=>{
  let active=0,peak=0;const updates=[];
  const result=await scan({source:'linkedin',maxJobs:6,pacingMs:0,discoveredRows:Array.from({length:6},(_,i)=>({id:String(i)}))},async url=>{

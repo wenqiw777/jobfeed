@@ -14,6 +14,24 @@ from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.ports.source import StoredEnrichment
 
 SEARCH_URL = "https://www.linkedin.com/jobs/search/?keywords=swe"
+
+
+async def test_live_sdui_apply_control_decodes_observed_safety_destination(monkeypatch):
+    async def read(_page, selectors, _attribute, **_kwargs):
+        if any("Apply on company website" in selector for selector in selectors):
+            return (
+                "https://www.linkedin.com/safety/go/"
+                "?url=https%3A%2F%2Fcareers.equifax.com%2Fen%2Fjobs%2Fj00179159%2F"
+            )
+        return None
+
+    monkeypatch.setattr(enrich_module, "read_first_attr", read)
+    assert (
+        await enrich_module._read_apply_url(object())
+        == "https://careers.equifax.com/en/jobs/j00179159/"
+    )
+
+
 # Long enough (>500 chars) to assess as GOOD so tier1 short-circuits enrich().
 GOOD_JD = (
     "We build job-search infrastructure with async Python, structured source "

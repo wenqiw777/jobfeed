@@ -1,7 +1,8 @@
 # Resolve application links to canonical ATS identities
 
-Status: local implementation and regression verification complete in the isolated
-`codex/application-route-dedup` worktree. Live Chrome coverage remains unverified.
+Status: local implementation, regression verification, and live Equifax route
+verification complete in the isolated `codex/application-route-dedup` worktree.
+The installed Jobfeed worker still runs the previous version; see live scope below.
 No live data changed or shipping performed.
 
 ## Outcome and current evidence
@@ -243,9 +244,13 @@ a route or silently widening the browser actions.
   identity transactions, scan overlap, and enrichment wiring.
 - Verified: red/green fixtures, SQLite/PostgreSQL test-database checks, and final
   regression, recovery, cancellation, and quality checks below.
-- Pending external verification: actual signed-in LinkedIn response contract and
-  rendered Chrome routes. No callable Chrome Extension browser connector is
-  exposed in this task; no Computer Use or DevTools substitute was used.
+- Verified live: signed-in LinkedIn DOM Apply contract and the Equifax rendered
+  Chrome route, using the actual Chrome extension browser provider. The unified
+  browser API exposed that provider; the earlier claim that no callable extension
+  connection existed was incorrect. No DevTools was used.
+- Pending: active Voyager API response-field observation and a live run of the
+  installed Jobfeed application-resolution worker; its current capabilities do
+  not advertise application-resolution. No broad source scan was started.
 - Deferred: historical coverage inventory and any historical repair. Missing
   Apply fields alone are not counted as confirmed missed duplicates.
 - Unmeasured: number of historical duplicate jobs affected.
@@ -295,3 +300,34 @@ a route or silently widening the browser actions.
   evidence and does not prove the linked Equifax job resolves end to end.
 - Live production DB writes, scan runs, browser reload, push, and deployment were
   not performed.
+
+## Live verification follow-up, 2026-10-01
+
+- Actual signed-in LinkedIn job 4473979895 exposes the native control
+  `a[aria-label="Apply on company website"]`. Its observed `/safety/go/` URL
+  contains the exact Equifax careers destination. Original selectors and redirect
+  decoding missed this SDUI case. Failing then passing tests now cover the
+  extension metadata parser, guest parser, and session enrichment path; recommended
+  links remain excluded. Both parsers also passed against the actual captured DOM.
+- The real Equifax Chrome page exposes `#js-apply-external` in `.job-sidebar`,
+  pointing to Workday J00179159 `/apply?source=Applied_LinkedIn`. The same bounded
+  public HTTP page still omits this anchor, so browser observation is required.
+- Live Workday confirms title Generative AI Engineer and requisition J00179159.
+  Following its Apply path into CXS returned HTTP422 because `/apply` is an action,
+  not the job detail API path. The actual corresponding job detail CXS endpoint
+  returned HTTP200 and confirmed the same title, JD and requisition. Added two
+  failing then passing suffix regressions; the resolver strips only the Workday
+  action suffix for its detail request and retains the original observed URL.
+- Verification ran the new production resolver and asynchronous identity queue
+  with captured public Chrome job facts, actual live HTTP/CXS, and a disposable
+  SQLite database. The Chrome reader input is a projection of captured JSON-LD,
+  header and sidebar, not an installed Jobfeed-worker snapshot. Three source rows
+  produced two parents before resolution, one afterwards; all original URLs,
+  Apply URLs and JD strings remained unchanged. All three outcomes resolved.
+  Direct SQL confirmed the durable Workday J00179159 identifier.
+- Evidence: [public verification report](evidence/equifax-application-resolution.json).
+  No private LinkedIn DOM/profile data is committed. Related regression checks:
+  127 Python tests passed; all 111 extension tests passed; Ruff/format/mypy passed.
+- This proves the reported Equifax route and canonical merge in new code. It
+  does not claim the running production service has loaded the new extension or
+  that the dedicated three-tab worker pool has been exercised live after reload.

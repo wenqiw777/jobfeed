@@ -20,7 +20,7 @@ var JobboardBatch = (() => {
   function linkedInPostingEvidence(doc,url) {
     // Page ownership and repost interpretation use the shared backend extractor.
     const scope = doc.querySelector('section[aria-label="Primary content"]');
-    const links = [...(scope || doc).querySelectorAll('a.jobs-apply-button[href],a.jobs-s-apply[href]')].filter(node => {
+    const links = [...(scope || doc).querySelectorAll('a.jobs-apply-button[href],a.jobs-s-apply[href],a[aria-label="Apply on company website"][href]')].filter(node => {
       for(let ancestor=node;ancestor&&ancestor!==scope;ancestor=ancestor.parentElement){
         const label=(ancestor.getAttribute('aria-label')||'')+' '+(ancestor.className||'');
         const heading=ancestor.querySelector?.('h1,h2,h3')?.textContent||'';
@@ -36,7 +36,13 @@ var JobboardBatch = (() => {
   function externalApplicationURL(value) {
     if (typeof value !== 'string') return null;
     try {
-      const url = new URL(value);
+      let url = new URL(value);
+      if (url.hostname === 'linkedin.com' || url.hostname.endsWith('.linkedin.com')) {
+        if (!['/safety/go/','/jobs/view/externalApply','/redir/redirect'].includes(url.pathname)) return null;
+        const destinations = url.searchParams.getAll('url');
+        if (destinations.length !== 1) return null;
+        url = new URL(destinations[0]);
+      }
       return ['http:','https:'].includes(url.protocol) && !url.username && !url.password &&
         url.hostname !== 'linkedin.com' && !url.hostname.endsWith('.linkedin.com') ? url.href : null;
     } catch {return null;}

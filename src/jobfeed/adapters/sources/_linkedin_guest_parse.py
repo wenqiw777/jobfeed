@@ -113,9 +113,21 @@ def parse_apply_url(html: str) -> str | None:
     urls = set()
     for link in soup.select(
         "a.apply-button[href], a[data-tracking-control-name*='apply'][href], "
-        "a[href*='/jobs/view/externalApply']"
+        "a[href*='/jobs/view/externalApply'], "
+        "section[aria-label='Primary content'] "
+        "a[aria-label='Apply on company website'][href]"
     ):
         if link.find_parent(class_=["base-search-card", "base-card", "similar-jobs"]):
+            continue
+        if any(
+            re.search(
+                r"recommend|similar.jobs|related.jobs|other.jobs",
+                str(parent.get("aria-label", "")),
+                re.I,
+            )
+            for parent in link.parents
+            if isinstance(parent, Tag)
+        ):
             continue
         try:
             href = _external_apply_href(str(link.get("href") or "").strip())
@@ -132,7 +144,11 @@ def _external_apply_href(href: str) -> str | None:
     host = (parts.hostname or "").lower()
     if host == "linkedin.com" or host.endswith(".linkedin.com"):
         targets = parse_qs(parts.query).get("url", [])
-        if parts.path not in {"/jobs/view/externalApply", "/redir/redirect"}:
+        if parts.path not in {
+            "/jobs/view/externalApply",
+            "/redir/redirect",
+            "/safety/go/",
+        }:
             return None
         if len(targets) != 1:
             return None

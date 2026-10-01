@@ -14,6 +14,7 @@ from jobfeed.ports.source import DiscoverResult, EnrichmentLookup, EnrichResult
 
 from ._linkedin_discover import discover_linkedin_jobs
 from ._linkedin_dom import human_delay, read_first_attr, read_job_description
+from ._linkedin_guest_parse import _external_apply_href
 
 Sleeper = Callable[[float], Awaitable[None]]
 _GOOD_RANK = quality_rank(QualityBand.GOOD)
@@ -169,19 +170,22 @@ async def _read_apply_url(page: Any) -> str | None:
     """Read a displayed external href without clicking or submitting Apply."""
     href = await read_first_attr(
         page,
-        ("a.jobs-apply-button[href]", "a.jobs-s-apply[href]"),
+        (
+            "a.jobs-apply-button[href]",
+            "a.jobs-s-apply[href]",
+            'section[aria-label="Primary content"] '
+            'a[aria-label="Apply on company website"][href]'
+            ':not([aria-label="Recommended jobs"] a)',
+        ),
         "href",
         timeout_ms=250,
     )
     if not href:
         return None
-    parsed = urlsplit(href)
-    if parsed.scheme not in {"http", "https"}:
+    try:
+        return _external_apply_href(href)
+    except ValueError:
         return None
-    host = (parsed.hostname or "").lower()
-    if host == "linkedin.com" or host.endswith(".linkedin.com"):
-        return None
-    return href
 
 
 def _with_current_job(search_url: str, job_id: str) -> str:

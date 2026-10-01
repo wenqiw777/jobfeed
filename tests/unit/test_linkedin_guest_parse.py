@@ -22,6 +22,26 @@ from jobfeed.adapters.sources._linkedin_guest_parse import (
 )
 
 _NOW = datetime(2026, 6, 10, 12, 0, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("recommended", [False, True])
+def test_observed_sdui_native_apply_redirect(recommended):
+    destination = "https://careers.equifax.com/en/jobs/j00179159/"
+    anchor = (
+        '<a aria-label="Apply on company website" '
+        'href="https://www.linkedin.com/safety/go/'
+        '?url=https%3A%2F%2Fcareers.equifax.com%2Fen%2Fjobs%2Fj00179159%2F">'
+        "Apply</a>"
+    )
+    content = (
+        f'<section aria-label="Recommended jobs">{anchor}</section>'
+        if recommended
+        else anchor
+    )
+    html = f'<section aria-label="Primary content">{content}</section>'
+    assert parse_apply_url(html) == (None if recommended else destination)
+
+
 _THREE_CARDS = 3
 
 
