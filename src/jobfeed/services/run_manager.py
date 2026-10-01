@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from jobfeed.domain.errors import RunConflictError, RunLeaseLostError
 from jobfeed.domain.models import PipelineRun
-from jobfeed.ports.run_leases import RecoverableRunLeaseStore, RunLeaseStore
+from jobfeed.ports.run_leases import (
+    ApplicationBackfillStopStore,
+    BackfillStopReason,
+    RecoverableRunLeaseStore,
+    RunLeaseStore,
+)
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
 from jobfeed.services.run_tracking import ActiveRun, RunProgressBroker
 from jobfeed.services.scan import SourceSpec, run_source_name
@@ -54,7 +59,9 @@ def _track_setup(
         setup = asyncio.get_running_loop().create_future()
         self._setup_tasks.add(setup)
         try:
-            return await method(self, *args, **kwargs)
+            async with self._admission_lock:
+                self._require_running()
+                return await method(self, *args, **kwargs)
         finally:
             setup.set_result(None)
             self._setup_tasks.discard(setup)
@@ -65,8 +72,8 @@ def _track_setup(
 class RunManager:
     """Async task lifecycle manager for web-triggered pipeline runs.
 
-    Uses asyncio.Lock per run type (scan / evaluate) acquired eagerly so
-    a second concurrent trigger raises RunConflictError immediately.
+    Serializes admissions and retains one lock per run type. Normal work
+    awaits historical backfill cleanup before acquiring its own ownership.
     """
 
     def __init__(  # noqa: PLR0913 - factories plus shared lease orchestration
@@ -93,6 +100,7 @@ class RunManager:
         )
         self._scan_lock = asyncio.Lock()
         self._eval_lock = asyncio.Lock()
+        self._admission_lock = asyncio.Lock()
         self._active: dict[str, ActiveRun] = {}
         self._progress = RunProgressBroker(RUN_DONE)
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -120,6 +128,7 @@ class RunManager:
         Raises: RunConflictError if a scan is already running.
         """
         self._require_running()
+        await self._preempt_application_backfill(self._scan_lock, "scan")
         self._require_unlocked(self._scan_lock, "scan")
         await self._scan_lock.acquire()
         stack = contextlib.AsyncExitStack()
@@ -191,10 +200,11 @@ class RunManager:
             A stoppable run ID, without source scans or post-scan enrichment.
 
         Raises:
-            RunConflictError: If a scan is active or the manager is shutting down.
+            RunConflictError: If scan/evaluate is active or shutdown has begun.
         """
         self._require_running()
         self._require_unlocked(self._scan_lock, "scan")
+        self._require_unlocked(self._eval_lock, "evaluation")
         await self._scan_lock.acquire()
         session = None
         try:
@@ -232,6 +242,7 @@ class RunManager:
         """
         self._require_running()
         self._require_unlocked(self._eval_lock, "evaluation")
+        await self._preempt_application_backfill(self._eval_lock, "evaluation")
         await self._eval_lock.acquire()
         run: PipelineRun | None = None
         session: RunLeaseSession | None = None
@@ -342,10 +353,38 @@ class RunManager:
                     if stack is not None:
                         await stack.aclose()
                 finally:
-                    self._finish_tracking(session.run)
-                    lock.release()
+                    try:
+                        await self._persist_backfill_stop_reason(session.run)
+                    finally:
+                        self._finish_tracking(session.run)
+                        lock.release()
         if lease_lost and session.kind == "scan":
             await self.recover_stale_runs()
+
+    async def _persist_backfill_stop_reason(self, run: PipelineRun) -> None:
+        """Correct late cancellation before publishing released local ownership.
+
+        Args:
+            run: Finalized owned run whose reason can change during commit.
+
+        Returns:
+            After the optional conditional correction; ordinary runs are unchanged.
+        """
+        if (
+            run.source == "application-backfill"
+            and run.status == "failed"
+            and run.failure_code in {"user_stopped", "interrupted"}
+            and isinstance(self._store, ApplicationBackfillStopStore)
+        ):
+            reason = cast(BackfillStopReason, run.failure_code)
+            await self._store.override_application_backfill_stop(
+                run.run_id, failure_code=reason
+            )
+            # A user Stop arriving during shutdown correction takes precedence.
+            if reason == "interrupted" and run.failure_code == "user_stopped":
+                await self._store.override_application_backfill_stop(
+                    run.run_id, failure_code="user_stopped"
+                )
 
     async def _execute_unpersisted_run(
         self,
@@ -406,16 +445,77 @@ class RunManager:
         if self._shutting_down:
             raise RunConflictError("Run manager is shutting down")
 
+    async def _preempt_application_backfill(
+        self, foreground_lock: asyncio.Lock, label: str
+    ) -> None:
+        """Await one historical task's complete finalization before admission.
+
+        Args:
+            foreground_lock: Ordinary foreground run's existing ownership lock.
+            label: Conflict label when ordinary work already owns that lock.
+
+        Returns:
+            After backfill cleanup, checkpoints, and durable lease release.
+        """
+        backfill = next(
+            (
+                run
+                for run in self._active.values()
+                if run.source == "application-backfill"
+            ),
+            None,
+        )
+        if backfill is None:
+            self._require_unlocked(foreground_lock, label)
+            return
+        task = self._tasks.get(backfill.run_id)
+        if task is None:
+            raise RunConflictError("Application backfill is still starting")
+        # Newly registered tasks must enter their finalize/finally scopes.
+        await asyncio.sleep(0)
+        if not task.done() and not task.cancelling():
+            task.cancel("foreground_priority")
+        # A cancelled foreground caller must not cancel historical cleanup again.
+        result = (await asyncio.shield(asyncio.gather(task, return_exceptions=True)))[0]
+        if isinstance(result, Exception):
+            raise result
+        self._require_running()
+
+    def _mark_cancel_reason(self, run_id: str, *, shutdown: bool) -> None:
+        """Preserve an explicit Stop/shutdown while priority cleanup is pending.
+
+        Args:
+            run_id: Locally owned run to mark.
+            shutdown: Whether the process is ending instead of a user Stop.
+
+        Returns:
+            None; the existing finalizer persists the failure fields.
+        """
+        active = self._active.get(run_id)
+        if active is not None and (
+            not shutdown or active.run.failure_code != "user_stopped"
+        ):
+            active.run.failure_code = "interrupted" if shutdown else "user_stopped"
+            active.run.failure_message = (
+                "Run interrupted by service shutdown"
+                if shutdown
+                else "Run stopped by user"
+            )
+
     async def shutdown(self) -> None:
         """Stop scheduling and await owned work before the store is closed."""
         self._shutting_down = True
+        for run_id in list(self._tasks):
+            self._mark_cancel_reason(run_id, shutdown=True)
         if self._setup_tasks:
             await asyncio.gather(*list(self._setup_tasks), return_exceptions=True)
         tasks = list(self._tasks.values())
+        for run_id in list(self._tasks):
+            self._mark_cancel_reason(run_id, shutdown=True)
         # Let newly registered coroutines enter their cleanup/finalize scope.
         await asyncio.sleep(0)
         for task in tasks:
-            if not task.done():
+            if not task.done() and not task.cancelling():
                 task.cancel("service_shutdown")
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -531,9 +631,12 @@ class RunManager:
         """
         task = self._tasks.get(run_id)
         if task is not None:
-            task.cancel()
+            self._mark_cancel_reason(run_id, shutdown=False)
+            await asyncio.sleep(0)
+            if not task.done() and not task.cancelling():
+                task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
+                await asyncio.shield(task)
             return True
         if isinstance(self._store, RecoverableRunLeaseStore):
             return await self._store.stop_pipeline_run(run_id, now=datetime.now(UTC))

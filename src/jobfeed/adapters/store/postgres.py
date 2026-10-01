@@ -4430,6 +4430,41 @@ class PostgresStore(
             )
         return [str(row["job_id"]) for row in rows]
 
+    async def override_application_backfill_stop(
+        self, run_id: str, *, failure_code: str
+    ) -> bool:
+        """Correct a late explicit cancellation without touching lease ownership.
+
+        Args:
+            run_id: Exact finalized historical attempt identity.
+            failure_code: Explicit user Stop or shutdown reason.
+
+        Returns:
+            True for a failed historical priority row, or a user Stop overriding
+            its interrupted reason; shutdown cannot override a user Stop.
+
+        Raises:
+            ValueError: If the explicit reason is neither Stop nor shutdown.
+        """
+        if failure_code not in {"user_stopped", "interrupted"}:
+            raise ValueError("Invalid explicit backfill stop reason")
+        message = (
+            "Run stopped by user"
+            if failure_code == "user_stopped"
+            else "Run interrupted by service shutdown"
+        )
+        async with self._get_pool().acquire() as connection:
+            result = await connection.execute(
+                """UPDATE pipeline_runs SET failure_code=$1, failure_message=$2
+                   WHERE run_id=$3 AND source='application-backfill'
+                     AND status='failed' AND (failure_code='foreground_priority'
+                       OR ($1='user_stopped' AND failure_code='interrupted'))""",
+                failure_code,
+                message,
+                run_id,
+            )
+        return bool(result == "UPDATE 1")
+
     async def update_pipeline_run_status(
         self,
         run: PipelineRun,

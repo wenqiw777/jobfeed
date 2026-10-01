@@ -512,3 +512,125 @@ WebSocket handshake. Mini must advertise that loaded capability before restart.
 
 Release and live ten-route verification are pending. The replacement run uses
 days=30 and reuses committed receipts; it does not trigger paid evaluation.
+
+Mini deployed 26d3579 after checking its prior HEAD and clean tracked files;
+existing publisher-filter changes are retained. Main remains unmerged. API,
+SQLite and Redis health checks pass. At deployment the connected extension
+still advertises only the old three-reader capability, so no replacement run
+has started. A one-off detached continuation (PID 54688, PPID 1) waits for
+application-resolution-10 before POSTing exactly {"days":30}. The user has been
+asked to reload installed extension 0.8.5; this is a technical dependency.
+
+New online before.sqlite backup in application-backfill-recent30-20261001
+contains 153,485 sources and 147,238 source-linked parents; quick_check=ok.
+The continuation will start a separate read-only final content verifier for
+the exact new run, and will not restart stopped or failed runs. Its scope,
+run ID, progress and verification are recorded in that same artifact folder.
+Independent review found no release blockers (85 Python checks and nine
+extension checks). CI 36915415485 for deployed 26d3579 completed successfully:
+changes, quality-gate and browser-tests all passed. The loaded ten-reader
+extension and replacement backfill remain pending the user's Mini reload.
+
+The user then reloaded Mini's extension. The live bridge now advertises
+application-resolution-10, and the detached continuation automatically launched
+run 39e91849-89c2-4456-9a34-2b694152f59e with exactly {"days":30} at
+2026-10-01T19:45:00Z (15:45 America/Detroit). The launch snapshot contains 37,263
+eligible sources. At 19:45:19Z, live counters report 3,126 processed (680 resolved,
+2,145 unresolved, 115 ambiguous, 3 blocked, 183 failed), LLM cost zero. The fast
+initial progress reuses receipts from the stopped run; it is not newly fetched
+page throughput and resolved outcomes are not merge counts. Health is OK.
+The separate final read-only verifier is running for this exact replacement run.
+Backfill completion and its final DB content comparison remain pending.
+
+Read-only error/speed diagnosis requested by the user: at 19:58:37Z (15:58
+America/Detroit), processed=3,846/37,263 with 3,846 durable receipts. Of 223
+counted errors, 185 reuse pre-run checked_at receipts and 38 are current-run
+outcomes. Current-run reasons: chrome_parse_failed=24, http_status=7,
+chrome_time_budget=5, non_public_destination=2. The latter two observed links
+are javascript: CareerSite.Apply workflow links, rejected by the public HTTP
+URL guard. Fresh read-only requests for the seven HTTP-status examples returned
+five 410 responses and two 404 responses; no evidence of 429 in those probes.
+The receipt currently loses the numeric HTTP status and browser error message,
+so the historical 94 HTTP-status and 111 browser-parse errors cannot all be
+attributed more precisely without additional evidence. No production changes
+or negative-cache expiration were performed during diagnosis.
+
+From 19:56:03Z to 19:58:37Z, 104 additional non-reused outcomes committed in
+154.95 seconds: 40.27/minute. Excluding 3,234 reused receipts, 612 new outcomes
+over 13.63 minutes average 44.91/minute. Initial cache-inclusive progress is not
+fetch throughput. Remaining 33,417 at these rates implies roughly 12-14 hours
+only if the subsequent source mix and latency stay similar. Evidence is saved
+in diagnostic-snapshot.json and diagnostic-speed-report.json in the recent30
+artifact folder. Browser code still reads twelve hydration snapshots separated
+by eleven 500ms waits and spaces same-host tab starts by one second; this can
+constrain throughput independently of Mini CPU load. Their precise contribution
+to elapsed time has not been instrumented.
+
+## Foreground scheduling priority correction
+
+The user identified that a 12-hour historical run would block scheduled work.
+The recent30 run was immediately stopped; active runs are now empty and its
+completed commits remain. The original implementation incorrectly gave
+historical backfill the scan lock for the entire backlog, while Mini's scheduler
+skips a complete scan/evaluate cycle whenever any active run is present.
+
+Visible assumption: normal scan and evaluate have priority over historical
+backfill. Keep the existing scan lease and atomic stale-write protections; do
+not introduce a new lease kind or let canonical merging race active evaluation.
+Backfill must finish cancellation/fenced finalization before a foreground task
+starts. Concurrent admissions must not double-cancel cleanup or allow backfill
+to reacquire the lock between foreground preemption and admission.
+
+Acceptance: scan/evaluate triggers preempt only application-backfill, ordinary
+same-kind conflicts still reject, backfill admission rejects active evaluation,
+manual Stop/shutdown never restart work. Only foreground-priority preemption
+may resume this authorized one-off backlog after normal work is inactive.
+Mini's scheduled script ignores backfill in its initial active-work check so it
+actually reaches foreground admission; other active work still skips as before.
+No new paid run is launched solely to verify this behavior. Evidence: test-first
+manager/SQLite cancellation and durable lease tests, scheduler injected-call
+tests, live DB/health checks, CI and read-only Mini scheduler admission probe.
+
+This bounded priority repair takes precedence over further speed optimization.
+The existing fixed hydration delay is retained until an early-readiness check
+can prove current-job ownership and preserve delayed Apply coverage.
+
+Stopped-run live verification at 20:05Z: 4,095 committed outcomes; 153,485
+sources retained; zero changes to original source fields except parent and
+zero missing/changed/new source evaluations. Thirty-three sources relinked and
+32 fewer source-linked parents versus the recent30 baseline (147,238→147,206).
+quick_check=ok; scan and evaluate lease owner/run_id are both NULL. Mini's
+scheduler log confirms the 15:00 local cycle was skipped as active work.
+
+Scheduler RED: three backfill-at-admission cases incorrectly skipped. GREEN:
+16 checks preserve the exact scan/evaluate payloads, skip ordinary active work,
+never score after failed scan, and never retry ambiguous paid POSTs.
+The one-off idle runner waits for the existing scheduled-cycle file lock and
+API inactivity, then runs days=30. Only explicit foreground_priority interruption
+resumes; user Stop, shutdown and runtime/ambiguous errors terminate. Ten runner
+checks pass, including the real fcntl lock probe and independent JSON output.
+
+Real SQLite tests additionally show committed receipts and source/evaluation
+fields retained, the old scan lease finalized before normal scan/evaluate starts,
+and canceled pending outcomes never commit after foreground admission.
+
+Combined verification before review: 112 targeted unit/integration/web checks
+passed in 2.59 seconds; changed-file Ruff/format, mypy and diff checks passed.
+Independent review found a late explicit Stop/shutdown race after the terminal
+SQL UPDATE had bound foreground_priority, before transaction completion. A real
+temporary SQLite reproduction returned stop=True with the wrong durable reason.
+The four SQLite UPDATE/commit-window regressions failed before the correction.
+A fifth regression proved manual Stop must also override shutdown during the
+correction write itself. The final correction runs before tracking/lock release,
+conditionally updates only failed historical priority rows, and lets user Stop
+override interrupted but never the reverse. It never mutates lease ownership.
+All 83 related manager/orchestration/backfill/SQLite lease checks now pass,
+including twelve late-stop/conditional-boundary checks. Ruff/format, mypy for
+the five affected production files, and eighteen hygiene checks pass.
+The idle continuation must also re-read the previous exact priority attempt
+after becoming idle, before restarting, because it may have observed the old
+reason while finalization was still running. Two late Stop/shutdown runner
+regressions failed before this repair; all twelve runner checks and sixteen
+scheduler checks now pass. A final combined run passes 136 tests in 4.11 seconds,
+including the existing SQLite lease suite. Ruff/format checks pass for thirteen
+changed code/test files. No production scan/evaluate was launched for testing.

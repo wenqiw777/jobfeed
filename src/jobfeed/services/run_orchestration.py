@@ -354,13 +354,26 @@ _SECRET = re.compile(r"(?i)(authorization|api[_-]?key|token|password)(\s*[:=]\s*
 def _record_failure(session: RunLeaseSession, exc: BaseException) -> None:
     run = session.run
     if isinstance(exc, asyncio.CancelledError):
-        shutting_down = exc.args == ("service_shutdown",)
-        run.failure_code = "interrupted" if shutting_down else "user_stopped"
-        run.failure_message = (
-            "Run interrupted by service shutdown"
-            if shutting_down
-            else "Run stopped by user"
-        )
+        if run.failure_code not in {"user_stopped", "interrupted"}:
+            reasons = {
+                "service_shutdown": (
+                    "interrupted",
+                    "Run interrupted by service shutdown",
+                ),
+                "foreground_priority": (
+                    "foreground_priority",
+                    "Historical work yielded to a foreground run",
+                ),
+            }
+            reason = (
+                exc.args[0]
+                if len(exc.args) == 1 and isinstance(exc.args[0], str)
+                else ""
+            )
+            run.failure_code, run.failure_message = reasons.get(
+                reason,
+                ("user_stopped", "Run stopped by user"),
+            )
     elif isinstance(exc, RunLeaseLostError):
         run.failure_code = "interrupted"
         run.failure_message = "Run interrupted after its worker stopped responding"

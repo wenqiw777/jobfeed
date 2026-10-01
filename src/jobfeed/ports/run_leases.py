@@ -9,6 +9,26 @@ from typing import Literal, Protocol, runtime_checkable
 from jobfeed.domain.models import PipelineRun
 
 RunKind = Literal["scan", "evaluate"]
+BackfillStopReason = Literal["user_stopped", "interrupted"]
+
+
+@runtime_checkable
+class ApplicationBackfillStopStore(Protocol):
+    """Optional correction after an owned priority finalizer has committed."""
+
+    async def override_application_backfill_stop(
+        self, run_id: str, *, failure_code: BackfillStopReason
+    ) -> bool:
+        """Replace a failed historical priority reason, preserving user priority.
+
+        Args:
+            run_id: Exact finalized historical attempt identity.
+            failure_code: Explicit user Stop or service shutdown reason.
+
+        Returns:
+            True if that failed priority row changed; leases stay unchanged.
+        """
+        ...
 
 
 @dataclass(frozen=True)
@@ -157,4 +177,11 @@ class RecoverableRunLeaseStore(Protocol):
         ...
 
 
-__all__ = ["RecoverableRunLeaseStore", "RecoveredRun", "RunKind", "RunLeaseStore"]
+__all__ = [
+    "ApplicationBackfillStopStore",
+    "BackfillStopReason",
+    "RecoverableRunLeaseStore",
+    "RecoveredRun",
+    "RunKind",
+    "RunLeaseStore",
+]

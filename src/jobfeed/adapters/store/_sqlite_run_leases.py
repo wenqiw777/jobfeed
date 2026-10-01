@@ -29,7 +29,7 @@ from jobfeed.adapters.store._sqlite_run_lease_support import (
 )
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
 from jobfeed.domain.models_run import PipelineRun
-from jobfeed.ports.run_leases import RecoveredRun
+from jobfeed.ports.run_leases import BackfillStopReason, RecoveredRun
 
 
 class _SqliteRunLeases:
@@ -335,6 +335,44 @@ class _SqliteRunLeases:
             if lease is not None and lease["kind"] == "evaluate":
                 await _clear_orphaned_stage_a_claims(connection, now_text)
         return True
+
+    async def override_application_backfill_stop(
+        self, run_id: str, *, failure_code: BackfillStopReason
+    ) -> bool:
+        """Correct a late explicit cancellation without touching lease ownership.
+
+        Args:
+            run_id: Exact finalized historical attempt identity.
+            failure_code: Explicit user Stop or shutdown reason.
+
+        Returns:
+            True for a failed historical priority row, or a user Stop overriding
+            its interrupted reason; shutdown cannot override a user Stop.
+
+        Raises:
+            ValueError: If the explicit reason is neither Stop nor shutdown.
+        """
+        if failure_code not in {"user_stopped", "interrupted"}:
+            raise ValueError("Invalid explicit backfill stop reason")
+        message = (
+            "Run stopped by user"
+            if failure_code == "user_stopped"
+            else "Run interrupted by service shutdown"
+        )
+        async with (
+            self._lifecycle.connection() as connection,
+            _immediate_transaction(connection),
+        ):
+            cursor = await connection.execute(
+                """UPDATE pipeline_runs SET failure_code=?, failure_message=?
+                   WHERE run_id=? AND source='application-backfill'
+                     AND status='failed' AND (failure_code='foreground_priority'
+                       OR (?='user_stopped' AND failure_code='interrupted'))""",
+                (failure_code, message, run_id, failure_code),
+            )
+            changed = cursor.rowcount == 1
+            await cursor.close()
+        return changed
 
     async def _after_start_lease_mutation(
         self,

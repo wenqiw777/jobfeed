@@ -2,13 +2,10 @@
 
 import asyncio
 
-import pytest
-
-from jobfeed.domain.errors import RunConflictError
 from tests.unit.test_run_manager import _build_manager
 
 
-async def test_backfill_blocks_other_scans_and_stop_releases_ownership():
+async def test_backfill_manual_stop_releases_ownership():
     manager = _build_manager()
     started = asyncio.Event()
     cancelled = asyncio.Event()
@@ -25,8 +22,6 @@ async def test_backfill_blocks_other_scans_and_stop_releases_ownership():
     run_id = await manager.trigger_application_backfill(work)
     await asyncio.wait_for(started.wait(), 1)
     assert manager.get_active_runs()[0].source == "application-backfill"
-    with pytest.raises(RunConflictError):
-        await manager.trigger_scan([])
     assert await manager.stop_run(run_id)
     assert cancelled.is_set()
     assert manager.get_active_runs() == []
