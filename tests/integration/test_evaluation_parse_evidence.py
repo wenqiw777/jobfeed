@@ -29,6 +29,14 @@ async def test_parse_attempts_survive_restart(tmp_path, canonical, stage, termin
         failed_calls = 0
 
         async def complete(self, request: LLMRequest) -> LLMResponse:
+            if canonical and request.model == "mock-b":
+                assert request.response_schema is not None
+                assert set(request.response_schema["properties"]) == {
+                    "verdict",
+                    "jd_summary",
+                    "fit_analysis",
+                    "resume_hooks",
+                }
             response = await super().complete(request)
             if request.model == "mock-" + stage:
                 self.failed_calls += 1

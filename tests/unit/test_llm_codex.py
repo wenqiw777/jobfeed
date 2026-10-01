@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -493,3 +494,26 @@ def test_unrecovered_reconnect_preserves_error() -> None:
     )
     with pytest.raises(CodexApiError, match="403 Forbidden"):
         _make_adapter()._parse_response(stdout, ELAPSED_MS)
+
+
+async def test_output_schema_file_is_supplied_and_removed_after_completion() -> None:
+    request = _make_request()
+    request.response_schema = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+    seen = []
+
+    async def run(cmd, **_kwargs):
+        schema_path = Path(cmd[cmd.index("--output-schema") + 1])
+        assert json.loads(schema_path.read_text()) == request.response_schema
+        seen.append(schema_path)
+        return _make_subprocess_result(
+            _build_jsonl(_agent_message_event(), _turn_completed_event())
+        )
+
+    with patch("jobfeed.adapters.llm.codex.run_with_retry", run):
+        await _make_adapter().complete(request)
+    assert len(seen) == 1
+    assert not seen[0].exists()

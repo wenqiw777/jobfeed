@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import tempfile
+from pathlib import Path
 
 from jobfeed.adapters.llm._pricing import ModelPricing, TokenUsage, estimate_cost
 from jobfeed.adapters.llm._subprocess import (
@@ -94,6 +95,12 @@ class CodexCliLLM:
 
         with tempfile.TemporaryDirectory(prefix="jobfeed-codex-") as workdir:
             cmd = self._build_command(workdir)
+            if request.response_schema is not None:
+                schema_path = Path(workdir) / "response-schema.json"
+                schema_path.write_text(
+                    json.dumps(request.response_schema), encoding="utf-8"
+                )
+                cmd[-1:-1] = ["--output-schema", str(schema_path)]
             opts = SubprocessOptions(
                 input_text=stdin,
                 timeout_s=self._timeout_s,

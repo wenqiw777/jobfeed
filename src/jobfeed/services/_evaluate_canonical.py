@@ -20,6 +20,7 @@ from jobfeed.domain.models import (
 )
 from jobfeed.domain.real_job_evaluation import RealJobEvaluationInput
 from jobfeed.domain.scoring_parse import parse_stage_a_response, parse_stage_b_response
+from jobfeed.domain.scoring_response_schema import stage_b_response_schema
 from jobfeed.ports.ml_gate import GateInput
 from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_canonical import CanonicalEvaluationStore
@@ -971,7 +972,11 @@ async def _score_b(
         job=item.job,
         stage_a_score=item.stage_a_score,
     )
-    request = LLMRequest(messages=bundle.messages, model=policy.config.llm.stage_b)
+    request = LLMRequest(
+        messages=bundle.messages,
+        model=policy.config.llm.stage_b,
+        response_schema=stage_b_response_schema(),
+    )
     for attempt in range(2):
         session.ensure_active()
         if not await cast(
