@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 
-function harness({manualTimers=false,firstMedia=false,holdCreates=false,holdSocket=false}={}){
+function harness({manualTimers=false,firstMedia=false,holdCreates=false,holdSocket=false,targetCount=5}={}){
   const sent=[],events=[],live=new Map(),held=[],rules=new Map(),timers=[],creating=[];let next=0,peak=0;
   const chrome={
     permissions:{contains:async()=>true},
@@ -19,25 +19,26 @@ function harness({manualTimers=false,firstMedia=false,holdCreates=false,holdSock
     clearTimeout:manualTimers?callback=>{const index=timers.indexOf(callback);if(index>=0)timers.splice(index,1);}:clearTimeout,
     wait:async()=>{},waitForTabComplete:async()=>{},waitForSocketCapacity:async()=>{events.push(['socket']);if(holdSocket)await new Promise(()=>{});},send:m=>sent.push(m)});
   vm.runInContext(fs.readFileSync('extensions/jobright-source/application-route-worker.js','utf8'),context);
-  const targets=Array.from({length:5},(_,i)=>({id:String(i),url:`https://careers.example/jobs/${i}`,title:'Engineer',company:'Acme'}));
+  const targets=Array.from({length:targetCount},(_,i)=>({id:String(i),url:`https://careers.example/jobs/${i}`,title:'Engineer',company:'Acme'}));
   return {context,targets,held,sent,events,live,rules,timers,reads,creating,get peak(){return peak;}};
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
-test('overlapping calls share exactly three additional inactive tabs and preserve task ownership',async()=>{
-  const h=harness(),a={cancelled:false},b={cancelled:false};
-  const runs=[h.context.runApplicationRouteScan({task_id:'a',targets:h.targets},a),h.context.runApplicationRouteScan({task_id:'b',targets:h.targets},b)];
-  await tick();assert.equal(h.peak,3);
+test('overlapping calls share ten inactive tabs, the eleventh waits, and task ownership is preserved',async()=>{
+  const h=harness({targetCount:11}),a={cancelled:false},b={cancelled:false};
+  const runs=[h.context.runApplicationRouteScan({task_id:'a',targets:h.targets.slice(0,6)},a),h.context.runApplicationRouteScan({task_id:'b',targets:h.targets.slice(6)},b)];
+  await tick();assert.equal(h.peak,10);assert.equal(h.events.filter(e=>e[0]==='create').length,10);
+  await tick();assert.equal(h.events.filter(e=>e[0]==='create').length,10);
   for(let n=0;n<60;n++){h.held.splice(0).forEach(x=>x.resolve());await tick();}
   await Promise.all(runs);
-  assert.equal(h.peak,3);assert.equal(h.live.size,0);assert.equal(h.rules.size,0);
+  assert.equal(h.peak,10);assert.equal(h.live.size,0);assert.equal(h.rules.size,0);
   assert.ok(h.events.filter(e=>e[0]==='create').every(e=>e[2].active===false&&e[2].url==='about:blank'));
   const allow=h.events.find(e=>e[0]==='rules'&&e[1].length)[1].find(r=>r.action.type==='allow');
   const filter=new RegExp(allow.condition.regexFilter);
   assert.ok(filter.test('https://careers.example/jobs/1'));
   assert.ok(!filter.test('https://careersXexample/jobs/1'));
   assert.ok(!filter.test('https://unvalidated.careers.example/jobs/1'));
-  for(const id of ['a','b']){assert.equal(h.sent.filter(m=>m.task_id===id).flatMap(m=>m.jobs||[]).length,5);assert.equal(h.sent.filter(m=>m.task_id===id&&m.type==='complete').length,1);}
+  for(const [id,count] of [['a',6],['b',5]]){assert.equal(h.sent.filter(m=>m.task_id===id).flatMap(m=>m.jobs||[]).length,count);assert.equal(h.sent.filter(m=>m.task_id===id&&m.type==='complete').length,1);}
 });
 
 test('cancelling one queued call releases only its own tabs and leaves another task running',async()=>{
@@ -61,13 +62,13 @@ test('private or credentialed targets are rejected before opening a tab',async()
 test('one page timeout releases its own tab without interrupting peers in the same call',async()=>{
   const h=harness({manualTimers:true}),task={cancelled:false};
   const running=h.context.runApplicationRouteScan({task_id:'a',targets:h.targets},task);
-  await tick();assert.equal(h.live.size,3);
+  await tick();assert.equal(h.live.size,5);
   const peers=[...h.live.keys()].slice(1);
   h.timers[0]();await tick();
   assert.ok(peers.every(id=>h.live.has(id)));
   assert.equal(h.sent.flatMap(m=>m.jobs||[])[0].error_code,'page_timeout');
   for(let n=0;n<60;n++){h.held.splice(0).forEach(x=>x.resolve());await tick();}
-  await running;assert.equal(h.live.size,0);assert.equal(h.peak,3);
+  await running;assert.equal(h.live.size,0);assert.equal(h.peak,5);
 });
 
 test('video or recommended Apply readiness does not end snapshots before target hydration',async()=>{
@@ -87,16 +88,16 @@ test('permission timeout cannot retain a worker or create a tab',async()=>{
 });
 
 test('late-created cancelled tabs are closed before capacity is reused',async()=>{
-  const h=harness({manualTimers:true,holdCreates:true}),a={cancelled:false},b={cancelled:false};
-  const first=h.context.runApplicationRouteScan({task_id:'first',targets:h.targets.slice(0,3)},a);
+  const h=harness({manualTimers:true,holdCreates:true,targetCount:11}),a={cancelled:false},b={cancelled:false};
+  const first=h.context.runApplicationRouteScan({task_id:'first',targets:h.targets.slice(0,10)},a);
   await tick();a.cancelled=true;h.context.cancelApplicationRouteTask(a);await first;
   const second=h.context.runApplicationRouteScan({task_id:'second',targets:h.targets.slice(0,1)},b);
-  await tick();assert.equal(h.creating.length,3);
+  await tick();assert.equal(h.creating.length,10);
   h.creating.splice(0).forEach(resolve=>resolve());await tick();
   assert.equal(h.live.size,0);assert.equal(h.creating.length,1);
   h.creating.splice(0).forEach(resolve=>resolve());
   for(let n=0;n<16;n++){h.held.splice(0).forEach(x=>x.resolve());await tick();}
-  await second;assert.ok(h.peak<=3);assert.equal(h.live.size,0);assert.equal(h.rules.size,0);
+  await second;assert.ok(h.peak<=10);assert.equal(h.live.size,0);assert.equal(h.rules.size,0);
 });
 
 test('socket backpressure notices cancellation without retaining the task',async()=>{

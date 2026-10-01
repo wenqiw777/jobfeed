@@ -52,7 +52,9 @@ async def trigger_application_backfill(
     if (
         bridge is None
         or not bridge.connected
-        or "application-resolution" not in bridge.supported_sources
+        or not {"application-resolution", "application-resolution-10"}.issubset(
+            bridge.supported_sources
+        )
     ):
         raise ApiError(409, "extension_update_required", "Reload the Mini extension")
     store = cast(ApplicationBackfillStore, context["store"])

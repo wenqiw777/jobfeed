@@ -479,3 +479,36 @@ recurring schedule. Artifacts are under application-backfill-release-20261001:
 continuation.json, full-progress.json, final-verify.log, interim-db-verification.json,
 fidelity-report.json, klarity-report.json, equifax-mini-verification.json.
 Full historical completion and final DB preservation are pending that run.
+
+## User scope change: recent 30 days, ten concurrent routes
+
+The user stopped the all-open scope in favor of the most recent 30 days and
+authorized increasing route concurrency to ten. Run 9880dde8 was explicitly
+stopped; its terminal code is user_stopped. The final read-only DB comparison
+retained all 153,485 sources, found zero changed source fields except parent,
+and zero missing/changed/new source evaluations; quick_check=ok. The three
+verified example merges remain intact. Its resolved count is not a merge count.
+
+Recent selection uses the existing canonical posting date, then source posting
+date, then persisted first discovery when posting dates are absent. Both closed
+sources and parents with official_closed_at are excluded. Canonical dates retain
+the existing original-posting/first-discovery policy, so a later repost cannot
+make an old parent newly eligible. A direct Mini snapshot found 37,269 eligible
+sources at the September 1 cutoff; the launch snapshot may differ slightly.
+This does not mark pages closed merely because they fail to load.
+
+Recency RED: the old discovery-only query admitted old postings and a closed
+parent; GREEN: eight backfill integration tests passed, covering boundary,
+unknown dates, canonical age and both closure levels.
+
+Queue, HTTP, bridge and shared extension pool now each admit at most ten routes;
+the eleventh waits. HTTP/browser same-host pacing, queue capacity, cached receipts,
+atomic serialized commits, cancellation and late-tab reservations are retained.
+RED: old queue/HTTP/browser pools could not reach ten. GREEN: 107 combined Python
+tests and 111 extension tests passed; seven changed source files passed mypy.
+Backfill refuses the old three-tab extension before starting (RED 200, GREEN 409).
+Extension 0.8.5 advertises application-resolution-10, accepted through the actual
+WebSocket handshake. Mini must advertise that loaded capability before restart.
+
+Release and live ten-route verification are pending. The replacement run uses
+days=30 and reuses committed receipts; it does not trigger paid evaluation.

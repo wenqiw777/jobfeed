@@ -14,7 +14,7 @@ from jobfeed.domain.application_route import ApplicationRouteOutcome
 from jobfeed.domain.models import JobPosting
 from jobfeed.services.application_resolution import ApplicationResolutionQueue
 
-BROWSER_WORKERS = 3
+RESOLUTION_WORKERS = 10
 
 
 def posting(key, url="https://careers.example.test/job/one"):
@@ -120,12 +120,12 @@ async def test_same_pending_url_is_fetched_once_and_links_both_batches():
     )
 
 
-async def test_three_routes_can_overlap_and_limit_is_shared_across_batches():
+async def test_ten_routes_can_overlap_and_limit_is_shared_across_batches():
     store = Store()
-    for key in store.jobs:
-        store.jobs[key] = replace(
-            store.jobs[key], apply_url=f"https://careers.example.test/job/{key}"
-        )
+    store.jobs = {
+        key: posting(key, f"https://careers.example.test/job/{key}")
+        for key in map(str, range(RESOLUTION_WORKERS + 1))
+    }
     started, release = asyncio.Event(), asyncio.Event()
     active, maximum = 0, 0
 
@@ -133,7 +133,7 @@ async def test_three_routes_can_overlap_and_limit_is_shared_across_batches():
         nonlocal active, maximum
         active += 1
         maximum = max(maximum, active)
-        if active == BROWSER_WORKERS:
+        if active == RESOLUTION_WORKERS:
             started.set()
         await release.wait()
         active -= 1
@@ -145,7 +145,7 @@ async def test_three_routes_can_overlap_and_limit_is_shared_across_batches():
         for key in store.jobs:
             await queue.submit_id(key)
         await asyncio.wait_for(started.wait(), 1)
-        assert maximum == BROWSER_WORKERS
+        assert maximum == RESOLUTION_WORKERS
         release.set()
     assert len(store.writes) == len(store.jobs)
     assert all(item[0]["ats_url"] is None for item in store.writes)
@@ -260,7 +260,7 @@ async def test_database_failure_unblocks_saturated_queue_and_stops_run():
             raise RuntimeError("identity write failed")
 
     store = BrokenStore()
-    for key in map(str, range(8)):
+    for key in map(str, range(RESOLUTION_WORKERS + 3)):
         store.jobs[key] = posting(key, f"https://careers.example.test/{key}")
 
     async def resolve(_job):

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Jobfeed Jobright Source",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "Streams signed-in Jobright, LinkedIn and Handshake jobs into local Jobfeed scans.",
   "permissions": [
     "alarms",

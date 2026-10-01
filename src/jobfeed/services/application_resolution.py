@@ -21,6 +21,7 @@ from jobfeed.ports.application_resolution import ApplicationIdentityStore
 
 RouteResolver = Callable[[JobPosting], Awaitable[ApplicationRouteOutcome]]
 ResolutionProgress = Callable[[int, int, str], None]
+_RESOLUTION_WORKERS = 10
 
 
 class ApplicationResolutionQueue:
@@ -52,11 +53,11 @@ class ApplicationResolutionQueue:
         self.total = self.completed = 0
 
     async def __aenter__(self) -> ApplicationResolutionQueue:
-        """Start three workers owned by the current scan/enrichment lifetime."""
+        """Start ten workers owned by the current scan/enrichment lifetime."""
         self._failure = asyncio.get_running_loop().create_future()
         self._workers = [
             asyncio.create_task(self._worker(), name=f"application-resolution:{index}")
-            for index in range(3)
+            for index in range(_RESOLUTION_WORKERS)
         ]
         return self
 

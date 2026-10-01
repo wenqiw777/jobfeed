@@ -3,12 +3,12 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 test('concurrent startup and alarm connect calls own only one socket',async()=>{
- const pending=[],sockets=[],event={addListener(){}};
+ const pending=[],sockets=[],sent=[],event={addListener(){}};
  class Socket {
   static OPEN=1;static CONNECTING=0;
   constructor(){this.readyState=0;this.listeners={};sockets.push(this);}
   addEventListener(name,fn){this.listeners[name]=fn;}
-  send(){}close(){this.readyState=3;}
+  send(message){sent.push(JSON.parse(message));}close(){this.readyState=3;}
  }
  const c=vm.createContext({importScripts(){},URL,console,WebSocket:Socket,setTimeout,clearTimeout,setInterval:()=>1,clearInterval(){},chrome:{runtime:{onInstalled:event,onStartup:event,onMessage:event},alarms:{onAlarm:event},storage:{local:{get:()=>new Promise(resolve=>pending.push(resolve))}}}});
  vm.runInContext(fs.readFileSync('extensions/jobright-source/service-worker.js','utf8'),c);
@@ -17,6 +17,9 @@ test('concurrent startup and alarm connect calls own only one socket',async()=>{
  await second;await new Promise(resolve=>setImmediate(resolve));
  assert.equal(sockets.length,1);
  sockets[0].readyState=1;sockets[0].listeners.open();
+ assert.ok(sent[0].sources.includes('application-resolution'));
+ assert.ok(sent[0].sources.includes('application-resolution-10'));
+ assert.equal(JSON.parse(fs.readFileSync('extensions/jobright-source/manifest.json','utf8')).version,'0.8.5');
  c.closeSocket();
  sockets[0].listeners.message({data:JSON.stringify({type:'ready',protocol:1})});
  await new Promise(resolve=>setImmediate(resolve));

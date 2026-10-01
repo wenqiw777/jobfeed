@@ -70,7 +70,7 @@ class JobrightBridge:
         self._pending: dict[str, _PendingScan] = {}
         self._retired_tasks: deque[str] = deque(maxlen=256)
         self._active_lanes: set[str] = set()
-        self._application_slots = asyncio.Semaphore(3)
+        self._application_slots = asyncio.Semaphore(10)
         self.supported_sources: frozenset[str] = frozenset()
 
     @property

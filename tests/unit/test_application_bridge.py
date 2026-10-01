@@ -1,4 +1,4 @@
-"""Three dedicated readers must overlap source scans and cancel independently."""
+"""Ten dedicated readers must overlap source scans and cancel independently."""
 
 import asyncio
 
@@ -6,10 +6,10 @@ import pytest
 
 from jobfeed.services.jobright_bridge import JobrightBridge
 
-BROWSER_WORKERS = 3
+BROWSER_WORKERS = 10
 
 
-async def test_three_application_calls_overlap_scan_and_fourth_waits():
+async def test_ten_application_calls_overlap_scan_and_eleventh_waits():
     bridge = JobrightBridge()
     connection = bridge.connect(["linkedin", "application-resolution"])
     options = {
@@ -28,11 +28,12 @@ async def test_three_application_calls_overlap_scan_and_fourth_waits():
                 **options,
             )
         )
-        for i in range(4)
+        for i in range(BROWSER_WORKERS + 1)
     ]
     try:
         commands = [
-            await asyncio.wait_for(connection.next_command(), 1) for _ in range(4)
+            await asyncio.wait_for(connection.next_command(), 1)
+            for _ in range(BROWSER_WORKERS + 1)
         ]
         assert (
             sum(c["source"] == "application-resolution" for c in commands)
@@ -44,12 +45,12 @@ async def test_three_application_calls_overlap_scan_and_fourth_waits():
         with pytest.raises(asyncio.CancelledError):
             await readers[0]
         assert (await connection.next_command())["type"] == "cancel"
-        fourth = await asyncio.wait_for(connection.next_command(), 1)
-        assert fourth["source"] == "application-resolution"
-        for command in [*commands, fourth]:
+        eleventh = await asyncio.wait_for(connection.next_command(), 1)
+        assert eleventh["source"] == "application-resolution"
+        for command in [*commands, eleventh]:
             await bridge.receive({"type": "complete", "task_id": command["task_id"]})
         assert await scan == []
-        assert await asyncio.gather(*readers[1:]) == [[], [], []]
+        assert await asyncio.gather(*readers[1:]) == [[]] * BROWSER_WORKERS
     finally:
         for task in [scan, *readers]:
             task.cancel()

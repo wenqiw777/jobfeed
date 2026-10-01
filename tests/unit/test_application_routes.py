@@ -19,8 +19,8 @@ from jobfeed.domain.models import JobPosting
 WRAPPER = "https://careers.acme.com/jobs/123"
 ATS = "https://boards.greenhouse.io/acme/jobs/123"
 MAX_PAGES = 6
-HTTP_SLOTS = 2
-BROWSER_SLOTS = 3
+HTTP_SLOTS = 10
+BROWSER_SLOTS = 10
 BODY = (
     "Build distributed software services and scalable machine learning systems. "
     "Implement production APIs with Python and monitor deployment reliability. "
@@ -319,8 +319,10 @@ async def test_public_guard_rejects_literal_private_and_resolved_private(monkeyp
     assert not await public_application_url("https://public-looking.example.com/")
 
 
-async def test_http_two_slots_do_not_reduce_three_browser_calls():
+async def test_ten_http_slots_and_ten_browser_calls_overlap():
     active_http = active_browser = peak_http = peak_browser = 0
+    all_http = asyncio.Event()
+    release_http = asyncio.Event()
     all_browsers = asyncio.Event()
     release_browser = asyncio.Event()
 
@@ -328,7 +330,9 @@ async def test_http_two_slots_do_not_reduce_three_browser_calls():
         nonlocal active_http, peak_http
         active_http += 1
         peak_http = max(peak_http, active_http)
-        await asyncio.sleep(0.01)
+        if active_http == HTTP_SLOTS:
+            all_http.set()
+        await release_http.wait()
         active_http -= 1
         return httpx.Response(200, text="<main>Loading</main>")
 
@@ -346,8 +350,11 @@ async def test_http_two_slots_do_not_reduce_three_browser_calls():
         resolver = ApplicationRouteResolver(
             client=client, url_guard=allow, chrome_reader=chrome
         )
-        tasks = [asyncio.create_task(resolver(posting())) for _ in range(3)]
+        tasks = [asyncio.create_task(resolver(posting())) for _ in range(HTTP_SLOTS)]
         try:
+            await asyncio.wait_for(all_http.wait(), timeout=1)
+            assert peak_http == HTTP_SLOTS
+            release_http.set()
             await asyncio.wait_for(all_browsers.wait(), timeout=1)
             release_browser.set()
             await asyncio.gather(*tasks)
@@ -651,3 +658,38 @@ async def test_recommended_original_post_link_is_not_current_application_target(
     result, calls = await resolve({WRAPPER: html})
     assert result.status != "resolved"
     assert calls == [WRAPPER]
+
+
+async def test_eleventh_http_request_waits_for_one_of_ten_slots():
+    active = peak = started = 0
+    ten_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(_request):
+        nonlocal active, peak, started
+        active += 1
+        started += 1
+        peak = max(peak, active)
+        if active == HTTP_SLOTS:
+            ten_started.set()
+        await release.wait()
+        active -= 1
+        return httpx.Response(200, text=page())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        resolver = ApplicationRouteResolver(client=client, url_guard=allow)
+        tasks = [
+            asyncio.create_task(resolver(posting())) for _ in range(HTTP_SLOTS + 1)
+        ]
+        try:
+            await asyncio.wait_for(ten_started.wait(), 1)
+            assert started == HTTP_SLOTS
+            assert peak == HTTP_SLOTS
+            release.set()
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    assert started == HTTP_SLOTS + 1
+    assert peak == HTTP_SLOTS

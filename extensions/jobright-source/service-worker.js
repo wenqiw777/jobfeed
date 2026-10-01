@@ -61,7 +61,7 @@ async function connect() {
   nextSocket.addEventListener("open", () => {
     if (socket !== nextSocket) return;
     connectionState = "handshaking";
-    send({ type: "hello", protocol: PROTOCOL_VERSION, sources: ["jobright", "linkedin", "handshake", "linkedin-search-results", "tiktok", "github-jd", "discovery-gate-v1", "application-resolution"] });
+    send({ type: "hello", protocol: PROTOCOL_VERSION, sources: ["jobright", "linkedin", "handshake", "linkedin-search-results", "tiktok", "github-jd", "discovery-gate-v1", "application-resolution", "application-resolution-10"] });
   });
   nextSocket.addEventListener("message", (event) => {
     if (socket === nextSocket) void handleMessage(event.data);

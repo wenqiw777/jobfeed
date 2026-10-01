@@ -1,4 +1,5 @@
 /* One shared queue across every application-resolution call. Never borrow scan tabs. */
+const APPLICATION_ROUTE_CAPACITY = 10;
 const applicationRouteQueue = [];
 let applicationRouteWorkers = 0;
 let applicationRouteLateCreates = 0;
@@ -47,7 +48,7 @@ function pumpApplicationRoutes() {
   for (let index = applicationRouteQueue.length - 1; index >= 0; index--) {
     if (applicationRouteQueue[index].task.cancelled) applicationRouteQueue.splice(index, 1)[0].resolve();
   }
-  while (applicationRouteWorkers + applicationRouteLateCreates < 3 && applicationRouteQueue.length) {
+  while (applicationRouteWorkers + applicationRouteLateCreates < APPLICATION_ROUTE_CAPACITY && applicationRouteQueue.length) {
     const item = applicationRouteQueue.shift();
     applicationRouteWorkers++;
     void processApplicationRoute(item).then(item.resolve, item.reject).finally(() => {
@@ -75,7 +76,7 @@ async function readApplicationRoute(target, task, timeout) {
     const creating = chrome.tabs.create({url:'about:blank', active:false});
     try {tab = await bounded(creating);} catch(error) {
       // Chrome cannot abort tabs.create. Keep its capacity reservation until a
-      // late-created blank tab is closed, so the three-tab limit still holds.
+      // late-created blank tab is closed, so the global tab limit still holds.
       applicationRouteLateCreates++;
       void creating.then(late => chrome.tabs.remove(late.id).catch(()=>{})).catch(()=>{}).finally(()=>{
         applicationRouteLateCreates--;pumpApplicationRoutes();
