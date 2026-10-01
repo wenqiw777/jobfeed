@@ -245,7 +245,10 @@ class ApplicationRouteResolver:
         headers = {"Referer": url, "Accept": "application/json"}
         if token:
             headers["X-CALYPSO-CSRF-TOKEN"] = token
-        api = await self._read(client, built[0], deadline, headers)
+        # Workday Apply actions identify the same posting, but CXS only accepts
+        # the job detail path. Preserve the observed Apply URL in route evidence.
+        details_url = built[0].rstrip("/").removesuffix("/apply")
+        api = await self._read(client, details_url, deadline, headers)
         if api.status != _HTTP_OK:
             return doc
         try:

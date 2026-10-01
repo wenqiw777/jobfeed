@@ -500,3 +500,38 @@ async def test_http_blocked_owned_page_without_apply_renders_once(response):
     assert result.status == "unresolved"
     assert result.reason == "target_apply_link_missing"
     assert browser_calls == [WRAPPER]
+
+
+@pytest.mark.parametrize("action_suffix", ["/apply", "/apply/"])
+async def test_workday_apply_action_reads_job_details_without_action_suffix(
+    action_suffix,
+):
+    target = (
+        "https://acme.wd5.myworkdayjobs.com/External/job/Boston/Engineer_R123"
+        + action_suffix
+        + "?source=Applied_LinkedIn"
+    )
+    cxs = (
+        "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External"
+        "/job/Boston/Engineer_R123"
+    )
+    result, calls = await resolve(
+        {
+            WRAPPER: page(req="R123", link=target),
+            target: "<h1>Careers at Acme</h1>",
+            cxs + action_suffix: httpx.Response(422),
+            cxs: httpx.Response(
+                200,
+                json={
+                    "jobPostingInfo": {
+                        "title": "Software Engineer",
+                        "jobDescription": BODY,
+                        "jobReqId": "R123",
+                    }
+                },
+            ),
+        }
+    )
+    assert result.status == "resolved"
+    assert result.ats_url == target
+    assert calls == [WRAPPER, target, cxs]
