@@ -12,9 +12,11 @@ def test_ten_reader_capability_survives_websocket_handshake():
     context["jobright_bridge"] = JobrightBridge()
     app = build_web_app(context)
     capabilities = ["application-resolution", "application-resolution-10"]
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/sources/jobright/bridge") as socket:
-            socket.send_json({"type": "hello", "protocol": 1, "sources": capabilities})
-            assert socket.receive_json() == {"type": "ready", "protocol": 1}
-            status = client.get("/api/sources/jobright/status").json()
-            assert status == {"connected": True, "supported_sources": capabilities}
+    with (
+        TestClient(app) as client,
+        client.websocket_connect("/api/sources/jobright/bridge") as socket,
+    ):
+        socket.send_json({"type": "hello", "protocol": 1, "sources": capabilities})
+        assert socket.receive_json() == {"type": "ready", "protocol": 1}
+        status = client.get("/api/sources/jobright/status").json()
+        assert status == {"connected": True, "supported_sources": capabilities}
