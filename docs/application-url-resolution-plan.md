@@ -419,3 +419,63 @@ company "Fidelity Bank" is incorrect on Jobright; this patch does not silently
 alias that separate company to Fidelity Investments. For the reported pair,
 the exact existing Workday ID and independently observed source link permit
 a scoped evidence backfill while preserving the original company metadata.
+
+## Full backfill started after extension reload (2026-10-01)
+
+Both screenshot cases received scoped, independently verified evidence backfills,
+without a global employer-alias rule or source field rewrites. Fidelity source
+487250's actual Jobright Original Job Post points to existing source 483339's
+Workday posting 2133859-1. The live CXS response independently confirms the title
+and posting ID; source-to-official JD word coverage is 89.54%. Run
+`cd9f8ec8-4ad1-47ba-bc6f-d9219347b5e6` reconciled parents 147211/150514 to 147211.
+
+Klarity evidence includes LinkedIn's actual Ashby destination UUID
+99de9d9b-d0c6-42a6-9e4d-2df097dae008, YC's explicit Within formerly Klarity
+statement, the same official employer website on YC and Ashby, exact role title
+and location, and official JD word coverage 99.63%/99.31% for the two source JDs.
+No fictitious YC-to-Ashby Apply edge was recorded: this was a scoped manual
+corroboration, not a newly generalized route heuristic. Run
+`0adb1c31-9eca-4402-a3c8-ca8eddbfcce9` reconciled source 477528/478104 parents
+141972/142548 to 141972. Both scoped runs preserved every original job field
+except real_job_id and source evaluation content. Each duplicate canonical
+evaluation was retained in canonical history. Klarity adds a requirements
+conflict audit row for differing descriptions; the parent remains clear and
+its existing completed score 94/apply is preserved. This audit row is retained.
+
+Concurrent deployment was detected: Mini had two newer publisher-filter commits.
+The initial switch briefly displaced them and bootstrap raced the other task.
+Both publisher commits were incorporated into this branch; only the two parser
+repairs differ in source/tests from Mini's final publisher version 6535ff9.
+Combined verification: 230 tests, Ruff and mypy passed. Mini now runs
+27df33c; GitHub CI 36906150278 passed every job. Main was not merged.
+Health DB/Redis/API and the loaded application-resolution capability are OK.
+
+The real installed Mini browser then completed Equifax sample
+`d6c3dff7-012c-43f8-9e1d-469323afd3f0`: LinkedIn 487470 followed the genuine
+employer wrapper and exact Workday Apply URL. Both sources now share parent
+150528. The earlier negative receipt was expired only for that source to
+permit this explicit retry.
+
+Full all-open candidate run `9880dde8-b2fd-41eb-85fa-5e7c71e02266` started
+2026-10-01T18:25:09Z (14:25 America/Detroit), snapshot total 90,000. It is
+RUNNING, not complete. At the live checkpoint, processed=164, resolved=36,
+unresolved=117, ambiguous=6, failed=5, blocked=0, LLM cost=0. Receipt outcomes
+are not merge counts. Unsupported, ambiguous or uncorroborated targets retain
+their sources and separate identities. No paid evaluation or enrichment runs.
+
+New online backup before-browser-backfill.sqlite: quick_check=ok, 153,485 sources,
+147,241 source-linked parents. Direct interim comparison at 18:28:28Z found
+153,485 sources retained, zero missing/changed source fields except parent,
+zero missing/changed/new source evaluation content, and 3 source relinks/3 fewer
+parents (the three verified examples); quick_check=ok. The six example sources
+share their expected three clear parents and retain completed canonical scores.
+
+One-off Mini continuation PID 52338 independently waits for this exact run.
+A separate read-only verification process PID 52447 records live progress each
+minute and, when terminal, compares original source fields and evaluation
+content directly against the backup and writes full-db-verification.json.
+Both are detached from Air; neither restarts stopped/failed backfills or adds a
+recurring schedule. Artifacts are under application-backfill-release-20261001:
+continuation.json, full-progress.json, final-verify.log, interim-db-verification.json,
+fidelity-report.json, klarity-report.json, equifax-mini-verification.json.
+Full historical completion and final DB preservation are pending that run.
