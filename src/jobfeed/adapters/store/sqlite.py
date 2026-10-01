@@ -138,24 +138,28 @@ class SQLiteStore(
         """Snapshot open source IDs whose application routes may need resolution.
 
         Args:
-            since: Optional inclusive discovery timestamp in UTC.
+            since: Inclusive posting cutoff; unknown dates use first discovery.
 
         Returns:
             Source IDs ordered by available Apply URL, then newest discovery.
         """
         sql = (
-            "SELECT id FROM jobs WHERE closed_at IS NULL AND ("
-            "NULLIF(TRIM(apply_url), '') IS NOT NULL OR platform IN ("
+            "SELECT j.id FROM jobs j LEFT JOIN real_jobs r ON r.id=j.real_job_id "
+            "WHERE j.closed_at IS NULL AND r.official_closed_at IS NULL AND ("
+            "NULLIF(TRIM(j.apply_url), '') IS NOT NULL OR j.platform IN ("
             "'linkedin', 'linkedin_guest', 'linkedin_jobspy', 'jobright', "
             "'speedyapply', 'indeed', 'official_search'))"
         )
         args: list[str] = []
         if since is not None:
-            sql += " AND discovered_at >= ?"
+            sql += (
+                " AND julianday(COALESCE(r.canonical_posted_at, j.posted_at, "
+                "j.discovered_at)) >= julianday(?)"
+            )
             args.append(_utc_text(since))
         sql += (
-            " ORDER BY (NULLIF(TRIM(apply_url), '') IS NOT NULL) DESC, "
-            "discovered_at DESC, id DESC"
+            " ORDER BY (NULLIF(TRIM(j.apply_url), '') IS NOT NULL) DESC, "
+            "j.discovered_at DESC, j.id DESC"
         )
         async with self._lifecycle.connection() as connection:
             cursor = await connection.execute(sql, args)

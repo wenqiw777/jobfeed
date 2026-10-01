@@ -105,6 +105,48 @@ async def test_candidate_snapshot_includes_missing_jd_and_orders_apply_first(sto
     ) == list(reversed(no_apply[5:]))
 
 
+async def test_recent_backfill_uses_posting_age_and_excludes_closed_parent(store):
+    cutoff = FIXED_NOW - timedelta(days=30)
+    cases = {
+        "old-posting-new-discovery": (FIXED_NOW, cutoff - timedelta(days=1), None),
+        "posting-after-first-discovery": (cutoff - timedelta(days=5), FIXED_NOW, None),
+        "recent-posting": (FIXED_NOW, FIXED_NOW - timedelta(days=2), None),
+        "unknown-recent": (FIXED_NOW, None, None),
+        "unknown-old": (cutoff - timedelta(days=1), None, None),
+        "boundary": (FIXED_NOW, cutoff, None),
+        "source-closed": (FIXED_NOW, FIXED_NOW, FIXED_NOW),
+        "parent-closed": (FIXED_NOW, FIXED_NOW, None),
+        "canonical-old": (FIXED_NOW, FIXED_NOW, None),
+    }
+    ids = {}
+    for key, (discovered, posted, closed) in cases.items():
+        saved = await store.save_job(
+            replace(
+                make_job(key, discovered_at=discovered, jd_text=f"Description {key}"),
+                platform="linkedin",
+                posted_at=posted,
+                closed_at=closed,
+            )
+        )
+        ids[key] = saved.job_id
+    async with store._lifecycle.connection() as connection:
+        await connection.execute(
+            "UPDATE real_jobs SET official_closed_at=? WHERE id="
+            "(SELECT real_job_id FROM jobs WHERE id=?)",
+            (FIXED_NOW.isoformat(), ids["parent-closed"]),
+        )
+        await connection.execute(
+            "UPDATE real_jobs SET canonical_posted_at=? WHERE id="
+            "(SELECT real_job_id FROM jobs WHERE id=?)",
+            ((cutoff - timedelta(days=1)).isoformat(), ids["canonical-old"]),
+        )
+        await connection.commit()
+    assert set(await store.list_application_backfill_ids(since=cutoff)) == {
+        ids[key] for key in ("recent-posting", "unknown-recent", "boundary")
+    }
+    assert ids["parent-closed"] not in await store.list_application_backfill_ids()
+
+
 async def test_positive_backfill_preserves_sources_and_evaluation_and_reuses_cache(
     store,
 ):

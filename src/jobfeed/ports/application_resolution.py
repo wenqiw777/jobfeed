@@ -97,7 +97,7 @@ class ApplicationBackfillStore(ApplicationIdentityStore, Protocol):
         """Read open candidates in stable priority order.
 
         Args:
-            since: Optional inclusive discovery timestamp.
+            since: Inclusive posting cutoff; unknown dates use first discovery.
 
         Returns:
             Existing source IDs; no new source rows are created.
