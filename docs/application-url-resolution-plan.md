@@ -326,6 +326,33 @@ a route or silently widening the browser actions.
   Apply URLs and JD strings remained unchanged. All three outcomes resolved.
   Direct SQL confirmed the durable Workday J00179159 identifier.
 - Evidence: [public verification report](evidence/equifax-application-resolution.json).
+
+## Mini deployment and historical backfill (2026-10-01)
+
+User explicitly authorized Mini deployment and selected all open candidates.
+Deploy the reviewed feature branch without merging main; preserve Mini's existing
+non-internship filter at base `732306b` and all private/untracked state.
+
+Additional release checks found and fixed Web factory bridge injection and missing
+historical Apply coverage. The explicit `POST /api/runs/application-backfill`
+uses the production bridge, scan lease/lock, three bounded workers and durable
+per-source receipts. Source URL is used only for rows without an observed Apply URL;
+original source fields remain intact. No discovery/enrichment/paid evaluation hook
+runs. Existing run APIs expose progress and stop. Explicit retry reuses fresh
+receipts; interrupted backfills do not automatically restart as ordinary scans.
+
+Test-first follow-up: missing-Apply queue, Web route/manager ownership, LinkedIn
+SDUI header, native ID mismatches, recommendation class/ARIA containers, and stale
+source-URL proof failed before their fixes. Independent review closed all three
+LinkedIn ownership findings and the source-URL transaction finding.
+
+Current evidence: full SQLite/default suite 2,903 passed, 478 deselected, 8 xfailed;
+latest follow-up regression/hygiene 72 passed; extension 111 passed; Ruff/format,
+mypy 373 source files, frontend generated types and TypeScript passed. The real
+captured LinkedIn SDUI DOM yields the exact Equifax company Apply URL. Mini online
+backup `artifacts/application-backfill-release-20261001/before.sqlite` passed
+`PRAGMA quick_check`; baseline has 153,485 source rows and 147,543 source-linked
+parents. Live deployment, extension reload and backfill outcome remain pending.
   No private LinkedIn DOM/profile data is committed. Related regression checks:
   127 Python tests passed; all 111 extension tests passed; Ruff/format/mypy passed.
 - This proves the reported Equifax route and canonical merge in new code. It
