@@ -7,10 +7,11 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Tag
 
+from jobfeed.adapters.sources._linkedin_guest_parse import _external_apply_href
 from jobfeed.domain.application_route import HopKind
 from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.models import JobPosting
@@ -74,7 +75,9 @@ def _excluded(node: Tag, requisitions: tuple[str, ...] = ()) -> bool:
     for ancestor in (node, *node.parents):
         if not isinstance(ancestor, Tag):
             continue
-        labels = " ".join([str(ancestor.get("id", "")), str(ancestor.get("class", ""))])
+        labels = " ".join(
+            str(ancestor.get(name, "")) for name in ("id", "class", "aria-label")
+        )
         if _EXCLUDED.search(labels):
             return True
         job_region = bool(re.search(r"job[-_ ]?(?:sidebar|apply|header)", labels, re.I))
@@ -92,6 +95,43 @@ def _excluded(node: Tag, requisitions: tuple[str, ...] = ()) -> bool:
 def _company_matches(company: str, job: JobPosting) -> bool:
     return bool(normalize_company(company)) and normalize_company(company) == (
         normalize_company(job.company)
+    )
+
+
+def _linkedin_job_matches(url: str, job: JobPosting) -> bool:
+    """Require the observed LinkedIn detail URL to retain the source native ID."""
+    parts = urlsplit(url)
+    native = re.search(r"/jobs/view/(?:[^/]*-)?(\d+)/?$", parts.path)
+    source = re.fullmatch(r"\D*(\d+)", job.canonical_id)
+    return bool(native and source and native[1] == source[1])
+
+
+def _linkedin_native_title(url: str, region: Tag, job: JobPosting) -> str:
+    """Read the SDUI job header before its own Apply control, excluding the JD."""
+    host = (urlsplit(url).hostname or "").casefold()
+    if (
+        host not in {"linkedin.com", "www.linkedin.com"}
+        or not _linkedin_job_matches(url, job)
+        or region.get("aria-label") != "Primary content"
+    ):
+        return ""
+    header = []
+    for node in region.find_all(["p", "a", "h1", "h2"]):
+        if _excluded(node):
+            continue
+        if node.get("aria-label") == "Apply on company website":
+            break
+        if node.name == "h2":
+            return ""
+        header.append(node.get_text(" ", strip=True))
+    else:
+        return ""
+    if not any(
+        normalize_company(text) == normalize_company(job.company) for text in header
+    ):
+        return ""
+    return next(
+        (text for text in header if normalize(text) == normalize(job.title)), ""
     )
 
 
@@ -131,14 +171,36 @@ def parse_route_document(  # noqa: C901 - explicit job-owned evidence branches
     block = matching[0] if matching else None
     title = str(block.get("title", "")) if block else ""
     company = str(block["hiringOrganization"].get("name", "")) if block else ""
-    region = soup.select_one("main") or soup.select_one('[role="main"]') or soup
+    region = (
+        (
+            soup.select_one('section[aria-label="Primary content"]')
+            if (urlsplit(url).hostname or "").casefold()
+            in {"linkedin.com", "www.linkedin.com"}
+            else None
+        )
+        or soup.select_one("main")
+        or soup.select_one('[role="main"]')
+        or soup
+    )
     heading = region.select_one("h1")
     content = region.get_text(" ", strip=True)
     if not block:
-        title = heading.get_text(" ", strip=True) if heading else ""
+        title = (
+            heading.get_text(" ", strip=True)
+            if heading
+            else (_linkedin_native_title(url, region, job))
+        )
         if f" {normalize_company(job.company)} " in f" {normalize(content)} ":
             company = job.company
-    owned = normalize(title) == normalize(job.title) and _company_matches(company, job)
+    linkedin = (urlsplit(url).hostname or "").casefold() in {
+        "linkedin.com",
+        "www.linkedin.com",
+    }
+    owned = (
+        normalize(title) == normalize(job.title)
+        and _company_matches(company, job)
+        and (not linkedin or _linkedin_job_matches(url, job))
+    )
     description = _text(block.get("description")) if block else content
     req = _requisition(block.get("identifier")) if block else ""
     requisitions = tuple(
@@ -165,10 +227,12 @@ def parse_route_document(  # noqa: C901 - explicit job-owned evidence branches
             label = " ".join(
                 [anchor.get_text(" ", strip=True), str(anchor.get("aria-label", ""))]
             )
-            if not _excluded(anchor, requisitions) and _APPLY.search(label):
-                candidates.append(
-                    (urljoin(base, str(anchor["href"])), "target_apply_link")
-                )
+            if _excluded(anchor, requisitions) or not _APPLY.search(label):
+                continue
+            href = urljoin(base, str(anchor["href"]))
+            target = _external_apply_href(href) if linkedin else href
+            if target:
+                candidates.append((target, "target_apply_link"))
         frames = [frame for owner in regions for frame in owner.select("iframe[src]")]
         for frame in frames:
             if _excluded(frame, requisitions):

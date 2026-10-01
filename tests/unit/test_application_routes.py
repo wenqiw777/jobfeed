@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from jobfeed.adapters.sources import application_routes
+from jobfeed.adapters.sources._application_route_html import parse_route_document
 from jobfeed.adapters.sources.application_routes import (
     ApplicationRouteResolver,
     public_application_url,
@@ -535,3 +536,69 @@ async def test_workday_apply_action_reads_job_details_without_action_suffix(
     assert result.status == "resolved"
     assert result.ats_url == target
     assert calls == [WRAPPER, target, cxs]
+
+
+def test_historical_linkedin_native_apply_has_observed_job_ownership():
+    job = posting()
+    markup = (
+        '<section aria-label="Primary content"><p>' + job.company + "</p>"
+        "<p>" + job.title + "</p>"
+        '<a aria-label="Apply on company website" '
+        'href="https://www.linkedin.com/safety/go/?url='
+        'https%3A%2F%2Fcareers.example.test%2Fjob%2Fone">Apply</a>'
+        "<h2>About the job</h2><p>" + (job.jd_text or "") + "</p></section>"
+    )
+    doc = parse_route_document("https://www.linkedin.com/jobs/view/123/", markup, job)
+    assert doc.owned
+    assert doc.candidates == (
+        ("https://careers.example.test/job/one", "target_apply_link"),
+    )
+
+
+def test_native_linkedin_header_cannot_prove_another_native_job():
+    job = posting()
+    markup = (
+        '<section aria-label="Primary content"><p>Acme</p>'
+        '<p>Software Engineer</p><a aria-label="Apply on company website" '
+        'href="https://careers.acme.com/jobs/123">Apply</a></section>'
+    )
+    doc = parse_route_document("https://www.linkedin.com/jobs/view/999/", markup, job)
+    assert not doc.owned
+    assert doc.candidates == ()
+
+
+def test_linkedin_heading_does_not_bypass_native_job_id():
+    job = posting()
+    markup = (
+        "<main><h1>Software Engineer</h1><p>Acme</p>"
+        '<a class="apply-button" href="https://careers.acme.com/jobs/other">'
+        "Apply</a></main>"
+    )
+    doc = parse_route_document("https://www.linkedin.com/jobs/view/999/", markup, job)
+    assert not doc.owned
+    assert doc.candidates == ()
+
+
+def test_linkedin_recommended_region_is_not_an_application_candidate():
+    job = posting()
+    markup = (
+        "<main><h1>Software Engineer</h1><p>Acme</p>"
+        '<section class="recommended-jobs"><a class="apply-button" '
+        'href="https://careers.acme.com/jobs/other">Apply</a></section></main>'
+    )
+    doc = parse_route_document(job.url, markup, job)
+    assert doc.owned
+    assert doc.candidates == ()
+
+
+def test_linkedin_recommended_aria_region_is_not_an_application_candidate():
+    job = posting()
+    markup = (
+        "<main><h1>Software Engineer</h1><p>Acme</p>"
+        '<section aria-label="Recommended jobs">'
+        '<a aria-label="Apply on company website" '
+        'href="https://careers.acme.com/jobs/other">Apply</a></section></main>'
+    )
+    doc = parse_route_document(job.url, markup, job)
+    assert doc.owned
+    assert doc.candidates == ()
