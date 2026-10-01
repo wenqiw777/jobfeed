@@ -32,6 +32,10 @@ async function runGitHubJDScan(command,task) {
       const origin=destination.origin;if(!await chrome.permissions.contains({origins:[`${origin}/*`]}))throw new Error(`Missing extension permission after navigation: ${origin}`);}
     await chrome.scripting.executeScript({target:{tabId},world:'ISOLATED',files:['job-page-snapshot.js','tiktok-batch.js','github-jd-entities.js','github-jd.js']});
   }
+  function cookieOnly(snapshot){
+    const blocks=snapshot?.blocks||[];
+    return blocks.length>0 && blocks.every(block=>/own and third-party cookies|cookie privacy statement/i.test(block.text||''));
+  }
   async function rendered(tabId,target,navigate=true,followFrame=true){
     if(navigate){await chrome.tabs.update(tabId,{url:target.url});await waitForTabComplete(tabId,null,true);}
     if(task.cancelled)return;
@@ -47,7 +51,7 @@ async function runGitHubJDScan(command,task) {
       if(result?.description)return result;
       if(result?.page_snapshot){
         const current=JSON.stringify(result.page_snapshot.blocks);
-        if(attempt>=4 && result.page_snapshot.blocks?.length && current===previousBlocks)return {...target,...result,source:'github-jd'};
+        if(attempt>=4 && result.page_snapshot.blocks?.length && !cookieOnly(result.page_snapshot) && current===previousBlocks)return {...target,...result,source:'github-jd'};
         previousBlocks=current;
       }
       if(result?.error==='GitHubJD is not defined'){
@@ -65,7 +69,7 @@ async function runGitHubJDScan(command,task) {
       // Reuse bounded readiness polling; never recurse into further frames.
       return await rendered(tabId,target,false,false);
     }
-    return {...failed(target,result?.page_snapshot && !result.page_snapshot.blocks?.length?'Page content did not become readable':result?.error||'No readable job description'),...(result?.page_snapshot?{page_snapshot:result.page_snapshot}:{}),frames:result?.frames||[],ats_urls:result?.ats_urls||[]};
+    return {...failed(target,result?.page_snapshot && (!result.page_snapshot.blocks?.length || cookieOnly(result.page_snapshot))?'Page content did not become readable':result?.error||'No readable job description'),...(result?.page_snapshot?{page_snapshot:result.page_snapshot}:{}),frames:result?.frames||[],ats_urls:result?.ats_urls||[]};
   }
   const queue=[];
   for(const [origin,targets] of groups){

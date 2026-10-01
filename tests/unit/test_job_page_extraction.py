@@ -350,3 +350,22 @@ async def test_empty_browser_snapshot_is_retryable_without_model_interpretation(
     )
     assert result["error_code"] == "page_timeout"
     c.complete.assert_not_awaited()
+
+
+async def test_cookie_only_browser_snapshot_is_retryable_without_paid_extraction():
+    c = client(decision())
+    s = snapshot()
+    s["blocks"] = [
+        {
+            "id": 0,
+            "text": (
+                "We use our own and third-party cookies. "
+                "See our Cookie Privacy Statement"
+            ),
+        }
+    ]
+    result = await JobPageExtractor(c, model="mock").enrich_row(
+        {"page_snapshot": s, "error_code": "page_timeout"}, target={"url": s["url"]}
+    )
+    assert result["error_code"] == "page_timeout"
+    c.complete.assert_not_awaited()

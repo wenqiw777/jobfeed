@@ -273,7 +273,16 @@ class JobPageExtractor:
         snapshot = row.get("page_snapshot")
         if not isinstance(snapshot, dict):
             return row
-        if not snapshot.get("blocks"):
+        blocks = snapshot.get("blocks")
+        cookie_only = bool(blocks) and all(
+            re.search(
+                r"own and third-party cookies|cookie privacy statement",
+                str(block.get("text", "")),
+                re.IGNORECASE,
+            )
+            for block in (blocks or [])
+        )
+        if not blocks or cookie_only:
             return {
                 **row,
                 "error": "Page content did not become readable",

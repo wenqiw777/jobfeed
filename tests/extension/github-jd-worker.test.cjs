@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 
-function harness({cancel=false,fail=false,missing=false,manifestPermissions=false,holdCooldown=false,scriptLost=false,iframeDelay=false,finalUrl=null,vanishedTab=false,snapshotOnly=false,emptySnapshot=false,lateRedirect=false,slowHydration=false,bootstrapOnly=false}={}) {
+function harness({cancel=false,fail=false,missing=false,manifestPermissions=false,holdCooldown=false,scriptLost=false,iframeDelay=false,finalUrl=null,vanishedTab=false,snapshotOnly=false,emptySnapshot=false,lateRedirect=false,slowHydration=false,bootstrapOnly=false,cookieHydration=false,cookieOnly=false}={}) {
   const events=[],sent=[],live=new Set(),task={cancelled:false},cooldowns=[];
   let next=0,peak=0;
   const frameTabs=new Map(),reads=new Map();
@@ -27,6 +27,7 @@ function harness({cancel=false,fail=false,missing=false,manifestPermissions=fals
       if(files){events.push(['inject',target.tabId]);return [];}
       assert.ok(!Array.isArray(args[0]),'extract one loaded page, not an HTTP batch');
       events.push(['extract',target.tabId,args[0].id]);
+      if(cookieHydration||cookieOnly){const n=reads.get(args[0].id)||0;reads.set(args[0].id,n+1);if(cookieOnly||n<20)return [{result:{page_snapshot:{blocks:[{id:0,text:'We use our own and third-party cookies. For more information, see our Cookie Privacy Statement'}]},frames:[]}}];}
       if(slowHydration){const n=reads.get(args[0].id)||0;reads.set(args[0].id,n+1);if(n<45)return [{result:{page_snapshot:{blocks:[]},frames:[]}}];}
       if(lateRedirect){const n=reads.get(args[0].id)||0;reads.set(args[0].id,n+1);if(n<3)return [{result:{page_snapshot:{blocks:[]},frames:[]}}];if(n===3)return [{result:{error:'GitHubJD is not defined'}}];}
       if(iframeDelay){if(!frameTabs.has(target.tabId))return [{result:{error:'Job identity not found in page',frames:['https://job-boards.eu.greenhouse.io/embed/job_app?for=example&token=1234567']}}]; const attempts=frameTabs.get(target.tabId);frameTabs.set(target.tabId,attempts+1);if(attempts===0)return [{result:{error:'Job identity not found in page'}}];}
@@ -162,4 +163,13 @@ test('manifest permits new company targets and their HTTPS redirects without per
  assert.equal(rows.length,9);
  assert.ok(rows.every(r=>r.description),'new origins must reach extraction');
  assert.equal(h.live.size,0);
+});
+
+test('cookie notice alone does not end polling before job hydration',async()=>{
+ const h=harness({cookieHydration:true});await h.run();
+ assert.ok(h.sent.flatMap(m=>m.jobs||[]).every(r=>r.description));
+});
+test('cookie-only page times out with retryable error',async()=>{
+ const h=harness({cookieOnly:true});await h.run();
+ assert.ok(h.sent.flatMap(m=>m.jobs||[]).every(r=>r.error_code==='page_timeout'));
 });
