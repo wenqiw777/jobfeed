@@ -61,4 +61,16 @@ stay equivalent. Two failing canonical cases became passing; 61 retry, route,
 views and hygiene checks passed. All 95 extension checks passed; mypy and
 Ruff passed on changed query modules.
 
-Final publication and Mini/CI verification pending the two follow-up commits.
+Final source release: c09550e, including ADP snapshot fix e249b6c and canonical
+Retry fix. Mini fast-forwarded to this release and restarted with zero active
+runs. CI 36808948948 passed the complete quality gate, extension tests, frontend
+lint/tests/build. Mini health reports DB/Redis ok and its extension connected;
+the normal com.wenqi.jobfeed.server LaunchAgent is running.
+
+Final direct DB checks confirm both ADP rows are full with errors and cooldowns
+cleared; Perchwell Stage B is completed/apply and the original Stage A timestamp
+is unchanged. The corrected retry lookup returns no remaining errors for the
+original 21:00 evaluation, as expected after recovery. Temporary browser probes
+were removed from tracked extension files; evidence scripts remain untracked.
+Release and targeted verification complete. Workday maintenance remains an
+external transient condition handled by the existing retry policy.
