@@ -352,7 +352,35 @@ mypy 373 source files, frontend generated types and TypeScript passed. The real
 captured LinkedIn SDUI DOM yields the exact Equifax company Apply URL. Mini online
 backup `artifacts/application-backfill-release-20261001/before.sqlite` passed
 `PRAGMA quick_check`; baseline has 153,485 source rows and 147,543 source-linked
-parents. Live deployment, extension reload and backfill outcome remain pending.
+parents.
+
+Deployment evidence: GitHub CI run `36897977337` passed changes, quality-gate and
+browser-tests. Mini now runs release `0059d70` (extension files version 0.8.4),
+normal LaunchAgent PID 51207; DB and Redis health are OK, API remains loopback-only.
+Scheduler was paused during deployment and restored. Mini's local Chrome PID
+78769 owns the bridge; its loaded extension still lacks application-resolution,
+so full browser verification is pending an unpacked-extension reload. The user's
+active application tab was preserved.
+
+First backfill phase completed: direct-ATS run
+`6e04731e-9862-48a6-b84f-111d96010c27` resolved 5,689 sources, errors=0,
+LLM cost=0. Direct SQLite comparison against the online backup found:
+153,485 source rows retained, zero changed job fields excluding real_job_id,
+zero missing/changed/new source evaluations, 337 sources relinked, and
+source-linked parents 147,543 -> 147,241 (302 fewer duplicates). quick_check=ok.
+Receipts: Mini artifacts/application-backfill-release-20261001/direct-report.json
+and direct-db-verification.json.
+
+The complete open-candidate snapshot contains 90,000 rows. An authorized one-off
+continuation process (PID 51310, PPID 1) is waiting for the extension capability,
+independently of this Air SSH session. After reload it will run the two actual
+Equifax source IDs (487275, 487470), verify that their parent IDs match, and only
+then start the full API backfill. It saves run IDs/progress under the same Mini
+artifact directory; no recurring schedule is added. It stops if the sample fails,
+the full run fails/is stopped, or an API error occurs. Already resolved direct ATS
+receipts are reused. Current continuation phase: waiting_for_extension;
+Equifax's LinkedIn source is not yet reconciled in production. Do not claim the
+full historical backfill or the installed browser worker validated yet.
   No private LinkedIn DOM/profile data is committed. Related regression checks:
   127 Python tests passed; all 111 extension tests passed; Ruff/format/mypy passed.
 - This proves the reported Equifax route and canonical merge in new code. It
