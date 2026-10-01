@@ -15,6 +15,35 @@ BODY = "Acme engineers build distributed payment services. " + " ".join(
 )
 
 
+AUDITED_PUBLISHERS = [
+    "TalentHop",
+    "Sundayy",
+    "Netrolynx AI",
+    "FetchJobs.co",
+    "Ladders",
+    "The Ladders",
+    "Jobgether",
+    "Wiraa",
+    "Jack & Jill",
+    (
+        "Underdog: Verified engineers. Interview-ready. Searching "
+        "confidentially. And companies apply to you"
+    ),
+    (
+        "Underdog.io -Apply to top tech jobs in 60 seconds. "
+        "A place where companies apply to you"
+    ),
+    "Dex",
+    "TalentAlly",
+    "CodeRound AI",
+    "Haystack",
+    "hackajob",
+    "Hire Feed",
+    "Jobverse.io",
+    "Underdog.io",
+]
+
+
 def posting(**changes):
     base = JobPosting(
         id="1",
@@ -131,3 +160,19 @@ def test_official_extra_text_is_allowed_but_short_generic_excerpt_is_not():
 )
 def test_similar_employer_names_remain_eligible(company):
     assert not intermediary_posting(official(company=company))
+
+
+@pytest.mark.parametrize("company", AUDITED_PUBLISHERS)
+def test_audited_publishers_cannot_supply_scoring_input(company):
+    source = official(company=company)
+    assert intermediary_posting(source)
+    assert select_real_job_input("1", [source], now=datetime.now(UTC)) is None
+
+
+@pytest.mark.parametrize(
+    "company", ["Underdog", "Haystack Oncology", "Dex Imaging", "Jobright.ai"]
+)
+def test_other_companies_keep_official_scoring_input(company):
+    source = official(company=company)
+    assert not intermediary_posting(source)
+    assert select_real_job_input("1", [source], now=datetime.now(UTC)) is not None

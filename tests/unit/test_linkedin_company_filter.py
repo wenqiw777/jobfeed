@@ -14,6 +14,7 @@ from jobfeed.config_sources import SourcesBoardExtensionConfig
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.ports.source import PartialSourceFetchError
 from jobfeed.services.jobright_bridge import JobrightBridgeError
+from tests.unit.test_intermediary_resolution import AUDITED_PUBLISHERS
 
 
 def source(bridge, store=None, platform="linkedin"):
@@ -37,6 +38,7 @@ def source(bridge, store=None, platform="linkedin"):
         "RemoteHunter",
         "Remote Hunter",
         "Torentify",
+        *AUDITED_PUBLISHERS,
     ],
 )
 async def test_blocked_discovery_skips_detail_and_cache_lookup(company):

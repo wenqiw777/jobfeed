@@ -10,13 +10,41 @@ from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.normalize import normalize, normalize_company
 
-BLOCKED_PUBLISHERS = ("yara ai", "remotehunter", "remote hunter", "torentify")
+BLOCKED_PUBLISHERS = (
+    "yara ai",
+    "remotehunter",
+    "remote hunter",
+    "torentify",
+    "talenthop",
+    "sundayy",
+    "netrolynx ai",
+    "fetchjobs.co",
+    "ladders",
+    "the ladders",
+    "jobgether",
+    "wiraa",
+    "jack & jill",
+    (
+        "underdog: verified engineers. interview-ready. searching "
+        "confidentially. and companies apply to you"
+    ),
+    (
+        "underdog.io -apply to top tech jobs in 60 seconds. "
+        "a place where companies apply to you"
+    ),
+    "dex",
+    "talentally",
+    "coderound ai",
+    "haystack",
+    "hackajob",
+    "hire feed",
+    "jobverse.io",
+    "underdog.io",
+)
 PUBLISHERS = (
     "dice",
     "jobs via dice",
-    "haystack",
     "jobverse",
-    "jobverse.io",
     *BLOCKED_PUBLISHERS,
 )
 DOMAINS = ("dice.com", "jobverse.io")

@@ -11,7 +11,11 @@ from jobfeed.domain.errors import RunLeaseLostError
 from jobfeed.observability import get_logger
 from jobfeed.services.intermediary_resolution import IntermediaryResolver
 from jobfeed.services.scan import ScanService
-from tests.unit.test_intermediary_resolution import official, posting
+from tests.unit.test_intermediary_resolution import (
+    AUDITED_PUBLISHERS,
+    official,
+    posting,
+)
 
 EXPECTED_SOURCES = 3
 
@@ -344,7 +348,8 @@ async def test_conflicting_user_decisions_are_not_reported_as_a_match(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "company", [" YARA  AI ", "RemoteHunter", "Remote Hunter", "Torentify"]
+    "company",
+    [" YARA  AI ", "RemoteHunter", "Remote Hunter", "Torentify", *AUDITED_PUBLISHERS],
 )
 async def test_blocked_publishers_are_not_saved_or_resolved(tmp_path, company):
     class Source:
@@ -371,7 +376,9 @@ async def test_blocked_publishers_are_not_saved_or_resolved(tmp_path, company):
         await store.close()
 
 
-@pytest.mark.parametrize("company", ["Yara AI", "RemoteHunter", "Torentify"])
+@pytest.mark.parametrize(
+    "company", ["Yara AI", "RemoteHunter", "Torentify", *AUDITED_PUBLISHERS]
+)
 async def test_blocked_publishers_never_trigger_resolution_search(tmp_path, company):
     store = SQLiteStore(tmp_path / "blocked-resolver.sqlite")
     await store.connect()
@@ -386,7 +393,9 @@ async def test_blocked_publishers_never_trigger_resolution_search(tmp_path, comp
         await store.close()
 
 
-@pytest.mark.parametrize("company", ["Yara AI", "RemoteHunter", "Torentify"])
+@pytest.mark.parametrize(
+    "company", ["Yara AI", "RemoteHunter", "Torentify", *AUDITED_PUBLISHERS]
+)
 async def test_existing_blocked_publishers_are_hidden_and_not_evaluation_candidates(
     tmp_path, company
 ):
