@@ -1,4 +1,4 @@
-importScripts("jobboard-batch.js", "github-jd-worker.js", "pilot-worker.js");
+importScripts("jobboard-batch.js", "github-jd-worker.js", "pilot-worker.js", "application-route-worker.js");
 const DEFAULT_BASE_URL = "http://127.0.0.1:7654";
 const PROTOCOL_VERSION = 1;
 const RECONNECT_DELAY_MS = 3000;
@@ -61,7 +61,7 @@ async function connect() {
   nextSocket.addEventListener("open", () => {
     if (socket !== nextSocket) return;
     connectionState = "handshaking";
-    send({ type: "hello", protocol: PROTOCOL_VERSION, sources: ["jobright", "linkedin", "handshake", "linkedin-search-results", "tiktok", "github-jd", "discovery-gate-v1"] });
+    send({ type: "hello", protocol: PROTOCOL_VERSION, sources: ["jobright", "linkedin", "handshake", "linkedin-search-results", "tiktok", "github-jd", "discovery-gate-v1", "application-resolution"] });
   });
   nextSocket.addEventListener("message", (event) => {
     if (socket === nextSocket) void handleMessage(event.data);
@@ -73,6 +73,7 @@ async function connect() {
       for (const [taskId,task] of activeTasks) {
         cancelDiscovery(taskId);
         task.cancelled = true;
+        if (task.lane === "application-resolution") cancelApplicationRouteTask(task);
         if (task.tabId != null) void chrome.tabs.remove(task.tabId).catch(() => {});
         for (const tabId of task.tabIds || []) void chrome.tabs.remove(tabId).catch(() => {});
       }
@@ -109,6 +110,7 @@ async function handleMessage(raw) {
     if (task) {
       cancelDiscovery(message.task_id);
       task.cancelled = true;
+      if (task.lane === "application-resolution") cancelApplicationRouteTask(task);
       if (task.tabId != null) await chrome.tabs.remove(task.tabId).catch(() => {});
       await Promise.all([...task.tabIds || []].map(tabId => chrome.tabs.remove(tabId).catch(() => {})));
     }
@@ -117,7 +119,7 @@ async function handleMessage(raw) {
   if (["start_scan", "start_board_scan"].includes(message.type) && typeof message.task_id === "string") {
     const source = message.type === "start_scan" ? "jobright" : message.source;
     const lane = ["github-jd", "tiktok"].includes(source) ? "enrichment" : source;
-    if (activeTasks.has(message.task_id) || [...activeTasks.values()].some(task => task.lane === lane) || pilotRunning) {
+    if (activeTasks.has(message.task_id) || (lane !== "application-resolution" && [...activeTasks.values()].some(task => task.lane === lane)) || pilotRunning) {
       send({
         type: "error",
         task_id: message.task_id,
@@ -128,7 +130,8 @@ async function handleMessage(raw) {
     const task = { cancelled: false, lane };
     activeTasks.set(message.task_id, task);
     try {
-      if (message.type === "start_board_scan") await runBoardScan(message, task);
+      if (source === "application-resolution") await runApplicationRouteScan(message, task);
+      else if (message.type === "start_board_scan") await runBoardScan(message, task);
       else await runScan(message, task);
     } catch (error) {
       if (task.cancelled) return;

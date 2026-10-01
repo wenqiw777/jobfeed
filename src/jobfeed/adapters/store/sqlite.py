@@ -10,6 +10,9 @@ from pathlib import Path
 
 import aiosqlite
 
+from jobfeed.adapters.store._sqlite_application_identity import (
+    record_application_identity as _record_application_identity,
+)
 from jobfeed.adapters.store._sqlite_intermediary import SqliteIntermediary
 from jobfeed.adapters.store._sqlite_real_job_evaluation import (
     SqliteRealJobEvaluation,
@@ -128,6 +131,45 @@ class SQLiteStore(
     async def close(self) -> None:
         """Close the shared SQLite lifecycle idempotently."""
         await self._lifecycle.close()
+
+    async def record_application_identity(  # noqa: PLR0913
+        self,
+        *,
+        job_id: str,
+        expected_apply_url: str,
+        ats_url: str | None,
+        state_key: str,
+        state_value: str,
+        run_id: str | None = None,
+        owner_id: str | None = None,
+        generation: int | None = None,
+    ) -> bool:
+        """Atomically record a resolution only if its Apply URL is still current.
+
+        Args:
+            job_id: Stored source identity.
+            expected_apply_url: Application URL observed before resolution.
+            ats_url: Verified ATS URL, or None for an unresolved outcome.
+            state_key: Resolution receipt key.
+            state_value: Serialized outcome and optional verification facts.
+            run_id: Optional scan lease identity.
+            owner_id: Optional scan lease owner.
+            generation: Optional scan lease generation.
+
+        Returns:
+            Whether the source still matches the URL and verification facts.
+        """
+        return await _record_application_identity(
+            self._lifecycle,
+            job_id=job_id,
+            expected_apply_url=expected_apply_url,
+            ats_url=ats_url,
+            state_key=state_key,
+            state_value=state_value,
+            run_id=run_id,
+            owner_id=owner_id,
+            generation=generation,
+        )
 
     async def backfill_real_job_identifiers(
         self, *, after_id: int = 0, limit: int = 100

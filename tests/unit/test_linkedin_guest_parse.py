@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from jobfeed.adapters.sources._linkedin_guest_parse import (
     ParsedCard,
     count_search_cards,
+    parse_apply_url,
     parse_jd,
     parse_posting_posted_at,
     parse_search_cards,
@@ -256,3 +259,51 @@ def test_posting_posted_at_missing_or_unparseable_is_none() -> None:
     assert parse_posting_posted_at("<div>no marker</div>", now=_NOW) is None
     garbage = '<span class="posted-time-ago__text">Posted recently</span>'
     assert parse_posting_posted_at(garbage, now=_NOW) is None
+
+
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        (
+            '<a class="apply-button" href="https://careers.example.com/jobs/1">Apply</a>',
+            "https://careers.example.com/jobs/1",
+        ),
+        (
+            '<a class="apply-button" href="https://www.linkedin.com/jobs/view/externalApply?url=https%3A%2F%2Fjobs.lever.co%2Facme%2Fabc">Apply</a>',
+            "https://jobs.lever.co/acme/abc",
+        ),
+        (
+            '<a class="apply-button" href="https://www.linkedin.com/signup">Apply</a>',
+            None,
+        ),
+        ('<a href="https://jobs.lever.co/acme/recommended">Recommended job</a>', None),
+        ('<a class="apply-button" href="javascript:alert(1)">Apply</a>', None),
+        (
+            '<a class="apply-button" href="https://jobs.lever.co/acme/1">Apply</a>'
+            '<a class="apply-button" href="https://jobs.lever.co/acme/2">Apply</a>',
+            None,
+        ),
+    ],
+)
+def test_parse_observed_apply_url_only(html, expected):
+    assert parse_apply_url(html) == expected
+
+
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        (
+            '<a href="https://www.linkedin.com/jobs/view/externalApply?'
+            'url=https%3A%2F%2Fcareers.example.com%2Fjobs%2F1">Apply</a>',
+            "https://careers.example.com/jobs/1",
+        ),
+        ('<a class="apply-button" href="https://[invalid">Apply</a>', None),
+        (
+            '<div class="base-search-card"><a class="apply-button" '
+            'href="https://careers.example.com/jobs/2">Apply</a></div>',
+            None,
+        ),
+    ],
+)
+def test_apply_parser_rejects_recommendations_and_invalid_urls(html, expected):
+    assert parse_apply_url(html) == expected

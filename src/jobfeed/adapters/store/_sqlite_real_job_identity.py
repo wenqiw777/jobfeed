@@ -130,7 +130,7 @@ async def _observed_candidates(
             ),
         )
         cursor = await connection.execute(
-            "SELECT real_job_id,evidence_job_id FROM real_job_identifiers "
+            "SELECT real_job_id,evidence_job_id,observed_url FROM real_job_identifiers "
             "WHERE provider=? AND scope=? AND native_id=?",
             (identifier.provider, identifier.scope, identifier.native_id),
         )
@@ -142,6 +142,10 @@ async def _observed_candidates(
         if other is None:
             continue
         other_job = _job_from_row(other)
+        # Wrapper sources retain the original Apply URL in jobs. Rehydrate
+        # their verified ATS evidence from the identifier that owns this match.
+        if identifier.provider in ATS_REQUISITION_PROVIDERS:
+            other_job.identity_evidence_url = str(owned["observed_url"])
         if compatible_role_facts(source_job, other_job):
             candidates[int(owned["real_job_id"])] = int(other["id"])
         else:

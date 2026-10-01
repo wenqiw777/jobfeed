@@ -5,11 +5,13 @@ from typing import cast
 from jobfeed.adapters.llm._pricing import load_price_table
 from jobfeed.adapters.queue.scan_journal import RedisScanJournal
 from jobfeed.adapters.sources.official_search import CodexWebSearch, OfficialSearch
+from jobfeed.application_resolution_wiring import build_application_resolver
 from jobfeed.config import IntermediarySettings
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.intermediary import IntermediaryStore
 from jobfeed.ports.store import JobStore
 from jobfeed.services.intermediary_resolution import IntermediaryResolver
+from jobfeed.services.jobright_bridge import JobrightBridge
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator
 from jobfeed.services.scan import ScanService
 
@@ -22,6 +24,7 @@ def build_scan_service(  # noqa: PLR0913 - existing runtime wiring plus resoluti
     intermediary: IntermediarySettings | None = None,
     redis_url: str | None = None,
     redis_namespace: str = "jobfeed",
+    bridge: JobrightBridge | None = None,
 ) -> ScanService:
     """Wire source orchestration to a configured journal adapter.
 
@@ -65,5 +68,12 @@ def build_scan_service(  # noqa: PLR0913 - existing runtime wiring plus resoluti
             timeout_s=intermediary.search_timeout_s,
         )
     return ScanService(
-        store, logger, run_orchestrator, journal=journal, intermediary=resolver
+        store,
+        logger,
+        run_orchestrator,
+        journal=journal,
+        intermediary=resolver,
+        application_resolver=build_application_resolver(bridge)
+        if callable(getattr(store, "record_application_identity", None))
+        else None,
     )

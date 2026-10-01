@@ -36,6 +36,7 @@ async def _record_enrichment(  # noqa: PLR0913
     enrich_source: str,
     jd_lang: str | None,
     posted_at: datetime | None,
+    apply_url: str | None = None,
 ) -> None:
     numeric_id = int(job_id)
     async with lifecycle.connection() as connection, _immediate_transaction(connection):
@@ -49,7 +50,8 @@ async def _record_enrichment(  # noqa: PLR0913
                 enrich_source=?,jd_lang=?,enrich_error=NULL,closed_at=NULL,
                 posted_at=COALESCE(posted_at,?),ml_gate_score=NULL,
                 ml_gate_result=NULL,ml_gate_fail_reason=NULL,ml_gate_at=NULL,
-                ml_gate_version=NULL,hard_filter=NULL,role_type=? WHERE id=?""",
+                ml_gate_version=NULL,hard_filter=NULL,role_type=?,
+                apply_url=COALESCE(?,apply_url) WHERE id=?""",
             (
                 jd_text,
                 jd_quality,
@@ -58,6 +60,7 @@ async def _record_enrichment(  # noqa: PLR0913
                 jd_lang,
                 _utc_text(posted_at) if posted_at is not None else None,
                 classify_role_type(str(row["title"]), jd_text),
+                apply_url,
                 numeric_id,
             ),
         )
@@ -198,6 +201,7 @@ def _stored_enrichment(row: aiosqlite.Row | None) -> StoredEnrichment | None:
         quality=QualityBand(quality) if quality else None,
         enriched_at=_datetime_from_text(row["enriched_at"]),
         enrich_source=row["enrich_source"],
+        apply_url=row["apply_url"],
         platform=row["platform"],
         external_identity=row["external_identity"],
         enrich_attempted_at=_datetime_from_text(row["enrich_attempted_at"]),

@@ -80,7 +80,7 @@ class _PassState:
 class EnrichService:
     """Application service for the paced per-posting JD enrichment pass."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         *,
         enricher: JobEnricher,
@@ -88,6 +88,7 @@ class EnrichService:
         logger: JobfeedLogger,
         sleeper: AsyncSleeper = asyncio.sleep,
         pacing: EnrichPacing | None = None,
+        on_saved: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         """Create an enrich service with injected ports.
 
@@ -98,7 +99,9 @@ class EnrichService:
             logger: Structured logger for enrichment events.
             sleeper: Async pacing hook; tests inject a recorder.
             pacing: Pacing and backoff knobs; defaults to ``EnrichPacing()``.
+            on_saved: Optional async observer after each durable enrichment save.
         """
+        self.on_saved = on_saved
         self.enricher = enricher
         self.store = store
         self.logger = logger
@@ -205,7 +208,10 @@ class EnrichService:
             enriched_at=datetime.now(UTC),
             enrich_source=result.enrich_source,
             posted_at=result.posted_at,
+            apply_url=result.apply_url,
         )
+        if self.on_saved is not None:
+            await self.on_saved(row.job_id)
         state.enriched += 1
         state.consecutive_blocks = 0
 

@@ -70,6 +70,7 @@ class JobrightBridge:
         self._pending: dict[str, _PendingScan] = {}
         self._retired_tasks: deque[str] = deque(maxlen=256)
         self._active_lanes: set[str] = set()
+        self._application_slots = asyncio.Semaphore(3)
         self.supported_sources: frozenset[str] = frozenset()
 
     @property
@@ -129,6 +130,9 @@ class JobrightBridge:
             JobrightBridgeError: If the extension is unavailable or the scan fails.
         """
         source = kwargs.get("source", "jobright")
+        if source == "application-resolution":
+            async with self._application_slots:
+                return await self._run_scan(**kwargs)
         lane = "enrichment" if source in {"github-jd", "tiktok"} else source
         if lane in self._active_lanes:
             raise JobrightBridgeError(f"{lane} browser lane is busy")
@@ -146,7 +150,7 @@ class JobrightBridge:
         payload = {
             key: value
             for key, value in kwargs.items()
-            if key not in {"on_progress", "on_discovery"}
+            if key not in {"on_progress", "on_discovery", "on_batch"}
         }
         source = payload.get("source", "jobright")
         identity = {
@@ -173,6 +177,9 @@ class JobrightBridge:
 
             async def persist(rows: list[dict[str, Any]]) -> None:
                 await pipeline.save_partial(name, rows)
+                callback = kwargs.get("on_batch")
+                if callback is not None:
+                    await callback(rows)
 
             error = None
             warning = False

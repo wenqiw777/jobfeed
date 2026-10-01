@@ -8,6 +8,9 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
+from jobfeed.adapters.store._application_identity_verification import (
+    verification_facts_match,
+)
 from jobfeed.adapters.store._repost_sort import triage_sorts
 from jobfeed.domain.display_posting import posting_location
 
@@ -3104,6 +3107,7 @@ class PostgresStore(
             quality=QualityBand(row["jd_quality"]) if row["jd_quality"] else None,
             enriched_at=row["enriched_at"],
             enrich_source=row["enrich_source"],
+            apply_url=row["apply_url"],
             platform=row["platform"],
             external_identity=row["external_identity"],
             enrich_attempted_at=row["enrich_attempted_at"],
@@ -3150,6 +3154,7 @@ class PostgresStore(
             quality=QualityBand(row["jd_quality"]) if row["jd_quality"] else None,
             enriched_at=row["enriched_at"],
             enrich_source=row["enrich_source"],
+            apply_url=row["apply_url"],
             platform=row["platform"],
             external_identity=identity,
             enrich_attempted_at=row["enrich_attempted_at"],
@@ -6435,6 +6440,107 @@ class PostgresStore(
                 slug,
             )
 
+    async def record_application_identity(
+        self,
+        *,
+        job_id: str,
+        expected_apply_url: str,
+        ats_url: str | None,
+        state_key: str,
+        state_value: str,
+        run_id: str | None = None,
+        owner_id: str | None = None,
+        generation: int | None = None,
+    ) -> bool:
+        """Commit application evidence and receipt, retrying concurrent merges.
+
+        Legacy PostgreSQL has no durable scan lease capability. Standalone
+        unfenced evidence is supported; an explicitly supplied fence is rejected.
+
+        Args:
+            job_id: Stored source identity.
+            expected_apply_url: Application URL observed before resolution.
+            ats_url: Verified ATS URL, or None for an unresolved outcome.
+            state_key: Resolution receipt key.
+            state_value: Serialized outcome and optional verification facts.
+            run_id: Optional scan lease identity.
+            owner_id: Optional scan lease owner.
+            generation: Optional scan lease generation.
+
+        Returns:
+            Whether the source still matches the URL and verification facts.
+
+        Raises:
+            RuntimeError: If an unsupported scan fence is supplied.
+            ValueError: If only part of the scan fence is supplied.
+            asyncpg.PostgresError: If persistence fails after bounded merge retries.
+        """
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                return await self._record_application_identity_once(
+                    job_id=job_id,
+                    expected_apply_url=expected_apply_url,
+                    ats_url=ats_url,
+                    state_key=state_key,
+                    state_value=state_value,
+                    run_id=run_id,
+                    owner_id=owner_id,
+                    generation=generation,
+                )
+            except (
+                IdentityParentChanged,
+                asyncpg.DeadlockDetectedError,
+                asyncpg.SerializationError,
+            ):
+                if attempt == max_attempts - 1:
+                    raise
+        raise AssertionError("unreachable application identity retry state")
+
+    async def _record_application_identity_once(
+        self,
+        *,
+        job_id: str,
+        expected_apply_url: str,
+        ats_url: str | None,
+        state_key: str,
+        state_value: str,
+        run_id: str | None = None,
+        owner_id: str | None = None,
+        generation: int | None = None,
+    ) -> bool:
+        fence = (run_id, owner_id, generation)
+        if any(value is not None for value in fence) and any(
+            value is None for value in fence
+        ):
+            raise ValueError("application evidence requires a complete scan fence")
+        async with self._get_pool().acquire() as conn, conn.transaction():
+            # The legacy PostgreSQL adapter has no durable run-lease table.
+            # Fail closed instead of accepting a SQLite-era fence as valid.
+            if run_id is not None:
+                raise RuntimeError("Scan write lease lost")
+            row = await conn.fetchrow(
+                "SELECT * FROM jobs WHERE id=$1 FOR UPDATE", int(job_id)
+            )
+            if row is None or row["apply_url"] != expected_apply_url:
+                return False
+            if ats_url is not None:
+                posting = _job_from_record(row)
+                if not verification_facts_match(posting, state_value):
+                    return False
+                posting.identity_evidence_url = ats_url
+                await resolve_postgres_real_job(
+                    conn, int(job_id), posting, include_content=False
+                )
+                await sync_postgres_real_job_input(conn, int(job_id), _job_from_record)
+            await conn.execute(
+                "INSERT INTO state(key,value) VALUES ($1,$2) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                state_key,
+                state_value,
+            )
+        return True
+
     async def record_enrichment(
         self,
         *,
@@ -6445,6 +6551,7 @@ class PostgresStore(
         enrich_source: str,
         jd_lang: str | None = None,
         posted_at: datetime | None = None,
+        apply_url: str | None = None,
     ) -> None:
         """Stamp a job as enriched with JD body and quality.
 
@@ -6460,6 +6567,8 @@ class PostgresStore(
                 exact card-derived date is never overwritten by this
                 approximate relative-text date. None leaves the column
                 untouched.
+            apply_url: Observed external application URL. None preserves the
+                previously stored value.
         """
         pool = self._get_pool()
         async with pool.acquire() as conn, conn.transaction():
@@ -6469,6 +6578,7 @@ class PostgresStore(
                        enrich_source = $4, jd_lang = $5, enrich_error = NULL,
                        closed_at = NULL,
                        posted_at = COALESCE(posted_at, $7),
+                       apply_url = COALESCE($8, apply_url),
                        -- An enrichment replaces the JD with new content, so the
                        -- ml_gate_* verdict (computed against the OLD JD) is
                        -- stale: a stale 'fail' is excluded from the funnel
@@ -6488,6 +6598,7 @@ class PostgresStore(
                 jd_lang,
                 int(job_id),
                 posted_at,
+                apply_url,
             )
             await sync_postgres_real_job_input(conn, int(job_id), _job_from_record)
 

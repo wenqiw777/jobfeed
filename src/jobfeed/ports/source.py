@@ -31,6 +31,7 @@ class EnrichResult:
     error: str | None = None
     posted_at: datetime | None = None
     apply_url: str | None = None
+    identity_evidence_url: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -41,6 +42,7 @@ class StoredEnrichment:
     quality: QualityBand | None
     enriched_at: datetime | None
     enrich_source: str | None = None
+    apply_url: str | None = None
     platform: str | None = None
     external_identity: str | None = None
     enrich_attempted_at: datetime | None = None

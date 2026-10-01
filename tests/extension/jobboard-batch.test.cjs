@@ -3,6 +3,40 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { scan } = require('../../extensions/jobright-source/jobboard-batch.js');
 const reply = data => ({ok:true,status:200,json:async()=>data});
+test('LinkedIn preserves the explicit external URL in its observed application metadata without another request',async()=>{
+ const requests=[];
+ const applyUrl='https://careers.equifax.com/en/jobs/j00179159/generative-ai-engineer/?source=Applied_LinkedIn';
+ const result=await scan({source:'linkedin',pacingMs:0,discoveredRows:[{id:'4473979895',employer:{name:'Equifax'}}]},async url=>{
+  requests.push(url);return reply({data:{title:'Generative AI Engineer',description:{text:'Original JD'},applyMethod:{'com.linkedin.voyager.jobs.OffsiteApply':{companyApplyUrl:applyUrl}}}});
+ });
+ assert.equal(requests.length,1);assert.equal(result.jobs[0].applyUrl,applyUrl);
+});
+test('ambiguous, internal, missing or unrelated application URLs are not invented',async()=>{
+ for(const detail of [
+  {companyApplyUrl:'https://unrelated.example/1'},
+  {applyMethod:null},
+  {applyMethod:{url:'https://www.linkedin.com/jobs/view/1/'}},
+  {applyMethod:{first:'https://careers.example/1',second:'https://careers.example/2'}},
+  {applyMethod:{url:'javascript:openApplication()'}},
+ ]){
+  const result=await scan({source:'linkedin',pacingMs:0,discoveredRows:[{id:'1',employer:{name:'Acme'}}]},async()=>reply({data:{title:'Engineer',description:{text:'JD'},...detail}}));
+  assert.equal(result.jobs[0].applyUrl,null);
+ }
+});
+test('existing metadata HTML carries only the current primary Apply href',async()=>{
+ const {Window}=await import('../../web-ui/node_modules/happy-dom/lib/index.js');
+ const board=require('../../extensions/jobright-source/jobboard-batch.js');
+ const parser=new (new Window().DOMParser)();
+ const doc=parser.parseFromString('<section aria-label="Primary content"><h1>Engineer</h1><a class="jobs-apply-button" href="https://careers.example/jobs/1">Apply</a></section><aside><a href="https://jobs.lever.co/other/2">Apply</a></aside>','text/html');
+ assert.equal(board.linkedInPostingEvidence(doc,'https://www.linkedin.com/jobs/view/1/').applyUrl,'https://careers.example/jobs/1');
+});
+test('a recommendation Apply link inside Primary content cannot become the current application URL',async()=>{
+ const {Window}=await import('../../web-ui/node_modules/happy-dom/lib/index.js');
+ const board=require('../../extensions/jobright-source/jobboard-batch.js');
+ const parser=new (new Window().DOMParser)();
+ const doc=parser.parseFromString('<section aria-label="Primary content"><h1>Engineer</h1><section aria-label="Recommended jobs"><h2>Recommended jobs</h2><a class="jobs-apply-button" href="https://jobs.lever.co/other/2">Apply</a></section></section>','text/html');
+ assert.equal(board.linkedInPostingEvidence(doc,'https://www.linkedin.com/jobs/view/1/').applyUrl,null);
+});
 test('LinkedIn detail workers are bounded and report completed jobs before a slow peer',async()=>{
  let active=0,peak=0;const updates=[];
  const result=await scan({source:'linkedin',maxJobs:6,pacingMs:0,discoveredRows:Array.from({length:6},(_,i)=>({id:String(i)}))},async url=>{

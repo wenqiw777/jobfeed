@@ -370,7 +370,7 @@ async def _observed_candidates(
             identifier.observed_url,
         )
         owned = await conn.fetchrow(
-            "SELECT real_job_id,evidence_job_id FROM real_job_identifiers "
+            "SELECT real_job_id,evidence_job_id,observed_url FROM real_job_identifiers "
             "WHERE provider=$1 AND scope=$2 AND native_id=$3",
             identifier.provider,
             identifier.scope,
@@ -383,7 +383,12 @@ async def _observed_candidates(
         )
         if other is None:
             continue
-        if compatible_role_facts(source, _posting(other)):
+        other_posting = _posting(other)
+        # The matched identifier retains verified ATS evidence for a source
+        # whose original Apply URL may still point at an employer wrapper.
+        if identifier.provider in ATS_REQUISITION_PROVIDERS:
+            other_posting.identity_evidence_url = str(owned["observed_url"])
+        if compatible_role_facts(source, other_posting):
             candidates[int(owned["real_job_id"])] = int(other["id"])
         else:
             await _review(

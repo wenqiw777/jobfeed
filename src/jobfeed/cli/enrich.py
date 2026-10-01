@@ -15,10 +15,13 @@ from jobfeed.adapters.sources._linkedin_guest_http import (
     fetch,
 )
 from jobfeed.adapters.sources.linkedin_guest import LinkedInGuestEnricher
+from jobfeed.application_resolution_wiring import build_application_resolver
 from jobfeed.cli import AppContext, require_app, require_enabled, run_with_store
 from jobfeed.config_sources import SourcesLinkedInGuestConfig
 from jobfeed.domain.quality import assess_quality
+from jobfeed.ports.application_resolution import ApplicationIdentityStore
 from jobfeed.ports.store_ops import StoreOpsMixin
+from jobfeed.services.application_resolution import ApplicationResolutionQueue
 from jobfeed.services.enrich import (
     EnrichPacing,
     EnrichProgressCallback,
@@ -189,12 +192,17 @@ async def run_guest_enrich_pass(
             logger=app["logger"],
             pacing=EnrichPacing(min_interval_s=config.pacing_s),
         )
-        return await service.run(
-            platform="linkedin_guest",
-            batch_limit=batch_limit or config.enrich_batch_limit,
-            job_ids=job_ids,
-            on_progress=on_progress,
-        )
+        async with ApplicationResolutionQueue(
+            cast(ApplicationIdentityStore, app["store"]),
+            build_application_resolver(app.get("jobright_bridge")),
+        ) as resolution:
+            service.on_saved = resolution.submit_id
+            return await service.run(
+                platform="linkedin_guest",
+                batch_limit=batch_limit or config.enrich_batch_limit,
+                job_ids=job_ids,
+                on_progress=on_progress,
+            )
 
 
 def format_enrich_summary(summary: EnrichSummary) -> str:

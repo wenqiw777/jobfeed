@@ -27,3 +27,18 @@ test('service worker accepts four lanes and rejects only the busy lane', async (
   release.forEach(resolve => resolve());
   await Promise.all(runs);
 });
+
+test('application calls share their dedicated lane while LinkedIn continues and cancel is task-scoped',async()=>{
+  const sent=[],started=[],release=[],cancelled=[];const event={addListener(){}};
+  const context=vm.createContext({importScripts(){},cancelDiscovery(){},URL,console,setTimeout,clearTimeout,setInterval,clearInterval,
+    WebSocket:{OPEN:1,CONNECTING:0},pilotRunning:false,
+    chrome:{runtime:{onInstalled:event,onStartup:event,onMessage:event},alarms:{onAlarm:event},storage:{local:{get:()=>new Promise(()=>{})}},tabs:{remove:async()=>{}}}});
+  vm.runInContext(fs.readFileSync('extensions/jobright-source/service-worker.js','utf8'),context);
+  context.send=m=>sent.push(m);
+  context.runBoardScan=context.runApplicationRouteScan=(command,task)=>{started.push([command.task_id,task.lane]);return new Promise(resolve=>release.push(resolve));};
+  context.cancelApplicationRouteTask=task=>cancelled.push(task);
+  const runs=['linkedin','application-resolution','application-resolution'].map((source,index)=>context.handleMessage(JSON.stringify({type:'start_board_scan',source,task_id:String(index)})));
+  assert.equal(started.length,3);assert.equal(sent.length,0);
+  await context.handleMessage(JSON.stringify({type:'cancel',task_id:'1'}));assert.equal(cancelled.length,1);
+  release.forEach(r=>r());await Promise.all(runs);
+});

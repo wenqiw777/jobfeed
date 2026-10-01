@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from bs4 import BeautifulSoup, Tag
 
@@ -95,6 +95,60 @@ def parse_jd(html: str) -> str:
     if markup is None:
         return ""
     return markup.get_text("\n", strip=True)
+
+
+def parse_apply_url(html: str) -> str | None:
+    """Read one unambiguous external href from the posting's Apply controls.
+
+    LinkedIn login/Easy Apply links provide no external identity. Decode only
+    the observed redirect URL parameter; never manufacture an employer URL.
+
+    Args:
+        html: Actual LinkedIn guest posting HTML.
+
+    Returns:
+        One unambiguous observed external application URL, or None.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    urls = set()
+    for link in soup.select(
+        "a.apply-button[href], a[data-tracking-control-name*='apply'][href], "
+        "a[href*='/jobs/view/externalApply']"
+    ):
+        if link.find_parent(class_=["base-search-card", "base-card", "similar-jobs"]):
+            continue
+        try:
+            href = _external_apply_href(str(link.get("href") or "").strip())
+        except ValueError:
+            continue
+        if href is not None:
+            urls.add(href)
+    return next(iter(urls)) if len(urls) == 1 else None
+
+
+def _external_apply_href(href: str) -> str | None:
+    """Decode a LinkedIn redirect and validate the actual external URL."""
+    parts = urlsplit(href)
+    host = (parts.hostname or "").lower()
+    if host == "linkedin.com" or host.endswith(".linkedin.com"):
+        targets = parse_qs(parts.query).get("url", [])
+        if parts.path not in {"/jobs/view/externalApply", "/redir/redirect"}:
+            return None
+        if len(targets) != 1:
+            return None
+        href = targets[0]
+        parts = urlsplit(href)
+        host = (parts.hostname or "").lower()
+    if (
+        parts.scheme in {"https", "http"}
+        and host
+        and host != "linkedin.com"
+        and not host.endswith(".linkedin.com")
+        and parts.username is None
+        and parts.password is None
+    ):
+        return href
+    return None
 
 
 def parse_posting_posted_at(html: str, *, now: datetime) -> datetime | None:
@@ -201,6 +255,7 @@ __all__ = [
     "VIEW_URL",
     "ParsedCard",
     "count_search_cards",
+    "parse_apply_url",
     "parse_jd",
     "parse_posting_posted_at",
     "parse_search_cards",

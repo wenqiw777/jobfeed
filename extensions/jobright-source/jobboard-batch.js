@@ -19,7 +19,46 @@ var JobboardBatch = (() => {
   }
   function linkedInPostingEvidence(doc,url) {
     // Page ownership and repost interpretation use the shared backend extractor.
-    return {page_snapshot:JobPageSnapshot.capture(doc,url||doc.URL)};
+    const scope = doc.querySelector('section[aria-label="Primary content"]');
+    const links = [...(scope || doc).querySelectorAll('a.jobs-apply-button[href],a.jobs-s-apply[href]')].filter(node => {
+      for(let ancestor=node;ancestor&&ancestor!==scope;ancestor=ancestor.parentElement){
+        const label=(ancestor.getAttribute('aria-label')||'')+' '+(ancestor.className||'');
+        const heading=ancestor.querySelector?.('h1,h2,h3')?.textContent||'';
+        if(/recommend|similar.jobs|related.jobs|other.jobs/i.test(label+' '+heading))return false;
+      }
+      return true;
+    });
+    const observed = links.map(node => {
+      try {return new URL(node.getAttribute('href'),url||doc.URL).href;} catch {return null;}
+    });
+    return {applyUrl:oneExternalApplicationURL(observed),page_snapshot:JobPageSnapshot.capture(doc,url||doc.URL)};
+  }
+  function externalApplicationURL(value) {
+    if (typeof value !== 'string') return null;
+    try {
+      const url = new URL(value);
+      return ['http:','https:'].includes(url.protocol) && !url.username && !url.password &&
+        url.hostname !== 'linkedin.com' && !url.hostname.endsWith('.linkedin.com') ? url.href : null;
+    } catch {return null;}
+  }
+  function oneExternalApplicationURL(values) {
+    const urls = [...new Set(values.map(externalApplicationURL).filter(Boolean))];
+    return urls.length === 1 ? urls[0] : null;
+  }
+  function linkedInApplicationURL(detail) {
+    // Observe only the application metadata subtree, never arbitrary company or
+    // tracking URLs. Missing/unknown API shapes stay absent without another fetch.
+    if (!detail?.applyMethod || typeof detail.applyMethod !== 'object') return null;
+    const urls = [], visited = new Set();let truncated = false;
+    function visit(value, depth=0) {
+      if (depth>8 || urls.length>20 || visited.size>64) {truncated=true;return;}
+      if (typeof value==='string') {if (externalApplicationURL(value)) urls.push(value);}
+      else if (value && typeof value==='object' && !visited.has(value)) {
+        visited.add(value);for (const child of Object.values(value)) visit(child,depth+1);
+      }
+    }
+    visit(detail.applyMethod);
+    return truncated ? null : oneExternalApplicationURL(urls);
   }
   function linkedInPostingDocument(html) {
     return new DOMParser().parseFromString(html,'text/html');
@@ -324,10 +363,12 @@ var JobboardBatch = (() => {
           if (source === 'linkedin' && !employer?.name?.trim()) {
             const metadata=await metadataFromPosting(row.id);
             employer=employer || metadata?.employer;
+            if(metadata?.applyUrl)row.applyUrl=metadata.applyUrl;
             if(metadata?.page_snapshot)row.page_snapshot=metadata.page_snapshot;
             if(metadata?.isRepost===true)Object.assign(row,metadata);
           }
           completed[index]={source,id:String(row.id),title:detail.title||row.title,
+            applyUrl:source==='linkedin' ? linkedInApplicationURL(detail) || externalApplicationURL(row.applyUrl) : null,
             isRepost:row.isRepost ?? null,repostEvidence:row.repostEvidence ?? null,repostObservedAt:row.repostObservedAt ?? null,
             url:source==='linkedin'?`https://www.linkedin.com/jobs/view/${row.id}/`:`https://app.joinhandshake.com/jobs/${row.id}`,
             description: typeof description==='string'?description:null,

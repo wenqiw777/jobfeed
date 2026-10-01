@@ -1,6 +1,7 @@
 """Redis delivery, replay and ownership tests against a real local server."""
 
 import asyncio
+import json
 import os
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -508,3 +509,52 @@ async def test_lost_redis_reply_replays_safe_journal_command_without_duplicate_w
     assert await pipeline.step("native:one", {}, work) == {"saved": "one"}
     assert work.await_count == 1
     assert await pipeline.pending_count() == 0
+
+
+async def test_durable_bridge_delivers_saved_batch_before_scan_finishes(redis_client):
+    pipeline = RedisPipeline(redis_client, namespace=f"test:{uuid4()}")
+    await pipeline.start("streamed-browser", generation=1)
+    bridge = JobrightBridge()
+    connection = bridge.connect(["linkedin"])
+    batches = []
+
+    async def received(rows):
+        identity = {
+            "source": "linkedin",
+            "query": None,
+            "sort": None,
+            "search_url": None,
+            "filters": None,
+        }
+        name = "bridge:" + json.dumps(identity, sort_keys=True)
+        assert await pipeline.load_partial(name) == rows
+        batches.append(rows)
+
+    token = current_pipeline.set(pipeline)
+    scan = asyncio.create_task(
+        bridge.run_scan(
+            source="linkedin",
+            max_jobs=1,
+            batch_size=1,
+            pacing_s=0,
+            timeout_s=5,
+            on_progress=lambda _: None,
+            on_batch=received,
+        )
+    )
+    try:
+        command = await asyncio.wait_for(connection.next_command(), 1)
+        rows = [{"id": "one", "source": "linkedin"}]
+        await bridge.receive(
+            {"type": "batch", "task_id": command["task_id"], "jobs": rows}
+        )
+        if not batches:
+            await scan
+        assert batches == [rows]
+        assert not scan.done()
+        await bridge.receive({"type": "complete", "task_id": command["task_id"]})
+        assert await scan == rows
+    finally:
+        scan.cancel()
+        await asyncio.gather(scan, return_exceptions=True)
+        current_pipeline.reset(token)

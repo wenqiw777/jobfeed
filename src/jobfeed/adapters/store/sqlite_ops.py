@@ -93,6 +93,7 @@ class SqliteOps:
         enrich_source: str,
         jd_lang: str | None = None,
         posted_at: datetime | None = None,
+        apply_url: str | None = None,
     ) -> None:
         """Replace enrichment and invalidate stale liveness/gate state.
 
@@ -107,6 +108,7 @@ class SqliteOps:
             enrich_source=enrich_source,
             jd_lang=jd_lang,
             posted_at=posted_at,
+            apply_url=apply_url,
         )
 
     async def list_unenriched_jobs(

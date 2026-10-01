@@ -77,6 +77,7 @@ async def bridge_socket(websocket: WebSocket) -> None:
                 "tiktok",
                 "github-jd",
                 "discovery-gate-v1",
+                "application-resolution",
             }
             for s in sources
         ):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
@@ -13,6 +14,11 @@ from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.models import JobPosting, PipelineRun, SaveJobResult
 from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger, bind_run_id, get_tracer
+from jobfeed.ports.application_resolution import (
+    ApplicationIdentityStore,
+    PostingBatchCallback,
+    StreamingApplicationSource,
+)
 from jobfeed.ports.pipeline import PipelineStep, PipelineStore, ScanJournal
 from jobfeed.ports.run_leases import RunLeaseStore
 from jobfeed.ports.source import (
@@ -26,10 +32,15 @@ from jobfeed.ports.source import (
 )
 from jobfeed.ports.store import JobStore
 from jobfeed.services._timing import StepTimer, get_perf_store
+from jobfeed.services.application_resolution import (
+    ApplicationResolutionQueue,
+    RouteResolver,
+)
 from jobfeed.services.error_handler import ServiceErrorHandler
 from jobfeed.services.intermediary_resolution import IntermediaryResolver
 from jobfeed.services.pipeline_context import POSTINGS, current_pipeline
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
+from jobfeed.services.scan_streaming import ScanBatchWriter
 
 ProgressCallback = Callable[[PipelineRun], None]
 
@@ -42,7 +53,7 @@ _SAVE_PROGRESS_INTERVAL = 100
 class ScanService:
     """Application service for source fetch and job persistence."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - independently injected scan services
         self,
         store: JobStore,
         logger: JobfeedLogger,
@@ -50,6 +61,7 @@ class ScanService:
         *,
         journal: ScanJournal | None = None,
         intermediary: IntermediaryResolver | None = None,
+        application_resolver: RouteResolver | None = None,
     ) -> None:
         """Create a scan service with injected ports.
 
@@ -58,6 +70,9 @@ class ScanService:
             logger: Structured logger for scan events.
         """
         self._intermediary = intermediary
+        self._application_resolver = application_resolver
+        self._application_queue: ApplicationResolutionQueue | None = None
+        self._writer_lock = asyncio.Lock()
         self._intermediary_jobs: list[JobPosting] = []
         self.store = store
         self._journal = journal
@@ -138,7 +153,59 @@ class ScanService:
         *,
         on_progress: ProgressCallback | None,
     ) -> None:
-        """Perform scan work under a heartbeat session owned by the caller."""
+        """Own asynchronous route work alongside source collection and writes."""
+        pipeline = current_pipeline.get()
+        self._writer_lock = pipeline.writer_lock if pipeline else asyncio.Lock()
+        if self._application_resolver is None:
+            await self._run_leased_sources(
+                lease_session, sources, on_progress=on_progress
+            )
+            return
+
+        def progress(done: int, total: int, status: str) -> None:
+            self._publish_scan_progress(
+                lease_session.run,
+                source="application-resolution",
+                phase="resolving",
+                processed=done,
+                total=total,
+            )
+            lease_session.run.scan_progress["application-resolution"]["outcome"] = (
+                status
+            )
+
+        queue = ApplicationResolutionQueue(
+            cast(ApplicationIdentityStore, self.store),
+            self._application_resolver,
+            run_id=lease_session.run.run_id,
+            ensure_active=lease_session.ensure_active,
+            writer_lock=self._writer_lock,
+            on_progress=progress,
+            lease_fence=(
+                lease_session.run.run_id,
+                lease_session.owner_id,
+                lease_session.generation,
+            )
+            if hasattr(self.store, "save_job_batch")
+            else None,
+        )
+        async with queue:
+            self._application_queue = queue
+            try:
+                await self._run_leased_sources(
+                    lease_session, sources, on_progress=on_progress
+                )
+            finally:
+                self._application_queue = None
+
+    async def _run_leased_sources(
+        self,
+        lease_session: RunLeaseSession,
+        sources: list[SourceSpec],
+        *,
+        on_progress: ProgressCallback | None,
+    ) -> None:
+        """Perform source work under a heartbeat session owned by the caller."""
         run = lease_session.run
         self._intermediary_jobs = []
         bind_run_id(run.run_id)
@@ -161,6 +228,7 @@ class ScanService:
                 if not work.done():
                     await self._run_orchestrator.checkpoint(lease_session)
             await work
+            await self._drain_application_resolution(lease_session, tasks)
             if self._intermediary is not None and self._intermediary_jobs:
 
                 def progress(done: int, total: int) -> None:
@@ -201,6 +269,25 @@ class ScanService:
                     task.cancel()
             await asyncio.gather(work, *tasks, return_exceptions=True)
 
+    async def _drain_application_resolution(
+        self, session: RunLeaseSession, tasks: list[asyncio.Task[None]]
+    ) -> None:
+        if self._application_queue is None:
+            return
+        resolution = asyncio.create_task(self._application_queue.drain())
+        tasks.append(resolution)
+        while not resolution.done():
+            await asyncio.wait({resolution}, timeout=5)
+            await self._run_orchestrator.checkpoint(session)
+        await resolution
+        self._publish_scan_progress(
+            session.run,
+            source="application-resolution",
+            phase="completed",
+            processed=self._application_queue.completed,
+            total=self._application_queue.total,
+        )
+
     async def _scan_one_source(
         self,
         lease_session: RunLeaseSession,
@@ -239,9 +326,42 @@ class ScanService:
         partial_failure = False
         warning = False
         detail = None
+        streamed: set[tuple[str, str]] = set()
+
+        self._source_write_generations[name] = str(lease_session.generation)
+
+        async def save_batch(batch: list[JobPosting], generation: str | None) -> None:
+            await self._save_jobs(
+                lease_session,
+                run,
+                name,
+                batch,
+                streaming=True,
+                stream_generation=generation,
+            )
+            self._intermediary_jobs.extend(j for j in batch if intermediary_posting(j))
+
+        writer = ScanBatchWriter(save_batch)
+
+        async def submit_batch(batch: list[JobPosting]) -> None:
+            await self._accept_stream_batch(
+                name, writer, batch, str(lease_session.generation)
+            )
+
         try:
             lease_session.ensure_active()
-            jobs = await self._fetch_source_jobs(source, config, run, name)
+            async with writer:
+                await self._restore_stream_batches(name, writer)
+                jobs = await self._fetch_source_jobs(
+                    source,
+                    config,
+                    run,
+                    name,
+                    on_batch=submit_batch
+                    if isinstance(source, StreamingApplicationSource)
+                    else None,
+                )
+            streamed = writer.seen
         except RunLeaseLostError:
             raise
         except PartialSourceFetchError as exc:
@@ -250,6 +370,7 @@ class ScanService:
             if not warning:
                 self.error_handler.handle_source_fetch_error(run, name, exc)
             jobs = exc.postings
+            streamed = writer.seen
         except Exception as exc:
             self.error_handler.handle_source_fetch_error(run, name, exc)
             self._publish_scan_progress(run, source=name, phase="failed")
@@ -274,8 +395,20 @@ class ScanService:
             processed=0,
         )
         await self._record_jobs(
-            lease_session, run, name, jobs, completed=not partial_failure
+            lease_session,
+            run,
+            name,
+            [j for j in jobs if (j.platform, j.canonical_id) not in streamed],
+            completed=False,
         )
+        if not partial_failure:
+            self._publish_scan_progress(
+                run,
+                source=name,
+                phase="completed",
+                processed=len(jobs),
+                total=len(jobs),
+            )
         if partial_failure:
             self._publish_scan_progress(
                 run,
@@ -300,6 +433,41 @@ class ScanService:
             processed=progress.processed,
             current_job_id=progress.current_job_id,
         )
+
+    @staticmethod
+    async def _accept_stream_batch(
+        source: str, writer: ScanBatchWriter, batch: list[JobPosting], generation: str
+    ) -> None:
+        """Persist immutable source payloads before acknowledging their queue slots."""
+        fresh = writer.unseen(batch)
+        if not fresh:
+            return
+        pipeline = current_pipeline.get()
+        if pipeline is not None:
+            await pipeline.save_partial(
+                f"source-stream:{source}",
+                [
+                    {
+                        "generation": generation,
+                        "jobs": POSTINGS.dump_python(fresh, mode="json"),
+                    }
+                ],
+            )
+        await writer.submit(fresh, generation=generation if pipeline else None)
+
+    @staticmethod
+    async def _restore_stream_batches(source: str, writer: ScanBatchWriter) -> None:
+        """Replay original serialized batches before a browser remaps their dates."""
+        pipeline = current_pipeline.get()
+        if pipeline is None:
+            return
+        for manifest in await pipeline.load_partial(f"source-stream:{source}"):
+            generation = manifest.get("generation")
+            if not isinstance(generation, str):
+                raise ValueError("stream manifest lacks its original generation")
+            await writer.submit(
+                POSTINGS.validate_python(manifest["jobs"]), generation=generation
+            )
 
     async def _scan_session_source(
         self,
@@ -332,7 +500,10 @@ class ScanService:
             total=len(jobs),
             processed=0,
         )
-        await self._record_jobs(lease_session, run, name, jobs)
+        self._intermediary_jobs.extend(j for j in jobs if intermediary_posting(j))
+        self._publish_scan_progress(
+            run, source=name, phase="completed", processed=len(jobs), total=len(jobs)
+        )
 
     async def _run_session(
         self,
@@ -372,6 +543,9 @@ class ScanService:
                     error=result.error,
                 )
             jobs.append(_merge_enrichment(posting, result))
+            await self._save_jobs(
+                lease_session, lease_session.run, name, [jobs[-1]], streaming=True
+            )
         return jobs
 
     async def _record_jobs(
@@ -405,26 +579,41 @@ class ScanService:
                 processed=len(jobs),
             )
 
-    async def _save_jobs(
+    async def _save_jobs(  # noqa: PLR0913 - explicit immutable batch generation
         self,
         lease_session: RunLeaseSession,
         run: PipelineRun,
         source: str,
         jobs: list[JobPosting],
+        *,
+        streaming: bool = False,
+        stream_generation: str | None = None,
     ) -> None:
         pipeline = current_pipeline.get()
         if pipeline is not None:
-            await self._save_queued_jobs(lease_session, run, source, jobs, pipeline)
+            await self._save_queued_jobs(
+                lease_session,
+                run,
+                source,
+                jobs,
+                pipeline,
+                streaming=streaming,
+                stream_generation=stream_generation,
+            )
             return
         for processed, job in enumerate(jobs, start=1):
             lease_session.ensure_active()
-            result = await self.store.save_job(job)
+            async with self._writer_lock:
+                lease_session.ensure_active()
+                result = await self.store.save_job(job)
             run.jobs_discovered += 1
             run.jobs_inserted += int(result.inserted)
             run.jobs_updated += int(result.updated)
             _record_scan_stats(run, source, job, result)
             if result.inserted:
                 run.scan_inserted_job_ids.append(result.job_id)
+            if self._application_queue is not None:
+                await self._application_queue.submit_id(result.job_id)
             if processed % _SAVE_PROGRESS_INTERVAL == 0:
                 self._publish_scan_progress(
                     run,
@@ -441,12 +630,22 @@ class ScanService:
         config: dict[str, object],
         run: PipelineRun,
         name: str,
+        *,
+        on_batch: PostingBatchCallback | None = None,
     ) -> list[JobPosting]:
         async def fetch(saved_config: dict[str, object]) -> dict[str, Any]:
             error = None
             warning = False
             try:
-                if isinstance(source, ProgressiveSimpleSource):
+                if on_batch is not None and isinstance(
+                    source, StreamingApplicationSource
+                ):
+                    jobs = await source.fetch_jobs_streaming(
+                        saved_config,
+                        lambda p: self._publish_fetch_progress(run, name, p),
+                        on_batch,
+                    )
+                elif isinstance(source, ProgressiveSimpleSource):
                     jobs = await source.fetch_jobs_with_progress(
                         saved_config,
                         lambda p: self._publish_fetch_progress(run, name, p),
@@ -490,18 +689,34 @@ class ScanService:
             )
         return jobs
 
-    async def _save_queued_jobs(
+    async def _save_queued_jobs(  # noqa: PLR0913 - fenced batch write context
         self,
         session: RunLeaseSession,
         run: PipelineRun,
         source: str,
         jobs: list[JobPosting],
         pipeline: PipelineStep,
+        *,
+        streaming: bool = False,
+        stream_generation: str | None = None,
     ) -> None:
         for offset in range(0, len(jobs), 100):
             batch = jobs[offset : offset + 100]
             name = f"write:{source}:{offset}"
-            generation = self._source_write_generations.get(source)
+            if streaming:
+                identity = [
+                    (
+                        j.platform,
+                        j.canonical_id,
+                        j.apply_url,
+                        j.enriched_at.isoformat() if j.enriched_at else None,
+                    )
+                    for j in batch
+                ]
+                name = f"write:{source}:stream:" + json.dumps(
+                    identity, separators=(",", ":")
+                )
+            generation = stream_generation or self._source_write_generations.get(source)
             if generation is not None:
                 name += f":attempt:{generation}"
 
@@ -521,6 +736,7 @@ class ScanService:
                 name, POSTINGS.dump_python(batch, mode="json"), write
             )
             _record_batch_outcomes(run, source, batch, outcomes)
+            await self._enqueue_application_outcomes(outcomes)
             self._publish_scan_progress(
                 run,
                 source=source,
@@ -529,6 +745,14 @@ class ScanService:
                 processed=offset + len(batch),
             )
             await self._run_orchestrator.checkpoint(session)
+
+    async def _enqueue_application_outcomes(
+        self, outcomes: list[dict[str, Any]]
+    ) -> None:
+        if self._application_queue is None:
+            return
+        for result in outcomes:
+            await self._application_queue.submit_id(str(result["job_id"]))
 
     def _publish_scan_progress(  # noqa: PLR0913 - one source progress snapshot
         self,
@@ -570,6 +794,8 @@ def _merge_enrichment(posting: JobPosting, result: EnrichResult) -> JobPosting:
         enriched_at=enriched_at,
         enrich_source=result.enrich_source,
         apply_url=result.apply_url or posting.apply_url,
+        identity_evidence_url=result.identity_evidence_url
+        or posting.identity_evidence_url,
     )
 
 

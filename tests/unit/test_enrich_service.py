@@ -350,3 +350,17 @@ async def test_custom_min_interval_used_for_pacing() -> None:
     await service.run(platform="linkedin_guest", batch_limit=_BATCH_LIMIT)
 
     assert sleeper.delays == [0.25]
+
+
+async def test_success_persists_apply_before_notifying_deduplication():
+    service, store, _, _ = _build([_row(1)], [_success()])
+    service.enricher.outcomes[0].result.apply_url = "https://careers.example.com/jobs/1"
+    notified = []
+
+    async def on_saved(job_id):
+        assert store.enrichments[0]["apply_url"] == "https://careers.example.com/jobs/1"
+        notified.append(job_id)
+
+    service.on_saved = on_saved
+    await service.run(platform="linkedin_guest", batch_limit=1)
+    assert notified == ["job-1"]

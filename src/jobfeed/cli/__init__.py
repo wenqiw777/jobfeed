@@ -97,6 +97,7 @@ def create_app(config_path: Path | None = None) -> AppContext:
             if settings.redis_pipeline.enabled
             else None,
             redis_namespace=settings.redis_pipeline.namespace,
+            bridge=jobright_bridge,
         ),
         run_orchestrator=run_orchestrator,
         stage_b_threshold_sync=store,

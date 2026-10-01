@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -57,12 +58,47 @@ class JobboardExtensionSource:
         """
         return await self.fetch_jobs_with_progress(config, lambda _: None)
 
-    async def fetch_jobs_with_progress(  # noqa: C901 - sequential fetch and recovery phases
+    async def fetch_jobs_with_progress(
         self,
-        config: dict[str, object],  # noqa: ARG002
+        config: dict[str, object],
         on_progress: SourceFetchProgressCallback,
     ) -> list[JobPosting]:
         """Collect board postings and publish scan progress.
+
+        Args:
+            config: Source request options.
+            on_progress: Callback receiving collection progress.
+
+        Returns:
+            Collected postings deduplicated by source identity.
+        """
+        return await self._fetch_jobs(config, on_progress)
+
+    async def fetch_jobs_streaming(
+        self,
+        config: dict[str, object],
+        on_progress: SourceFetchProgressCallback,
+        on_batch: Callable[[list[JobPosting]], Awaitable[None]],
+    ) -> list[JobPosting]:
+        """Publish interpreted batches while the extension continues discovery.
+
+        Args:
+            config: Source request options.
+            on_progress: Callback receiving collection progress.
+            on_batch: Awaited callback receiving each interpreted source batch.
+
+        Returns:
+            All collected postings, including those delivered through on_batch.
+        """
+        return await self._fetch_jobs(config, on_progress, on_batch)
+
+    async def _fetch_jobs(  # noqa: C901 - sequential fetch and recovery phases
+        self,
+        config: dict[str, object],  # noqa: ARG002
+        on_progress: SourceFetchProgressCallback,
+        on_batch: Callable[[list[JobPosting]], Awaitable[None]] | None = None,
+    ) -> list[JobPosting]:
+        """Collect board postings and optionally deliver committed browser batches.
 
         Complexity: O(Q * J), for queries Q and returned jobs J.
 
@@ -190,6 +226,30 @@ class JobboardExtensionSource:
                     )
 
                 try:
+
+                    async def streamed(
+                        rows: list[dict[str, Any]], query: str = query
+                    ) -> None:
+                        """Map and deliver new rows.
+
+                        Complexity: O(J) for J rows in the received batch.
+                        """
+                        pending = [
+                            row for row in rows if str(row.get("id")) not in postings
+                        ]
+                        if self.page_extractor is not None:
+                            pending = await self._interpret_rows(
+                                pending, query, on_progress
+                            )
+                        jobs = []
+                        for row in pending:
+                            job = map_board_job(row, discovered_at=datetime.now(UTC))
+                            if not blocked(job.company):
+                                postings[job.canonical_id] = job
+                                jobs.append(job)
+                        if jobs and on_batch is not None:
+                            await on_batch(jobs)
+
                     rows = await self.bridge.run_scan(
                         source=self.source,
                         query=query,
@@ -202,18 +262,23 @@ class JobboardExtensionSource:
                         timeout_s=self.config.timeout_s,
                         on_progress=progress,
                         on_discovery=gate,
+                        **({"on_batch": streamed} if on_batch is not None else {}),
                     )
                 except JobrightBridgeError as exc:
                     for row in exc.partial_jobs:
+                        if str(row.get("id")) in postings:
+                            continue
                         job = map_board_job(row, discovered_at=datetime.now(UTC))
                         if not blocked(job.company):
                             postings[job.canonical_id] = job
                     raise PartialSourceFetchError(
                         str(exc), list(postings.values()), warning=exc.warning
                     ) from exc
-                if self.page_extractor is not None:
+                if on_batch is not None:
+                    await streamed(rows)
+                elif self.page_extractor is not None:
                     rows = await self._interpret_rows(rows, query, on_progress)
-                for row in rows:
+                for row in [] if on_batch is not None else rows:
                     job = map_board_job(row, discovered_at=datetime.now(UTC))
                     if not blocked(job.company):
                         postings[job.canonical_id] = job
@@ -372,6 +437,7 @@ def map_board_job(raw: dict[str, Any], *, discovered_at: datetime) -> JobPosting
         url=raw["url"],
         title=raw["title"],
         company=employer.get("name") or "Unknown",
+        apply_url=_observed_apply_url(raw.get("applyUrl")),
         location=location or "Unknown",
         discovered_at=discovered_at,
         jd_text=description or None,
@@ -385,6 +451,24 @@ def map_board_job(raw: dict[str, Any], *, discovered_at: datetime) -> JobPosting
         else None,
         **_repost_fields(raw),
     )
+
+
+def _observed_apply_url(value: Any) -> str | None:
+    """Preserve only an observed external HTTP(S) destination."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not host
+        or (host == "linkedin.com" or host.endswith(".linkedin.com"))
+    ):
+        return None
+    return value
 
 
 def _repost_fields(raw: dict[str, Any]) -> dict[str, Any]:

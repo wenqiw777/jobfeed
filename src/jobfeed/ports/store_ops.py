@@ -85,6 +85,40 @@ class StoreOpsMixin(Protocol):
         """
         ...
 
+    async def record_application_identity(
+        self,
+        *,
+        job_id: str,
+        expected_apply_url: str,
+        ats_url: str | None,
+        state_key: str,
+        state_value: str,
+        run_id: str | None = None,
+        owner_id: str | None = None,
+        generation: int | None = None,
+    ) -> bool:
+        """Commit evidence and resolution state if the source's Apply URL matches.
+
+        A missing ATS URL records a negative outcome without creating identity
+        evidence. Return False for a missing source or changed Apply URL.
+        A supplied complete scan fence is checked within the transaction;
+        adapters without durable lease support reject it rather than bypass it.
+
+        Args:
+            job_id: Stored source identity.
+            expected_apply_url: Previously observed application URL.
+            ats_url: Verified ATS URL, or None for a negative outcome.
+            state_key: Resolution receipt key.
+            state_value: Serialized outcome and optional verification facts.
+            run_id: Optional scan lease identity.
+            owner_id: Optional scan lease owner.
+            generation: Optional scan lease generation.
+
+        Returns:
+            Whether the source and its verification facts remain current.
+        """
+        ...
+
     async def record_enrichment(
         self,
         *,
@@ -95,6 +129,7 @@ class StoreOpsMixin(Protocol):
         enrich_source: str,
         jd_lang: str | None = None,
         posted_at: datetime | None = None,
+        apply_url: str | None = None,
     ) -> None:
         """Stamp a job as enriched with JD body and quality.
 
@@ -108,6 +143,8 @@ class StoreOpsMixin(Protocol):
             posted_at: Optional JD-derived posting date. Fills the column
                 only when it is NULL — an exact card-derived date already
                 stored is never overwritten by this approximate value.
+            apply_url: Observed external application URL; None preserves the
+                previously stored URL.
         """
         ...
 

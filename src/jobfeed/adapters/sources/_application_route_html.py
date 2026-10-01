@@ -1,0 +1,242 @@
+"""Pure target-job ownership and Apply-region extraction from observed HTML."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+from typing import Any
+from urllib.parse import urljoin
+
+from bs4 import BeautifulSoup, Tag
+
+from jobfeed.domain.application_route import HopKind
+from jobfeed.domain.external_identity import observed_identifier
+from jobfeed.domain.models import JobPosting
+from jobfeed.domain.normalize import normalize, normalize_company
+
+_MIN_JD_CHARS = 300
+_MAX_JD_WORDS = 5000
+_MIN_JD_COVERAGE = 0.80
+_EXCLUDED = re.compile(r"recommend|related|similar|other.jobs|talent|job.alert", re.I)
+_APPLY = re.compile(r"\bapply\b|\bapplication\b", re.I)
+_REQUISITION = re.compile(
+    r"\b(?:requisition|req|job)(?:\s*(?:id|number|#))?\s*[:#]\s*([A-Z0-9-]+)",
+    re.I,
+)
+
+
+@dataclass(frozen=True)
+class RouteDocument:
+    """Current-job facts and observed navigation candidates."""
+
+    title: str
+    company: str
+    description: str
+    requisitions: tuple[str, ...]
+    candidates: tuple[tuple[str, HopKind], ...]
+    owned: bool
+    ambiguous: bool = False
+    has_job_facts: bool = False
+
+
+def _job_blocks(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [block for item in value for block in _job_blocks(item)]
+    if not isinstance(value, dict):
+        return []
+    types = value.get("@type", [])
+    if types == "JobPosting" or (isinstance(types, list) and "JobPosting" in types):
+        return [value]
+    return _job_blocks(value.get("@graph", []))
+
+
+def _text(value: Any) -> str:
+    return (
+        BeautifulSoup(value, "html.parser").get_text(" ", strip=True)
+        if isinstance(value, str)
+        else ""
+    )
+
+
+def _requisition(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("value")
+    return str(value).strip().casefold() if isinstance(value, (str, int)) else ""
+
+
+def _excluded(node: Tag, requisitions: tuple[str, ...] = ()) -> bool:
+    """Reject unrelated ancestor regions and conflicting job ID attributes.
+
+    Time complexity: O(d * a) for ancestor depth d and four ID attributes a.
+    """
+    for ancestor in (node, *node.parents):
+        if not isinstance(ancestor, Tag):
+            continue
+        labels = " ".join([str(ancestor.get("id", "")), str(ancestor.get("class", ""))])
+        if _EXCLUDED.search(labels):
+            return True
+        job_region = bool(re.search(r"job[-_ ]?(?:sidebar|apply|header)", labels, re.I))
+        if ancestor.name in {"nav", "footer"} or (
+            ancestor.name in {"header", "aside"} and not job_region
+        ):
+            return True
+        for name in ("data-job-id", "data-jobid", "data-requisition-id", "data-req-id"):
+            req = str(ancestor.get(name, "")).casefold()
+            if requisitions and req and req not in requisitions:
+                return True
+    return False
+
+
+def _company_matches(company: str, job: JobPosting) -> bool:
+    return bool(normalize_company(company)) and normalize_company(company) == (
+        normalize_company(job.company)
+    )
+
+
+def parse_route_document(  # noqa: C901 - explicit job-owned evidence branches
+    url: str, html: str, job: JobPosting
+) -> RouteDocument:
+    """Select only the source job's structured block/Apply region, never siblings.
+
+    Args:
+        url: Observed document URL, used to resolve relative navigation edges.
+        html: Bounded fetched or rendered document.
+        job: Source facts defining the target employer and job title.
+
+    Returns:
+        Target ownership facts and actual application navigation candidates.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    blocks: list[dict[str, Any]] = []
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            blocks.extend(_job_blocks(json.loads(script.get_text())))
+        except (ValueError, TypeError):
+            continue
+    matching = [
+        b
+        for b in blocks
+        if isinstance(b.get("hiringOrganization"), dict)
+        and normalize(str(b.get("title", ""))) == (normalize(job.title))
+        and _company_matches(
+            str((b.get("hiringOrganization") or {}).get("name", "")), job
+        )
+    ]
+    if len(matching) > 1:
+        return RouteDocument("", "", "", (), (), False, True)
+    if blocks and not matching:
+        return RouteDocument("", "", "", (), (), False, has_job_facts=True)
+    block = matching[0] if matching else None
+    title = str(block.get("title", "")) if block else ""
+    company = str(block["hiringOrganization"].get("name", "")) if block else ""
+    region = soup.select_one("main") or soup.select_one('[role="main"]') or soup
+    heading = region.select_one("h1")
+    content = region.get_text(" ", strip=True)
+    if not block:
+        title = heading.get_text(" ", strip=True) if heading else ""
+        if f" {normalize_company(job.company)} " in f" {normalize(content)} ":
+            company = job.company
+    owned = normalize(title) == normalize(job.title) and _company_matches(company, job)
+    description = _text(block.get("description")) if block else content
+    req = _requisition(block.get("identifier")) if block else ""
+    requisitions = tuple(
+        dict.fromkeys(
+            [req]
+            if req
+            else (match.casefold() for match in _REQUISITION.findall(content))
+        )
+    )
+    candidates: list[tuple[str, HopKind]] = []
+    base_tag = soup.find("base", href=True)
+    base = urljoin(url, str(base_tag["href"])) if isinstance(base_tag, Tag) else url
+    if owned:
+        regions = [region]
+        if block and len(blocks) == 1:
+            regions.extend(
+                soup.select(
+                    ".job-sidebar, .job-apply, .job-header, .hero-content, "
+                    "[data-job-id], [data-jobid], [data-requisition-id]"
+                )
+            )
+        anchors = [anchor for owner in regions for anchor in owner.select("a[href]")]
+        for anchor in anchors:
+            label = " ".join(
+                [anchor.get_text(" ", strip=True), str(anchor.get("aria-label", ""))]
+            )
+            if not _excluded(anchor, requisitions) and _APPLY.search(label):
+                candidates.append(
+                    (urljoin(base, str(anchor["href"])), "target_apply_link")
+                )
+        frames = [frame for owner in regions for frame in owner.select("iframe[src]")]
+        for frame in frames:
+            if _excluded(frame, requisitions):
+                continue
+            target = urljoin(base, str(frame["src"]))
+            if observed_identifier(target):
+                candidates.append((target, "target_embedded_job_url"))
+    if owned and block and isinstance(block.get("url"), str):
+        target = urljoin(base, block["url"])
+        if target != url and observed_identifier(target):
+            candidates.append((target, "target_embedded_job_url"))
+    return RouteDocument(
+        title,
+        company,
+        description,
+        requisitions,
+        tuple(dict.fromkeys(candidates)),
+        owned,
+        has_job_facts=bool(blocks or heading),
+    )
+
+
+def verify_route_target(
+    job: JobPosting, doc: RouteDocument, url: str, requisitions: set[str]
+) -> str | None:
+    """Return a failure reason unless final job facts corroborate this source.
+
+    Args:
+        job: Source facts and description requiring corroboration.
+        doc: Independently observed final job facts.
+        url: Observed concrete ATS destination URL.
+        requisitions: Explicit IDs observed on preceding target job pages.
+
+    Returns:
+        Machine-readable rejection reason, or None when evidence agrees.
+    """
+    if not doc.owned or doc.ambiguous:
+        return "target_ownership_missing"
+    identity = observed_identifier(url)
+    if identity is None:
+        return "unsupported_ats_identity"
+    final_ids = set(doc.requisitions)
+    if (
+        identity.provider == "workday"
+        and final_ids
+        and identity.native_id.casefold() not in final_ids
+    ):
+        return "target_requisition_mismatch"
+    if requisitions and final_ids and not requisitions.intersection(final_ids):
+        return "requisition_mismatch"
+    # Observed wrapper IDs must agree with the explicit ATS requisition too.
+    if (
+        identity.provider == "workday"
+        and requisitions
+        and identity.native_id.casefold() not in requisitions
+    ):
+        return "requisition_mismatch"
+    left, right = normalize(job.jd_text), normalize(doc.description)
+    if min(len(left), len(right)) < _MIN_JD_CHARS:
+        return "target_jd_missing"
+    if max(len(left.split()), len(right.split())) > _MAX_JD_WORDS:
+        return "target_jd_size_limit"
+    matched = sum(
+        b.size
+        for b in SequenceMatcher(
+            None, left.split(), right.split(), autojunk=False
+        ).get_matching_blocks()
+    )
+    if matched / len(left.split()) < _MIN_JD_COVERAGE:
+        return "target_jd_mismatch"
+    return None

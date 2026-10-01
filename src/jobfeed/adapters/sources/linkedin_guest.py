@@ -40,6 +40,7 @@ from jobfeed.adapters.sources._linkedin_guest_http import (
     posting_url,
 )
 from jobfeed.adapters.sources._linkedin_guest_parse import (
+    parse_apply_url,
     parse_jd,
     parse_posting_posted_at,
 )
@@ -203,6 +204,7 @@ class LinkedInGuestEnricher:
                 quality=assess_quality(jd_text),
                 enrich_source=_ENRICH_SOURCE,
                 posted_at=parse_posting_posted_at(html, now=self._now()),
+                apply_url=parse_apply_url(html),
             )
         )
 

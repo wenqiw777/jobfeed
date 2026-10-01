@@ -272,3 +272,11 @@ async def test_canonical_id_without_digits_errors_without_fetching() -> None:
     assert outcome.is_blocked is False
     assert outcome.is_gone is False
     assert fetcher.urls == []
+
+
+async def test_observed_external_apply_url_is_in_enrichment():
+    html = _posting_html(_LONG_JD_TEXT) + (
+        '<a class="apply-button" href="https://careers.example.com/jobs/1">Apply</a>'
+    )
+    outcome = await _enricher(_ok(html)).enrich(canonical_id=_JOB_ID, url="unused")
+    assert outcome.result.apply_url == "https://careers.example.com/jobs/1"

@@ -16,6 +16,66 @@ from jobfeed.services.job_page_extraction import JobPageExtractor
 from jobfeed.services.jobright_bridge import JobrightBridge, JobrightBridgeError
 
 
+async def test_streaming_batch_is_available_before_browser_scan_completes():
+    delivered = asyncio.Event()
+    release = asyncio.Event()
+    row = {
+        "source": "linkedin",
+        "id": "123",
+        "title": "Engineer",
+        "url": "https://www.linkedin.com/jobs/view/123/",
+        "description": "Original JD",
+        "applyUrl": "https://careers.example/jobs/123",
+    }
+
+    class Bridge:
+        async def run_scan(self, **kwargs):
+            await kwargs["on_batch"]([row])
+            await release.wait()
+            return [row]
+
+    source = JobboardExtensionSource(
+        source="linkedin",
+        bridge=Bridge(),
+        config=SourcesBoardExtensionConfig(queries=["Engineer"]),
+    )
+    batches = []
+
+    async def saved(jobs):
+        batches.append(jobs)
+        delivered.set()
+
+    running = asyncio.create_task(
+        source.fetch_jobs_streaming({}, lambda _: None, saved)
+    )
+    try:
+        await asyncio.wait_for(delivered.wait(), 1)
+        assert not running.done()
+        assert batches[0][0].apply_url == row["applyUrl"]
+    finally:
+        release.set()
+        result = await running
+    assert len(batches) == 1
+    assert len(result) == 1
+
+
+@pytest.mark.parametrize(
+    "apply_url", [None, "https://www.linkedin.com/jobs/view/1/", "javascript:void(0)"]
+)
+def test_board_mapping_leaves_missing_or_internal_application_link_absent(apply_url):
+    job = map_board_job(
+        {
+            "source": "linkedin",
+            "id": "1",
+            "title": "Engineer",
+            "url": "https://www.linkedin.com/jobs/view/1/",
+            "applyUrl": apply_url,
+        },
+        discovered_at=datetime.now(UTC),
+    )
+    assert job.apply_url is None
+
+
 async def test_observation_progress_does_not_add_jobs_or_disconnect_scan():
     bridge = JobrightBridge()
     connection = bridge.connect(sources=["linkedin"])
