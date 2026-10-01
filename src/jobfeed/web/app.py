@@ -142,6 +142,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
             if context["settings"].redis_pipeline.enabled
             else None,
             redis_namespace=context["settings"].redis_pipeline.namespace,
+            bridge=context.get("jobright_bridge"),
         ),
         evaluate_service_factory=lambda **kw: build_evaluate_service(
             context,
