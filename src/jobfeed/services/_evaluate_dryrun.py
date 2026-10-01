@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from jobfeed.domain.ai_data_work import ai_data_work_reason
 from jobfeed.domain.models import DryRunPreviewItem, JobPosting, PipelineRun
+from jobfeed.domain.seniority import non_internship_experience_reason
 from jobfeed.domain.types import StageName
 from jobfeed.observability import JobfeedLogger
 from jobfeed.ports.store import JobStore
@@ -86,6 +87,14 @@ async def build_dry_run_preview(
             job for job in jobs_b if not ai_data_work_reason(job.title, job.company)
         ]
         run.jobs_filtered += len(jobs_b) - len(survivors)
+        if config.seniority_gate_mode == "filter":
+            eligible = [
+                job
+                for job in survivors
+                if not non_internship_experience_reason(job.title, job.jd_text or "")
+            ]
+            run.jobs_seniority_filtered += len(survivors) - len(eligible)
+            survivors = eligible
         run.dry_run_preview.extend(log_dry_run(request.logger, "stage_b", survivors))
     return run.dry_run_preview
 
