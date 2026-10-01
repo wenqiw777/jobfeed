@@ -38,6 +38,42 @@
         "title": "ApiErrorResponse",
         "type": "object"
       },
+      "ApplicationBackfillRequest": {
+        "description": "All open candidates, or an explicit existing-ID / recency subset.",
+        "properties": {
+          "days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days"
+          },
+          "job_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 1000,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Ids"
+          }
+        },
+        "title": "ApplicationBackfillRequest",
+        "type": "object"
+      },
       "ApplicationDetail": {
         "description": "Application audit refs: snapshot hashes only, never contents.",
         "properties": {
@@ -8304,6 +8340,49 @@
           }
         },
         "summary": "Get Active Runs"
+      }
+    },
+    "/api/runs/application-backfill": {
+      "post": {
+        "description": "Start fenced identity work without enrichment or paid scoring.\n\nArgs:\n    body: Optional existing source IDs or posting recency window.\n    request: Shared production store and connected Chrome bridge.\n    manager: Run lifecycle and exclusive scan ownership.\n\nReturns:\n    A stoppable run ID and initial status.\n\nRaises:\n    ApiError: If the updated extension is unavailable or a scan is active.",
+        "operationId": "trigger_application_backfill_api_runs_application_backfill_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationBackfillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Trigger Application Backfill Api Runs Application Backfill Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Application Backfill"
       }
     },
     "/api/runs/evaluate": {

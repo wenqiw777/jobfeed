@@ -36,6 +36,9 @@ from jobfeed.web.onboarding_app import (
     _include_onboarding_routers,
     _make_post_scan_hook,
 )
+from jobfeed.web.routes.application_backfill import (
+    router as application_backfill_router,
+)
 from jobfeed.web.routes.applications import router as applications_router
 from jobfeed.web.routes.companies import router as companies_router
 from jobfeed.web.routes.configuration import router as configuration_router
@@ -157,10 +160,20 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
         run_orchestrator=context.get("run_orchestrator"),
         post_scan_hook=_make_post_scan_hook(context),
         auto_restart_allowed=lambda source: (
-            source
-            not in {"all", "jobright", "speedyapply", "linkedin-extension", "handshake"}
-            or bool(
-                context.get("jobright_bridge") and context["jobright_bridge"].connected
+            source != "application-backfill"
+            and (
+                source
+                not in {
+                    "all",
+                    "jobright",
+                    "speedyapply",
+                    "linkedin-extension",
+                    "handshake",
+                }
+                or bool(
+                    context.get("jobright_bridge")
+                    and context["jobright_bridge"].connected
+                )
             )
         ),
     )
@@ -200,6 +213,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     app.include_router(real_jobs_router, prefix="/api")
     app.include_router(insights_router, prefix="/api")
     app.include_router(runs_router, prefix="/api")
+    app.include_router(application_backfill_router, prefix="/api")
     app.include_router(run_sources_router, prefix="/api")
     app.include_router(companies_router, prefix="/api")
     app.include_router(performance_router, prefix="/api")

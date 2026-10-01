@@ -176,6 +176,49 @@ class RunManager:
         return scope
 
     @_track_setup
+    async def trigger_application_backfill(
+        self,
+        work: Callable[
+            [RunLeaseSession, Callable[[PipelineRun], None]], Awaitable[None]
+        ],
+    ) -> str:
+        """Own historical identity work under the existing scan lock and fence.
+
+        Args:
+            work: Backfill operation and its persisted progress callback.
+
+        Returns:
+            A stoppable run ID, without source scans or post-scan enrichment.
+
+        Raises:
+            RunConflictError: If a scan is active or the manager is shutting down.
+        """
+        self._require_running()
+        self._require_unlocked(self._scan_lock, "scan")
+        await self._scan_lock.acquire()
+        session = None
+        try:
+            session = await self._run_orchestrator.start("scan", "application-backfill")
+            self._register(session.run, session.run.source)
+            progress = self._make_progress(session.run.run_id, session)
+
+            async def execute(active: RunLeaseSession) -> None:
+                await work(active, progress)
+
+            self._tasks[session.run.run_id] = asyncio.create_task(
+                self._execute_run(self._scan_lock, session, execute)
+            )
+            return session.run.run_id
+        except BaseException as exc:
+            try:
+                if session is not None:
+                    self._active.pop(session.run.run_id, None)
+                    await self._run_orchestrator.fail(session, exc)
+            finally:
+                self._scan_lock.release()
+            raise
+
+    @_track_setup
     async def trigger_evaluate(self, **kwargs: Any) -> str:
         """Start an evaluate if none active.
 

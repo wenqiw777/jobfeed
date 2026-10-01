@@ -21,7 +21,7 @@ async def record_application_identity(  # noqa: PLR0913
     lifecycle: SqliteLifecycle,
     *,
     job_id: str,
-    expected_apply_url: str,
+    expected_apply_url: str | None,
     ats_url: str | None,
     state_key: str,
     state_value: str,

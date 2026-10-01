@@ -1695,6 +1695,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/application-backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Application Backfill
+         * @description Start fenced identity work without enrichment or paid scoring.
+         *
+         *     Args:
+         *         body: Optional existing source IDs or posting recency window.
+         *         request: Shared production store and connected Chrome bridge.
+         *         manager: Run lifecycle and exclusive scan ownership.
+         *
+         *     Returns:
+         *         A stoppable run ID and initial status.
+         *
+         *     Raises:
+         *         ApiError: If the updated extension is unavailable or a scan is active.
+         */
+        post: operations["trigger_application_backfill_api_runs_application_backfill_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/evaluate": {
         parameters: {
             query?: never;
@@ -1958,6 +1989,16 @@ export interface components {
          */
         ApiErrorResponse: {
             error: components["schemas"]["ApiErrorDetail"];
+        };
+        /**
+         * ApplicationBackfillRequest
+         * @description All open candidates, or an explicit existing-ID / recency subset.
+         */
+        ApplicationBackfillRequest: {
+            /** Days */
+            days?: number | null;
+            /** Job Ids */
+            job_ids?: string[] | null;
         };
         /**
          * ApplicationDetail
@@ -6105,6 +6146,41 @@ export interface operations {
                             [key: string]: unknown;
                         }[];
                     };
+                };
+            };
+        };
+    };
+    trigger_application_backfill_api_runs_application_backfill_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplicationBackfillRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

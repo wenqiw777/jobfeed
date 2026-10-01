@@ -37,11 +37,13 @@ class ApplicationResolutionQueue:
         on_progress: ResolutionProgress = lambda _done, _total, _status: None,
         queue_size: int = 50,
         lease_fence: tuple[str, str, int] | None = None,
+        allow_missing_apply: bool = False,
     ) -> None:
         self.store, self.resolver, self.run_id = store, resolver, run_id
         self.ensure_active, self.on_progress = ensure_active, on_progress
         self.writer_lock = writer_lock or asyncio.Lock()
         self.lease_fence = lease_fence
+        self.allow_missing_apply = allow_missing_apply
         self.queue: asyncio.Queue[JobPosting] = asyncio.Queue(maxsize=queue_size)
         self._workers: list[asyncio.Task[None]] = []
         self._routes: dict[tuple[str, str], asyncio.Task[ApplicationRouteOutcome]] = {}
@@ -79,9 +81,9 @@ class ApplicationResolutionQueue:
         self.ensure_active()
         self._raise_failure()
         job = await self.store.get_job(job_id)
-        if job is None or not job.apply_url:
+        if job is None or (not job.apply_url and not self.allow_missing_apply):
             return
-        key = (job_id, job.apply_url)
+        key = (job_id, job.apply_url or job.url)
         if key in self._submitted:
             return
         self._submitted.add(key)
@@ -156,7 +158,7 @@ class ApplicationResolutionQueue:
             reused = self._cached(cached, job)
             if reused is not None:
                 return reused
-        key = (job.apply_url or "", json.dumps(self._facts(job), sort_keys=True))
+        key = (job.apply_url or job.url, json.dumps(self._facts(job), sort_keys=True))
         if key not in self._routes:
             self._routes[key] = asyncio.create_task(self._resolve(job))
         return await asyncio.shield(self._routes[key])
@@ -172,12 +174,13 @@ class ApplicationResolutionQueue:
             )
 
     async def _commit(self, job: JobPosting, outcome: ApplicationRouteOutcome) -> bool:
-        assert job.id is not None and job.apply_url is not None
+        assert job.id is not None
         evidence = {
             **asdict(outcome),
             "checked_at": outcome.checked_at.isoformat(),
             "run_id": self.run_id,
             "apply_url": job.apply_url,
+            "source_url": job.url,
             "company": job.company,
             "title": job.title,
             "verification_facts": self._facts(job),
@@ -213,6 +216,7 @@ class ApplicationResolutionQueue:
             saved = json.loads(value)
             if (
                 saved["apply_url"] != job.apply_url
+                or (not job.apply_url and saved.get("source_url") != job.url)
                 or saved.get("company") != job.company
                 or saved.get("title") != job.title
                 or saved.get("verification_facts")

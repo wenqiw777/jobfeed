@@ -25,6 +25,12 @@ def verification_facts_match(posting: JobPosting, state_value: str) -> bool:
         return True
     if not isinstance(receipt, dict) or "verification_facts" not in receipt:
         return True
+    if (
+        not posting.apply_url
+        and "source_url" in receipt
+        and receipt["source_url"] != posting.url
+    ):
+        return False
     facts = receipt["verification_facts"]
     if not isinstance(facts, dict):
         return False

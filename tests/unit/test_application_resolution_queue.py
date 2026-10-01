@@ -57,6 +57,38 @@ class Store:
         return True
 
 
+async def test_explicit_backfill_resolves_missing_apply_without_rewriting_source():
+    store = Store()
+    store.jobs["1"] = replace(store.jobs["1"], apply_url=None)
+    calls = []
+
+    async def resolve(job):
+        calls.append(job)
+        return ApplicationRouteOutcome("unresolved", reason="target_apply_link_missing")
+
+    async with ApplicationResolutionQueue(store, resolve) as queue:
+        await queue.submit_id("1")
+    assert calls == []
+    async with ApplicationResolutionQueue(
+        store, resolve, allow_missing_apply=True
+    ) as queue:
+        await queue.submit_id("1")
+    assert calls == [store.jobs["1"]]
+    assert store.writes[0][0]["expected_apply_url"] is None
+    assert store.jobs["1"].apply_url is None
+
+
+def test_missing_apply_proof_rejects_a_changed_original_source_url():
+    job = replace(posting("1"), apply_url=None)
+    receipt = json.dumps(
+        {
+            "source_url": "https://www.linkedin.com/jobs/view/different/",
+            "verification_facts": ApplicationResolutionQueue._facts(job),
+        }
+    )
+    assert not verification_facts_match(job, receipt)
+
+
 async def test_same_pending_url_is_fetched_once_and_links_both_batches():
     store = Store()
     started, finish = asyncio.Event(), asyncio.Event()

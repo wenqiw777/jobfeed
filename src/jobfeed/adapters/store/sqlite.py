@@ -132,11 +132,42 @@ class SQLiteStore(
         """Close the shared SQLite lifecycle idempotently."""
         await self._lifecycle.close()
 
+    async def list_application_backfill_ids(
+        self, since: datetime | None = None
+    ) -> list[str]:
+        """Snapshot open source IDs whose application routes may need resolution.
+
+        Args:
+            since: Optional inclusive discovery timestamp in UTC.
+
+        Returns:
+            Source IDs ordered by available Apply URL, then newest discovery.
+        """
+        sql = (
+            "SELECT id FROM jobs WHERE closed_at IS NULL AND ("
+            "NULLIF(TRIM(apply_url), '') IS NOT NULL OR platform IN ("
+            "'linkedin', 'linkedin_guest', 'linkedin_jobspy', 'jobright', "
+            "'speedyapply', 'indeed', 'official_search'))"
+        )
+        args: list[str] = []
+        if since is not None:
+            sql += " AND discovered_at >= ?"
+            args.append(_utc_text(since))
+        sql += (
+            " ORDER BY (NULLIF(TRIM(apply_url), '') IS NOT NULL) DESC, "
+            "discovered_at DESC, id DESC"
+        )
+        async with self._lifecycle.connection() as connection:
+            cursor = await connection.execute(sql, args)
+            rows = await cursor.fetchall()
+            await cursor.close()
+        return [str(row[0]) for row in rows]
+
     async def record_application_identity(  # noqa: PLR0913
         self,
         *,
         job_id: str,
-        expected_apply_url: str,
+        expected_apply_url: str | None,
         ats_url: str | None,
         state_key: str,
         state_value: str,

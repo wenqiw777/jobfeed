@@ -1,6 +1,7 @@
 """Application-link evidence writes and streaming source boundaries."""
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from jobfeed.domain.models import JobPosting
@@ -61,7 +62,7 @@ class ApplicationIdentityStore(Protocol):
         self,
         *,
         job_id: str,
-        expected_apply_url: str,
+        expected_apply_url: str | None,
         ats_url: str | None,
         state_key: str,
         state_value: str,
@@ -83,5 +84,22 @@ class ApplicationIdentityStore(Protocol):
 
         Returns:
             Whether the source still matches and the update committed.
+        """
+        ...
+
+
+class ApplicationBackfillStore(ApplicationIdentityStore, Protocol):
+    """Snapshot historical sources before owned application-route resolution."""
+
+    async def list_application_backfill_ids(
+        self, since: datetime | None = None
+    ) -> list[str]:
+        """Read open candidates in stable priority order.
+
+        Args:
+            since: Optional inclusive discovery timestamp.
+
+        Returns:
+            Existing source IDs; no new source rows are created.
         """
         ...

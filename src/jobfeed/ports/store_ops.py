@@ -89,7 +89,7 @@ class StoreOpsMixin(Protocol):
         self,
         *,
         job_id: str,
-        expected_apply_url: str,
+        expected_apply_url: str | None,
         ats_url: str | None,
         state_key: str,
         state_value: str,
