@@ -11,7 +11,11 @@ def _object(properties: dict[str, object]) -> dict[str, object]:
 
 
 def stage_b_response_schema() -> dict[str, object]:
-    """Require every Stage B field without generating missing evaluation content."""
+    """Require every Stage B field without generating missing evaluation content.
+
+    Returns:
+        Strict JSON schema describing the canonical Stage B response shape.
+    """
     text = {"type": "string"}
     texts = {"type": "array", "items": text}
     return _object(
