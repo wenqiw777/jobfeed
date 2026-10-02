@@ -299,7 +299,7 @@ function ScanProgress({
           isDone={["completed", "completed_with_warnings"].includes(String(progress.phase))}
           isFailed={progress.phase === "failed"}
           isActive={!["queued", "completed", "completed_with_warnings", "failed"].includes(String(progress.phase))}
-          detail={`${String(progress.phase ?? "queued").replaceAll("_", " ")} · ${progress.processed ?? 0}${progress.total == null ? "" : ` / ${progress.total}`}`}
+          detail={`${progress.phase === "resolving" ? "deduplicating" : String(progress.phase ?? "queued").replaceAll("_", " ")} · ${progress.processed ?? 0}${progress.total == null ? "" : ` / ${progress.total}`}`}
         />
         {progress.message && <Box color={progress.phase === "failed" ? "text-status-error" : "text-status-warning"}>{String(progress.message)}</Box>}
         {run.scan_stats?.[source] && <Box color="text-body-secondary">
@@ -343,6 +343,7 @@ function scanActivity(run: RunSummary): string | null {
     details: "Fetching job details",
     rate_limited: "Waiting for source rate limit",
     interpreting: "Interpreting job page evidence",
+    resolving: "deduplicating",
     completed: "Source complete",
     enriching_job_descriptions: "Enriching job descriptions",
   }[run.scan_phase] ?? run.scan_phase;

@@ -241,7 +241,7 @@ function RunDetail({ run }: { run: RunSummary }) {
           <div key={source}>
             <Box variant="awsui-key-label">{sourceLabel(source)}</Box>
             <StatusIndicator type={progress.phase === "failed" ? "error" : progress.phase === "completed_with_warnings" ? "warning" : "success"}>
-              {String(progress.phase ?? "unknown").replaceAll("_", " ")} · {progress.processed ?? 0} processed
+              {progress.phase === "resolving" ? "deduplicating" : String(progress.phase ?? "unknown").replaceAll("_", " ")} · {progress.processed ?? 0} processed
             </StatusIndicator>
             {progress.message && <Box>{String(progress.message)}</Box>}
           </div>
