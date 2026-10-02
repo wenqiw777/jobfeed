@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urldefrag, urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Tag
 
@@ -67,6 +67,17 @@ def _requisition(value: Any) -> str:
     return str(value).strip().casefold() if isinstance(value, (str, int)) else ""
 
 
+def _internal_job_label(value: str, job: JobPosting) -> bool:
+    """Distinguish a title-like internal label from a conflicting requisition."""
+    words = set(normalize(job.title).split())
+    return (
+        len(words) > 1
+        and bool(re.search(r"\s", value))
+        and not re.match(r"^(?:req(?:uisition)?|job)(?:\s|[:#])", value, re.I)
+        and words.issubset(normalize(value).split())
+    )
+
+
 def _excluded(node: Tag, requisitions: tuple[str, ...] = ()) -> bool:
     """Reject unrelated ancestor regions and conflicting job ID attributes.
 
@@ -98,6 +109,16 @@ def _company_matches(company: str, job: JobPosting) -> bool:
     return bool(normalize_company(company)) and normalize_company(company) == (
         normalize_company(job.company)
     )
+
+
+def _application_region(
+    soup: BeautifulSoup, fragment: str, requisitions: tuple[str, ...]
+) -> Tag | None:
+    """Read an Apply anchor's current-job region if it already exists."""
+    application = soup.find(id=unquote(fragment))
+    if isinstance(application, Tag) and not _excluded(application, requisitions):
+        return application
+    return None
 
 
 def _linkedin_job_matches(url: str, job: JobPosting) -> bool:
@@ -233,8 +254,15 @@ def parse_route_document(  # noqa: C901 - explicit job-owned evidence branches
                 continue
             href = urljoin(base, str(anchor["href"]))
             target = _external_apply_href(href) if linkedin else href
-            if target:
-                candidates.append((target, "target_apply_link"))
+            if not target:
+                continue
+            document, fragment = urldefrag(target)
+            if fragment and document == urldefrag(url)[0]:
+                # The current document may hold a dynamically loaded ATS.
+                application = _application_region(soup, fragment, requisitions)
+                regions.extend([application] if application is not None else [])
+                continue
+            candidates.append((target, "target_apply_link"))
         frames = [frame for owner in regions for frame in owner.select("iframe[src]")]
         for frame in frames:
             if _excluded(frame, requisitions):
@@ -246,6 +274,29 @@ def parse_route_document(  # noqa: C901 - explicit job-owned evidence branches
         target = urljoin(base, block["url"])
         if target != url and observed_identifier(target):
             candidates.append((target, "target_embedded_job_url"))
+    # Some careers sites use a human-readable internal JobPosting label and
+    # expose the ATS's numeric identifier separately. Only use that metadata
+    # when this job's observed application destination is actually Greenhouse.
+    meta = soup.find("meta", attrs={"name": "JobIdentifier"})
+    native_id = str(meta.get("content", "")).strip() if isinstance(meta, Tag) else ""
+    greenhouse = any(
+        identity is not None and identity.provider == "greenhouse"
+        for target, _kind in candidates
+        for identity in (observed_identifier(target),)
+    )
+    if owned and greenhouse and native_id.isdecimal():
+        requisitions = tuple(
+            dict.fromkeys(
+                [
+                    *(
+                        value
+                        for value in requisitions
+                        if not _internal_job_label(value, job)
+                    ),
+                    native_id,
+                ]
+            )
+        )
     return RouteDocument(
         title,
         company,

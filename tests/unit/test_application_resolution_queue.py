@@ -10,7 +10,10 @@ import pytest
 from jobfeed.adapters.store._application_identity_verification import (
     verification_facts_match,
 )
-from jobfeed.domain.application_route import ApplicationRouteOutcome
+from jobfeed.domain.application_route import (
+    ApplicationRouteHop,
+    ApplicationRouteOutcome,
+)
 from jobfeed.domain.models import JobPosting
 from jobfeed.services.application_resolution import ApplicationResolutionQueue
 
@@ -55,6 +58,52 @@ class Store:
         self.writes.append((values, current.jd_text))
         self.states[values["state_key"]] = values["state_value"]
         return True
+
+
+@pytest.mark.parametrize(
+    "kind,expected_calls", [("target_apply_link", 1), ("http_redirect", 0)]
+)
+async def test_only_old_same_document_apply_loop_bypasses_failure_cache(
+    kind, expected_calls
+):
+    store = Store()
+    job = store.jobs["1"]
+    old = ApplicationRouteOutcome(
+        "unresolved",
+        reason="navigation_loop",
+        hops=(
+            ApplicationRouteHop(job.apply_url, "original_apply_url"),
+            ApplicationRouteHop(job.apply_url + "#apply-now", kind),
+        ),
+    )
+    seed = ApplicationResolutionQueue(store, lambda _: None)
+    assert await seed._commit(job, old)
+    calls = []
+
+    async def resolve(job):
+        calls.append(job.id)
+        return ApplicationRouteOutcome(
+            "resolved", ats_url="https://boards.greenhouse.io/acme/jobs/123"
+        )
+
+    async with ApplicationResolutionQueue(store, resolve) as queue:
+        await queue.submit_id("1")
+    assert len(calls) == expected_calls
+
+
+@pytest.mark.parametrize("cached", ["[]", "null", "123", '"text"'])
+async def test_malformed_cached_receipt_does_not_abort_resolution(cached):
+    store = Store()
+    store.states["application-resolution:linkedin:1"] = cached
+    calls = []
+
+    async def resolve(job):
+        calls.append(job.id)
+        return ApplicationRouteOutcome("unresolved", reason="target_apply_link_missing")
+
+    async with ApplicationResolutionQueue(store, resolve) as queue:
+        await queue.submit_id("1")
+    assert calls == ["1"]
 
 
 async def test_explicit_backfill_resolves_missing_apply_without_rewriting_source():

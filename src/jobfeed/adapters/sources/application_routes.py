@@ -13,6 +13,10 @@ from urllib.parse import urldefrag, urljoin, urlsplit
 
 import httpx
 
+from jobfeed.adapters.sources._application_route_greenhouse import (
+    greenhouse_form_api,
+    greenhouse_job_document,
+)
 from jobfeed.adapters.sources._application_route_html import (
     RouteDocument,
     parse_route_document,
@@ -28,7 +32,7 @@ from jobfeed.domain.application_route import (
     RenderedApplicationPage,
     RouteStatus,
 )
-from jobfeed.domain.external_identity import external_identity
+from jobfeed.domain.external_identity import external_identity, observed_identifier
 from jobfeed.domain.intermediary import trusted_ats_url
 from jobfeed.domain.models import JobPosting
 
@@ -229,7 +233,32 @@ class ApplicationRouteResolver:
         hops.append(ApplicationRouteHop(snapshot.url, "rendered_page"))
         return snapshot
 
-    async def _workday_document(
+    async def _greenhouse_document(
+        self,
+        client: httpx.AsyncClient,
+        job: JobPosting,
+        url: str,
+        api_url: str,
+        deadline: float,
+    ) -> RouteDocument:
+        """Corroborate an observed form embed with its official detail record."""
+        api = await self._read(client, api_url, deadline)
+        if api.status != _HTTP_OK:
+            raise _RouteError("unresolved", "target_details_unavailable")
+        try:
+            value = json.loads(api.html)
+        except ValueError as exc:
+            raise _RouteError("unresolved", "target_details_unreadable") from exc
+        identity = observed_identifier(url)
+        if (
+            not isinstance(value, dict)
+            or identity is None
+            or str(value.get("id")) != identity.native_id
+        ):
+            raise _RouteError("unresolved", "target_requisition_mismatch")
+        return greenhouse_job_document(url, value, job)
+
+    async def _ats_document(
         self,
         client: httpx.AsyncClient,
         job: JobPosting,
@@ -238,6 +267,11 @@ class ApplicationRouteResolver:
         deadline: float,
     ) -> RouteDocument:
         doc = parse_route_document(url, page.html, job)
+        greenhouse_api = greenhouse_form_api(url, page.html, job)
+        if greenhouse_api:
+            return await self._greenhouse_document(
+                client, job, url, greenhouse_api, deadline
+            )
         built = _build_cxs_url(url)
         if not built or "postingAvailable: false" in page.html:
             return doc
@@ -342,7 +376,7 @@ class ApplicationRouteResolver:
                 raise _RouteError("failed", "http_status")
             doc = parse_route_document(current, page.html, job)
             if trusted_ats_url(current) and not doc.owned:
-                doc = await self._workday_document(client, job, current, page, deadline)
+                doc = await self._ats_document(client, job, current, page, deadline)
             if doc.ambiguous:
                 raise _RouteError("ambiguous", "multiple_target_job_blocks")
             if not rendered and (
@@ -361,6 +395,8 @@ class ApplicationRouteResolver:
                 current, page = snapshot.url, _Page(snapshot.html, _HTTP_OK)
                 rendered = True
                 doc = parse_route_document(current, page.html, job)
+                if trusted_ats_url(current) and not doc.owned:
+                    doc = await self._ats_document(client, job, current, page, deadline)
             if trusted_ats_url(current):
                 reason = verify_route_target(job, doc, current, requisitions)
                 if reason:

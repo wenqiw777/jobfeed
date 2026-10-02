@@ -183,6 +183,163 @@ async def test_dynamic_reader_supplies_same_checked_facts():
     assert result.status == "resolved"
 
 
+@pytest.mark.parametrize("already_rendered", [False, True])
+async def test_in_page_apply_anchor_uses_owned_iframe_not_a_navigation_edge(
+    already_rendered,
+):
+    calls = []
+    anchor = '<a href="#apply-now">Apply now</a><div id="apply-now"></div>'
+    frame = f'<div class="job-apply"><iframe src="{ATS}"></iframe></div>'
+
+    async def chrome(_job, url):
+        calls.append(url)
+        return RenderedApplicationPage(url, page(extra=anchor + frame))
+
+    result, _ = await resolve(
+        {
+            WRAPPER: page(extra=anchor + (frame if already_rendered else "")),
+            ATS: page(),
+        },
+        chrome_reader=chrome,
+    )
+    assert result.status == "resolved"
+    assert result.ats_url == ATS
+    assert calls == ([] if already_rendered else [WRAPPER])
+    assert all(not hop.url.endswith("#apply-now") for hop in result.hops)
+
+
+async def test_apply_anchor_can_reference_its_owned_region_outside_main():
+    html = page(extra='<a href="#application-form">Apply</a>') + (
+        f'<section id="application-form"><iframe src="{ATS}"></iframe></section>'
+    )
+    result, _ = await resolve({WRAPPER: html, ATS: page()})
+    assert result.status == "resolved"
+
+
+async def test_anchor_does_not_adopt_recommended_job_region():
+    html = page(extra='<a href="#application-form">Apply</a>') + (
+        '<section class="related-jobs" id="application-form">'
+        f'<iframe src="{ATS}"></iframe></section>'
+    )
+    result, _ = await resolve({WRAPPER: html})
+    assert result.status != "resolved"
+
+
+async def test_dynamic_anchor_without_observed_ats_stays_unresolved():
+    html = page(extra='<a href="#apply-now">Apply</a><div id="apply-now"></div>')
+
+    async def chrome(_job, url):
+        return RenderedApplicationPage(url, html)
+
+    result, _ = await resolve({WRAPPER: html}, chrome_reader=chrome)
+    assert result.reason == "target_apply_link_missing"
+
+
+async def test_lazy_anchor_target_is_rendered_even_before_dom_target_exists():
+    async def chrome(_job, url):
+        return RenderedApplicationPage(
+            url, page(extra=f'<iframe src="{ATS}"></iframe>')
+        )
+
+    result, _ = await resolve(
+        {WRAPPER: page(link="#application"), ATS: page()}, chrome_reader=chrome
+    )
+    assert result.status == "resolved"
+
+
+async def test_official_greenhouse_meta_id_distinguishes_internal_job_label():
+    embed = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123"
+    api = "https://boards-api.greenhouse.io/v1/boards/acme/jobs/123"
+    wrapper = '<meta name="JobIdentifier" content="123">' + page(
+        req="Evergreen Software Engineer IC13",
+        extra=f'<iframe src="{embed}"></iframe>',
+    )
+    result, _ = await resolve(
+        {
+            WRAPPER: wrapper,
+            embed: "<title>Job Application for Software Engineer at Acme</title>",
+            api: httpx.Response(
+                200, json={"id": 123, "title": "Software Engineer", "content": BODY}
+            ),
+        }
+    )
+    assert result.status == "resolved"
+
+
+@pytest.mark.parametrize("req", ["999", "REQ999", "REQ 999", "123 456"])
+async def test_greenhouse_meta_does_not_replace_conflicting_requisition(req):
+    embed = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123"
+    wrapper = '<meta name="JobIdentifier" content="123">' + page(
+        req=req, extra=f'<iframe src="{embed}"></iframe>'
+    )
+    result, calls = await resolve({WRAPPER: wrapper})
+    assert result.status == "ambiguous"
+    assert result.reason == "multiple_target_requisitions"
+    assert calls == [WRAPPER]
+
+
+async def test_rendered_greenhouse_form_uses_same_official_detail_verification():
+    embed = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123"
+    api = "https://boards-api.greenhouse.io/v1/boards/acme/jobs/123"
+
+    async def chrome(_job, url):
+        assert url == embed
+        return RenderedApplicationPage(
+            url, "<title>Job Application for Software Engineer at Acme</title>"
+        )
+
+    result, _ = await resolve(
+        {
+            WRAPPER: page(extra=f'<iframe src="{embed}"></iframe>'),
+            embed: "<main>Loading</main>",
+            api: httpx.Response(
+                200, json={"id": 123, "title": "Software Engineer", "content": BODY}
+            ),
+        },
+        chrome_reader=chrome,
+    )
+    assert result.status == "resolved"
+
+
+@pytest.mark.parametrize(
+    "change,reason",
+    [
+        ({}, ""),
+        ({"id": 999}, "target_requisition_mismatch"),
+        ({"title": "Different Engineer"}, "target_ownership_missing"),
+        ({"content": "Unrelated job responsibilities " * 40}, "target_jd_mismatch"),
+    ],
+)
+async def test_greenhouse_form_embed_verifies_official_board_job(change, reason):
+    embed = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123"
+    api = "https://boards-api.greenhouse.io/v1/boards/acme/jobs/123"
+    details = {"id": 123, "title": "Software Engineer", "content": BODY, **change}
+    result, calls = await resolve(
+        {
+            WRAPPER: page(extra=f'<iframe src="{embed}"></iframe>'),
+            embed: "<title>Job Application for Software Engineer at Acme</title>"
+            "<main>Apply for this job</main>",
+            api: httpx.Response(200, json=details),
+        }
+    )
+    assert result.reason == (reason or "verified_application_route")
+    assert result.status == ("unresolved" if reason else "resolved")
+    assert calls == [WRAPPER, embed, api]
+
+
+async def test_greenhouse_embed_wrong_employer_cannot_use_board_api():
+    embed = "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=123"
+    result, calls = await resolve(
+        {
+            WRAPPER: page(extra=f'<iframe src="{embed}"></iframe>'),
+            embed: "<title>Job Application for Software Engineer at Other Company"
+            "</title>",
+        }
+    )
+    assert result.status != "resolved"
+    assert calls == [WRAPPER, embed]
+
+
 async def test_loops_limits_and_missing_dynamic_reader():
     result, _ = await resolve(
         {WRAPPER: httpx.Response(302, headers={"location": WRAPPER})}

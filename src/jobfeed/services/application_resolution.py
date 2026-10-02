@@ -12,6 +12,7 @@ from typing import Any
 from jobfeed.domain.application_route import (
     ApplicationRouteHop,
     ApplicationRouteOutcome,
+    is_in_page_application_loop,
 )
 from jobfeed.domain.errors import RunLeaseLostError
 from jobfeed.domain.models import JobPosting
@@ -215,6 +216,8 @@ class ApplicationResolutionQueue:
     def _cached(value: str, job: JobPosting) -> ApplicationRouteOutcome | None:
         try:
             saved = json.loads(value)
+            if not isinstance(saved, dict) or is_in_page_application_loop(saved):
+                return None
             if (
                 saved["apply_url"] != job.apply_url
                 or (not job.apply_url and saved.get("source_url") != job.url)
