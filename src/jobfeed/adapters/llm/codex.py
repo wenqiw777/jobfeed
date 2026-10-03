@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import tempfile
+import tomllib
 from pathlib import Path
 
 from jobfeed.adapters.llm._pricing import ModelPricing, TokenUsage, estimate_cost
@@ -153,6 +155,7 @@ class CodexCliLLM:
             "--skip-git-repo-check",
             "-m",
             self._model,
+            *_host_provider_args(),
             "-",
         ]
 
@@ -272,6 +275,39 @@ class CodexCliLLM:
             cached=cached_input > 0,
             latency_ms=elapsed_ms,
         )
+
+
+def _host_provider_args() -> list[str]:
+    """Keep the host's OpenAI-auth transport while isolating other CLI settings."""
+    codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    path = codex_home / "config.toml"
+    if not path.is_file():
+        return []
+    config = tomllib.loads(path.read_text(encoding="utf-8"))
+    selected = config.get("model_provider")
+    if not isinstance(selected, str) or selected == "openai":
+        return []
+    if re.fullmatch(r"[A-Za-z0-9_-]+", selected) is None:
+        raise ValueError("Codex host provider name must be a simple identifier")
+    providers = config.get("model_providers", {})
+    provider = providers.get(selected, {}) if isinstance(providers, dict) else {}
+    if (
+        not isinstance(provider, dict)
+        or provider.get("requires_openai_auth") is not True
+    ):
+        return []
+    overrides = [f"model_provider={json.dumps(selected)}"]
+    for field in (
+        "name",
+        "base_url",
+        "wire_api",
+        "requires_openai_auth",
+        "supports_websockets",
+    ):
+        value = provider.get(field)
+        if isinstance(value, (str, bool)):
+            overrides.append(f"model_providers.{selected}.{field}={json.dumps(value)}")
+    return [argument for override in overrides for argument in ("-c", override)]
 
 
 def _codex_env() -> dict[str, str]:
