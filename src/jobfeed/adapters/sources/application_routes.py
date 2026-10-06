@@ -7,7 +7,7 @@ import ipaddress
 import json
 import socket
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import monotonic
 from urllib.parse import urldefrag, urljoin, urlsplit
 
@@ -24,6 +24,10 @@ from jobfeed.adapters.sources._application_route_html import (
 )
 from jobfeed.adapters.sources._ats_workday import _build_cxs_url, _parse_csrf_token
 from jobfeed.adapters.sources._http import html_to_text
+from jobfeed.adapters.sources._linkedin_application import (
+    LinkedInApplicationReader,
+    is_linkedin_url,
+)
 from jobfeed.domain.application_route import (
     ApplicationPageReadError,
     ApplicationRouteHop,
@@ -110,11 +114,13 @@ class ApplicationRouteResolver:
         chrome_reader: ChromeReader | None = None,
         url_guard: URLGuard = public_application_url,
         pace: Pace | None = None,
+        linkedin_reader: LinkedInApplicationReader | None = None,
     ) -> None:
         self.client = client
         self.chrome_reader = chrome_reader
         self.url_guard = url_guard
         self.pace = pace
+        self.linkedin_reader = linkedin_reader or LinkedInApplicationReader()
         self._http_slots = asyncio.Semaphore(_HTTP_WORKERS)
 
     async def __call__(self, job: JobPosting) -> ApplicationRouteOutcome:
@@ -200,7 +206,7 @@ class ApplicationRouteResolver:
                     body.decode("utf-8", errors="replace"), response.status_code
                 )
 
-    async def _render(
+    async def _render(  # noqa: C901 - independent browser boundary and snapshot checks
         self,
         job: JobPosting,
         url: str,
@@ -208,6 +214,8 @@ class ApplicationRouteResolver:
         *,
         remaining_budget: float | None = None,
     ) -> RenderedApplicationPage:
+        if is_linkedin_url(url):
+            raise _RouteError("blocked", "linkedin_browser_disabled")
         budget = _CHROME_BUDGET if remaining_budget is None else remaining_budget
         if budget <= 0:
             raise _RouteError("blocked", "chrome_time_budget") from None
@@ -333,6 +341,19 @@ class ApplicationRouteResolver:
         visited: set[str] = set()
         requisitions: set[str] = set()
         for edge_count in range(_MAX_EDGES + 1):
+            if is_linkedin_url(current):
+                evidence = await self.linkedin_reader(job, current)
+                if not evidence.apply_url:
+                    return ApplicationRouteOutcome(
+                        "unresolved", hops=tuple(hops), reason=evidence.reason
+                    )
+                current = evidence.apply_url
+                hops.append(ApplicationRouteHop(current, "target_apply_link"))
+                if not job.jd_text and evidence.jd_text:
+                    job = replace(job, jd_text=evidence.jd_text)
+                if edge_count == _MAX_EDGES:
+                    break
+                continue
             rendered = False
             key = urldefrag(current)[0]
             if key in visited:

@@ -33,6 +33,8 @@ test('overlapping calls share ten inactive tabs, the eleventh waits, and task ow
   await Promise.all(runs);
   assert.equal(h.peak,10);assert.equal(h.live.size,0);assert.equal(h.rules.size,0);
   assert.ok(h.events.filter(e=>e[0]==='create').every(e=>e[2].active===false&&e[2].url==='about:blank'));
+  const guard=h.events.find(e=>e[0]==='rules'&&e[1].length)[1].find(r=>r.condition.requestDomains?.includes('linkedin.com'));
+  assert.equal(guard.action.type,'block');assert.equal(guard.priority,4);assert.ok(['main_frame','sub_frame','xmlhttprequest'].every(type=>guard.condition.resourceTypes.includes(type)));
   const allow=h.events.find(e=>e[0]==='rules'&&e[1].length)[1].find(r=>r.action.type==='allow');
   const filter=new RegExp(allow.condition.regexFilter);
   assert.ok(filter.test('https://careers.example/jobs/1'));
@@ -107,4 +109,12 @@ test('socket backpressure notices cancellation without retaining the task',async
   assert.ok(h.events.some(e=>e[0]==='socket'));
   task.cancelled=true;h.context.cancelApplicationRouteTask(task);await running;
   assert.equal(h.live.size,0);assert.equal(h.rules.size,0);assert.equal(h.sent.length,0);
+});
+
+test('LinkedIn targets are rejected before creating a browser tab',async()=>{
+  const h=harness();
+  for(const host of ['linkedin.com','www.linkedin.com','uk.linkedin.com']){
+    await assert.rejects(h.context.runApplicationRouteScan({task_id:'li',targets:[{id:'123',url:`https://${host}/jobs/view/123`}]},{cancelled:false}),/LinkedIn browser access disabled/);
+  }
+  assert.equal(h.events.filter(e=>e[0]==='create').length,0);
 });

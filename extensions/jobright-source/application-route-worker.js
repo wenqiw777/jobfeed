@@ -8,6 +8,8 @@ const applicationRouteNextHostStart = new Map();
 
 function applicationPublicURL(value) {
   const u = new URL(value), host = u.hostname.toLowerCase();
+  if (host.replace(/\.$/,'') === 'linkedin.com' || host.replace(/\.$/,'').endsWith('.linkedin.com'))
+    throw new Error('LinkedIn browser access disabled for application resolution');
   // URL normalizes alternative IPv4 spellings before this guard.
   if (!['http:','https:'].includes(u.protocol) || u.username || u.password ||
       !host.includes('.') || host.endsWith('.localhost') || host.endsWith('.local') ||
@@ -85,9 +87,11 @@ async function readApplicationRoute(target, task, timeout) {
     }
     task.tabIds.add(tab.id);
     if (task.cancelled) return;
-    const blockId = ++applicationRouteRuleId, allowId = ++applicationRouteRuleId, privateId = ++applicationRouteRuleId;
-    ruleIds = [blockId, allowId, privateId];
+    const blockId = ++applicationRouteRuleId, allowId = ++applicationRouteRuleId, privateId = ++applicationRouteRuleId, linkedinId = ++applicationRouteRuleId;
+    ruleIds = [blockId, allowId, privateId, linkedinId];
     const installing = chrome.declarativeNetRequest.updateSessionRules({addRules:[
+      // Also prevent redirects, frames and subresources from contacting LinkedIn.
+      {id:linkedinId, priority:4, action:{type:'block'}, condition:{tabIds:[tab.id],requestDomains:['linkedin.com'],resourceTypes:['main_frame','sub_frame','xmlhttprequest','script','image','stylesheet','font','media','object','ping','csp_report','websocket','other']}},
       {id:blockId, priority:1, action:{type:'block'}, condition:{tabIds:[tab.id],resourceTypes:['main_frame']}},
       // Unknown cross-origin redirects cannot be DNS-checked before Chrome requests
       // them. Block them; the backend may validate and read an observed link later.

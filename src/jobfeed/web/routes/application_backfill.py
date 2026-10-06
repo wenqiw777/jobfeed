@@ -58,7 +58,7 @@ async def trigger_application_backfill(
     ):
         raise ApiError(409, "extension_update_required", "Reload the Mini extension")
     store = cast(ApplicationBackfillStore, context["store"])
-    resolver = build_application_resolver(bridge)
+    resolver = build_application_resolver(bridge, store=store)
 
     async def resolve(job: JobPosting) -> ApplicationRouteOutcome:
         return await resolver.resolve(job, job.apply_url or job.url)

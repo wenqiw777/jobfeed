@@ -36,7 +36,6 @@ from jobfeed.adapters.sources._linkedin_guest_discover import _GuestRun
 from jobfeed.adapters.sources._linkedin_guest_http import (
     GuestResponse,
     create_client,
-    fetch,
     posting_url,
 )
 from jobfeed.adapters.sources._linkedin_guest_parse import (
@@ -44,6 +43,7 @@ from jobfeed.adapters.sources._linkedin_guest_parse import (
     parse_jd,
     parse_posting_posted_at,
 )
+from jobfeed.adapters.sources._linkedin_guest_shared import shared_fetch as fetch
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.quality import assess_quality
 from jobfeed.observability import JobfeedLogger

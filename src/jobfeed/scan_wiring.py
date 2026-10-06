@@ -73,7 +73,7 @@ def build_scan_service(  # noqa: PLR0913 - existing runtime wiring plus resoluti
         run_orchestrator,
         journal=journal,
         intermediary=resolver,
-        application_resolver=build_application_resolver(bridge)
+        application_resolver=build_application_resolver(bridge, store=store)
         if callable(getattr(store, "record_application_identity", None))
         else None,
     )

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from jobfeed.adapters.store.sqlite import SQLiteStore
+from jobfeed.application_resolution_wiring import build_application_resolver
 from jobfeed.domain.models import PipelineRun
 from jobfeed.domain.normalize import normalize, normalize_company
 from jobfeed.domain.real_job_identity import normalized_jd_body
@@ -334,3 +335,26 @@ async def test_durable_wrapper_evidence_preserves_conflict_review(
         async with store._get_pool().acquire() as conn:
             reviews = await conn.fetch("SELECT reason FROM real_job_review_cases")
             assert expected_reason in [row["reason"] for row in reviews]
+
+
+async def test_linkedin_native_id_joins_jobright_without_network(contract_store):
+    store = contract_store
+    native_url = "https://www.linkedin.com/jobs/view/123456789"
+    guest = replace(
+        make_job("123456789", jd_text=""),
+        platform="linkedin_guest",
+        url=native_url,
+        apply_url=None,
+    )
+    wrapper = replace(
+        guest,
+        platform="jobright",
+        canonical_id="wrapper",
+        url="https://jobright.ai/jobs/info/wrapper",
+        apply_url=native_url,
+    )
+    first, second = await store.save_job(guest), await store.save_job(wrapper)
+    resolver = build_application_resolver(store=store)
+    outcome = await resolver(await store.get_job(second.job_id))
+    assert outcome.reason == "linkedin_existing_data"
+    assert len(await store.resolve_real_job_ids([first.job_id, second.job_id])) == 1

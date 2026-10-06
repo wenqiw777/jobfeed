@@ -12,8 +12,8 @@ import click
 from jobfeed.adapters.sources._linkedin_guest_http import (
     GuestResponse,
     create_client,
-    fetch,
 )
+from jobfeed.adapters.sources._linkedin_guest_shared import shared_fetch as fetch
 from jobfeed.adapters.sources.linkedin_guest import LinkedInGuestEnricher
 from jobfeed.application_resolution_wiring import build_application_resolver
 from jobfeed.cli import AppContext, require_app, require_enabled, run_with_store
@@ -194,7 +194,7 @@ async def run_guest_enrich_pass(
         )
         async with ApplicationResolutionQueue(
             cast(ApplicationIdentityStore, app["store"]),
-            build_application_resolver(app.get("jobright_bridge")),
+            build_application_resolver(app.get("jobright_bridge"), store=app["store"]),
         ) as resolution:
             service.on_saved = resolution.submit_id
             return await service.run(

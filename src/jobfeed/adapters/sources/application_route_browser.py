@@ -5,6 +5,7 @@ import json
 from typing import Literal
 from urllib.parse import urlsplit
 
+from jobfeed.adapters.sources._linkedin_application import is_linkedin_url
 from jobfeed.domain.application_route import (
     ApplicationPageReadError,
     RenderedApplicationPage,
@@ -29,8 +30,10 @@ class ChromeApplicationPageReader:
     def __init__(self, bridge: JobrightBridge) -> None:
         self.bridge = bridge
 
-    async def __call__(self, job: JobPosting, url: str) -> RenderedApplicationPage:
+    async def __call__(self, job: JobPosting, url: str) -> RenderedApplicationPage:  # noqa: C901 - validate destination before dispatch
         """Read one target without rewriting source facts or discovering extra jobs."""
+        if is_linkedin_url(url):
+            raise ApplicationPageReadError("blocked", "linkedin_browser_disabled")
         target_id = json.dumps(
             [job.platform, job.canonical_id, url], ensure_ascii=False
         )
