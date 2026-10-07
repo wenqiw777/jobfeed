@@ -11,11 +11,16 @@ import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
-WINDOWS = ((60, 180), (540, 660), (1020, 1140))
+MINUTES_PER_DAY = 1440
+WINDOWS = tuple((start, start + 120) for start in range(0, 1440, 120))
+DAILY_SCANS = 3
+TIMEZONE = ZoneInfo("America/Detroit")
 LABEL = "com.wenqi.jobfeed.schedule"
 DRAW = random.SystemRandom().randrange
+CHOOSE = random.SystemRandom().sample
 
 
 def plan_path(root, day):
@@ -36,28 +41,31 @@ def _read(path, day):
     plan = json.loads(path.read_text())
     minutes = plan.get("minutes") if isinstance(plan, dict) else None
     attempted = plan.get("attempted") if isinstance(plan, dict) else None
-    if not isinstance(minutes, list) or len(minutes) != len(WINDOWS):
+    if not isinstance(minutes, list) or len(minutes) != DAILY_SCANS:
         raise ValueError("Invalid daily slot count")
     if plan.get("day") != day.isoformat() or not isinstance(attempted, list):
         raise ValueError("Invalid dated scan plan")
     if not all(
-        type(value) is int and start <= value < end
-        for value, (start, end) in zip(minutes, WINDOWS, strict=True)
+        type(value) is int and 0 <= value < MINUTES_PER_DAY for value in minutes
     ):
         raise ValueError("Scan slot outside its window")
+    if len({value // 120 for value in minutes}) != DAILY_SCANS:
+        raise ValueError("Scan slots must use distinct two-hour windows")
     if any(type(value) is not int or value not in minutes for value in attempted):
         raise ValueError("Invalid attempted scan slot")
     return plan
 
 
-def ensure_plan(root, day, *, draw=DRAW):
+def ensure_plan(root, day, *, draw=DRAW, choose=CHOOSE):
     """Choose once per day, reusing the choices after restarts or repeated planning."""
     path = plan_path(root, day)
     if path.exists():
         return _read(path, day)
     plan = {
         "day": day.isoformat(),
-        "minutes": [draw(start, end) for start, end in WINDOWS],
+        "minutes": sorted(
+            draw(start, end) for start, end in choose(WINDOWS, DAILY_SCANS)
+        ),
         "attempted": [],
     }
     _save(path, plan)
@@ -66,7 +74,7 @@ def ensure_plan(root, day, *, draw=DRAW):
 
 def run_due(root, day, *, now=None, run=None):
     """Attempt each exact-minute slot once; skip stale or late launchd delivery."""
-    now = now or datetime.now().astimezone()
+    now = now or datetime.now(TIMEZONE)
     path = plan_path(root, day)
     if day != now.date() or not path.exists():
         return 0
@@ -138,7 +146,14 @@ def main():
     """Plan/install daily random times, or accept an exact dated timer delivery."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["plan", "run"])
-    parser.add_argument("--day", type=date.fromisoformat, default=date.today())
+    parser.add_argument(
+        "--day", type=date.fromisoformat, default=datetime.now(TIMEZONE).date()
+    )
+    parser.add_argument(
+        "--run-due",
+        action="store_true",
+        help="After daily planning, accept a current-minute trigger",
+    )
     args = parser.parse_args()
     if args.action == "run":
         return run_due(ROOT, args.day)
@@ -149,7 +164,7 @@ def main():
         plan = ensure_plan(ROOT, args.day)
         install_plan(ROOT, plan)
         print(json.dumps(plan))
-    return 0
+    return run_due(ROOT, args.day) if args.run_due else 0
 
 
 if __name__ == "__main__":
