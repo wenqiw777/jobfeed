@@ -384,7 +384,7 @@ async def test_category_search_uses_native_filters_without_keyword_or_bootstrap(
     }
 
 
-async def test_linkedin_each_search_gets_500_and_results_deduplicate_by_id():
+async def test_linkedin_scan_shares_total_budget_and_deduplicates_by_id():
     calls = []
 
     class Bridge:
@@ -399,7 +399,7 @@ async def test_linkedin_each_search_gets_500_and_results_deduplicate_by_id():
                     "description": "Complete description",
                 }
                 for i in range(
-                    0 if len(calls) == 1 else 400, 500 if len(calls) == 1 else 900
+                    0 if len(calls) == 1 else 200, 500 if len(calls) == 1 else 700
                 )
             ][: kwargs["max_jobs"]]
 
@@ -409,7 +409,24 @@ async def test_linkedin_each_search_gets_500_and_results_deduplicate_by_id():
         bridge=Bridge(),
     )
     jobs = await source.fetch_jobs({})
-    assert [call["max_jobs"] for call in calls] == [500, 500]
-    expected_unique_jobs = 900
+    assert [call["max_jobs"] for call in calls] == [250, 250]
+    expected_unique_jobs = 450
     assert len(jobs) == expected_unique_jobs
     assert all(job.jd_text == "Complete description" for job in jobs)
+
+
+async def test_linkedin_odd_total_budget_is_split_across_searches():
+    calls = []
+
+    class Bridge:
+        async def run_scan(self, **kwargs):
+            calls.append(kwargs["max_jobs"])
+            return []
+
+    source = JobboardExtensionSource(
+        source="linkedin",
+        config=SourcesBoardExtensionConfig(queries=["SWE", "AI"], max_jobs=5),
+        bridge=Bridge(),
+    )
+    await source.fetch_jobs({})
+    assert calls == [3, 2]

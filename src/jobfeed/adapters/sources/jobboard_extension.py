@@ -195,8 +195,6 @@ class JobboardExtensionSource:
                 budget = (
                     100000
                     if bootstrap
-                    else self.config.max_jobs
-                    if self.source == "linkedin"
                     else self.config.max_jobs // len(queries)
                     + (index < self.config.max_jobs % len(queries))
                 )
