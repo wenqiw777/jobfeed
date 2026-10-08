@@ -77,6 +77,10 @@ def run_due(root, day, *, now=None, run=None):
     now = now or datetime.now(TIMEZONE)
     path = plan_path(root, day)
     if day != now.date() or not path.exists():
+        print(
+            f"Skip: day={day} now={now.isoformat()} plan_exists={path.exists()}",
+            flush=True,
+        )
         return 0
     lock_path = root / "data/scheduler/random-slot.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,13 +88,22 @@ def run_due(root, day, *, now=None, run=None):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
+            print(f"Skip: slot lock busy now={now.isoformat()}", flush=True)
             return 0
         plan = _read(path, day)
         minute = now.hour * 60 + now.minute
         if minute not in plan["minutes"] or minute in plan["attempted"]:
+            print(
+                f"Skip: now={now.isoformat()} minute={minute} "
+                f"selected={plan['minutes']} attempted={plan['attempted']}",
+                flush=True,
+            )
             return 0
         # Persist intent before API work; failure or a second DST delivery must
         # not replay a scan and its evaluation.
+        print(
+            f"Start slot: day={day} now={now.isoformat()} minute={minute}", flush=True
+        )
         plan["attempted"].append(minute)
         _save(path, plan)
         if run is not None:
@@ -99,6 +112,37 @@ def run_due(root, day, *, now=None, run=None):
             [sys.executable, str(root / "scripts/jobfeed_scheduled_cycle.py")],
             check=False,
         ).returncode
+
+
+def tick(root, *, now=None, run=None):
+    """Check durable Detroit-day plans independently of launchd calendar timezone."""
+    now = now or datetime.now(TIMEZONE)
+    directory = root / "data/scheduler"
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "random-plan.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        plan = ensure_plan(root, now.date())
+    minute = now.hour * 60 + now.minute
+    if minute not in plan["minutes"] or minute in plan["attempted"]:
+        return 0
+    return run_due(root, now.date(), now=now, run=run)
+
+
+def poll_agent(root):
+    """Poll every half minute; only selected persisted minutes launch scans."""
+    return {
+        "Label": "com.wenqi.jobfeed.random-scan",
+        "ProgramArguments": [
+            str(root / ".venv/bin/python"),
+            str(root / "scripts/jobfeed_random_schedule.py"),
+            "tick",
+        ],
+        "WorkingDirectory": str(root),
+        "RunAtLoad": True,
+        "StartInterval": 30,
+        "StandardOutPath": str(root / "data/scheduler/random-schedule.log"),
+        "StandardErrorPath": str(root / "data/scheduler/random-schedule.log"),
+    }
 
 
 def scan_agent(root, plan):
@@ -145,7 +189,7 @@ def install_plan(root, plan):
 def main():
     """Plan/install daily random times, or accept an exact dated timer delivery."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["plan", "run"])
+    parser.add_argument("action", choices=["plan", "run", "tick"])
     parser.add_argument(
         "--day", type=date.fromisoformat, default=datetime.now(TIMEZONE).date()
     )
@@ -155,6 +199,8 @@ def main():
         help="After daily planning, accept a current-minute trigger",
     )
     args = parser.parse_args()
+    if args.action == "tick":
+        return tick(ROOT)
     if args.action == "run":
         return run_due(ROOT, args.day)
     directory = ROOT / "data/scheduler"

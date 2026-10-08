@@ -3,7 +3,8 @@
 # ruff: noqa: PLR2004
 
 import json
-from datetime import date, datetime
+from datetime import UTC, date, datetime
+from unittest.mock import Mock
 
 import pytest
 
@@ -188,3 +189,37 @@ def test_manual_plan_install_does_not_start_a_scan(tmp_path, monkeypatch):
         scheduler, "run_due", lambda _root, _day: pytest.fail("unexpected scan")
     )
     assert scheduler.main() == 0
+
+
+def test_tick_runs_persisted_slot_once_and_rolls_over_day(tmp_path):
+    calls = []
+    scheduler.ensure_plan(
+        tmp_path, DAY, choose=lambda w, n: w[:n], draw=lambda start, _end: start + 7
+    )
+    now = datetime(2026, 10, 3, 0, 7, 30, tzinfo=scheduler.TIMEZONE)
+    scheduler.tick(tmp_path, now=now, run=lambda: calls.append(True) or 0)
+    scheduler.tick(tmp_path, now=now, run=lambda: calls.append(True) or 0)
+    assert calls == [True]
+    tomorrow = datetime(2026, 10, 4, 12, 0, tzinfo=scheduler.TIMEZONE)
+    scheduler.tick(tmp_path, now=tomorrow, run=lambda: 0)
+    assert scheduler.plan_path(tmp_path, tomorrow.date()).exists()
+
+
+def test_polling_agent_uses_interval_and_no_dated_calendar(tmp_path):
+    agent = scheduler.poll_agent(tmp_path)
+    assert agent["StartInterval"] == 30
+    assert "StartCalendarInterval" not in agent
+    assert agent["ProgramArguments"][-1] == "tick"
+    assert "--day" not in agent["ProgramArguments"]
+
+
+def test_tick_uses_detroit_date_even_when_host_day_is_utc(tmp_path, monkeypatch):
+    clock = Mock()
+    # At 00:07 UTC it is still the previous Detroit calendar day.
+    now = datetime(2026, 10, 4, 0, 7, tzinfo=UTC).astimezone(scheduler.TIMEZONE)
+    clock.now.return_value = now
+    monkeypatch.setattr(scheduler, "datetime", clock)
+    scheduler.tick(tmp_path, run=lambda: 0)
+    clock.now.assert_called_once_with(scheduler.TIMEZONE)
+    assert scheduler.plan_path(tmp_path, DAY).exists()
+    assert not scheduler.plan_path(tmp_path, date(2026, 10, 4)).exists()
