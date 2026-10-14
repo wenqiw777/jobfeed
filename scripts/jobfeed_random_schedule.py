@@ -15,12 +15,11 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 MINUTES_PER_DAY = 1440
-WINDOWS = tuple((start, start + 120) for start in range(0, 1440, 120))
+WINDOWS = ((480, 600), (840, 960), (1140, 1260))
 DAILY_SCANS = 3
 TIMEZONE = ZoneInfo("America/Detroit")
 LABEL = "com.wenqi.jobfeed.schedule"
 DRAW = random.SystemRandom().randrange
-CHOOSE = random.SystemRandom().sample
 
 
 def plan_path(root, day):
@@ -56,16 +55,14 @@ def _read(path, day):
     return plan
 
 
-def ensure_plan(root, day, *, draw=DRAW, choose=CHOOSE):
+def ensure_plan(root, day, *, draw=DRAW):
     """Choose once per day, reusing the choices after restarts or repeated planning."""
     path = plan_path(root, day)
     if path.exists():
         return _read(path, day)
     plan = {
         "day": day.isoformat(),
-        "minutes": sorted(
-            draw(start, end) for start, end in choose(WINDOWS, DAILY_SCANS)
-        ),
+        "minutes": [draw(start, end) for start, end in WINDOWS],
         "attempted": [],
     }
     _save(path, plan)
@@ -92,6 +89,13 @@ def run_due(root, day, *, now=None, run=None):
             return 0
         plan = _read(path, day)
         minute = now.hour * 60 + now.minute
+        window = next(
+            ((start, end) for start, end in WINDOWS if start <= minute < end), None
+        )
+        if window is None or any(
+            window[0] <= value < window[1] for value in plan["attempted"]
+        ):
+            return 0
         if minute not in plan["minutes"] or minute in plan["attempted"]:
             print(
                 f"Skip: now={now.isoformat()} minute={minute} "

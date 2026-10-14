@@ -24,10 +24,9 @@ def test_draws_once_in_each_window_and_reuses_saved_choices(tmp_path):
         tmp_path,
         DAY,
         draw=draw,
-        choose=lambda windows, _count: [windows[i] for i in (0, 6, 11)],
     )
-    assert first["minutes"] == [7, 727, 1327]
-    assert calls == [(0, 120), (720, 840), (1320, 1440)]
+    assert first["minutes"] == [487, 847, 1147]
+    assert calls == [(480, 600), (840, 960), (1140, 1260)]
     assert scheduler.ensure_plan(tmp_path, DAY, draw=draw) == first
     assert len(calls) == 3
 
@@ -37,16 +36,14 @@ def test_new_day_gets_a_fresh_plan(tmp_path):
         tmp_path,
         DAY,
         draw=lambda start, _end: start,
-        choose=lambda windows, count: windows[:count],
     )
     following = scheduler.ensure_plan(
         tmp_path,
         date(2026, 10, 4),
         draw=lambda _start, end: end - 1,
-        choose=lambda windows, count: windows[-count:],
     )
     assert following["day"] == "2026-10-04"
-    assert following["minutes"] == [1199, 1319, 1439]
+    assert following["minutes"] == [599, 959, 1259]
 
 
 def test_runs_each_chosen_minute_only_once_even_on_failure(tmp_path):
@@ -54,10 +51,9 @@ def test_runs_each_chosen_minute_only_once_even_on_failure(tmp_path):
         tmp_path,
         DAY,
         draw=lambda start, _end: start + 7,
-        choose=lambda windows, _count: [windows[i] for i in (0, 4, 8)],
     )
     calls = []
-    for hour, minute in [(0, 7), (8, 7), (16, 7)]:
+    for hour, minute in [(8, 7), (14, 7), (19, 7)]:
         now = datetime(2026, 10, 3, hour, minute)
         assert (
             scheduler.run_due(
@@ -88,7 +84,6 @@ def test_wrong_day_late_trigger_and_missing_plan_do_not_scan(tmp_path):
         tmp_path,
         DAY,
         draw=lambda start, _end: start + 7,
-        choose=lambda windows, _count: [windows[i] for i in (0, 4, 8)],
     )
     for now in [
         datetime(2026, 10, 4, 0, 7),
@@ -104,7 +99,6 @@ def test_corrupt_plan_fails_without_running(tmp_path):
         tmp_path,
         DAY,
         draw=lambda start, _end: start,
-        choose=lambda windows, count: windows[:count],
     )
     plan["minutes"] = [0, 0, 0]
     scheduler.plan_path(tmp_path, DAY).write_text(json.dumps(plan))
@@ -125,32 +119,35 @@ def test_launch_agent_contains_three_drawn_slots_and_day_guard(tmp_path):
         tmp_path,
         DAY,
         draw=lambda start, _end: start + 7,
-        choose=lambda windows, _count: [windows[i] for i in (0, 4, 8)],
     )
     agent = scheduler.scan_agent(tmp_path, plan)
     assert agent["StartCalendarInterval"] == [
-        {"Hour": 0, "Minute": 7},
         {"Hour": 8, "Minute": 7},
-        {"Hour": 16, "Minute": 7},
+        {"Hour": 14, "Minute": 7},
+        {"Hour": 19, "Minute": 7},
     ]
     assert agent["ProgramArguments"][-3:] == ["run", "--day", "2026-10-03"]
     assert agent["RunAtLoad"] is False
 
 
-def test_all_twelve_slots_can_be_selected(tmp_path):
-    expected = tuple((start, start + 120) for start in range(0, 1440, 120))
-    assert expected == scheduler.WINDOWS
-    for slot in range(12):
-        plan = scheduler.ensure_plan(
-            tmp_path / str(slot),
-            DAY,
-            choose=lambda windows, count, slot=slot: [
-                windows[(slot + i) % 12] for i in range(count)
-            ],
-            draw=lambda _start, end: end - 1,
+def test_only_daytime_windows_can_be_selected(tmp_path):
+    assert scheduler.WINDOWS == ((480, 600), (840, 960), (1140, 1260))
+    plan = scheduler.ensure_plan(tmp_path, DAY, draw=lambda _start, end: end - 1)
+    assert plan["minutes"] == [599, 959, 1259]
+
+
+def test_legacy_overnight_slot_never_starts(tmp_path):
+    path = scheduler.plan_path(tmp_path, DAY)
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {"day": DAY.isoformat(), "minutes": [242, 884, 1332], "attempted": []}
         )
-        assert len({minute // 120 for minute in plan["minutes"]}) == 3
-        assert slot in {minute // 120 for minute in plan["minutes"]}
+    )
+    run = Mock()
+    scheduler.run_due(tmp_path, DAY, now=datetime(2026, 10, 3, 4, 2), run=run)
+    scheduler.run_due(tmp_path, DAY, now=datetime(2026, 10, 3, 22, 12), run=run)
+    run.assert_not_called()
 
 
 def test_existing_daily_plan_is_preserved(tmp_path):
@@ -193,10 +190,8 @@ def test_manual_plan_install_does_not_start_a_scan(tmp_path, monkeypatch):
 
 def test_tick_runs_persisted_slot_once_and_rolls_over_day(tmp_path):
     calls = []
-    scheduler.ensure_plan(
-        tmp_path, DAY, choose=lambda w, n: w[:n], draw=lambda start, _end: start + 7
-    )
-    now = datetime(2026, 10, 3, 0, 7, 30, tzinfo=scheduler.TIMEZONE)
+    scheduler.ensure_plan(tmp_path, DAY, draw=lambda start, _end: start + 7)
+    now = datetime(2026, 10, 3, 8, 7, 30, tzinfo=scheduler.TIMEZONE)
     scheduler.tick(tmp_path, now=now, run=lambda: calls.append(True) or 0)
     scheduler.tick(tmp_path, now=now, run=lambda: calls.append(True) or 0)
     assert calls == [True]

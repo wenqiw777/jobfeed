@@ -33,6 +33,12 @@ Progress:
   `artifacts/codex-evaluation-isolation/mini-proof.json`.
 - Historical MCP warnings remain insufficient evidence of the original terminal
   cause. Full diagnostics will allow future failures to be attributed correctly.
-- Remaining: authorize production activation, wait for the active evaluation to
-  finish, deploy/restart, verify deployed behavior, then retry only remaining
-  failed items. No deployment or retry performed in this change.
+- User authorized combined deployment with the new daily scan windows on Oct 14.
+  Windows are 08:00–10:00, 14:00–16:00, 19:00–21:00 America/Detroit, one random
+  minute per window. Scan still precedes evaluation. Existing attempts are retained;
+  today's unattempted 22:12 slot will move into the evening window.
+- Scheduler checks: 7 failures before implementation; 61 combined scheduler,
+  adapter, and canonical retry tests pass after. Old overnight slots cannot launch,
+  including when an old daily plan remains on disk. No catch-up scans.
+- Remaining: combined production activation and deployed verification. Historical
+  failed-job retry is separate from the requested deployment.
