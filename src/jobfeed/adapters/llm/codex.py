@@ -15,6 +15,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+from jobfeed.adapters.llm._codex_diagnostics import redact_output, save_failure_output
 from jobfeed.adapters.llm._pricing import ModelPricing, TokenUsage, estimate_cost
 from jobfeed.adapters.llm._subprocess import (
     RetryOptions,
@@ -112,6 +113,7 @@ class CodexCliLLM:
             )
 
             for attempt in range(1 + self._max_retries):
+                result = None
                 try:
                     result = await run_with_retry(
                         cmd,
@@ -120,7 +122,18 @@ class CodexCliLLM:
                         logger=self._logger,
                     )
                     return self._parse_response(result.stdout, result.elapsed_ms)
-                except (CodexApiError, SubprocessTimeout, SubprocessError):
+                except (CodexApiError, SubprocessTimeout, SubprocessError) as error:
+                    diagnostic_path = save_failure_output(
+                        model=self._model,
+                        attempt=attempt + 1,
+                        error=error,
+                        result=result,
+                        logger=self._logger,
+                    )
+                    summary = redact_output(str(error))
+                    if diagnostic_path is not None:
+                        summary += f"; diagnostics: {diagnostic_path}"
+                    error.args = (summary,)
                     if attempt >= self._max_retries:
                         raise
                     self._logger.warning(
@@ -148,6 +161,14 @@ class CodexCliLLM:
             "--ignore-rules",
             "-c",
             "shell_environment_policy.inherit=none",
+            "-c",
+            "features.apps=false",
+            "-c",
+            "features.plugins=false",
+            "-c",
+            "features.remote_plugin=false",
+            "-c",
+            "mcp_servers={}",
             "--sandbox",
             "read-only",
             "--cd",

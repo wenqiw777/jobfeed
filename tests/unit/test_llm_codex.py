@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from jobfeed.adapters.llm._pricing import ModelPricing
-from jobfeed.adapters.llm._subprocess import SubprocessResult
+from jobfeed.adapters.llm._subprocess import SubprocessError, SubprocessResult
 from jobfeed.adapters.llm.codex import CodexApiError, CodexCliLLM
 from jobfeed.domain.models import LLMRequest, LLMResponse, Message
 from jobfeed.ports.llm import LLMClient
@@ -28,6 +28,7 @@ CACHED_INPUT_TOKENS = 10
 REASONING_OUTPUT_TOKENS = 5
 AGENT_RESPONSE_TEXT = "The role looks like a good fit."
 ERROR_MESSAGE = "rate_limit_exceeded"
+PRIVATE_FILE_MODE = 0o600
 INPUT_COST_PER_TOKEN = 0.0001
 OUTPUT_COST_PER_TOKEN = 0.0002
 REASONING_COST_PER_TOKEN = 0.0003
@@ -207,6 +208,10 @@ async def test_command_has_json_flag_and_model() -> None:
     assert cmd[config_idx + 1] == "shell_environment_policy.inherit=none"
     model_idx = cmd.index("-m")
     assert cmd[model_idx + 1] == MODEL
+    assert "features.apps=false" in cmd
+    assert "features.plugins=false" in cmd
+    assert "features.remote_plugin=false" in cmd
+    assert "mcp_servers={}" in cmd
 
 
 # ---------------------------------------------------------------------------
@@ -517,3 +522,80 @@ async def test_output_schema_file_is_supplied_and_removed_after_completion() -> 
         await _make_adapter().complete(request)
     assert len(seen) == 1
     assert not seen[0].exists()
+
+
+async def test_failed_codex_preserves_redacted_output_after_workdir_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "private-api-value")
+    stderr = "MCP startup warning " * 30 + "terminal failure: model unavailable"
+    stdout = (
+        'Bearer private-bearer-value\n{"access_token":"private-token-value"}\n'
+        "private-api-value"
+    )
+    failure = SubprocessError(1, stderr, stdout=stdout)
+    adapter = CodexCliLLM(
+        model=MODEL, max_retries=0, price_table=PRICE_TABLE, logger=_make_logger()
+    )
+    with (
+        patch(
+            "jobfeed.adapters.llm.codex.run_with_retry", AsyncMock(side_effect=failure)
+        ),
+        pytest.raises(SubprocessError) as raised,
+    ):
+        await adapter.complete(_make_request())
+    assert "diagnostics:" in str(raised.value)
+    path = Path(str(raised.value).split("diagnostics: ", 1)[1])
+    saved = json.loads(path.read_text())
+    assert saved["stderr"] == stderr
+    assert saved["returncode"] == 1
+    assert saved["model"] == MODEL
+    assert "[REDACTED]" in saved["stdout"]
+    assert "private-" not in saved["stdout"]
+    assert path.stat().st_mode & 0o777 == PRIVATE_FILE_MODE
+
+
+async def test_terminal_jsonl_failure_saves_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    stdout = _build_jsonl(
+        {"type": "turn.failed", "error": {"message": "quota exceeded"}}
+    )
+    adapter = CodexCliLLM(
+        model=MODEL, max_retries=0, price_table=PRICE_TABLE, logger=_make_logger()
+    )
+    with (
+        patch(
+            "jobfeed.adapters.llm.codex.run_with_retry",
+            AsyncMock(return_value=_make_subprocess_result(stdout)),
+        ),
+        pytest.raises(CodexApiError, match="quota exceeded") as raised,
+    ):
+        await adapter.complete(_make_request())
+    path = Path(str(raised.value).split("diagnostics: ", 1)[1])
+    assert json.loads(path.read_text())["stdout"] == stdout
+
+
+async def test_diagnostic_write_failure_preserves_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    logger = _make_logger()
+    adapter = CodexCliLLM(
+        model=MODEL, max_retries=0, price_table=PRICE_TABLE, logger=logger
+    )
+    with (
+        patch(
+            "jobfeed.adapters.llm.codex.run_with_retry",
+            AsyncMock(side_effect=SubprocessError(1, "model request failed")),
+        ),
+        patch(
+            "jobfeed.adapters.llm._codex_diagnostics.tempfile.mkstemp",
+            side_effect=OSError("disk full"),
+        ),
+        pytest.raises(SubprocessError, match="model request failed"),
+    ):
+        await adapter.complete(_make_request())
+    logger.warning.assert_called_once_with("codex_failure_output_unavailable")

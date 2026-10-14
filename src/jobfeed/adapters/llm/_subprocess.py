@@ -39,9 +39,10 @@ class SubprocessTimeout(Exception):
 class SubprocessError(Exception):
     """Subprocess exited with non-zero code."""
 
-    def __init__(self, returncode: int, stderr: str) -> None:
+    def __init__(self, returncode: int, stderr: str, *, stdout: str = "") -> None:
         self.returncode = returncode
         self.stderr = stderr
+        self.stdout = stdout
         super().__init__(f"exit code {returncode}: {stderr[:200]}")
 
 
@@ -112,7 +113,7 @@ async def run_subprocess(
     )
 
     if process.returncode != 0:
-        raise SubprocessError(process.returncode or 1, stderr_text)
+        raise SubprocessError(process.returncode or 1, stderr_text, stdout=stdout_text)
 
     return SubprocessResult(
         stdout=stdout_text,

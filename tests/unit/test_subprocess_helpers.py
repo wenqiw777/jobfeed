@@ -129,7 +129,9 @@ async def test_run_subprocess_timeout_kills_process_group() -> None:
 
 async def test_run_subprocess_raises_error_on_nonzero_exit() -> None:
     """run_subprocess raises SubprocessError on non-zero exit code."""
-    proc = _make_process(stderr=b"bad input", returncode=1)
+    proc = _make_process(
+        stdout=b"terminal JSONL failure", stderr=b"bad input", returncode=1
+    )
     logger = _make_logger()
 
     with (
@@ -144,6 +146,7 @@ async def test_run_subprocess_raises_error_on_nonzero_exit() -> None:
 
     assert exc_info.value.returncode == 1
     assert "bad input" in exc_info.value.stderr
+    assert exc_info.value.stdout == "terminal JSONL failure"
 
 
 # ---------------------------------------------------------------------------

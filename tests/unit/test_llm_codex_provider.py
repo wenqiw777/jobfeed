@@ -37,8 +37,14 @@ def test_preserves_only_selected_openai_auth_provider(
     assert not any(
         excluded in argument
         for argument in command
-        for excluded in ["unrelated", "private-value", "http_headers", "mcp_servers"]
+        for excluded in [
+            "unrelated",
+            "private-value",
+            "http_headers",
+            "mcp_servers.unrelated",
+        ]
     )
+    assert "mcp_servers={}" in command
 
 
 def test_no_provider_override_without_host_config(

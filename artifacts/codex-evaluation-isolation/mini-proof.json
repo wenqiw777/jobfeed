@@ -1,0 +1,31 @@
+[
+  {
+    "model": "gpt-6-luna",
+    "ok": true,
+    "latency_ms": 4217,
+    "input_tokens": 12383,
+    "output_tokens": 15,
+    "stderr": "",
+    "event_types": [
+      "thread.started",
+      "turn.started",
+      "item.completed",
+      "turn.completed"
+    ]
+  },
+  {
+    "model": "gpt-6.1-sol",
+    "ok": true,
+    "latency_ms": 5046,
+    "input_tokens": 12288,
+    "output_tokens": 30,
+    "stderr": "",
+    "event_types": [
+      "thread.started",
+      "item.completed",
+      "turn.started",
+      "item.completed",
+      "turn.completed"
+    ]
+  }
+]
