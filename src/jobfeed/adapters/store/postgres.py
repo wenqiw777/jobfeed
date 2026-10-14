@@ -11,6 +11,7 @@ from typing import Any, cast
 from jobfeed.adapters.store._application_identity_verification import (
     verification_facts_match,
 )
+from jobfeed.adapters.store._posting_spam import SpamDB
 from jobfeed.adapters.store._repost_sort import triage_sorts
 from jobfeed.domain.display_posting import posting_location
 
@@ -6750,6 +6751,57 @@ class PostgresStore(
             enrich_source="manual-paste",
         )
         return job_id
+
+    async def spam_review(
+        self, *, status: str = "pending", limit: int = 50, offset: int = 0
+    ) -> dict[str, object]:
+        """List source findings for human review.
+
+        Args:
+            status: Review tab filter.
+            limit: Page size.
+            offset: Page offset.
+
+        Returns:
+            Findings and matching total.
+        """
+        async with self._get_pool().acquire() as conn:
+            return await SpamDB(conn, postgres=True).review(status, limit, offset)
+
+    async def spam_decide(self, job_id: str, *, scope: str, decision: str) -> None:
+        """Persist a reversible review decision.
+
+        Args:
+            job_id: Source anchoring the decision.
+            scope: Job or exact company.
+            decision: Allow, block, or reset.
+        """
+        async with self._get_pool().acquire() as conn, conn.transaction():
+            await SpamDB(conn, postgres=True).decide(int(job_id), scope, decision)
+
+    async def spam_audit_page(
+        self, *, after: int = 0, limit: int = 100
+    ) -> dict[str, int]:
+        """Explicitly audit a bounded page of historical sources.
+
+        Args:
+            after: Exclusive source ID cursor.
+            limit: Maximum sources to inspect in one transaction.
+
+        Returns:
+            Processed count and next source ID cursor.
+        """
+        async with self._get_pool().acquire() as conn, conn.transaction():
+            db = SpamDB(conn, postgres=True)
+            rows = await db.rows(
+                "SELECT id FROM jobs WHERE id>? ORDER BY id LIMIT ?", after, limit
+            )
+            for row in rows:
+                await db.assess_source(int(row["id"]))
+            return {
+                "processed": len(rows),
+                "after": int(rows[-1]["id"]) if rows else after,
+            }
 
     async def get_state(self, key: str) -> str | None:
         """Read a key-value state entry.

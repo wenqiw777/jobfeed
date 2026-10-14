@@ -39,6 +39,7 @@ from jobfeed.services._evaluate_stage_b import _run_stage_b
 from jobfeed.services._timing import StepTimer, get_perf_store
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
 from jobfeed.services.evaluation_parse_evidence import save_parse_failure
+from jobfeed.services.posting_spam import spam_block_reason
 from jobfeed.services.run_orchestration import RunLeaseOrchestrator, RunLeaseSession
 
 
@@ -303,7 +304,11 @@ class EvaluateService:
     ) -> None:
         lease_session.ensure_active()
         job_id = require_job_id(job)
-        if intermediary_posting(job) or await confirmed_repost(self._deps.store, job):
+        if (
+            await spam_block_reason(self._deps.store, job)
+            or intermediary_posting(job)
+            or await confirmed_repost(self._deps.store, job)
+        ):
             await release_stage_a_for_run(self._deps.store, job_id)
             self._logger.info(
                 "scoring_skipped_intermediary"

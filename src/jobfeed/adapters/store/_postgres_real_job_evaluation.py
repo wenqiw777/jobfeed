@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import asyncpg  # type: ignore[import-untyped]
 
+from jobfeed.adapters.store._posting_spam import SpamDB
 from jobfeed.domain.models import JobPosting, MLGateResult, StageAResult, StageBResult
 from jobfeed.domain.real_job_evaluation import (
     EVALUATION_ACTIVATION_KEY,
@@ -88,6 +89,9 @@ class PostgresRealJobEvaluation:
                 )
                 if (
                     selected is None
+                    or not await SpamDB(db, postgres=True).allowed(
+                        selected.source_job_id
+                    )
                     or selected.job.closed_at is not None
                     or selected.job.is_repost is True
                     or _too_old(selected, now, max_days)
@@ -367,6 +371,9 @@ class PostgresRealJobEvaluation:
                 )
                 if (
                     selected is None
+                    or not await SpamDB(db, postgres=True).allowed(
+                        selected.source_job_id
+                    )
                     or selected.job.closed_at is not None
                     or selected.job.is_repost is True
                     or _too_old(selected, now, max_days)
@@ -845,6 +852,7 @@ async def sync_postgres_real_job_input(  # noqa: C901 - atomic source synchroniz
         "SELECT to_regclass('public.real_job_evaluations') IS NOT NULL"
     ):
         return
+    await SpamDB(db, postgres=True).assess_source(source_id)
     real_id = await db.fetchval("SELECT real_job_id FROM jobs WHERE id=$1", source_id)
     if real_id is None:
         return

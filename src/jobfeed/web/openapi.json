@@ -5088,6 +5088,34 @@
         "title": "SourcesSpeedyApplyConfig",
         "type": "object"
       },
+      "SpamDecision": {
+        "description": "Validated reversible action chosen by the user.",
+        "properties": {
+          "decision": {
+            "enum": [
+              "allow",
+              "block",
+              "reset"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "job",
+              "company"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "decision"
+        ],
+        "title": "SpamDecision",
+        "type": "object"
+      },
       "StageADetail": {
         "description": "Stage A summary: fast score plus its one-line rationale.",
         "properties": {
@@ -8678,6 +8706,132 @@
           }
         },
         "summary": "Bridge Status"
+      }
+    },
+    "/api/spam-review": {
+      "get": {
+        "description": "Return a bounded review page.\n\nArgs:\n    store: Application store.\n    status: Review tab filter.\n    limit: Page size.\n    offset: Page offset.\n\nReturns:\n    Findings and matching total.",
+        "operationId": "review_api_spam_review_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "pending",
+              "enum": [
+                "pending",
+                "blocked",
+                "reviewed",
+                "all"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Api Spam Review Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review"
+      }
+    },
+    "/api/spam-review/{job_id}/decision": {
+      "post": {
+        "description": "Record a user-requested job or company decision.\n\nArgs:\n    job_id: Source posting anchoring the decision.\n    body: Validated scope and action.\n    store: Application store.\n\nReturns:\n    Success acknowledgement.\n\nRaises:\n    HTTPException: Missing source or invalid company scope.",
+        "operationId": "decide_api_spam_review__job_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpamDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Decide Api Spam Review  Job Id  Decision Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide"
       }
     }
   }

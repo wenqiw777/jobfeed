@@ -1,0 +1,68 @@
+# Automatic posting screening and human review
+
+## Accepted result and boundaries
+
+Use stored job content before scoring. Explicit multi-signal evidence blocks a
+posting; uncertainty goes to a review queue and remains visible/eligible. A single
+keyword, frequency, unknown company, or company-name substring never blocks a
+company. Reuse existing state storage; preserve jobs, scores and workflow history.
+No new hashes, paid models, logged-in LinkedIn reads, or broad re-evaluation.
+
+Company promotion requires at least three independent canonical jobs with three
+distinct titles, all observed company postings carrying strong third-party
+publisher redirect evidence. Unassessed/clean/review/official-ATS postings veto
+promotion. AI work and training-placement findings alone never promote a company.
+Human job decisions override automatic company decisions; manual company decisions
+persist across rescans. Existing explicit blacklist rules remain authoritative.
+
+## Tasks and evidence
+
+1. Conservative pure classifier: test-first positive examples and adversarial
+   normal-company controls, quoted/negated text, URL host boundaries, templates,
+   AI contributor versus engineering work, training/placement versus normal training.
+2. Persistent source assessment on save/enrichment, exact-company promotion and
+   reversible decisions; SQLite production plus PostgreSQL-compatible state queries.
+   Results rows/count/selection and canonical/legacy paid paths share enforcement.
+   Test with real temporary SQLite DB, duplicates, mixed employers, rescans,
+   human overrides, enrichment and existing completed scores.
+3. Review API and small UI page: evidence, source links, pending/blocked findings,
+   keep/block job and company decisions. API/UI tests and real local browser pass,
+   with a screenshot for user approval before merge. No live deployment is implied
+   by approval to implement this behavior.
+4. Read-only sample audit using stored Mini content, final local verification and
+   scoped commit. Record counts, remaining limits and release evidence here.
+
+## Readiness
+
+Implementation-ready. Use exact case/whitespace normalized company names. Unknown
+or missing company cannot promote. Need not guess true employer from generic prose;
+ambiguous attribution stays review-only. Automatic decisions are explainable and
+reversible. Historical records can be explicitly backfilled using a bounded audit
+operation; startup does not rewrite the database.
+
+## Progress
+
+- Planning: inspected persistence, canonical claim/Results, legacy scoring and UI.
+- Test-first: classifier/SQLite/API/UI cases failed before implementation and pass
+  after wiring. The final legacy-funnel regression first failed with a persisted
+  `spam:ai_contributor_work` hard_filter; spam no longer writes that sticky column.
+  All eight evaluation-mode cases pass, including restored dry-run eligibility
+  after Keep job and zero paid calls for blocked jobs.
+- Feature verification: 39 classifier, persistence, API and evaluation tests pass;
+  separate real PostgreSQL integration passes (1). Ruff passes; mypy passes for
+  382 source files. Frontend: 188 tests pass, ESLint and production build pass.
+- Browser: local Chrome at localhost:5177/spam-review; exercised Keep job, Keep
+  company, company confirmation and reset. Screenshot:
+  `artifacts/automatic-spam-review/review-preview.jpg`.
+- Read-only Mini audit: 4,673 stored recent postings after existing blacklist
+  exclusions; 0 automatic blocks and 3 review-only findings (Burtch Works,
+  iDelsoft, Pave Talent). These findings do not establish spam or fraud.
+- Limits: conservative rules can miss new patterns. New/enriched postings are
+  checked automatically; historical backfill is explicit and bounded. No paid
+  classifier or background automation was added. No production data changed.
+- Full tracked backend regression: 3,286 passed, 19 skipped, 8 xfailed; one
+  pre-existing code-hygiene test failed. Identified baseline
+  hygiene failures concern missing docstring Args/Returns in unchanged
+  `_codex_diagnostics.py`, `_linkedin_application.py`, `_linkedin_guest_shared.py`;
+  each verified identical to HEAD. No unrelated fixes included.
+- Release: pending UI screenshot approval and explicit deployment authorization.

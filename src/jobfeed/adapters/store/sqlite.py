@@ -22,6 +22,7 @@ from jobfeed.adapters.store._sqlite_real_job_identity import resolve_sqlite_real
 from jobfeed.adapters.store._sqlite_real_job_views import SqliteRealJobViews
 from jobfeed.adapters.store._sqlite_real_job_workflow import SqliteRealJobWorkflow
 from jobfeed.adapters.store._sqlite_runs import _get_pipeline_run
+from jobfeed.adapters.store._sqlite_spam import SqliteSpam
 from jobfeed.adapters.store._sqlite_values import _job_from_row, _utc_text
 from jobfeed.adapters.store.sqlite_claims_runs import SqliteClaimsRuns
 from jobfeed.adapters.store.sqlite_jobs_evaluations import SqliteJobsEvaluations
@@ -100,6 +101,7 @@ async def _refresh_backfilled_real_job_display(
 
 
 class SQLiteStore(
+    SqliteSpam,
     SqliteIntermediary,
     SqliteRealJobEvaluation,
     SqliteRealJobWorkflow,

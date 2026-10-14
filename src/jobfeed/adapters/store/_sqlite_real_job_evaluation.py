@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
+from jobfeed.adapters.store._posting_spam import SpamDB
 from jobfeed.adapters.store._sqlite_capability_support import _immediate_transaction
 from jobfeed.adapters.store._sqlite_values import (
     _canonical_json,
@@ -117,6 +118,9 @@ class SqliteRealJobEvaluation:
                         )
                         if (
                             selected is None
+                            or not await SpamDB(connection).allowed(
+                                selected.source_job_id
+                            )
                             or selected.job.closed_at is not None
                             or selected.job.is_repost is True
                             or _too_old(selected, now, max_days)
@@ -420,6 +424,9 @@ class SqliteRealJobEvaluation:
                         )
                         if (
                             selected is None
+                            or not await SpamDB(connection).allowed(
+                                selected.source_job_id
+                            )
                             or selected.job.closed_at is not None
                             or selected.job.is_repost is True
                             or _too_old(selected, now, max_days)
@@ -967,6 +974,7 @@ async def sync_sqlite_real_job_input(
     )
     if present is None:
         return
+    await SpamDB(connection).assess_source(source_id)
     parent = await _one(
         connection, "SELECT real_job_id FROM jobs WHERE id=?", (source_id,)
     )

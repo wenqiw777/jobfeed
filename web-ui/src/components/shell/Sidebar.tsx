@@ -2,20 +2,32 @@ import SideNavigation, {
   type SideNavigationProps,
 } from "@cloudscape-design/components/side-navigation";
 import Icon, { type IconProps } from "@cloudscape-design/components/icon";
+import Badge from "@cloudscape-design/components/badge";
+import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 
+import { apiFetch } from "@/api/client";
 import { ZONES } from "@/components/shell/zones";
 
 /** Cloudscape navigation for the application's product zones. */
 export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const pending = useQuery({
+    queryKey: ["spam-review", "pending-count"],
+    queryFn: () => apiFetch<{ total: number }>("/api/spam-review?status=pending&limit=1"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+  });
   const items: SideNavigationProps.Item[] = [
     ...ZONES.map((zone) => ({
       type: "link" as const,
       text: zone.label,
       href: zone.path,
       icon: <ZoneIcon zone={zone.path} />,
+      info: zone.path === "/spam-review" && (pending.data?.total ?? 0) > 0
+        ? <Badge color="blue">{pending.data?.total}</Badge> : undefined,
     })),
     { type: "divider" as const },
     {

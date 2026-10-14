@@ -19,6 +19,7 @@ from jobfeed.ports.store import JobStore
 from jobfeed.ports.store_ext import StoreStageBPreviewMixin
 from jobfeed.services._evaluate_funnel import run_funnel
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
+from jobfeed.services.posting_spam import spam_block_reason
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,10 @@ async def build_dry_run_preview(
             deps.store, request.limit, request.max_days, config.stage_a_threshold
         )
         survivors = [
-            job for job in jobs_b if not ai_data_work_reason(job.title, job.company)
+            job
+            for job in jobs_b
+            if not await spam_block_reason(deps.store, job)
+            and not ai_data_work_reason(job.title, job.company)
         ]
         run.jobs_filtered += len(jobs_b) - len(survivors)
         if config.seniority_gate_mode == "filter":

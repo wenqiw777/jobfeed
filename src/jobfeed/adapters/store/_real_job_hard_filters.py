@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from jobfeed.adapters.store._posting_spam import spam_allowed_sql
 from jobfeed.domain.ai_data_work import AI_DATA_COMPANY_PATTERN, AI_DATA_TITLE_PATTERN
 from jobfeed.domain.filtering import _US_NAMES, _US_STATE_CODES, HardFilters
 from jobfeed.domain.intermediary import DOMAINS, PUBLISHERS
@@ -88,6 +89,7 @@ def sqlite_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
         "jobfeed_intermediary(j.company,j.url,j.apply_url)=0 AND "
         "jobfeed_ai_data_work(j.title,j.company) IS NULL"
     )
+    intrinsic += " AND " + spam_allowed_sql()
     if not _active(filters):
         return intrinsic, []
     assert filters is not None
@@ -164,6 +166,7 @@ def postgres_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
         A SQL predicate and its ordered PostgreSQL bind values.
     """
     intrinsic = f"{_direct_source_predicate()} AND {_postgres_contributor_predicate()}"
+    intrinsic += " AND " + spam_allowed_sql(postgres=True)
     if not _active(filters):
         return intrinsic, []
     assert filters is not None

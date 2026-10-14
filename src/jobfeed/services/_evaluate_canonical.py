@@ -35,6 +35,7 @@ from jobfeed.services.evaluate_types import (
     EvaluateRuntimeConfig,
 )
 from jobfeed.services.evaluation_parse_evidence import save_parse_failure
+from jobfeed.services.posting_spam import spam_block_reason
 from jobfeed.services.run_orchestration import RunLeaseSession
 
 if TYPE_CHECKING:
@@ -252,7 +253,7 @@ async def _preview_stage(  # noqa: PLR0913 - explicit preview scope
         inputs = await cast(
             CanonicalEvaluationStore, service._deps.store
         ).load_real_job_priority_inputs(page)
-        _append_preview_page(
+        await _append_preview_page(
             service,
             run,
             inputs,
@@ -269,7 +270,7 @@ async def _preview_stage(  # noqa: PLR0913 - explicit preview scope
             return
 
 
-def _append_preview_page(  # noqa: PLR0913 - preview decision facts
+async def _append_preview_page(  # noqa: PLR0913 - preview decision facts
     service: EvaluateService,
     run: PipelineRun,
     inputs: list[CanonicalPriorityInput],
@@ -297,7 +298,9 @@ def _append_preview_page(  # noqa: PLR0913 - preview decision facts
             or item.stage_b_status == "completed"
         ):
             continue
-        if ai_data_work_reason(item.job.title, item.job.company):
+        if await spam_block_reason(
+            service._deps.store, item.job
+        ) or ai_data_work_reason(item.job.title, item.job.company):
             run.jobs_filtered += 1
             continue
         if (
@@ -560,7 +563,7 @@ async def _prepare_stage_a_claims(
     hard_filter_survivors: list[RealJobEvaluationInput] = []
     hard_filter_rejected: list[RealJobEvaluationInput] = []
     for item in claims:
-        reason = apply_hard_filters(
+        reason = await spam_block_reason(store, item.job) or apply_hard_filters(
             item.job, service._deps.hard_filters or HardFilters()
         )
         if reason is None:
@@ -799,7 +802,9 @@ async def _score_stage_b_claims(
         try:
             async with semaphore:
                 session.ensure_active()
-                if ai_data_work_reason(item.job.title, item.job.company):
+                if await spam_block_reason(
+                    service._deps.store, item.job
+                ) or ai_data_work_reason(item.job.title, item.job.company):
                     run.jobs_filtered += 1
                     await cast(
                         CanonicalEvaluationStore, store

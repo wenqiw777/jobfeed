@@ -29,6 +29,7 @@ from jobfeed.services._evaluate_repost import confirmed_repost
 from jobfeed.services._evaluate_reuse import ReuseEntry
 from jobfeed.services._evaluate_sweep import sweep_stage_b
 from jobfeed.services.evaluation_parse_evidence import save_parse_failure
+from jobfeed.services.posting_spam import spam_block_reason
 from jobfeed.services.run_orchestration import RunLeaseSession
 
 if TYPE_CHECKING:
@@ -161,7 +162,9 @@ async def _score_stage_b(  # noqa: PLR0913 - scorer inputs plus lease guard
     """Score one Stage B job without writing after lease ownership loss."""
     lease_session.ensure_active()
     job_id = require_job_id(job)
-    if ai_data_work_reason(job.title, job.company):
+    if await spam_block_reason(service._deps.store, job) or ai_data_work_reason(
+        job.title, job.company
+    ):
         run.jobs_filtered += 1
         await release_stage_b_for_run(service._deps.store, job_id)
         return "skipped"

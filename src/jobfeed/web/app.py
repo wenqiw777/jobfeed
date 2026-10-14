@@ -51,6 +51,7 @@ from jobfeed.web.routes.real_jobs import router as real_jobs_router
 from jobfeed.web.routes.real_jobs_workflow import router as real_jobs_workflow_router
 from jobfeed.web.routes.run_sources import router as run_sources_router
 from jobfeed.web.routes.runs import router as runs_router
+from jobfeed.web.routes.spam import router as spam_router
 from jobfeed.web.routes.workflow import router as workflow_router
 
 
@@ -202,6 +203,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     project_root = config_path.resolve().parent
     _configure_onboarding(app, context, project_root, logger, store)
     install_error_handling(app)
+    app.include_router(spam_router, prefix="/api")
     app.include_router(health_router, prefix="/api")
     app.include_router(configuration_router, prefix="/api")
     _include_onboarding_routers(app)

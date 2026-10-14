@@ -26,6 +26,7 @@ from jobfeed.services._evaluate_gate import gate_representatives, resolve_gate_m
 from jobfeed.services._evaluate_repost import eligible_jobs
 from jobfeed.services._evaluate_seniority import apply_seniority_gate
 from jobfeed.services.evaluate_types import EvaluateDependencies, EvaluateRuntimeConfig
+from jobfeed.services.posting_spam import spam_block_reason
 
 # Generous safety bound on candidate pages scanned per funnel run, so a long
 # freshness window that is almost entirely hard-filter-blocked can't spin
@@ -190,13 +191,19 @@ async def _apply_hard_filters(
     kept: list[GateCandidate] = []
     rejected: dict[str, str] = {}
     for candidate in candidates:
-        reason = apply_hard_filters(candidate.job, filters)
+        reason = await spam_block_reason(store, candidate.job) or apply_hard_filters(
+            candidate.job, filters
+        )
         if reason is None:
             kept.append(candidate)
             continue
         rejected[_job_id(candidate.job)] = reason
-    if persist and rejected:
-        await store.save_hard_filters(rejected)
+    # Spam decisions live in reversible state, never the sticky hard_filter column.
+    persisted = {
+        key: value for key, value in rejected.items() if not value.startswith("spam:")
+    }
+    if persist and persisted:
+        await store.save_hard_filters(persisted)
     run.jobs_filtered += len(rejected)
     return kept
 
