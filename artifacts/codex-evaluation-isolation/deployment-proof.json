@@ -1,0 +1,24 @@
+{
+  "previous_commit": "2e7d4c663a4fa8222d8ae3e61c97f7071d86dd51",
+  "deployed_commit": "38cdad7d663f8247a825d681ae5dbf83cf3dc9ed",
+  "health": {
+    "status": "ok",
+    "db": "ok",
+    "redis": "ok"
+  },
+  "active_runs": {
+    "runs": []
+  },
+  "today_plan": {
+    "day": "2026-10-14",
+    "minutes": [
+      242,
+      884,
+      1185
+    ],
+    "attempted": [
+      242,
+      884
+    ]
+  }
+}
