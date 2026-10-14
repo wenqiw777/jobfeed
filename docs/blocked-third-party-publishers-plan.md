@@ -39,3 +39,41 @@ Acceptance: all audited aliases skip LinkedIn discovery detail/cache work, sourc
 Test-first reproduction: 91 failed, 70 passed with the extended tests against the previous policy. Final targeted suite: 238 passed; Ruff, mypy and git diff --check passed. Mini pre-deploy read-only baseline: 1,238 historical source rows and 392 affected Results among 13,109 total. Deployed to Mini with only these five scoped files. No active runs at restart; API, DB and Redis health all ok. Live Results: 392 affected -> 0, total 13,109 -> 12,717. All 1,238 historical rows remain stored and now fail scoring eligibility. Mini smoke passed all 19 aliases with case/whitespace variants and five similar employer names. No paid scans or evaluations were triggered.
 
 Deployment reconciliation: another release temporarily replaced Mini policy code after initial verification. Reapplied the publisher guards to that release without altering application-route logic. A subsequent checkout restored the original publisher-block release (c41ffc3). Final live verification on the running server again confirms 392 affected Results -> 0, 1,238 historical rows preserved and healthy API/DB/Redis. Current source smoke confirms all 23 aliases. Evidence: artifacts/publisher-audit-20261001/deployment-verification.json.
+
+## User-requested full audit block (2026-10-14)
+
+Scope: block all 23 newly discussed names, including the uncertain candidates,
+plus the spaced Talent Hop alias. Names: TaskVerse, Fonzi AI, Revature,
+Tech Consulting, SkillStorm, SynergisticIT, Turing, Alignerr, Welo Data,
+BeaconFire Inc., Emonics LLC, MeeBoss, Raydar, CoffeeSpace, talentpluto,
+ScoutBetter, Nord Resume, HiredBuddy, EngRadar, AgileGrid Solutions,
+AfterQuery Experts, RemoExperts, SoTalent, Talent Hop.
+
+Reuse exact normalized company matching and existing ingestion, resolution,
+scoring and Results guards. This is a user preference block, not a claim that
+all listed businesses are fraudulent. Preserve historical source records.
+No domain heuristics, schema changes, hash logic or unrelated edits.
+
+Evidence: extending the existing SQLite historical-source regression first
+produced 24 failures and 22 passes. After the policy update, intermediary unit
+and SQLite integration tests plus LinkedIn discovery tests passed: 281 passed.
+Ruff check and git diff --check passed. Direct-employer controls remain covered.
+
+Status: local implementation verified; Mini activation requires explicit release
+approval under AGENTS.md. No production files, services or data changed.
+
+Release approved by user with "go". Mini deployment updated only the existing
+BLOCKED_PUBLISHERS tuple and restarted com.wenqi.jobfeed.server after confirming
+there were no active runs. The previous source file is backed up on Mini at
+artifacts/publisher-block-20261014/intermediary.before.py. Unrelated Mini edits
+were preserved; no GitHub push or merge was performed.
+
+Live verification: all 24 exact normalized company names/aliases have zero
+Results records. Case/repeated-whitespace policy smoke checks pass. SQLite still
+contains 2,306 historical source rows for the affected names; no database writes
+or deletion were performed. Health status, DB and Redis are all ok; 14,227 other
+Results remain. A broad search initially failed the zero-count assertion because
+Turing also matches Manufacturing (69 other-company records), and Tech Consulting
+matches JSR Tech Consulting (2 records). Exact company checks confirm these are
+unrelated employers, not block leaks; retain them. Current verification receipt:
+artifacts/publisher-block-20261014/verification.json.
