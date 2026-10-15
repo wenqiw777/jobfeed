@@ -65,4 +65,12 @@ operation; startup does not rewrite the database.
   hygiene failures concern missing docstring Args/Returns in unchanged
   `_codex_diagnostics.py`, `_linkedin_application.py`, `_linkedin_guest_shared.py`;
   each verified identical to HEAD. No unrelated fixes included.
-- Release: pending UI screenshot approval and explicit deployment authorization.
+- Release: user approved deployment on 2026-10-15. Applied scoped commit on Mini
+  as `f266da1`; idle service restarted and scheduler restored. Health, DB, Redis,
+  review API, Results API and review HTML return successfully. Both served JS/CSS
+  assets exactly match deployed files. Existing unrelated Mini edits preserved.
+  Mini has no pytest installation, so prior local verification plus live checks
+  were used. Production browser recheck was blocked by the browser tool's policy
+  initialization network failure; prior local browser evidence remains valid.
+  Review queue starts empty; existing historical sample was not backfilled.
+  Evidence: `artifacts/automatic-spam-review/deployment-proof.json`.
