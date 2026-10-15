@@ -69,7 +69,16 @@ async def shared_fetch(
     *,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> GuestResponse:
-    """Read anonymously with shared pacing, response reuse and block cooldown."""
+    """Read anonymously with shared pacing, response reuse and block cooldown.
+
+    Args:
+        client: Anonymous HTTP client used for the request.
+        url: Guest endpoint to fetch.
+        sleep: Async delay function used for request pacing.
+
+    Returns:
+        Guest response fetched or reused by the event loop's shared queue.
+    """
     loop = asyncio.get_running_loop()
     queue = _queues.setdefault(loop, _GuestRequests())
     return await queue.read(client, url, sleep)

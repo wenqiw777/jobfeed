@@ -13,7 +13,14 @@ from jobfeed.observability import JobfeedLogger
 
 
 def redact_output(value: str) -> str:
-    """Remove known environment secrets and credential-shaped log values."""
+    """Remove known environment secrets and credential-shaped log values.
+
+    Args:
+        value: Captured output to sanitize before persistence.
+
+    Returns:
+        Output with recognized secret values replaced by redaction markers.
+    """
     for key, secret in os.environ.items():
         if secret and any(
             part in key.upper() for part in ("TOKEN", "SECRET", "PASSWORD", "API_KEY")
@@ -36,7 +43,18 @@ def save_failure_output(
     result: SubprocessResult | None,
     logger: JobfeedLogger,
 ) -> Path | None:
-    """Save both output streams without truncation; never mask the original error."""
+    """Save both output streams without truncation; never mask the original error.
+
+    Args:
+        model: Model used for the failed call.
+        attempt: One-based attempt number.
+        error: Failure to describe, including output for subprocess errors.
+        result: Captured output when the subprocess completed successfully.
+        logger: Logger for the diagnostic path or persistence failure.
+
+    Returns:
+        Private diagnostic file path, or None if writing fails.
+    """
     stdout = (
         error.stdout
         if isinstance(error, SubprocessError)

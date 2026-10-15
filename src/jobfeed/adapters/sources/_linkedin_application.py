@@ -17,7 +17,14 @@ _MIN_JD = 200
 
 
 def is_linkedin_url(url: str) -> bool:
-    """Match LinkedIn and its subdomains, never similarly named hosts."""
+    """Match LinkedIn and its subdomains, never similarly named hosts.
+
+    Args:
+        url: Candidate URL whose hostname should be checked.
+
+    Returns:
+        Whether the hostname is LinkedIn or one of its subdomains.
+    """
     host = (urlsplit(url).hostname or "").lower().rstrip(".")
     return host == "linkedin.com" or host.endswith(".linkedin.com")
 
