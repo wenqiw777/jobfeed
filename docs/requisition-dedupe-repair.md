@@ -18,3 +18,13 @@ Verification and deployment evidence: pending.
 - Full local tracked suite: 3336 passed, 19 skipped, 479 deselected, 8 xfailed. Subsequent multi-candidate hold and cross-tenant regressions pass; Ruff, formatting, mypy and hygiene checks pass. PostgreSQL code mirrors the changes; no live PostgreSQL service was used locally.
 - Live Salesforce route verification: resolved verified_application_route, workday_requisition JR355250 for the JR355250-1 URL.
 - Official CXS reads for 49 observed base/suffix pairs: 28 verified, 21 unverified (HTTP/access/availability failures). Only verified pairs are eligible for alias backfill; no suffix-only merges.
+
+## Mini release and production backfill — 2026-10-16 Detroit
+
+Deployed source commit 6c09433, plus the existing main LinkedIn application/Guest shared modules required by Mini's older checkout. All deployed modules imported successfully before restart. No unrelated Mini dirty files were overwritten.
+
+Idle preflight, scheduler suspension/resumption, full SQLite backup and service restart completed. Health/db/Redis all OK. Production backfill: 1,286 source targets, 423 duplicate parents merged, 1,829 source rows affected; 28 official Workday aliases, 21 unverified pairs left separate. All 296 applications and 174,461 source statuses preserved; foreign-key check clean. Remaining 173 parents without exclusive identifiers are all identity_conflict, none clear.
+
+Salesforce Results 29 -> 27; new duplicates 168507 and 168357 excluded. Original September 7 application remains on 57649. Conflicting ghosted/archived histories are held, not force-merged. There are 547 historical Apply/Consider rows covered by the new exclusion predicates, including already archived records; this is not a count of newly removed visible cards.
+
+Mini rollback backup: data/deployment-backups/requisition-20261016-release/before.sqlite, prior source under source/. Preserve concurrent user writes when considering restoration. Local detailed CSV/Markdown report: artifacts/requisition-dedupe-repair/report.md.
