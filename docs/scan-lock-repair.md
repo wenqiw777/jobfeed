@@ -16,4 +16,6 @@ Deployment: four scoped runtime files installed on Mini; originals preserved und
 
 CI: source commit b3e1de7 passed run 38928961392. Additional cancellation-in-queued-BEGIN test passed; busy recovery suite 6 passed.
 
-Remaining: live recovered scan terminal status and evaluation continuation. Historical owner remains unprovable without pre-existing telemetry; do not label failed_source as the lock owner.
+Live recovery succeeded at 2026-10-16 16:13:36 UTC: 5,785 source outcomes, 444 inserted, 5,341 updated, 0 run errors. Application resolution completed 1,409/1,409. SpeedyApply retained its pre-existing partial-description warning (24/26); no new database-lock errors. Direct DB check found zero duplicate (platform, canonical_id) groups. Follow-up evaluation e41d8c1f-499d-495a-ad95-ed1f479ed744 started and its running row persisted. Full evaluation remains in progress; completion is not claimed.
+
+Repair, tests, deployment, recovery and main push complete. Original failing run remains intact as audit history. Historical owner remains unprovable without pre-existing telemetry; do not label failed_source as the lock owner.
