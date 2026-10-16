@@ -11,6 +11,8 @@ from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.normalize import normalize, normalize_company
 
 BLOCKED_PUBLISHERS = (
+    "dice",
+    "jobs via dice",
     "taskverse",
     "fonzi ai",
     "revature",
@@ -66,8 +68,6 @@ BLOCKED_PUBLISHERS = (
     "underdog.io",
 )
 PUBLISHERS = (
-    "dice",
-    "jobs via dice",
     "jobverse",
     *BLOCKED_PUBLISHERS,
 )
