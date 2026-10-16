@@ -12,4 +12,8 @@ Implemented: indexed case-sensitive GLOB alias prefix (same existing primary-key
 
 Verification: initial regression run 2 failed / 17 passed; after repair 294 relevant contract/unit/integration checks passed. Snapshot replay after indexed lookup: Handshake 0.297 s, SpeedyApply 0.365 s per 100 (approximately 8-9x faster).
 
-Remaining: deployed verification, CI. Historical owner remains unprovable without pre-existing telemetry; do not label failed_source as the lock owner.
+Deployment: four scoped runtime files installed on Mini; originals preserved under data/deployment-backups/scan-lock-20261016/source. API health/db/Redis OK. Recovery of failed scan started as 6ba15e5e-3d57-4173-ae81-4f14870af5f2. OS F_GETLK sampling of WAL write-lock byte 120 observed PID 18745 (current Jobfeed server) in 73 of 100 samples; this is current evidence, not historical PID attribution. Handshake completed and over 4,300 postings saved without new busy errors.
+
+CI: source commit b3e1de7 passed run 38928961392. Additional cancellation-in-queued-BEGIN test passed; busy recovery suite 6 passed.
+
+Remaining: live recovered scan terminal status and evaluation continuation. Historical owner remains unprovable without pre-existing telemetry; do not label failed_source as the lock owner.
