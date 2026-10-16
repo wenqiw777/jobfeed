@@ -64,6 +64,19 @@ def run_cycle(request=request_json, wait=wait_run):
             result.get("errors"),
             result.get("total_llm_cost_usd"),
         )
+        if (
+            phase == "scan"
+            and result["status"] == "failed"
+            and result.get("failure_message") == "database is locked"
+        ):
+            if _has_foreground_run(request("/api/runs/active")["runs"]):
+                return "skipped_active"
+            # A confirmed terminal attempt is safe to resume through its journal.
+            # Never retry an ambiguous POST, a paid evaluation, or a second failure.
+            run_id = request(f"/api/runs/{run_id}/retry", {})["run_id"]
+            LOG.info("Resumed database-busy scan run=%s", run_id)
+            result = wait(run_id)
+            LOG.info("Finished resumed scan run=%s status=%s", run_id, result["status"])
         if result["status"] != "succeeded":
             raise RuntimeError(f"{phase} {run_id} {result['status']}; cycle stopped")
     return "succeeded"

@@ -129,3 +129,48 @@ def test_observation_timeout_does_not_stop_or_retry_server_work(monkeypatch):
     with pytest.raises(TimeoutError, match="two-hour observation window"):
         scheduler.wait_run("created-run-id")
     assert calls == []
+
+
+def test_terminal_database_lock_scan_is_resumed_once_before_evaluation():
+    api = API([[], [], []])
+    original_wait = api.wait
+
+    def wait(run_id):
+        if run_id == "scan-1":
+            return {"status": "failed", "failure_message": "database is locked"}
+        if run_id == "retry-1":
+            return {"status": "succeeded"}
+        return original_wait(run_id)
+
+    assert run_cycle(api.request, wait) == "succeeded"
+    assert ("/api/runs/scan-1/retry", {}) in api.requests
+    assert api.requests[-1][0] == "/api/runs/evaluate"
+
+
+def test_resumed_busy_scan_failure_stops_without_second_retry_or_evaluation():
+    api = API([[], []])
+
+    def wait(_run_id):
+        return {"status": "failed", "failure_message": "database is locked"}
+
+    with pytest.raises(RuntimeError, match="cycle stopped"):
+        run_cycle(api.request, wait)
+    posts = [path for path, payload in api.requests if payload is not None]
+    assert posts == ["/api/runs/scan", "/api/runs/scan-1/retry"]
+
+
+def test_busy_scan_retry_post_timeout_is_not_repeated():
+    api = API([[], []])
+
+    def request(path, payload=None):
+        if path.endswith("/retry"):
+            api.requests.append((path, payload))
+            raise TimeoutError("unknown POST result")
+        return api.request(path, payload)
+
+    def wait(_run_id):
+        return {"status": "failed", "failure_message": "database is locked"}
+
+    with pytest.raises(TimeoutError):
+        run_cycle(request, wait)
+    assert len([p for p, _ in api.requests if p.endswith("/retry")]) == 1
