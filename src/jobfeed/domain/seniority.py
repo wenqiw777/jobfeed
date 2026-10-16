@@ -49,7 +49,7 @@ _DIRECT_REQUIREMENT = re.compile(
 _ALTERNATIVE_GAP = re.compile(r"[;,]\s*or|\bor\s*$", re.IGNORECASE)
 _MAX_ALTERNATIVE_GAP = 180
 _MULTILEVEL_TITLE = re.compile(
-    r"\bassociate\s+or\s+experienced\b|\bmultiple\s+levels\b|"
+    r"\bassociate\s*(?:[,/]\s*)?(?:or\s+)?experienced\b|\bmultiple\s+levels\b|"
     r"\bassociate\s+software\s+engineer\s*/\s*software\s+engineer\b|"
     r"\bopen\s+rank\b|\b(?:engineer|developer)\s+I\s*[-\u2013/]\s*III\b",
     re.IGNORECASE,
@@ -69,7 +69,13 @@ _ENTRY_TITLE = re.compile(
 _OWNERSHIP_TITLE = re.compile(r"\b(?:staff|principal|lead|manager)\b", re.IGNORECASE)
 _EXPLICIT_SENIORITY_TITLE = re.compile(
     r"\b(?:senior|sr\.?|mid[\s-]?level|midlevel)\b"
-    r"|\b(?:engineer|developer|programmer)\s+(?:II|III|IV|2|3|4)\b",
+    r"|\b(?:engineer|developer|programmer|SDE|SWE)\s+(?:II|III|IV|2|3|4)\b",
+    re.IGNORECASE,
+)
+# Level II/2 varies across employers; retain its existing low-year path.
+_STRONG_SENIORITY_TITLE = re.compile(
+    r"\b(?:senior|sr\.?)\b|"
+    r"\b(?:engineer|developer|programmer|SDE|SWE)\s+(?:III|IV|3|4)\b",
     re.IGNORECASE,
 )
 _OWNERSHIP_SCOPE = re.compile(
@@ -169,7 +175,11 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
         jd_text,
         required_years=required_years,
         mts_title=bool(mts_title),
-        senior_title=bool(explicit_seniority_title),
+        senior_title=(
+            bool(_STRONG_SENIORITY_TITLE.search(title) or ownership_title)
+            and not _has_lower_title_band(title)
+        )
+        or bool(_OWNERSHIP_SCOPE.search(jd_text)),
     )
     if protected is not None:
         return protected
@@ -219,6 +229,20 @@ def classify_seniority_rule(title: str, jd_text: str) -> SeniorityDecision:
         reason="no explicit seniority boundary",
         yoe_min=None,
         confidence=0.0,
+    )
+
+
+def _has_lower_title_band(title: str) -> bool:
+    """Recognize separately named lower roles in a mixed hiring title."""
+    bands = re.split(r"/|\band\b|\bor\b", title, flags=re.IGNORECASE)
+    return len(bands) > 1 and any(
+        re.fullmatch(
+            r"\s*(?:software\s+)?(?:engineer(?:ing)?|developer)"
+            r"(?:\s+(?:I|II|1|2))?(?:\s*[-,(].*)?\s*",
+            band,
+            re.IGNORECASE,
+        )
+        for band in bands
     )
 
 
@@ -278,7 +302,7 @@ def _junior_or_mts_decision(
     junior_years = (
         required_years is not None and required_years <= SCOPE_EXPERIENCE_YEARS
     )
-    if _JUNIOR_JD_PATH.search(jd_text) or junior_years:
+    if _JUNIOR_JD_PATH.search(jd_text) or (junior_years and not senior_title):
         return SeniorityDecision(
             result="in_scope",
             reason="explicit junior path",
