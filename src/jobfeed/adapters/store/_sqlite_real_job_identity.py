@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from itertools import combinations
+
 import aiosqlite
 
 from jobfeed.adapters.store._sqlite_values import _job_from_row, _utc_text
@@ -19,12 +21,13 @@ from jobfeed.domain.real_job_identity import (
     source_identifiers,
     strict_content_equivalent,
 )
+from jobfeed.domain.requisition_alias import PREFIX, Aliases, alias_id
 
 _CANDIDATE_LIMIT = 50
 _NEUTRAL = ("new", "scored")
 
 
-async def resolve_sqlite_real_job(
+async def resolve_sqlite_real_job(  # noqa: C901 - bounded evidence and status checks
     connection: aiosqlite.Connection,
     source_id: int,
     job: JobPosting,
@@ -32,6 +35,8 @@ async def resolve_sqlite_real_job(
     include_content: bool = True,
 ) -> bool:
     """Join one source only when a scoped ID or exact substantive body proves it.
+
+    Time complexity: O(b * c^2) bounded parent and candidate comparisons.
 
     Args:
         connection: Open source-write transaction on an identity-enabled DB.
@@ -52,32 +57,43 @@ async def resolve_sqlite_real_job(
     source_job = _job_from_row(source)
     source_job.apply_url = job.apply_url or source_job.apply_url
     source_job.identity_evidence_url = job.identity_evidence_url
+    aliases = await _aliases(connection)
     merged = False
     for _ in range(_CANDIDATE_LIMIT):
-        observed = await _observed_candidates(
-            connection, source_parent, source_id, source_job
+        observed, conflict = await _observed_candidates(
+            connection, source_parent, source_id, source_job, aliases
         )
+        if conflict:
+            return merged
         candidates = dict(observed)
         if include_content:
             candidates.update(
-                await _content_candidates(connection, source_parent, source_job)
+                await _content_candidates(
+                    connection, source_parent, source_job, aliases
+                )
             )
         if len(candidates) > 1:
-            if len(observed) == 1:
+            if observed and await _compatible_candidates(
+                connection, [source_parent, *observed], aliases
+            ):
+                candidates = dict([min(observed.items())])
+            elif len(observed) == 1:
                 candidates = observed
             else:
-                other_parent, other_source = min(candidates.items())
-                await _review(
-                    connection,
-                    (source_parent, other_parent),
-                    (source_id, other_source),
-                    "multiple_identity_candidates",
-                )
+                for other_parent, other_source in candidates.items():
+                    await _review(
+                        connection,
+                        (source_parent, other_parent),
+                        (source_id, other_source),
+                        "multiple_identity_candidates",
+                    )
                 return merged
         if not candidates:
             return merged
         other_parent, other_source = next(iter(candidates.items()))
-        if await _conflicting_requisitions(connection, source_parent, other_parent):
+        if await _conflicting_requisitions(
+            connection, source_parent, other_parent, aliases
+        ):
             await _review(
                 connection,
                 (source_parent, other_parent),
@@ -113,13 +129,15 @@ async def _observed_candidates(
     source_parent: int,
     source_id: int,
     source_job: JobPosting,
-) -> dict[int, int]:
+    aliases: Aliases,
+) -> tuple[dict[int, int], bool]:
     candidates: dict[int, int] = {}
-    for identifier in source_identifiers(source_job):
+    conflict = False
+    for identifier in source_identifiers(source_job, aliases):
         await connection.execute(
-            "INSERT OR IGNORE INTO real_job_identifiers("
+            "INSERT INTO real_job_identifiers("
             "real_job_id,provider,scope,native_id,evidence_job_id,observed_url) "
-            "VALUES(?,?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?) ON CONFLICT(provider,scope,native_id) DO NOTHING",
             (
                 source_parent,
                 identifier.provider,
@@ -146,22 +164,31 @@ async def _observed_candidates(
         # their verified ATS evidence from the identifier that owns this match.
         if identifier.provider in ATS_REQUISITION_PROVIDERS:
             other_job.identity_evidence_url = str(owned["observed_url"])
-        if compatible_role_facts(source_job, other_job):
+        if compatible_role_facts(source_job, other_job, aliases):
             candidates[int(owned["real_job_id"])] = int(other["id"])
         else:
+            conflict = True
             await _review(
                 connection,
                 (source_parent, int(owned["real_job_id"])),
                 (source_id, int(other["id"])),
-                "conflicting_role_facts",
+                "conflicting_requisition_ids"
+                if any(
+                    i.provider == identifier.provider
+                    and i.scope == identifier.scope
+                    and i.native_id != identifier.native_id
+                    for i in source_identifiers(source_job, aliases)
+                )
+                else "conflicting_role_facts",
             )
-    return candidates
+    return candidates, conflict
 
 
 async def _content_candidates(
     connection: aiosqlite.Connection,
     source_parent: int,
     source_job: JobPosting,
+    aliases: Aliases,
 ) -> dict[int, int]:
     cursor = await connection.execute(
         "SELECT * FROM jobs WHERE company_norm=? AND title_norm=? "
@@ -180,7 +207,7 @@ async def _content_candidates(
     return {
         int(other["real_job_id"]): int(other["id"])
         for other in rows
-        if strict_content_equivalent(source_job, _job_from_row(other))
+        if strict_content_equivalent(source_job, _job_from_row(other), aliases)
     }
 
 
@@ -214,20 +241,23 @@ async def _explicit_statuses(
 
 
 async def _conflicting_requisitions(
-    connection: aiosqlite.Connection, left: int, right: int
+    connection: aiosqlite.Connection, left: int, right: int, aliases: Aliases
 ) -> bool:
     providers = tuple(sorted(ATS_REQUISITION_PROVIDERS))
     placeholders = ",".join("?" for _ in providers)
     cursor = await connection.execute(
-        "SELECT 1 FROM real_job_identifiers a JOIN real_job_identifiers b "
+        "SELECT a.provider,a.scope,a.native_id,b.native_id "
+        "FROM real_job_identifiers a JOIN real_job_identifiers b "
         "ON b.real_job_id=? AND b.provider=a.provider AND b.scope=a.scope "
         "AND b.native_id<>a.native_id WHERE a.real_job_id=? "
-        f"AND a.provider IN ({placeholders}) LIMIT 1",
+        f"AND a.provider IN ({placeholders})",
         (right, left, *providers),
     )
-    found = await cursor.fetchone()
+    rows = await cursor.fetchall()
     await cursor.close()
-    return found is not None
+    return any(
+        alias_id(p, s, a, aliases) != alias_id(p, s, b, aliases) for p, s, a, b in rows
+    )
 
 
 async def _review(
@@ -236,6 +266,11 @@ async def _review(
     sources: tuple[int, int],
     reason: str,
 ) -> None:
+    await connection.execute(
+        "UPDATE real_jobs SET identity_review_state='identity_conflict' "
+        "WHERE id IN (?,?) AND identity_review_state='clear'",
+        pair,
+    )
     left, right = pair
     left_source, right_source = sources
     if left > right:
@@ -388,3 +423,23 @@ async def _source_row_status(
     row = await cursor.fetchone()
     await cursor.close()
     return row
+
+
+async def _aliases(connection: aiosqlite.Connection) -> dict[tuple[str, str], str]:
+    cursor = await connection.execute(
+        "SELECT key,value FROM state WHERE key LIKE ?", (PREFIX + "%",)
+    )
+    rows = await cursor.fetchall()
+    await cursor.close()
+    return {tuple(key[len(PREFIX) :].split(":", 1)): value for key, value in rows}
+
+
+async def _compatible_candidates(
+    connection: aiosqlite.Connection, parents: list[int], aliases: Aliases
+) -> bool:
+    for left, right in combinations(parents, 2):
+        if await _conflicting_requisitions(connection, left, right, aliases):
+            return False
+        if len(await _explicit_statuses(connection, left, right)) > 1:
+            return False
+    return True

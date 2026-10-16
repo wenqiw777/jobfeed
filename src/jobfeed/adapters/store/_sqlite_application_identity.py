@@ -15,6 +15,7 @@ from jobfeed.adapters.store._sqlite_real_job_evaluation import (
 from jobfeed.adapters.store._sqlite_real_job_identity import resolve_sqlite_real_job
 from jobfeed.adapters.store._sqlite_values import _job_from_row, _utc_now_text
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.domain.requisition_alias import receipt_alias
 
 
 async def record_application_identity(  # noqa: PLR0913
@@ -74,6 +75,13 @@ async def record_application_identity(  # noqa: PLR0913
             posting = _job_from_row(row)
             if not verification_facts_match(posting, state_value):
                 return False
+            alias = receipt_alias(ats_url, state_value)
+            if alias:
+                await connection.execute(
+                    "INSERT INTO state(key,value) VALUES (?,?) "
+                    "ON CONFLICT(key) DO NOTHING",
+                    alias,
+                )
             posting.identity_evidence_url = ats_url
             await resolve_sqlite_real_job(
                 connection, numeric_id, posting, include_content=False

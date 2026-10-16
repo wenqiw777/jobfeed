@@ -364,6 +364,8 @@ class SQLiteStore(
             cursor = await connection.execute(
                 "SELECT r.id FROM real_jobs r LEFT JOIN real_job_evaluations e "
                 "ON e.real_job_id=r.id WHERE r.identity_review_state='clear' "
+                "AND NOT EXISTS(SELECT 1 FROM real_job_applications applied "
+                "WHERE applied.real_job_id=r.id) "
                 "AND r.official_closed_at IS NULL "
                 "AND EXISTS(SELECT 1 FROM jobs j WHERE j.real_job_id=r.id "
                 "AND j.jd_quality IN ('full','good') AND COALESCE(j.jd_text,'')!='') "

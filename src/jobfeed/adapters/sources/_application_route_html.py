@@ -16,6 +16,7 @@ from jobfeed.domain.application_route import HopKind
 from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.normalize import normalize, normalize_company
+from jobfeed.domain.requisition_alias import verified_alias
 
 _MIN_JD_CHARS = 300
 _MAX_JD_WORDS = 5000
@@ -40,6 +41,7 @@ class RouteDocument:
     owned: bool
     ambiguous: bool = False
     has_job_facts: bool = False
+    workday_requisition: str | None = None
 
 
 def _job_blocks(value: Any) -> list[dict[str, Any]]:
@@ -332,6 +334,7 @@ def verify_route_target(
         identity.provider == "workday"
         and final_ids
         and identity.native_id.casefold() not in final_ids
+        and not verified_alias(url, doc.workday_requisition)
     ):
         return "target_requisition_mismatch"
     if requisitions and final_ids and not requisitions.intersection(final_ids):
@@ -341,6 +344,11 @@ def verify_route_target(
         identity.provider == "workday"
         and requisitions
         and identity.native_id.casefold() not in requisitions
+        and not (
+            doc.workday_requisition
+            and doc.workday_requisition.casefold() in requisitions
+            and verified_alias(url, doc.workday_requisition)
+        )
     ):
         return "requisition_mismatch"
     left, right = normalize(job.jd_text), normalize(doc.description)

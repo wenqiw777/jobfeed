@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from itertools import combinations
+
 import asyncpg  # type: ignore[import-untyped]
 
 from jobfeed.domain.models import JobPosting, QualityBand
@@ -16,6 +18,7 @@ from jobfeed.domain.real_job_identity import (
     source_identifiers,
     strict_content_equivalent,
 )
+from jobfeed.domain.requisition_alias import PREFIX, Aliases, alias_id
 
 _CANDIDATE_LIMIT = 50
 _NEUTRAL = ("new", "scored")
@@ -42,7 +45,7 @@ def _posting(row: asyncpg.Record) -> JobPosting:
     )
 
 
-async def resolve_postgres_real_job(
+async def resolve_postgres_real_job(  # noqa: C901 - bounded identity conflict resolution
     conn: asyncpg.Connection,
     source_id: int,
     incoming: JobPosting,
@@ -73,27 +76,38 @@ async def resolve_postgres_real_job(
     source = _posting(row)
     source.apply_url = incoming.apply_url or source.apply_url
     source.identity_evidence_url = incoming.identity_evidence_url
-    observed = await _observed_candidates(conn, source_parent, source_id, source)
+    aliases = await _aliases(conn)
+    observed, conflict = await _observed_candidates(
+        conn, source_parent, source_id, source, aliases
+    )
+    if conflict:
+        return False
     candidates = dict(observed)
     if include_content:
-        candidates.update(await _content_candidates(conn, source_parent, source))
+        candidates.update(
+            await _content_candidates(conn, source_parent, source, aliases)
+        )
     if len(candidates) > 1:
-        if len(observed) == 1:
+        if observed and await _compatible_candidates(
+            conn, [source_parent, *observed], aliases
+        ):
+            candidates = dict([min(observed.items())])
+        elif len(observed) == 1:
             candidates = observed
         else:
-            other_parent, other_source = min(candidates.items())
-            await _review(
-                conn,
-                (source_parent, other_parent),
-                (source_id, other_source),
-                "multiple_identity_candidates",
-            )
+            for other_parent, other_source in candidates.items():
+                await _review(
+                    conn,
+                    (source_parent, other_parent),
+                    (source_id, other_source),
+                    "multiple_identity_candidates",
+                )
             return False
     if candidates:
         if remaining_merges < 1:
             raise RuntimeError("identity resolution exceeded candidate bound")
         other_parent, other_source = next(iter(candidates.items()))
-        if await _conflicting_requisitions(conn, source_parent, other_parent):
+        if await _conflicting_requisitions(conn, source_parent, other_parent, aliases):
             await _review(
                 conn,
                 (source_parent, other_parent),
@@ -308,18 +322,22 @@ async def _status_conflict(conn: asyncpg.Connection, left: int, right: int) -> b
 
 
 async def _conflicting_requisitions(
-    conn: asyncpg.Connection, left: int, right: int
+    conn: asyncpg.Connection, left: int, right: int, aliases: Aliases
 ) -> bool:
-    return bool(
-        await conn.fetchval(
-            "SELECT 1 FROM real_job_identifiers a JOIN real_job_identifiers b "
-            "ON b.real_job_id=$2 AND b.provider=a.provider AND b.scope=a.scope "
-            "AND b.native_id<>a.native_id WHERE a.real_job_id=$1 "
-            "AND a.provider=ANY($3::text[]) LIMIT 1",
-            left,
-            right,
-            list(ATS_REQUISITION_PROVIDERS),
-        )
+    rows = await conn.fetch(
+        "SELECT a.provider,a.scope,a.native_id AS first,b.native_id AS second "
+        "FROM real_job_identifiers a JOIN real_job_identifiers b "
+        "ON b.real_job_id=$2 AND b.provider=a.provider AND b.scope=a.scope "
+        "AND b.native_id<>a.native_id WHERE a.real_job_id=$1 "
+        "AND a.provider=ANY($3::text[])",
+        left,
+        right,
+        list(ATS_REQUISITION_PROVIDERS),
+    )
+    return any(
+        alias_id(r["provider"], r["scope"], r["first"], aliases)
+        != alias_id(r["provider"], r["scope"], r["second"], aliases)
+        for r in rows
     )
 
 
@@ -354,9 +372,11 @@ async def _observed_candidates(
     source_parent: int,
     source_id: int,
     source: JobPosting,
-) -> dict[int, int]:
+    aliases: Aliases,
+) -> tuple[dict[int, int], bool]:
     candidates: dict[int, int] = {}
-    for identifier in source_identifiers(source):
+    conflict = False
+    for identifier in source_identifiers(source, aliases):
         await conn.execute(
             "INSERT INTO real_job_identifiers("
             "real_job_id,provider,scope,native_id,evidence_job_id,observed_url) "
@@ -388,22 +408,31 @@ async def _observed_candidates(
         # whose original Apply URL may still point at an employer wrapper.
         if identifier.provider in ATS_REQUISITION_PROVIDERS:
             other_posting.identity_evidence_url = str(owned["observed_url"])
-        if compatible_role_facts(source, other_posting):
+        if compatible_role_facts(source, other_posting, aliases):
             candidates[int(owned["real_job_id"])] = int(other["id"])
         else:
+            conflict = True
             await _review(
                 conn,
                 (source_parent, int(owned["real_job_id"])),
                 (source_id, int(other["id"])),
-                "conflicting_role_facts",
+                "conflicting_requisition_ids"
+                if any(
+                    i.provider == identifier.provider
+                    and i.scope == identifier.scope
+                    and i.native_id != identifier.native_id
+                    for i in source_identifiers(source, aliases)
+                )
+                else "conflicting_role_facts",
             )
-    return candidates
+    return candidates, conflict
 
 
 async def _content_candidates(
     conn: asyncpg.Connection,
     source_parent: int,
     source: JobPosting,
+    aliases: Aliases,
 ) -> dict[int, int]:
     others = await conn.fetch(
         "SELECT * FROM jobs WHERE company_norm=$1 AND title_norm=$2 "
@@ -418,7 +447,7 @@ async def _content_candidates(
     return {
         int(other["real_job_id"]): int(other["id"])
         for other in others
-        if strict_content_equivalent(source, _posting(other))
+        if strict_content_equivalent(source, _posting(other), aliases)
     }
 
 
@@ -428,6 +457,11 @@ async def _review(
     sources: tuple[int, int],
     reason: str,
 ) -> None:
+    await conn.execute(
+        "UPDATE real_jobs SET identity_review_state='identity_conflict' "
+        "WHERE id=ANY($1::bigint[]) AND identity_review_state='clear'",
+        list(pair),
+    )
     left, right = pair
     left_source, right_source = sources
     if left > right:
@@ -445,3 +479,21 @@ async def _review(
         right_source,
         reason,
     )
+
+
+async def _aliases(conn: asyncpg.Connection) -> dict[tuple[str, str], str]:
+    rows = await conn.fetch(
+        "SELECT key,value FROM state WHERE key LIKE $1", PREFIX + "%"
+    )
+    return {tuple(r["key"][len(PREFIX) :].split(":", 1)): r["value"] for r in rows}
+
+
+async def _compatible_candidates(
+    conn: asyncpg.Connection, parents: list[int], aliases: Aliases
+) -> bool:
+    for left, right in combinations(parents, 2):
+        if await _conflicting_requisitions(conn, left, right, aliases):
+            return False
+        if await _status_conflict(conn, left, right):
+            return False
+    return True

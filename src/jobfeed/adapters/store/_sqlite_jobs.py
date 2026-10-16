@@ -125,9 +125,9 @@ async def _ensure_real_job(
         (real_job_id, source_id),
     )
     await connection.execute(
-        "INSERT OR IGNORE INTO real_job_identifiers("
+        "INSERT INTO real_job_identifiers("
         "real_job_id,provider,scope,native_id,evidence_job_id,observed_url) "
-        "VALUES(?,?,?,?,?,?)",
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(provider,scope,native_id) DO NOTHING",
         (real_job_id, job.platform, "", job.canonical_id, source_id, job.url),
     )
 

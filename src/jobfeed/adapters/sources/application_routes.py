@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import re
 import socket
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -143,7 +144,13 @@ class ApplicationRouteResolver:
         if not original:
             return ApplicationRouteOutcome("unresolved", reason="apply_url_missing")
         hops = [ApplicationRouteHop(original, "original_apply_url")]
-        if trusted_ats_url(original):
+        identity = observed_identifier(original)
+        needs_workday_check = bool(
+            identity
+            and identity.provider == "workday"
+            and re.search(r"-\d+$", identity.native_id)
+        )
+        if trusted_ats_url(original) and not needs_workday_check:
             return ApplicationRouteOutcome(
                 "resolved", original, tuple(hops), "direct_ats_identity"
             )
@@ -321,7 +328,10 @@ class ApplicationRouteResolver:
             )
             + "</script>"
         )
-        return parse_route_document(url, synthetic, job)
+        return replace(
+            parse_route_document(url, synthetic, job),
+            workday_requisition=info.get("jobReqId") or None,
+        )
 
     async def _walk(  # noqa: C901 - explicit bounded navigation state machine
         self,
@@ -396,7 +406,10 @@ class ApplicationRouteResolver:
             if not _HTTP_OK <= page.status < _HTTP_REDIRECTION:
                 raise _RouteError("failed", "http_status")
             doc = parse_route_document(current, page.html, job)
-            if trusted_ats_url(current) and not doc.owned:
+            if trusted_ats_url(current) and (
+                not doc.owned
+                or re.search(r"_[^/]+-\d+(?:/apply)?/?(?:\?.*)?$", current)
+            ):
                 doc = await self._ats_document(client, job, current, page, deadline)
             if doc.ambiguous:
                 raise _RouteError("ambiguous", "multiple_target_job_blocks")
@@ -416,14 +429,21 @@ class ApplicationRouteResolver:
                 current, page = snapshot.url, _Page(snapshot.html, _HTTP_OK)
                 rendered = True
                 doc = parse_route_document(current, page.html, job)
-                if trusted_ats_url(current) and not doc.owned:
+                if trusted_ats_url(current) and (
+                    not doc.owned
+                    or re.search(r"_[^/]+-\d+(?:/apply)?/?(?:\?.*)?$", current)
+                ):
                     doc = await self._ats_document(client, job, current, page, deadline)
             if trusted_ats_url(current):
                 reason = verify_route_target(job, doc, current, requisitions)
                 if reason:
                     raise _RouteError("unresolved", reason)
                 return ApplicationRouteOutcome(
-                    "resolved", current, tuple(hops), "verified_application_route"
+                    "resolved",
+                    current,
+                    tuple(hops),
+                    "verified_application_route",
+                    workday_requisition=doc.workday_requisition,
                 )
             if not doc.owned:
                 raise _RouteError("unresolved", "target_ownership_missing")

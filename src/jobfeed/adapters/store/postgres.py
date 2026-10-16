@@ -14,6 +14,7 @@ from jobfeed.adapters.store._application_identity_verification import (
 from jobfeed.adapters.store._posting_spam import SpamDB
 from jobfeed.adapters.store._repost_sort import triage_sorts
 from jobfeed.domain.display_posting import posting_location
+from jobfeed.domain.requisition_alias import receipt_alias
 
 try:
     import asyncpg  # type: ignore[import-untyped]
@@ -1994,6 +1995,8 @@ class PostgresStore(
             rows = await db.fetch(
                 "SELECT r.id FROM real_jobs r LEFT JOIN real_job_evaluations e "
                 "ON e.real_job_id=r.id WHERE r.identity_review_state='clear' "
+                "AND NOT EXISTS(SELECT 1 FROM real_job_applications applied "
+                "WHERE applied.real_job_id=r.id) "
                 "AND r.official_closed_at IS NULL "
                 "AND EXISTS(SELECT 1 FROM jobs j WHERE j.real_job_id=r.id "
                 "AND j.jd_quality IN ('full','good') AND COALESCE(j.jd_text,'')!='') "
@@ -6564,6 +6567,12 @@ class PostgresStore(
                 posting = _job_from_record(row)
                 if not verification_facts_match(posting, state_value):
                     return False
+                alias = receipt_alias(ats_url, state_value)
+                if alias:
+                    await conn.execute(
+                        "INSERT INTO state(key,value) VALUES ($1,$2) ON CONFLICT(key) DO NOTHING",
+                        *alias,
+                    )
                 posting.identity_evidence_url = ats_url
                 await resolve_postgres_real_job(
                     conn, int(job_id), posting, include_content=False

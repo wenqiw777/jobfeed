@@ -66,6 +66,7 @@ class ApplicationRouteOutcome:
     hops: tuple[ApplicationRouteHop, ...] = ()
     reason: str = ""
     checked_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    workday_requisition: str | None = None
 
 
 @dataclass(frozen=True)

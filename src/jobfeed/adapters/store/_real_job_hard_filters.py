@@ -90,6 +90,11 @@ def sqlite_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
         "jobfeed_ai_data_work(j.title,j.company) IS NULL"
     )
     intrinsic += " AND " + spam_allowed_sql()
+    intrinsic += " AND r.identity_review_state!='identity_conflict'"
+    intrinsic += (
+        " AND NOT EXISTS(SELECT 1 FROM real_job_applications applied "
+        "WHERE applied.real_job_id=r.id)"
+    )
     if not _active(filters):
         return intrinsic, []
     assert filters is not None
@@ -167,6 +172,11 @@ def postgres_hard_filter(  # noqa: C901 - mirrors configured filter dimensions
     """
     intrinsic = f"{_direct_source_predicate()} AND {_postgres_contributor_predicate()}"
     intrinsic += " AND " + spam_allowed_sql(postgres=True)
+    intrinsic += " AND r.identity_review_state!='identity_conflict'"
+    intrinsic += (
+        " AND NOT EXISTS(SELECT 1 FROM real_job_applications applied "
+        "WHERE applied.real_job_id=r.id)"
+    )
     if not _active(filters):
         return intrinsic, []
     assert filters is not None

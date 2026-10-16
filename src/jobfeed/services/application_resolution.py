@@ -15,6 +15,7 @@ from jobfeed.domain.application_route import (
     is_in_page_application_loop,
 )
 from jobfeed.domain.errors import RunLeaseLostError
+from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.models import JobPosting
 from jobfeed.domain.normalize import normalize, normalize_company
 from jobfeed.domain.real_job_identity import normalized_jd_body
@@ -227,6 +228,15 @@ class ApplicationResolutionQueue:
                 != ApplicationResolutionQueue._facts(job)
             ):
                 return None
+
+            identity = observed_identifier(saved.get("ats_url") or "")
+            if (
+                identity
+                and identity.provider == "workday"
+                and "-" in identity.native_id
+                and not saved.get("workday_requisition")
+            ):
+                return None
             checked = datetime.fromisoformat(saved["checked_at"])
             lifetime = timedelta(days=7 if saved["status"] == "resolved" else 1)
             if checked + lifetime <= datetime.now(UTC):
@@ -236,6 +246,7 @@ class ApplicationResolutionQueue:
                 ats_url=saved.get("ats_url"),
                 reason=saved.get("reason", ""),
                 checked_at=checked,
+                workday_requisition=saved.get("workday_requisition"),
                 hops=tuple(ApplicationRouteHop(**hop) for hop in saved.get("hops", [])),
             )
         except (ValueError, KeyError, TypeError):
