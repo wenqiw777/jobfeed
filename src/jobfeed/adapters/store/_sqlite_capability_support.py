@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import sqlite3
+import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
 import aiosqlite
+import structlog
 
 from jobfeed.domain.models import JobPosting, QualityBand
 
@@ -55,7 +59,7 @@ async def _immediate_transaction(
     connection: aiosqlite.Connection,
 ) -> AsyncIterator[None]:
     """Own one short BEGIN IMMEDIATE transaction with rollback on any failure."""
-    await connection.execute("BEGIN IMMEDIATE")
+    await _begin_immediate(connection)
     try:
         yield
     except BaseException:
@@ -63,6 +67,38 @@ async def _immediate_transaction(
         raise
     else:
         await connection.commit()
+
+
+_BUSY_ATTEMPTS = 6
+_BUSY_RETRY_DELAY = 0.1
+_LOG = structlog.get_logger(__name__)
+
+
+async def _begin_immediate(connection: aiosqlite.Connection) -> None:
+    """Retry only acquisition; never replay a partially executed transaction."""
+    started = time.monotonic()
+    for attempt in range(_BUSY_ATTEMPTS):
+        try:
+            await connection.execute("BEGIN IMMEDIATE")
+            return
+        except asyncio.CancelledError:
+            # aiosqlite's queued BEGIN may acquire the lock after cancellation.
+            # Queue rollback behind it before returning ownership to the caller.
+            await connection.rollback()
+            raise
+        except sqlite3.OperationalError as exc:
+            code = getattr(exc, "sqlite_errorcode", 0)
+            if code & 0xFF != sqlite3.SQLITE_BUSY:
+                raise
+            _LOG.warning(
+                "sqlite_writer_busy",
+                attempt=attempt + 1,
+                elapsed_seconds=round(time.monotonic() - started, 3),
+                sqlite_errorname=getattr(exc, "sqlite_errorname", "SQLITE_BUSY"),
+            )
+            if attempt + 1 == _BUSY_ATTEMPTS:
+                raise
+            await asyncio.sleep(_BUSY_RETRY_DELAY)
 
 
 async def _fetch_rows(

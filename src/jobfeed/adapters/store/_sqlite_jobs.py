@@ -9,6 +9,7 @@ from typing import Any
 import aiosqlite
 
 from jobfeed.adapters.store._normalize import normalize, normalize_company
+from jobfeed.adapters.store._sqlite_capability_support import _begin_immediate
 from jobfeed.adapters.store._sqlite_real_job_evaluation import (
     sync_sqlite_real_job_input,
 )
@@ -38,7 +39,7 @@ async def _save_job(lifecycle: SqliteLifecycle, job: JobPosting) -> SaveJobResul
     """Atomically insert or quality-aware update one natural-key job."""
     async with lifecycle.connection() as connection:
         connection.row_factory = aiosqlite.Row
-        await connection.execute("BEGIN IMMEDIATE")
+        await _begin_immediate(connection)
         try:
             result = await _save_job_on_connection(connection, job)
             await connection.commit()
@@ -144,7 +145,7 @@ async def _save_job_batch(  # noqa: PLR0913 - explicit transaction fence
     """Commit jobs and their original outcomes atomically under the live run fence."""
     async with lifecycle.connection() as connection:
         connection.row_factory = aiosqlite.Row
-        await connection.execute("BEGIN IMMEDIATE")
+        await _begin_immediate(connection)
         try:
             cursor = await connection.execute(
                 "SELECT 1 FROM run_leases WHERE kind='scan' AND run_id=? "

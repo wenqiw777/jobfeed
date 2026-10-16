@@ -427,7 +427,7 @@ async def _source_row_status(
 
 async def _aliases(connection: aiosqlite.Connection) -> dict[tuple[str, str], str]:
     cursor = await connection.execute(
-        "SELECT key,value FROM state WHERE key LIKE ?", (PREFIX + "%",)
+        "SELECT key,value FROM state WHERE key GLOB ?", (PREFIX + "*",)
     )
     rows = await cursor.fetchall()
     await cursor.close()
