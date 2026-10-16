@@ -391,7 +391,7 @@ async def test_source_upsert_retries_parent_move_once(
         await store.close()
 
 
-async def test_exact_id_backfill_holds_divergent_full_descriptions(
+async def test_exact_id_backfill_accepts_divergent_full_descriptions(
     fresh_pg_dsn: str,
 ) -> None:
     store = PostgresStore(fresh_pg_dsn)
@@ -427,12 +427,12 @@ async def test_exact_id_backfill_holds_divergent_full_descriptions(
                 await conn.fetchval(
                     "SELECT identity_review_state FROM real_jobs WHERE id=$1", parent
                 )
-                == "requirements_conflict"
+                == "clear"
             )
             assert [
                 row[0]
                 for row in await conn.fetch("SELECT reason FROM real_job_review_cases")
-            ] == ["requirements_conflict"]
+            ] == []
     finally:
         await store.close()
 

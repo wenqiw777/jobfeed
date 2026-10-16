@@ -250,7 +250,7 @@ async def test_merge_of_legacy_scores_keeps_activation_ready(tmp_path: Path) -> 
                     (int(real_ids[0]),),
                 )
             ).fetchone()
-            assert state[0] == "evaluation_input_conflict"
+            assert state[0] == "clear"
         assert await store.canonical_evaluation_ready()
     finally:
         await store.close()
@@ -1000,7 +1000,9 @@ async def test_stage_b_does_not_claim_an_existing_score_placed_on_hold(
 
 
 @pytest.mark.asyncio
-async def test_corrected_source_jd_clears_requirements_hold(tmp_path: Path) -> None:
+async def test_source_sync_clears_existing_hold_without_matching_jds(
+    tmp_path: Path,
+) -> None:
     store = SQLiteStore(tmp_path / "resolved-requirements.db")
     await store.connect()
     try:
@@ -1032,8 +1034,20 @@ async def test_corrected_source_jd_clears_requirements_hold(tmp_path: Path) -> N
         saved = await store.save_job(first)
         await store.save_job(second)
         real_id = await store.resolve_real_job_id(saved.job_id)
+        async with store._lifecycle.connection() as db:
+            await db.execute(
+                "UPDATE real_jobs SET identity_review_state='requirements_conflict' "
+                "WHERE id=?",
+                (int(real_id),),
+            )
+            await db.execute(
+                "INSERT INTO real_job_review_cases(left_real_job_id,right_real_job_id,"
+                "left_job_id,right_job_id,reason) "
+                "VALUES(?,?,?,?, 'requirements_conflict')",
+                (int(real_id), int(real_id), int(saved.job_id), int(saved.job_id)),
+            )
         assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
-        await store.save_job(replace(second, jd_text=first.jd_text))
+        await store.save_job(second)
         detail = await store.get_real_job_view(real_id)
         assert detail is not None
         assert detail["row"]["identity_review_state"] == "clear"

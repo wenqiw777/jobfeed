@@ -6,14 +6,13 @@ import json
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from typing import cast
+from urllib.parse import urlparse
 
 from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.intermediary import intermediary_posting
 from jobfeed.domain.models import JobPosting, MLGateResult, QualityBand, StageBResult
 from jobfeed.domain.real_job_identity import (
-    compatible_role_facts,
     normalized_jd_body,
-    strict_content_equivalent,
 )
 
 
@@ -37,7 +36,6 @@ _QUALITY = {
 _ATS_PROVIDERS = frozenset(
     {"greenhouse", "ashby", "lever", "workday", "phenom", "eightfold"}
 )
-_MIN_COMPLETE_BODY_CHARS = 300
 EVALUATION_ACTIVATION_KEY = "real_job_evaluation_activation_v1"
 
 
@@ -47,7 +45,7 @@ def select_real_job_input(
     *,
     now: datetime,
 ) -> RealJobEvaluationInput | None:
-    """Choose trusted official input before comparing lower-trust sources.
+    """Choose official, then LinkedIn, then the best available description.
 
     Args:
         real_job_id: Canonical parent identifier.
@@ -55,7 +53,7 @@ def select_real_job_input(
         now: Evaluation time, reserved for the selection contract.
 
     Returns:
-        The selected scoring input, or none when the group is ambiguous.
+        The selected scoring input, or none when no usable description exists.
     """
     del now  # Closure is based on official evidence, not the time of evaluation.
     complete = [
@@ -65,21 +63,7 @@ def select_real_job_input(
     ]
     if not complete or any(job.id is None for job in complete):
         return None
-    complete = [job for job in complete if _is_ats(job)] or complete
-    for index, left in enumerate(complete):
-        if any(
-            not strict_content_equivalent(left, right)
-            for right in complete[index + 1 :]
-        ):
-            return None
-    representative = min(
-        complete,
-        key=lambda job: (
-            0 if _is_ats(job) else 1,
-            _QUALITY[cast(QualityBand, job.jd_quality)],
-            int(cast(str, job.id)),
-        ),
-    )
+    representative = min(complete, key=_source_priority)
     first_discovery = min(job.discovered_at for job in sources)
     original_dates = [
         job.posted_at
@@ -158,11 +142,7 @@ def representative_source_id(real_job_id: str, sources: list[JobPosting]) -> int
             str,
             min(
                 available,
-                key=lambda job: (
-                    not _is_ats(job),
-                    _QUALITY.get(cast(QualityBand, job.jd_quality), len(_QUALITY)),
-                    int(cast(str, job.id)),
-                ),
+                key=_source_priority,
             ).id,
         )
     )
@@ -171,32 +151,25 @@ def representative_source_id(real_job_id: str, sources: list[JobPosting]) -> int
 def conflicting_complete_sources(
     sources: list[JobPosting],
 ) -> tuple[int, int] | None:
-    """Find divergent full descriptions for the same role.
+    """Text differences do not require review; source authority selects the JD.
 
-    Time complexity: O(n²) for n complete source descriptions.
-
-    Args:
-        sources: Source postings under one real job.
-
-    Returns:
-        The two source IDs requiring review, or None when descriptions agree.
+    Keep this shared store hook so existing requirements holds are removed
+    during input synchronization in both SQLite and Postgres.
     """
-    complete = [
-        job
-        for job in sources
-        if job.id is not None
-        and job.jd_text
-        and job.jd_quality in _QUALITY
-        and len(normalized_jd_body(job.jd_text)) >= _MIN_COMPLETE_BODY_CHARS
-    ]
-    complete = [job for job in complete if _is_ats(job)] or complete
-    for index, left in enumerate(complete):
-        for right in complete[index + 1 :]:
-            if compatible_role_facts(left, right) and not strict_content_equivalent(
-                left, right
-            ):
-                return int(cast(str, left.id)), int(cast(str, right.id))
+    del sources
     return None
+
+
+def _source_priority(job: JobPosting) -> tuple[int, int, int]:
+    host = (urlparse(job.url).hostname or "").casefold()
+    linkedin = host == "linkedin.com" or host.endswith(".linkedin.com")
+    official = _is_ats(job) or job.platform in _ATS_PROVIDERS | {"ats"}
+    authority = 0 if official else 1 if linkedin else 2
+    return (
+        authority,
+        _QUALITY.get(cast(QualityBand, job.jd_quality), len(_QUALITY)),
+        int(cast(str, job.id)),
+    )
 
 
 def legacy_evaluation_input_hold(

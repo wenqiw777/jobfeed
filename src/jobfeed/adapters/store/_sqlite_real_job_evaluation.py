@@ -1134,7 +1134,7 @@ async def _select_sqlite_real_job_input(
     *,
     now: datetime,
 ) -> RealJobEvaluationInput | None:
-    """Use an explicitly reviewed source before the strict automatic choice."""
+    """Apply current source authority before historical review choices."""
     override = await _review_source_override(connection, real_id, jobs)
     return _select_input_with_override(real_id, jobs, override, now=now)
 
@@ -1147,6 +1147,9 @@ def _select_input_with_override(
     now: datetime,
 ) -> RealJobEvaluationInput | None:
     """Select from a transaction-consistent source and manual-choice snapshot."""
+    selected = select_real_job_input(str(real_id), jobs, now=now)
+    if selected is not None:
+        return selected
     if override is not None and intermediary_posting(override):
         return None
     if override is None:

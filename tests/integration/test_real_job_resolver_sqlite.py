@@ -263,7 +263,7 @@ async def test_explicit_backfill_joins_only_observed_exact_ids(tmp_path: Path) -
         await store.close()
 
 
-async def test_exact_id_backfill_holds_divergent_full_descriptions(
+async def test_exact_id_backfill_accepts_divergent_full_descriptions(
     tmp_path: Path,
 ) -> None:
     store = SQLiteStore(tmp_path / "backfill-conflict.db")
@@ -312,8 +312,8 @@ async def test_exact_id_backfill_holds_divergent_full_descriptions(
                 await connection.execute("SELECT reason FROM real_job_review_cases")
             ).fetchall()
         assert len(parents) == 1
-        assert state[0] == "requirements_conflict"
-        assert cases == [("requirements_conflict",)]
+        assert state[0] == "clear"
+        assert cases == []
     finally:
         await store.close()
 

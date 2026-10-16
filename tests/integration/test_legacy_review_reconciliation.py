@@ -207,7 +207,7 @@ async def test_reconcile_preserves_unresolved_holds_and_completed_scores(
                     "UPDATE jobs SET jd_text='' WHERE id=?", (int(first.job_id),)
                 )
             elif case == "official_conflict":
-                # Both sources are trusted, so the preference rule cannot resolve it.
+                # Different official copies now use stable source priority.
                 await db.execute(
                     "INSERT INTO jobs(platform,canonical_id,url,title,company,loc"
                     "ation,discovered_at,jd_quality,jd_text,real_job_id) SELECT '"
@@ -258,6 +258,16 @@ async def test_reconcile_preserves_unresolved_holds_and_completed_scores(
                         )
                     ).fetchone()
                 ) is None
+            elif case == "official_conflict":
+                assert applied[0]["action"] == "clear_hold_pending"
+                assert (
+                    await (
+                        await db.execute(
+                            "SELECT identity_review_state FROM real_jobs WHERE id=?",
+                            (rid,),
+                        )
+                    ).fetchone()
+                )[0] == "clear"
             else:
                 assert applied[0]["action"] == "keep_hold"
                 assert (

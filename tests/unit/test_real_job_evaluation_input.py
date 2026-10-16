@@ -3,6 +3,9 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+from jobfeed.adapters.store._sqlite_real_job_evaluation import (
+    _select_input_with_override,
+)
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.real_job_evaluation import (
     conflicting_complete_sources,
@@ -71,10 +74,11 @@ def test_quality_then_stable_source_id_selects_one_input() -> None:
     assert selected.source_job_id == "1"
 
 
-def test_conflicting_substantive_requirements_hold_scoring() -> None:
+def test_divergent_linkedin_copies_select_stable_authority() -> None:
     first = _source("1", jd="Build Java services and APIs. " * 15)
     second = _source("2", jd="Design FPGA circuits and verify RTL. " * 15)
-    assert select_real_job_input("5", [first, second], now=NOW) is None
+    assert select_real_job_input("5", [first, second], now=NOW).source_job_id == "1"
+    assert conflicting_complete_sources([first, second]) is None
 
 
 def test_empty_sources_hold_scoring() -> None:
@@ -98,14 +102,15 @@ def test_official_input_wins_over_divergent_aggregator() -> None:
     assert conflicting_complete_sources([official, aggregator]) is None
 
 
-def test_conflicting_official_inputs_stay_held() -> None:
+def test_divergent_official_copies_select_stable_authority() -> None:
     first = _source("1", url="https://boards.greenhouse.io/acme/jobs/1234567")
     second = _source(
         "2",
         url="https://jobs.lever.co/acme/12345678-1234-1234-1234-123456789012",
         jd="Build FPGA circuits and verify RTL. " * 15,
     )
-    assert select_real_job_input("1", [first, second], now=NOW) is None
+    assert select_real_job_input("1", [first, second], now=NOW).source_job_id == "1"
+    assert conflicting_complete_sources([first, second]) is None
 
 
 def test_legacy_score_time_uncertainty_does_not_require_review() -> None:
@@ -113,3 +118,54 @@ def test_legacy_score_time_uncertainty_does_not_require_review() -> None:
         source = replace(_source("1"), enriched_at=enriched)
         selected = select_real_job_input("1", [source], now=NOW)
         assert legacy_evaluation_input_hold(selected, [source], [(1, NOW)]) is None
+
+
+def test_linkedin_authority_wins_over_earlier_full_aggregator() -> None:
+    aggregator = _source(
+        "1",
+        platform="jobright",
+        url="https://jobright.ai/jobs/info/123",
+        jd="Aggregator summary of this role. " * 15,
+    )
+    linkedin = _source("2", quality=QualityBand.GOOD)
+    for sources in ([aggregator, linkedin], [linkedin, aggregator]):
+        selected = select_real_job_input("1", sources, now=NOW)
+        assert selected.source_job_id == "2"
+        assert selected.job.jd_text == linkedin.jd_text
+        assert conflicting_complete_sources(sources) is None
+
+
+def test_aggregator_only_selects_available_jd_without_review() -> None:
+    first = _source("1", platform="jobright", url="https://jobright.ai/jobs/info/123")
+    second = _source(
+        "2",
+        platform="speedyapply",
+        url="https://jobright.ai/jobs/info/456",
+        jd="A differently formatted summary. " * 15,
+    )
+    assert select_real_job_input("1", [first, second], now=NOW).source_job_id == "1"
+    assert conflicting_complete_sources([first, second]) is None
+
+
+def test_direct_ats_source_without_known_url_pattern_wins() -> None:
+    official = _source(
+        "3",
+        platform="ats",
+        url="https://careers.example.com/role/3",
+        quality=QualityBand.GOOD,
+    )
+    linkedin = _source("1")
+    assert (
+        select_real_job_input("1", [linkedin, official], now=NOW).source_job_id == "3"
+    )
+
+
+def test_old_review_override_does_not_replace_current_authority() -> None:
+    aggregator = _source(
+        "1", platform="jobright", url="https://jobright.ai/jobs/info/123"
+    )
+    linkedin = _source("2")
+    selected = _select_input_with_override(
+        1, [aggregator, linkedin], aggregator, now=NOW
+    )
+    assert selected.source_job_id == "2"
