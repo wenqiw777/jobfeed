@@ -73,8 +73,8 @@ def posting(**changes):
         id="1",
         platform="jobright",
         canonical_id="one",
-        url="https://www.dice.com/job-detail/one",
-        company="Dice",
+        url="https://jobverse.io/job/one",
+        company="Jobverse",
         title="Software Engineer",
         location="Boston, MA",
         jd_text=BODY,
@@ -109,7 +109,7 @@ def official(**changes):
         {"company": "Actual Employer"},
         {
             "url": "https://jobright.ai/jobs/info/1",
-            "apply_url": "https://www.dice.com/job-detail/one",
+            "apply_url": "https://jobverse.io/job/one",
         },
     ],
 )

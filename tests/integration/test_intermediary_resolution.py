@@ -273,7 +273,7 @@ async def test_lost_lease_prevents_external_official_write(tmp_path):
             )
         rows = await store.list_jobs()
         assert len(rows) == 1
-        assert rows[0].company == "Dice"
+        assert rows[0].company == "Jobverse"
     finally:
         await store.close()
 
@@ -349,7 +349,15 @@ async def test_conflicting_user_decisions_are_not_reported_as_a_match(tmp_path):
 
 @pytest.mark.parametrize(
     "company",
-    [" YARA  AI ", "RemoteHunter", "Remote Hunter", "Torentify", *AUDITED_PUBLISHERS],
+    [
+        " YARA  AI ",
+        "RemoteHunter",
+        "Remote Hunter",
+        "Torentify",
+        "Dice",
+        "Jobs via Dice",
+        *AUDITED_PUBLISHERS,
+    ],
 )
 async def test_blocked_publishers_are_not_saved_or_resolved(tmp_path, company):
     class Source:
@@ -377,7 +385,15 @@ async def test_blocked_publishers_are_not_saved_or_resolved(tmp_path, company):
 
 
 @pytest.mark.parametrize(
-    "company", ["Yara AI", "RemoteHunter", "Torentify", *AUDITED_PUBLISHERS]
+    "company",
+    [
+        "Yara AI",
+        "RemoteHunter",
+        "Torentify",
+        "Dice",
+        "Jobs via Dice",
+        *AUDITED_PUBLISHERS,
+    ],
 )
 async def test_blocked_publishers_never_trigger_resolution_search(tmp_path, company):
     store = SQLiteStore(tmp_path / "blocked-resolver.sqlite")
@@ -394,7 +410,15 @@ async def test_blocked_publishers_never_trigger_resolution_search(tmp_path, comp
 
 
 @pytest.mark.parametrize(
-    "company", ["Yara AI", "RemoteHunter", "Torentify", *AUDITED_PUBLISHERS]
+    "company",
+    [
+        "Yara AI",
+        "RemoteHunter",
+        "Torentify",
+        "Dice",
+        "Jobs via Dice",
+        *AUDITED_PUBLISHERS,
+    ],
 )
 async def test_existing_blocked_publishers_are_hidden_and_not_evaluation_candidates(
     tmp_path, company
