@@ -155,6 +155,12 @@ def conflicting_complete_sources(
 
     Keep this shared store hook so existing requirements holds are removed
     during input synchronization in both SQLite and Postgres.
+
+    Args:
+        sources: Source postings whose text differences no longer cause holds.
+
+    Returns:
+        None, since source priority resolves description differences.
     """
     del sources
     return None
