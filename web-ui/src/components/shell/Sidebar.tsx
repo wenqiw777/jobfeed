@@ -22,7 +22,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   });
   const identities = useQuery({
     queryKey: ["identity-review", "pending-count"],
-    queryFn: () => apiFetch<{ total: number }>("/api/identity-review?status=pending&limit=1"),
+    queryFn: () => apiFetch<{ job_total: number }>("/api/identity-review?status=pending&limit=1"),
     refetchInterval: 60_000, staleTime: 30_000, retry: false,
   });
   const items: SideNavigationProps.Item[] = [
@@ -32,7 +32,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
       href: zone.path,
       icon: <ZoneIcon zone={zone.path} />,
       info: zone.path === "/spam-review" && (pending.data?.total ?? 0) > 0
-        ? <Badge color="blue">{pending.data?.total}</Badge> : zone.path === "/needs-review" && (identities.data?.total ?? 0) > 0 ? <Badge color="blue">{identities.data?.total}</Badge> : undefined,
+        ? <Badge color="blue">{pending.data?.total}</Badge> : zone.path === "/needs-review" && (identities.data?.job_total ?? 0) > 0 ? <Badge color="blue">{identities.data?.job_total}</Badge> : undefined,
     })),
     { type: "divider" as const },
     {

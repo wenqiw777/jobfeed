@@ -11,6 +11,7 @@ from jobfeed.adapters.store._sqlite_real_job_identity import (
 )
 from jobfeed.adapters.store._sqlite_values import _job_from_row
 from jobfeed.adapters.store.sqlite import SQLiteStore
+from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.models import JobPosting, QualityBand
 
 
@@ -35,7 +36,7 @@ async def seed(store):
         )
     async with store._lifecycle.connection() as db:
         await db.execute(
-            "UPDATE real_jobs SET identity_review_state='identity_conflict'"
+            "UPDATE real_jobs SET identity_review_state='requirements_conflict'"
         )
         await db.execute(
             "INSERT INTO real_job_review_cases(left_real_job_id,right_real_job_id,"
@@ -173,5 +174,76 @@ async def test_separate_survives_matching_content_refresh(tmp_path):
         assert (await store.identity_review(status="pending", limit=25, offset=0))[
             "total"
         ] == 0
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_excludes_historical_and_inactive_pairs(tmp_path):
+    store = SQLiteStore(tmp_path / "scope.db")
+    await store.connect()
+    try:
+        await seed(store)
+        async with store._lifecycle.connection() as db:
+            await db.execute(
+                "UPDATE real_jobs SET identity_review_state='identity_conflict'"
+            )
+        assert (await store.identity_review(status="pending", limit=25, offset=0))[
+            "total"
+        ] == 0
+        async with store._lifecycle.connection() as db:
+            await db.execute("UPDATE real_jobs SET identity_review_state='clear'")
+        assert (await store.identity_review(status="pending", limit=25, offset=0))[
+            "total"
+        ] == 0
+        async with store._lifecycle.connection() as db:
+            await db.execute(
+                "UPDATE real_jobs SET identity_review_state='requirements_conflict'"
+            )
+            await db.execute("UPDATE real_job_status SET status='ignored'")
+        assert (await store.identity_review(status="pending", limit=25, offset=0))[
+            "total"
+        ] == 0
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_review_uses_current_filters_but_keeps_old_candidate(tmp_path):
+
+    store = SQLiteStore(tmp_path / "filter.db")
+    await store.connect()
+    try:
+        ids = await seed(store)
+        async with store._lifecycle.connection() as db:
+            await db.execute(
+                "UPDATE real_job_status SET status='ignored' WHERE real_job_id=?",
+                (ids[1][0],),
+            )
+        page = await store.identity_review(status="pending", limit=25, offset=0)
+        assert page["total"] == 1
+        assert page["job_total"] == 1
+        assert page["items"][0]["right"]["id"] == str(ids[1][0])
+        assert (
+            await store.identity_review(
+                status="pending",
+                limit=25,
+                offset=0,
+                hard_filters=HardFilters(company_blocklist=["Example"]),
+            )
+        )["total"] == 0
+        async with store._lifecycle.connection() as db:
+            await db.execute(
+                "UPDATE real_jobs SET first_discovered_at='2020-01-01T00:00:00+00:00',"
+                "canonical_posted_at='2020-01-01T00:00:00+00:00'"
+            )
+        assert (
+            await store.identity_review(
+                status="pending",
+                limit=25,
+                offset=0,
+                hard_filters=HardFilters(posted_within_days=14),
+            )
+        )["total"] == 0
     finally:
         await store.close()

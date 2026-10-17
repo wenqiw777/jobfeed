@@ -277,6 +277,7 @@ export interface paths {
          *
          *     Args:
          *         store: Configured store.
+         *         context: Current Results settings.
          *         status: Active tab.
          *         limit: Page size.
          *         offset: Page offset.

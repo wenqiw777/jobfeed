@@ -53,3 +53,28 @@ Finding dispositions:
 Wenqi approved shipping with 'push 部署同时'. Push and Mini deployment proceed
 in parallel, with CI and live health/queue verification. Production review
 decisions remain for Wenqi; preview decisions are not deployed.
+
+Release evidence: fb6a7b7 pushed and Mini deployed concurrently on 2026-10-17 UTC.
+CI run 38988365494 passed. Mini health DB/Redis ok; server running and scheduled
+scan agent restored. Chrome verified /needs-review on port 7654. Live screenshot:
+artifacts/needs-review-page/mini-live.jpg. No production decisions (history=0).
+Deployment backup: data/maintenance/needs-review-20261017T005242Z/code.tar.
+Compile smoke excludes existing macOS ._ metadata files; actual Python passes.
+
+Post-deploy scope finding: live page shows 1036 historical candidate pairs, whereas
+previous Results discussion concerned two jobs. Pending query currently includes
+all non-self review pairs, without Results eligibility filtering. User flagged
+this mismatch; do not represent the total as 1036 current scoring blockers.
+
+Scope correction (2026-10-16 America/Detroit):
+- Pending reads now require a current actionable review state and Results visibility
+  (workflow, closed/application/spam, company/location/date policy). Ordinary
+  identity_conflict candidate flags alone do not become manual tasks.
+- Keep candidates of an eligible job available even if the candidate is historical.
+  Sidebar counts distinct eligible jobs; page distinguishes jobs from comparisons.
+- Red: historical-clear pair test returned 1 instead of 0. Green: 12 SQLite/API/
+  OpenAPI tests, 2 real PostgreSQL tests including bound filter values; frontend
+  suite 194 tests, lint/typecheck/build and mypy pass. Chrome preview shows 2 jobs.
+- Read-only candidate code against Mini: 11 comparisons belonging to United 169159
+  and Boeing 168542. No production decisions made. Screenshot scoped-preview.jpg.
+- User explicitly authorized push and deployment together after verification.

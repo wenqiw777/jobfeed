@@ -18,6 +18,7 @@ from jobfeed.adapters.store._postgres_real_job_identity import (
 from jobfeed.adapters.store._posting_spam import SpamDB
 from jobfeed.adapters.store._repost_sort import triage_sorts
 from jobfeed.domain.display_posting import posting_location
+from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.requisition_alias import receipt_alias
 
 try:
@@ -6767,7 +6768,12 @@ class PostgresStore(
         return job_id
 
     async def identity_review(
-        self, *, status: str, limit: int, offset: int
+        self,
+        *,
+        status: str,
+        limit: int,
+        offset: int,
+        hard_filters: HardFilters | None = None,
     ) -> dict[str, object]:
         """Read one duplicate-review page.
 
@@ -6775,13 +6781,14 @@ class PostgresStore(
             status: Pending or reviewed.
             limit: Page size.
             offset: Page offset.
+            hard_filters: Current Results visibility policy.
 
         Returns:
             Review cards and matching total.
         """
         async with self._get_pool().acquire() as db:
             return await IdentityReviewDB(db, postgres=True).review(
-                status, limit, offset
+                status, limit, offset, hard_filters
             )
 
     async def identity_decide(

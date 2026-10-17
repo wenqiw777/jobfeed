@@ -7,14 +7,21 @@ from typing import Annotated, Literal, Protocol, cast
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from jobfeed.web.deps import get_store
+from jobfeed.cli import AppContext
+from jobfeed.domain.filtering import HardFilters
+from jobfeed.web.deps import get_context, get_store
 
 router = APIRouter()
 
 
 class _ReviewStore(Protocol):
     async def identity_review(
-        self, *, status: str, limit: int, offset: int
+        self,
+        *,
+        status: str,
+        limit: int,
+        offset: int,
+        hard_filters: HardFilters | None = None,
     ) -> dict[str, object]: ...
     async def identity_decide(
         self,
@@ -36,6 +43,7 @@ class IdentityDecision(BaseModel):
 @router.get("/identity-review")
 async def review(
     store: Annotated[object, Depends(get_store)],
+    context: Annotated[AppContext, Depends(get_context)],
     status: Literal["pending", "reviewed"] = "pending",
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -44,6 +52,7 @@ async def review(
 
     Args:
         store: Configured store.
+        context: Current Results settings.
         status: Active tab.
         limit: Page size.
         offset: Page offset.
@@ -52,7 +61,10 @@ async def review(
         Review cards and matching count.
     """
     return await cast(_ReviewStore, store).identity_review(
-        status=status, limit=limit, offset=offset
+        status=status,
+        limit=limit,
+        offset=offset,
+        hard_filters=context["settings"].hard_filters.to_domain(),
     )
 
 

@@ -1,12 +1,14 @@
 """Review routes validate decisions and preserve pending cases on invalid writes."""
 
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import httpx
 from fastapi import FastAPI
 
 from jobfeed.adapters.store.sqlite import SQLiteStore
-from jobfeed.web.deps import get_store
+from jobfeed.domain.filtering import HardFilters
+from jobfeed.web.deps import get_context, get_store
 from jobfeed.web.routes.identity_review import router
 from tests.integration.test_identity_review import seed
 
@@ -19,6 +21,11 @@ async def test_review_api_merge_validation_and_history(tmp_path):
         app = FastAPI()
         app.include_router(router, prefix="/api")
         app.dependency_overrides[get_store] = lambda: store
+        app.dependency_overrides[get_context] = lambda: {
+            "settings": SimpleNamespace(
+                hard_filters=SimpleNamespace(to_domain=HardFilters)
+            )
+        }
         url = f"/api/identity-review/{ids[0][0]}/{ids[1][0]}/decision"
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"

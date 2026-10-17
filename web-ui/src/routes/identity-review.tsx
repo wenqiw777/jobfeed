@@ -34,7 +34,7 @@ export default function IdentityReviewPage() {
   const [view, setView] = useState({ status: "pending", page: 1 });
   const [choice, setChoice] = useState<Choice | null>(null);
   const [saved, setSaved] = useState("");
-  const query = useQuery({ queryKey: ["identity-review", view], queryFn: () => apiFetch<{ total: number; items: Pair[] }>(`/api/identity-review?status=${view.status}&limit=${PAGE_SIZE}&offset=${(view.page - 1) * PAGE_SIZE}`) });
+  const query = useQuery({ queryKey: ["identity-review", view], queryFn: () => apiFetch<{ total: number; job_total: number; items: Pair[] }>(`/api/identity-review?status=${view.status}&limit=${PAGE_SIZE}&offset=${(view.page - 1) * PAGE_SIZE}`) });
   const mutation = useMutation({
     mutationFn: ({ item, target }: { item: Pair; target?: Job }) => apiPost(`/api/identity-review/${item.left.id}/${item.right.id}/decision`, target ? { decision: "merge", target_id: Number(target.id) } : { decision: "separate" }),
     onSuccess: async (_data, variables) => {
@@ -52,7 +52,7 @@ export default function IdentityReviewPage() {
       {query.isError && <Alert type="error" header="Could not load reviews"><Button onClick={() => void query.refetch()}>Retry</Button></Alert>}
       {mutation.isError && <Alert type="error" header="Decision was not saved">{mutation.error.message}</Alert>}
       {query.data && <SpaceBetween size="l">
-        <Box color="text-body-secondary">{query.data.total} {view.status === "pending" ? `${query.data.total === 1 ? "comparison" : "comparisons"} to review` : `${query.data.total === 1 ? "saved decision" : "saved decisions"}`}</Box>
+        <Box color="text-body-secondary">{view.status === "pending" && `${query.data.job_total} jobs need review · `}{query.data.total} {view.status === "pending" ? `${query.data.total === 1 ? "comparison" : "comparisons"} to review` : `${query.data.total === 1 ? "saved decision" : "saved decisions"}`}</Box>
         {!query.data.items.length && <Container><Box textAlign="center" padding="l">{view.status === "pending" ? "You're all caught up. No duplicate records need a decision." : "Your decisions will appear here."}</Box></Container>}
         {query.data.items.map(item => <Container key={item.id} header={<Header variant="h2" description={item.decision ? new Date(item.decided_at!).toLocaleString() : (item.reasons ?? []).map(r => reasons[r] ?? "Possible duplicate records").join(" · ")} actions={<Badge color={item.decision ? "green" : "blue"}>{item.decision === "merge" ? `Merged into #${item.target_id}` : item.decision === "separate" ? "Kept separate" : "Possible duplicate"}</Badge>}>{item.left.company === item.right.company ? item.left.company : `${item.left.company} / ${item.right.company}`}</Header>}>
           <SpaceBetween size="l">

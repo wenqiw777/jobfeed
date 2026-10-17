@@ -8,6 +8,7 @@ from jobfeed.adapters.store._identity_review import IdentityReviewDB
 from jobfeed.adapters.store._sqlite_capability_support import _immediate_transaction
 from jobfeed.adapters.store._sqlite_real_job_identity import _merge
 from jobfeed.adapters.store.sqlite_lifecycle import SqliteLifecycle
+from jobfeed.domain.filtering import HardFilters
 
 
 class SqliteIdentityReview:
@@ -16,7 +17,12 @@ class SqliteIdentityReview:
     _lifecycle: SqliteLifecycle
 
     async def identity_review(
-        self, *, status: str, limit: int, offset: int
+        self,
+        *,
+        status: str,
+        limit: int,
+        offset: int,
+        hard_filters: HardFilters | None = None,
     ) -> dict[str, object]:
         """Read one review page.
 
@@ -24,12 +30,15 @@ class SqliteIdentityReview:
             status: Pending or reviewed.
             limit: Page size.
             offset: Page offset.
+            hard_filters: Current Results visibility policy.
 
         Returns:
             Cards and total.
         """
         async with self._lifecycle.connection() as db:
-            return await IdentityReviewDB(db).review(status, limit, offset)
+            return await IdentityReviewDB(db).review(
+                status, limit, offset, hard_filters
+            )
 
     async def identity_decide(
         self,

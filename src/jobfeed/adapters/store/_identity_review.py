@@ -7,6 +7,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from jobfeed.adapters.store._posting_spam import SpamDB
+from jobfeed.adapters.store._real_job_hard_filters import (
+    postgres_hard_filter,
+    sqlite_hard_filter,
+)
+from jobfeed.domain.filtering import HardFilters
 
 _SEPARATE = "identity-separate:"
 _HISTORY = "identity-review:"
@@ -100,13 +105,20 @@ class IdentityReviewDB:
         )
         return value
 
-    async def review(self, status: str, limit: int, offset: int) -> dict[str, Any]:
+    async def review(
+        self,
+        status: str,
+        limit: int,
+        offset: int,
+        hard_filters: HardFilters | None = None,
+    ) -> dict[str, Any]:
         """List pending pairs or historical user decisions.
 
         Args:
             status: Pending or reviewed tab.
             limit: Maximum page size.
             offset: Page offset.
+            hard_filters: Current Results visibility policy.
 
         Returns:
             Matching total and review cards.
@@ -126,20 +138,66 @@ class IdentityReviewDB:
                 "total": total[0]["n"],
                 "items": [json.loads(r["value"]) for r in rows],
             }
+        if self.db.postgres:
+            hard, values = postgres_hard_filter(
+                hard_filters, datetime.now(UTC), first_param=1
+            )
+            args = values
+        else:
+            hard, args = sqlite_hard_filter(hard_filters, datetime.now(UTC))
+
+        async def pending_rows(sql: str, *page_args: object) -> list[dict[str, Any]]:
+            if self.db.postgres:
+                for index in range(len(args) + 1, len(args) + len(page_args) + 1):
+                    sql = sql.replace("?", f"${index}", 1)
+                return [
+                    dict(row)
+                    for row in await self.db.connection.fetch(
+                        sql.replace("REVIEW_HARD_FILTER", hard), *args, *page_args
+                    )
+                ]
+            return await self.db.rows(
+                sql.replace("REVIEW_HARD_FILTER", hard), *args, *page_args
+            )
+
+        eligible = (
+            "SELECT r.id FROM real_jobs r JOIN jobs j ON j.id=r.representative_job_id "
+            "AND j.real_job_id=r.id JOIN real_job_status s ON s.real_job_id=r.id "
+            "LEFT JOIN real_job_evaluations e ON e.real_job_id=r.id "
+            "WHERE r.identity_review_state IN ('requirements_conflict',"
+            "'evaluation_conflict','evaluation_input_conflict',"
+            "'evaluation_input_missing','status_conflict') "
+            "AND s.status IN ('new','scored') AND r.official_closed_at IS NULL "
+            "AND (REVIEW_HARD_FILTER)"
+        )
+        cte = f"WITH eligible AS ({eligible}) "
         pairs = (
             " FROM real_job_review_cases WHERE "
-            "left_real_job_id<>right_real_job_id GROUP BY "
+            "left_real_job_id<>right_real_job_id AND "
+            "(left_real_job_id IN (SELECT id FROM eligible) OR "
+            "right_real_job_id IN (SELECT id FROM eligible)) GROUP BY "
             "left_real_job_id,right_real_job_id"
         )
-        total = await self.db.rows(
-            "SELECT count(*) AS n FROM (SELECT left_real_job_id" + pairs + ") pairs"
+        total = await pending_rows(
+            cte
+            + "SELECT count(*) AS n FROM (SELECT left_real_job_id"
+            + pairs
+            + ") pairs",
         )
-        rows = await self.db.rows(
-            "SELECT left_real_job_id,right_real_job_id,MAX(id) AS newest"
+        rows = await pending_rows(
+            cte
+            + "SELECT left_real_job_id,right_real_job_id,MAX(id) AS newest"
             + pairs
             + " ORDER BY newest DESC LIMIT ? OFFSET ?",
             limit,
             offset,
+        )
+        jobs = await pending_rows(
+            cte + "SELECT count(*) AS n FROM eligible WHERE id IN "
+            "(SELECT left_real_job_id FROM real_job_review_cases "
+            "WHERE left_real_job_id<>right_real_job_id "
+            "UNION SELECT right_real_job_id FROM real_job_review_cases "
+            "WHERE left_real_job_id<>right_real_job_id)",
         )
         items = []
         for row in rows:
@@ -158,7 +216,7 @@ class IdentityReviewDB:
                     "reasons": [r["reason"] for r in reasons],
                 }
             )
-        return {"total": total[0]["n"], "items": items}
+        return {"total": total[0]["n"], "job_total": jobs[0]["n"], "items": items}
 
     async def prepare(
         self, left: int, right: int, decision: str, target: int | None

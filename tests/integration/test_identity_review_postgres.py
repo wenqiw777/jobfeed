@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from jobfeed.adapters.store.postgres import PostgresStore
+from jobfeed.domain.filtering import HardFilters
 from jobfeed.domain.models import JobPosting, QualityBand
 
 pytestmark = pytest.mark.postgres
@@ -37,7 +38,7 @@ async def test_postgres_decision_keeps_history_and_selected_identity(
             )
         async with store._get_pool().acquire() as db:
             await db.execute(
-                "UPDATE real_jobs SET identity_review_state='identity_conflict'"
+                "UPDATE real_jobs SET identity_review_state='requirements_conflict'"
             )
             await db.execute(
                 "INSERT INTO real_job_review_cases(left_real_job_id,right_real_job_id,"
@@ -51,6 +52,22 @@ async def test_postgres_decision_keeps_history_and_selected_identity(
         assert (await store.identity_review(status="pending", limit=25, offset=0))[
             "total"
         ] == 1
+        pending = await store.identity_review(
+            status="pending",
+            limit=25,
+            offset=0,
+            hard_filters=HardFilters(company_blocklist=["Other"]),
+        )
+        assert pending["total"] == 1
+        assert pending["job_total"] == len(ids)
+        assert (
+            await store.identity_review(
+                status="pending",
+                limit=25,
+                offset=0,
+                hard_filters=HardFilters(company_blocklist=["Example"]),
+            )
+        )["total"] == 0
         await store.identity_decide(
             str(ids[0][0]),
             str(ids[1][0]),

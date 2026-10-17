@@ -6049,7 +6049,7 @@
     },
     "/api/identity-review": {
       "get": {
-        "description": "Read pending comparisons or previous decisions.\n\nArgs:\n    store: Configured store.\n    status: Active tab.\n    limit: Page size.\n    offset: Page offset.\n\nReturns:\n    Review cards and matching count.",
+        "description": "Read pending comparisons or previous decisions.\n\nArgs:\n    store: Configured store.\n    context: Current Results settings.\n    status: Active tab.\n    limit: Page size.\n    offset: Page offset.\n\nReturns:\n    Review cards and matching count.",
         "operationId": "review_api_identity_review_get",
         "parameters": [
           {
