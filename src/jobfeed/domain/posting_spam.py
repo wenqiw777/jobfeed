@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from jobfeed.domain.models import JobPosting
 
-RULE_VERSION = 1
+RULE_VERSION = 2
 _MIN_PLACEHOLDERS = 2
 PUBLISHER_DOMAINS = (
     "fetchjobs.co",
@@ -53,6 +53,13 @@ _PLACEMENT = re.compile(
     r"\b(?:then deploy|placement with|placed with|deploy straight to)"
     r"[^.!?\n]{0,65}\b(?:client|corporate partner)",
     re.I,
+)
+_AGENCY_RECRUITMENT = re.compile(
+    r"^(?:we (?:are )?(?:recruiting|hiring|seeking|looking)"
+    r"[^.!?\n]{0,100}\b(?:on behalf of|for (?:our|a|an) client)\b"
+    r"[^.!?\n]{0,120}|our client is (?:seeking|looking for) "
+    r"(?:a|an) [^.!?\n]{1,120})",
+    re.I | re.M,
 )
 _INTRO = re.compile(
     r"about the company\s*\n+\s*(?:At )?(.{2,80}?) (?:is|are|has|offers|provides)\b",
@@ -137,7 +144,8 @@ def assess_posting(job: JobPosting) -> SpamAssessment:
     introduced = company_key(intro[1]) if intro else ""
     mismatch = bool(
         introduced
-        and introduced not in ("we", "our company", "our team", employer)
+        and introduced
+        not in ("we", "who we", "our client", "our company", "our team", employer)
         and not introduced.startswith((employer + " ", employer + ","))
     )
     redirect = _publisher_url(job.apply_url)
@@ -182,6 +190,24 @@ def assess_posting(job: JobPosting) -> SpamAssessment:
             (posting_attribution or (intro[0] if intro else ""), redirect),
             True,
         )
+    # A client introduced as the employer is explicit agency recruitment.
+    # Ordinary customer mentions or company aliases are not recruitment evidence.
+    agency = next(
+        (
+            m.group()
+            for m in _AGENCY_RECRUITMENT.finditer(body[:2500])
+            if not _NEGATION.search(m.group())
+        ),
+        None,
+    )
+    if (
+        introduced == "our client"
+        and intro
+        and not _NEGATION.search(body[intro.end() :].split("\n", 1)[0][:120])
+    ):
+        agency = intro[0]
+    if agency:
+        return SpamAssessment("block", "agency_recruitment", (agency,))
     contributor = bool(_GIG.search(body) and _LABOR.search(body)) or bool(
         _CONTRACT_EVALUATOR.search(body)
         and re.search(r"\b(?:type|engagement)\s*:\s*contractor\b", body, re.I)
@@ -200,12 +226,11 @@ def assess_posting(job: JobPosting) -> SpamAssessment:
         body[max(0, placement.start() - 100) : placement.end()]
     ):
         return SpamAssessment("block", "training_placement", (placement.group(),))
-    if attribution or mismatch or redirect or placeholders:
+    if attribution or redirect or placeholders:
         evidence = tuple(
             x
             for x in (
                 attribution,
-                intro[0] if mismatch and intro else None,
                 redirect,
                 *placeholders,
             )

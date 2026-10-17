@@ -1,8 +1,10 @@
 """Real SQLite coverage for automatic exclusions and reversible human decisions."""
 
+import json
 from datetime import UTC, datetime
 
 from jobfeed.adapters.store.sqlite import SQLiteStore
+from jobfeed.domain.posting_spam import RULE_VERSION
 from tests.unit.test_intermediary_resolution import official
 
 EXISTING_SCORE = 92
@@ -166,5 +168,57 @@ async def test_official_and_nearby_company_names_veto_promotion(tmp_path):
         assert page["total"] == 1
         assert page["jobs"][0]["company"] == "New Publisher Labs"
         assert await store.get_job(saved.job_id)
+    finally:
+        await store.close()
+
+
+async def test_reaudit_clears_old_false_positive_blocks_agency_preserves_override(
+    tmp_path,
+):
+    store = SQLiteStore(tmp_path / "reaudit.sqlite")
+    await store.connect()
+    try:
+        normal = await store.save_job(
+            publisher(
+                10,
+                company="Valon Tech",
+                apply_url=None,
+                jd_text="ABOUT THE COMPANY\nValon is building mortgage software.",
+            )
+        )
+        agency = await store.save_job(
+            publisher(
+                11,
+                apply_url=None,
+                jd_text="About the Company\nOur client is building AI search.",
+            )
+        )
+        for saved, company in [(normal, "Valon Tech"), (agency, "New Publisher")]:
+            await store.set_state(
+                "spam:job:" + saved.job_id,
+                json.dumps(
+                    {
+                        "job_id": saved.job_id,
+                        "company": company,
+                        "company_key": company.lower(),
+                        "disposition": "review",
+                        "category": "possible_publisher_or_template",
+                        "rule_version": 1,
+                    }
+                ),
+            )
+        await store.spam_audit_page(limit=100)
+        assert (await store.spam_review(status="pending"))["total"] == 0
+        blocked = await store.spam_review(status="blocked")
+        assert [item["job_id"] for item in blocked["items"]] == [agency.job_id]
+        assert blocked["items"][0]["rule_version"] == RULE_VERSION
+        assert (await store.query_real_jobs_view(decision="results"))["total"] == 1
+        assert await store.get_state("spam:company:new publisher") is None
+        await store.spam_decide(agency.job_id, scope="job", decision="allow")
+        await store.spam_audit_page(limit=100)
+        assert (await store.spam_review(status="reviewed"))["total"] == 1
+        assert (await store.query_real_jobs_view(decision="results"))["total"] == len(
+            [normal, agency]
+        )
     finally:
         await store.close()

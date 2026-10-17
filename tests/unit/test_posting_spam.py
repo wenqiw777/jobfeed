@@ -94,11 +94,11 @@ def test_normal_engineering_is_clear(body):
     assert assess(body).disposition == "clear"
 
 
-def test_unnamed_client_is_review_not_company_block():
+def test_unnamed_client_blocks_only_posting():
     result = assess(
         "We are recruiting on behalf of an unnamed client for a Software Engineer."
     )
-    assert result.disposition == "review"
+    assert result.disposition == "block"
     assert not result.company_evidence
 
 
@@ -199,3 +199,54 @@ def test_contractor_evaluator_is_not_disguised_as_ordinary_engineering():
         "Type: Contractor. Duration: 1 month."
     )
     assert result.disposition == "block"
+
+
+@pytest.mark.parametrize(
+    "company,body",
+    [
+        (
+            "CitiusTech",
+            "About the Company\nWho we are: At CitiusTech, we build "
+            "healthcare applications.",
+        ),
+        ("Valon Tech", "ABOUT THE COMPANY\nValon is building mortgage software."),
+        (
+            "Medal",
+            "About The Company\nGeneral Intuition is a frontier lab. It "
+            "builds on Medal.",
+        ),
+        (
+            "Agency",
+            "We are hiring for our internal engineering team. Our client is a bank.",
+        ),
+        (
+            "Acme",
+            "Our client is hiring engineers. Build software that monitors "
+            "these announcements.",
+        ),
+        ("Acme", "We are not recruiting on behalf of a client."),
+    ],
+)
+def test_normal_company_intros_and_customer_mentions_are_clear(company, body):
+    result = assess_posting(replace(make_job(), company=company, jd_text=body))
+    assert result.disposition == "clear"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "About the Company\nOur client is building AI search.\nThe "
+        "role\nBuild backend APIs.",
+        "About the Company\nOur client is a venture-backed startup.\nAbout "
+        "the Role\nOur client is seeking a full stack engineer.",
+        "We are hiring a Software Engineer on behalf of our client.",
+        "We are recruiting for our client, a startup seeking a backend engineer.",
+        "Our client is seeking a Software Engineer to build their platform.",
+    ],
+)
+def test_explicit_agency_recruitment_blocks_only_this_job(body):
+    result = assess(body)
+    assert result.disposition == "block"
+    assert result.category == "agency_recruitment"
+    assert result.evidence
+    assert not result.company_evidence

@@ -74,3 +74,31 @@ operation; startup does not rewrite the database.
   initialization network failure; prior local browser evidence remains valid.
   Review queue starts empty; existing historical sample was not backfilled.
   Evidence: `artifacts/automatic-spam-review/deployment-proof.json`.
+
+## 2026-10-16 agency recruitment correction
+
+- Authorized: block explicit agency recruitment at posting scope, remove normal
+  company introduction false positives, deploy to Mini, reassess only the seven
+  reviewed IDs (393343, 449687, 449733, 468297, 509325, 510292, 510781).
+- Version 2: employer-introduction `Our client` and explicit recruitment for a
+  client block the posting; no company promotion from agency evidence. Generic
+  customer mentions, aliases and related company names alone do not flag spam.
+- Test-first evidence: 8 failures reproduced the original cases; one additional
+  standalone client-recruitment case failed before its fix. Final targeted suite:
+  51 passed, including SQLite re-audit, visibility, overrides and evaluation;
+  scoped Ruff checks pass. No UI changes or schema changes.
+- Risk: deterministic rules can miss unfamiliar wording; no claim of universal
+  detection. Existing manual decisions retain precedence. Unrelated local and
+  Mini edits are excluded.
+- Deployed scoped code/tests to Mini as `a914014`; the historical plan differs
+  there, so its patch was excluded. Service restarted while idle; scheduler
+  restored. Live health reports service/DB/Redis all OK. Deployed classifier
+  bytes exactly match the locally tested file.
+- Transactionally reassessed all seven IDs using SpamDB.assess_source; original
+  assessment backup: Mini `data/spam-recheck-20261016.json`. Direct DB checks
+  confirm job rows and manual decisions unchanged, rule_version=2 throughout.
+- Talent Vine 468297 and Syndesus 510292: agency_recruitment/block, source
+  eligibility false. Valon 393343/449687/449733, CitiusTech 509325, Medal 510781:
+  clear, source eligibility true. Live API readback: 2 blocked, 0 pending.
+  Only these seven historical records were reassessed; new/enriched postings
+  automatically use version 2. No remote push or merge performed.
