@@ -223,6 +223,7 @@ async def test_review_uses_current_filters_but_keeps_old_candidate(tmp_path):
         page = await store.identity_review(status="pending", limit=25, offset=0)
         assert page["total"] == 1
         assert page["job_total"] == 1
+        assert page["pending_job_ids"] == [str(ids[0][0])]
         assert page["items"][0]["right"]["id"] == str(ids[1][0])
         assert (
             await store.identity_review(

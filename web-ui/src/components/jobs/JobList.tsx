@@ -1,3 +1,4 @@
+import { usePendingIdentityReview } from "@/api/identity-review";
 import Badge from "@cloudscape-design/components/badge";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
@@ -30,6 +31,8 @@ export function JobList({
   onSort,
 }: JobListProps) {
   const { density } = useDensity();
+  const reviews = usePendingIdentityReview();
+  const needsReview = (id: string) => reviews.data?.pending_job_ids?.includes(id) ?? false;
   const selectedItems = jobs.filter((job) => isChecked(job.id));
   const columnDefinitions: TableProps.ColumnDefinition<TriageJob>[] = [
     {
@@ -48,7 +51,7 @@ export function JobList({
             <Box color="text-body-secondary">{job.location}</Box>
           ) : null}
           {job.is_repost === true && <div><Badge color="grey">Reposted</Badge></div>}
-          {job.identity_review_state !== "clear" && (
+          {needsReview(job.id) && (
             <div><Badge color="blue">Needs review</Badge></div>
           )}
           {job.evaluation_stale_reason && (
@@ -61,7 +64,7 @@ export function JobList({
     {
       id: "verdict",
       header: "Recommendation",
-      cell: (job) => <VerdictBadge job={job} />,
+      cell: (job) => <VerdictBadge job={job} pendingReview={needsReview(job.id)} />,
       width: 120,
     },
     {
@@ -69,7 +72,7 @@ export function JobList({
       header: "Fit score",
       sortingField: "score",
       cell: (job) => !["clear", "identity_conflict", "requirements_conflict"].includes(job.identity_review_state)
-        ? "Review pending"
+        ? (needsReview(job.id) ? "Review pending" : "Unavailable")
         : job.evaluation_stale_reason === "legacy_policy_unknown"
           ? "Old score · pending"
         : job.stage_b_fit_score ?? job.stage_a_score ?? "—",
@@ -129,9 +132,9 @@ export function JobList({
   );
 }
 
-function VerdictBadge({ job }: { job: TriageJob }) {
+function VerdictBadge({ job, pendingReview }: { job: TriageJob; pendingReview: boolean }) {
   if (!["clear", "identity_conflict", "requirements_conflict"].includes(job.identity_review_state)) {
-    return <Badge color="blue">Needs review</Badge>;
+    return <Badge color="blue">{pendingReview ? "Needs review" : "Evaluation unavailable"}</Badge>;
   }
   if (job.evaluation_stale_reason && job.verdict === null) {
     return <Badge color="blue">Re-evaluation pending</Badge>;

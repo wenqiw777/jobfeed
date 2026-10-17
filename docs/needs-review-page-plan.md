@@ -78,3 +78,20 @@ Scope correction (2026-10-16 America/Detroit):
 - Read-only candidate code against Mini: 11 comparisons belonging to United 169159
   and Boeing 168542. No production decisions made. Screenshot scoped-preview.jpg.
 - User explicitly authorized push and deployment together after verification.
+- Release confirmed: 8785d1f pushed and deployed in parallel. CI 38989094010
+  completed successfully. Mini GET reports job_total=2, total=11, history=0;
+  health DB/Redis ok. Chrome live screenshot scoped-mini-live.jpg confirms badge 2.
+  Runtime backup: data/maintenance/needs-review-20261017T010205Z/code.tar.
+
+Shared detail/queue rule (2026-10-16):
+- Pending API returns IDs from the same eligible-job query used for its count.
+  Sidebar, list badges and detail alerts share one query/cache; no client state
+  predicate determines queue membership. Workflow changes invalidate that cache.
+- Evaluation-unavailable explanations remain distinct from human review tasks.
+- Red: completed-score identity fixture incorrectly showed Duplicate review pending.
+  Green: 195 frontend tests (including queue refresh removes detail alert), 9
+  SQLite/API tests, 2 PostgreSQL tests, lint/build/typecheck/mypy.
+- Chrome verified copied Salesforce 168507 has no duplicate-review banner and
+  retains 92/Apply; United still has its queue-backed alert. Screenshot:
+  artifacts/needs-review-page/detail-rule-preview.jpg. Production remains untouched
+  by fixture setup; user authorized concurrent push/deploy after verification.

@@ -6,6 +6,7 @@ import Badge from "@cloudscape-design/components/badge";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 
+import { usePendingIdentityReview } from "@/api/identity-review";
 import { apiFetch } from "@/api/client";
 import { ZONES } from "@/components/shell/zones";
 
@@ -20,11 +21,7 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
     staleTime: 30_000,
     retry: false,
   });
-  const identities = useQuery({
-    queryKey: ["identity-review", "pending-count"],
-    queryFn: () => apiFetch<{ job_total: number }>("/api/identity-review?status=pending&limit=1"),
-    refetchInterval: 60_000, staleTime: 30_000, retry: false,
-  });
+  const identities = usePendingIdentityReview();
   const items: SideNavigationProps.Item[] = [
     ...ZONES.map((zone) => ({
       type: "link" as const,

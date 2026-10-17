@@ -146,6 +146,7 @@ export function useRealJobTransition() {
       }),
     onSuccess: (_data, { id }) => {
       void queryClient.invalidateQueries({ queryKey: realJobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: ["identity-review"] });
       void queryClient.invalidateQueries({ queryKey: realJobsKeys.detail(id) });
       void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
       void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });
@@ -162,6 +163,7 @@ export function useRealJobBulkTransition() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: realJobsKeys.lists });
+      void queryClient.invalidateQueries({ queryKey: ["identity-review"] });
       void queryClient.invalidateQueries({ queryKey: realJobsKeys.details });
       void queryClient.invalidateQueries({ queryKey: jobsKeys.lists });
       void queryClient.invalidateQueries({ queryKey: jobsKeys.attention });

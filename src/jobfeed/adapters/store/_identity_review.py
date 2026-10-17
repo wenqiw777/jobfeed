@@ -193,7 +193,7 @@ class IdentityReviewDB:
             offset,
         )
         jobs = await pending_rows(
-            cte + "SELECT count(*) AS n FROM eligible WHERE id IN "
+            cte + "SELECT id FROM eligible WHERE id IN "
             "(SELECT left_real_job_id FROM real_job_review_cases "
             "WHERE left_real_job_id<>right_real_job_id "
             "UNION SELECT right_real_job_id FROM real_job_review_cases "
@@ -216,7 +216,12 @@ class IdentityReviewDB:
                     "reasons": [r["reason"] for r in reasons],
                 }
             )
-        return {"total": total[0]["n"], "job_total": jobs[0]["n"], "items": items}
+        return {
+            "total": total[0]["n"],
+            "job_total": len(jobs),
+            "pending_job_ids": [str(job["id"]) for job in jobs],
+            "items": items,
+        }
 
     async def prepare(
         self, left: int, right: int, decision: str, target: int | None

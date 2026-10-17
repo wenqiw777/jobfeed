@@ -170,7 +170,7 @@ test("shows a held real job without a canonical score and opens source audit", a
   renderPage();
   fireEvent.click(screen.getByRole("tab", { name: "Wait" }));
   await screen.findByTestId("job-row-1");
-  expect(screen.getAllByText(/Needs review/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Evaluation unavailable/).length).toBeGreaterThan(0);
   expect(screen.getByText(/No current canonical score/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "View source audit" }));
   expect(await screen.findByText(/Source audit score: 87/)).toBeInTheDocument();
@@ -228,7 +228,7 @@ test.each([
   renderPage();
   await screen.findByTestId("job-row-1");
   expect(screen.getByText(message)).toBeInTheDocument();
-  expect(screen.getByText("Review pending")).toBeInTheDocument();
+  expect(screen.getByText("Unavailable")).toBeInTheDocument();
 });
 
 test("Ignored requests one decision that includes archived workflow rows", async () => {
@@ -723,6 +723,7 @@ test("select all loads every matching real ID, not only the current page", async
 test("identity review does not replace a completed score with Review pending", async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.startsWith("/api/identity-review?")) return json({ job_total: 0, pending_job_ids: [] });
     if (url.startsWith("/api/real-jobs?")) return json({ jobs: [{ ...job(), identity_review_state: "identity_conflict", stage_a_score: 91, stage_b_fit_score: null }], total: 1, tab_counts: { results: 1, wait: 0, applied: 0, ignored: 0 } });
     if (url === "/api/real-jobs/1") return json({ ...detail(), identity_review_state: "identity_conflict" });
     throw new Error(`unexpected fetch: ${url}`);
@@ -731,5 +732,23 @@ test("identity review does not replace a completed score with Review pending", a
   await screen.findByTestId("job-row-1");
   expect(screen.getByText("91")).toBeVisible();
   expect(screen.queryByText("Review pending")).not.toBeInTheDocument();
-  expect(screen.getByText(/Scoring continues/)).toBeInTheDocument();
+  expect(screen.queryByText("Duplicate review pending")).not.toBeInTheDocument();
+  expect(screen.queryByText("Needs review")).not.toBeInTheDocument();
+});
+
+ test("detail follows server queue membership and clears the banner after refresh", async () => {
+  let pending = true;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/identity-review?")) return json({ job_total: pending ? 1 : 0, pending_job_ids: pending ? ["1"] : [] });
+    if (url.startsWith("/api/real-jobs?")) return json({ jobs: [job()], total: 1, tab_counts: { results: 1, wait: 0, applied: 0, ignored: 0 } });
+    if (url === "/api/real-jobs/1") return json({ ...detail(), identity_review_state: "requirements_conflict" });
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><DensityProvider><TriagePage /></DensityProvider></QueryClientProvider>);
+  expect(await screen.findByText("Duplicate review pending")).toBeVisible();
+  pending = false;
+  await client.invalidateQueries({ queryKey: ["identity-review"] });
+  await waitFor(() => expect(screen.queryByText("Duplicate review pending")).not.toBeInTheDocument());
 });

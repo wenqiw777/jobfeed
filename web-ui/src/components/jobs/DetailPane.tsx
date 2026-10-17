@@ -8,6 +8,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
 import { useState } from "react";
 
+import { usePendingIdentityReview } from "@/api/identity-review";
 import { useJobDetail, useRealJobDetail, useSourceAuditDetail, type TransitionStatus } from "@/api/queries";
 import { EvaluationSections, TwinsLine } from "@/components/jobs/DetailSections";
 import { VerdictPill } from "@/components/jobs/VerdictPill";
@@ -39,6 +40,8 @@ export function DetailPane({
 }: DetailPaneProps) {
   const sourceDetail = useJobDetail(jobId, !realJob);
   const canonicalDetail = useRealJobDetail(jobId, realJob);
+  const reviews = usePendingIdentityReview(realJob && jobId !== null);
+  const pendingReview = reviews.data?.pending_job_ids?.includes(jobId ?? "") ?? false;
   const detail = realJob ? canonicalDetail : sourceDetail;
 
   if (jobId === null) return <Box padding="l">{emptyHint}</Box>;
@@ -60,9 +63,9 @@ export function DetailPane({
   return (
     <SpaceBetween size="m">
       <Header variant="h3" description={job.title}>{job.company}</Header>
-      {reviewState !== "clear" && !held && <Alert type="info" header="Duplicate review pending">Scoring continues. <a href="/needs-review">Review possible duplicates</a> to decide whether these records should be combined.</Alert>}
-      {held && <Alert type="warning" header="Needs review">
-        {reviewMessage(reviewState)} No current canonical score is shown until this job is reviewed.
+      {pendingReview && !held && <Alert type="info" header="Duplicate review pending">Scoring continues. <a href="/needs-review">Review possible duplicates</a> to decide whether these records should be combined.</Alert>}
+      {held && <Alert type="warning" header={pendingReview ? "Needs review" : "Evaluation unavailable"}>
+        {reviewMessage(reviewState)} No current canonical score is available.
       </Alert>}
       {staleReason && <Alert type="warning" header="Old score · re-evaluation pending">
         {staleReason === "legacy_policy_unknown"
