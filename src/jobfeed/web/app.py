@@ -43,6 +43,7 @@ from jobfeed.web.routes.applications import router as applications_router
 from jobfeed.web.routes.companies import router as companies_router
 from jobfeed.web.routes.configuration import router as configuration_router
 from jobfeed.web.routes.health import router as health_router
+from jobfeed.web.routes.identity_review import router as identity_review_router
 from jobfeed.web.routes.insights import router as insights_router
 from jobfeed.web.routes.jobright_bridge import router as jobright_bridge_router
 from jobfeed.web.routes.jobs import router as jobs_router
@@ -204,6 +205,7 @@ def build_web_app(context: AppContext, static_dir: Path | None = None) -> FastAP
     _configure_onboarding(app, context, project_root, logger, store)
     install_error_handling(app)
     app.include_router(spam_router, prefix="/api")
+    app.include_router(identity_review_router, prefix="/api")
     app.include_router(health_router, prefix="/api")
     app.include_router(configuration_router, prefix="/api")
     _include_onboarding_routers(app)

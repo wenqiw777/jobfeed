@@ -1046,12 +1046,12 @@ async def test_source_sync_clears_existing_hold_without_matching_jds(
                 "VALUES(?,?,?,?, 'requirements_conflict')",
                 (int(real_id), int(real_id), int(saved.job_id), int(saved.job_id)),
             )
-        assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
+        assert len(await store.claim_real_job_stage_a_by_ids([real_id])) == 1
         await store.save_job(second)
         detail = await store.get_real_job_view(real_id)
         assert detail is not None
         assert detail["row"]["identity_review_state"] == "clear"
-        assert len(await store.claim_real_job_stage_a_by_ids([real_id])) == 1
+        assert await store.claim_real_job_stage_a_by_ids([real_id]) == []
     finally:
         await store.close()
 

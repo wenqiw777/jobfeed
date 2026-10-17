@@ -11,6 +11,10 @@ from typing import Any, cast
 from jobfeed.adapters.store._application_identity_verification import (
     verification_facts_match,
 )
+from jobfeed.adapters.store._identity_review import IdentityReviewDB
+from jobfeed.adapters.store._postgres_real_job_identity import (
+    _merge as merge_reviewed_postgres_job,
+)
 from jobfeed.adapters.store._posting_spam import SpamDB
 from jobfeed.adapters.store._repost_sort import triage_sorts
 from jobfeed.domain.display_posting import posting_location
@@ -1994,7 +1998,8 @@ class PostgresStore(
         async with self._get_pool().acquire() as db:
             rows = await db.fetch(
                 "SELECT r.id FROM real_jobs r LEFT JOIN real_job_evaluations e "
-                "ON e.real_job_id=r.id WHERE r.identity_review_state='clear' "
+                "ON e.real_job_id=r.id WHERE r.identity_review_state IN "
+                "('clear','identity_conflict','requirements_conflict') "
                 "AND NOT EXISTS(SELECT 1 FROM real_job_applications applied "
                 "WHERE applied.real_job_id=r.id) "
                 "AND r.official_closed_at IS NULL "
@@ -6760,6 +6765,59 @@ class PostgresStore(
             enrich_source="manual-paste",
         )
         return job_id
+
+    async def identity_review(
+        self, *, status: str, limit: int, offset: int
+    ) -> dict[str, object]:
+        """Read one duplicate-review page.
+
+        Args:
+            status: Pending or reviewed.
+            limit: Page size.
+            offset: Page offset.
+
+        Returns:
+            Review cards and matching total.
+        """
+        async with self._get_pool().acquire() as db:
+            return await IdentityReviewDB(db, postgres=True).review(
+                status, limit, offset
+            )
+
+    async def identity_decide(
+        self,
+        left_id: str,
+        right_id: str,
+        *,
+        decision: str,
+        target_id: str | None = None,
+    ) -> None:
+        """Apply a user-selected duplicate decision atomically.
+
+        Args:
+            left_id: First identity.
+            right_id: Second identity.
+            decision: Merge or separate.
+            target_id: Surviving identity for a merge.
+
+        Raises:
+            ValueError: The review changed during the decision.
+        """
+        left, right = int(left_id), int(right_id)
+        target = int(target_id) if target_id else None
+        async with self._get_pool().acquire() as db, db.transaction():
+            await db.fetch(
+                "SELECT id FROM real_jobs WHERE id=ANY($1::bigint[]) "
+                "ORDER BY id FOR UPDATE",
+                sorted((left, right)),
+            )
+            review = IdentityReviewDB(db, postgres=True)
+            snapshot = await review.prepare(left, right, decision, target)
+            if decision == "merge" and not await merge_reviewed_postgres_job(
+                db, left, right, target_id=target
+            ):
+                raise ValueError("Review changed. Refresh the page.")
+            await review.finish(left, right, snapshot)
 
     async def spam_review(
         self, *, status: str = "pending", limit: int = 50, offset: int = 0

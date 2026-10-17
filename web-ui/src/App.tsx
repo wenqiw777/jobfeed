@@ -8,6 +8,7 @@ import Spinner from "@cloudscape-design/components/spinner";
 import { useConfiguration } from "@/api/configuration";
 import { Shell } from "@/components/shell/Shell";
 import ConfigurationPage from "@/routes/configuration";
+import IdentityReviewPage from "@/routes/identity-review";
 import SpamReviewPage from "@/routes/spam-review";
 import LibraryPage from "@/routes/library";
 import RunsPage from "@/routes/runs";
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/triage" replace />} />
         <Route path="/triage" element={<TriagePage />} />
         <Route path="/pipeline" element={<Navigate to="/triage" replace />} />
+        <Route path="/needs-review" element={<IdentityReviewPage />} />
         <Route path="/spam-review" element={<SpamReviewPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route

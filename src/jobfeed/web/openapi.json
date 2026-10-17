@@ -1297,6 +1297,36 @@
         "title": "HardFiltersSettings",
         "type": "object"
       },
+      "IdentityDecision": {
+        "description": "Explicit pair decision and selected surviving identity.",
+        "properties": {
+          "decision": {
+            "enum": [
+              "merge",
+              "separate"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "IdentityDecision",
+        "type": "object"
+      },
       "IdentityEvidence": {
         "description": "Observed external identifier linking a source to its parent.",
         "properties": {
@@ -6015,6 +6045,139 @@
           }
         },
         "summary": "Get Health"
+      }
+    },
+    "/api/identity-review": {
+      "get": {
+        "description": "Read pending comparisons or previous decisions.\n\nArgs:\n    store: Configured store.\n    status: Active tab.\n    limit: Page size.\n    offset: Page offset.\n\nReturns:\n    Review cards and matching count.",
+        "operationId": "review_api_identity_review_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "pending",
+              "enum": [
+                "pending",
+                "reviewed"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Api Identity Review Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review"
+      }
+    },
+    "/api/identity-review/{left_id}/{right_id}/decision": {
+      "post": {
+        "description": "Save one user decision against a still-pending pair.\n\nArgs:\n    left_id: First canonical ID.\n    right_id: Second canonical ID.\n    body: Chosen decision and target.\n    store: Configured store.\n\nReturns:\n    Success acknowledgement.\n\nRaises:\n    HTTPException: Stale or unsafe merge; refresh before retrying.",
+        "operationId": "decide_api_identity_review__left_id___right_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "left_id",
+            "required": true,
+            "schema": {
+              "title": "Left Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "right_id",
+            "required": true,
+            "schema": {
+              "title": "Right Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Decide Api Identity Review  Left Id   Right Id  Decision Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide"
       }
     },
     "/api/insights/overview": {

@@ -8,6 +8,7 @@ export interface Zone {
 
 export const ZONES: Zone[] = [
   { path: "/triage", label: "Triage", badge: "queue" },
+  { path: "/needs-review", label: "Needs review", badge: null },
   { path: "/spam-review", label: "Spam review", badge: null },
   { path: "/library", label: "Library", badge: null },
   { path: "/insights", label: "Insights", badge: null },

@@ -6,6 +6,8 @@ from itertools import combinations
 
 import aiosqlite
 
+from jobfeed.adapters.store._identity_review import kept_separate, rehome_separations
+from jobfeed.adapters.store._posting_spam import SpamDB
 from jobfeed.adapters.store._sqlite_values import _job_from_row, _utc_text
 from jobfeed.domain.intermediary import intermediary_posting, trusted_ats_url
 from jobfeed.domain.models import JobPosting
@@ -72,6 +74,10 @@ async def resolve_sqlite_real_job(  # noqa: C901 - bounded evidence and status c
                     connection, source_parent, source_job, aliases
                 )
             )
+        for candidate in list(candidates):
+            if await kept_separate(SpamDB(connection), source_parent, candidate):
+                candidates.pop(candidate)
+                observed.pop(candidate, None)
         if len(candidates) > 1:
             if observed and await _compatible_candidates(
                 connection, [source_parent, *observed], aliases
@@ -155,6 +161,10 @@ async def _observed_candidates(
         owned = await cursor.fetchone()
         await cursor.close()
         if owned is None or int(owned["real_job_id"]) == source_parent:
+            continue
+        if await kept_separate(
+            SpamDB(connection), source_parent, int(owned["real_job_id"])
+        ):
             continue
         other = await _source_row(connection, int(owned["evidence_job_id"]))
         if other is None:
@@ -266,6 +276,8 @@ async def _review(
     sources: tuple[int, int],
     reason: str,
 ) -> None:
+    if await kept_separate(SpamDB(connection), *pair):
+        return
     await connection.execute(
         "UPDATE real_jobs SET identity_review_state='identity_conflict' "
         "WHERE id IN (?,?) AND identity_review_state='clear'",
@@ -287,6 +299,7 @@ async def _review(
 
 async def _merge(connection: aiosqlite.Connection, left: int, right: int) -> None:
     winner, loser = left, right
+    await rehome_separations(SpamDB(connection), winner, loser)
     winner_status = await _source_row_status(connection, winner)
     loser_status = await _source_row_status(connection, loser)
     if winner_status is None and loser_status is not None:

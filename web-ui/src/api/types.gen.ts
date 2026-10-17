@@ -264,6 +264,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identity-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review
+         * @description Read pending comparisons or previous decisions.
+         *
+         *     Args:
+         *         store: Configured store.
+         *         status: Active tab.
+         *         limit: Page size.
+         *         offset: Page offset.
+         *
+         *     Returns:
+         *         Review cards and matching count.
+         */
+        get: operations["review_api_identity_review_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identity-review/{left_id}/{right_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide
+         * @description Save one user decision against a still-pending pair.
+         *
+         *     Args:
+         *         left_id: First canonical ID.
+         *         right_id: Second canonical ID.
+         *         body: Chosen decision and target.
+         *         store: Configured store.
+         *
+         *     Returns:
+         *         Success acknowledgement.
+         *
+         *     Raises:
+         *         HTTPException: Stale or unsafe merge; refresh before retrying.
+         */
+        post: operations["decide_api_identity_review__left_id___right_id__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/insights/overview": {
         parameters: {
             query?: never;
@@ -2538,6 +2599,19 @@ export interface components {
             title_blocklist?: string[];
         };
         /**
+         * IdentityDecision
+         * @description Explicit pair decision and selected surviving identity.
+         */
+        IdentityDecision: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "merge" | "separate";
+            /** Target Id */
+            target_id?: number | null;
+        };
+        /**
          * IdentityEvidence
          * @description Observed external identifier linking a source to its parent.
          */
@@ -4638,6 +4712,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    review_api_identity_review_get: {
+        parameters: {
+            query?: {
+                status?: "pending" | "reviewed";
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_api_identity_review__left_id___right_id__decision_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                left_id: number;
+                right_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityDecision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

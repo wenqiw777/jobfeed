@@ -50,7 +50,7 @@ export function DetailPane({
   const { job, evaluation, status } = detail.data;
   const reviewState = realJob && canonicalDetail.data !== undefined
     ? canonicalDetail.data.identity_review_state : "clear";
-  const held = reviewState !== "clear";
+  const held = !["clear", "identity_conflict", "requirements_conflict"].includes(reviewState);
   const staleReason = detail.data.evaluation_stale_reason;
   const staleScore = realJob && canonicalDetail.data !== undefined
     ? canonicalDetail.data.stale_stage_a_score : null;
@@ -60,6 +60,7 @@ export function DetailPane({
   return (
     <SpaceBetween size="m">
       <Header variant="h3" description={job.title}>{job.company}</Header>
+      {reviewState !== "clear" && !held && <Alert type="info" header="Duplicate review pending">Scoring continues. <a href="/needs-review">Review possible duplicates</a> to decide whether these records should be combined.</Alert>}
       {held && <Alert type="warning" header="Needs review">
         {reviewMessage(reviewState)} No current canonical score is shown until this job is reviewed.
       </Alert>}

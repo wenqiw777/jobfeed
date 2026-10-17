@@ -719,3 +719,17 @@ test("select all loads every matching real ID, not only the current page", async
     return params.get("limit") === "2" && params.get("offset") === "0";
   })).toBe(false);
 });
+
+test("identity review does not replace a completed score with Review pending", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/real-jobs?")) return json({ jobs: [{ ...job(), identity_review_state: "identity_conflict", stage_a_score: 91, stage_b_fit_score: null }], total: 1, tab_counts: { results: 1, wait: 0, applied: 0, ignored: 0 } });
+    if (url === "/api/real-jobs/1") return json({ ...detail(), identity_review_state: "identity_conflict" });
+    throw new Error(`unexpected fetch: ${url}`);
+  }));
+  renderPage();
+  await screen.findByTestId("job-row-1");
+  expect(screen.getByText("91")).toBeVisible();
+  expect(screen.queryByText("Review pending")).not.toBeInTheDocument();
+  expect(screen.getByText(/Scoring continues/)).toBeInTheDocument();
+});

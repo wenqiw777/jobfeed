@@ -6,6 +6,8 @@ from itertools import combinations
 
 import asyncpg  # type: ignore[import-untyped]
 
+from jobfeed.adapters.store._identity_review import kept_separate, rehome_separations
+from jobfeed.adapters.store._posting_spam import SpamDB
 from jobfeed.domain.models import JobPosting, QualityBand
 from jobfeed.domain.normalize import normalize, normalize_company
 from jobfeed.domain.real_job_evaluation import (
@@ -87,6 +89,10 @@ async def resolve_postgres_real_job(  # noqa: C901 - bounded identity conflict r
         candidates.update(
             await _content_candidates(conn, source_parent, source, aliases)
         )
+    for candidate in list(candidates):
+        if await kept_separate(SpamDB(conn, postgres=True), source_parent, candidate):
+            candidates.pop(candidate)
+            observed.pop(candidate, None)
     if len(candidates) > 1:
         if observed and await _compatible_candidates(
             conn, [source_parent, *observed], aliases
@@ -143,18 +149,21 @@ async def resolve_postgres_real_job(  # noqa: C901 - bounded identity conflict r
     return False
 
 
-async def _merge(
+async def _merge(  # noqa: C901, PLR0913 - atomic identity merge with explicit target
     conn: asyncpg.Connection,
     source_parent: int,
     other_parent: int,
     *,
     source_id: int | None = None,
     other_source_id: int | None = None,
+    target_id: int | None = None,
 ) -> bool:
     winner, loser = sorted((source_parent, other_parent))
+    if target_id == loser:
+        winner, loser = loser, winner
     # Lock both identities in a stable order before reading any child state.
     # A concurrent A<-B merge may delete B while this transaction waits.
-    for parent_id in (winner, loser):
+    for parent_id in sorted((winner, loser)):
         if (
             await conn.fetchval(
                 "SELECT id FROM real_jobs WHERE id=$1 FOR UPDATE", parent_id
@@ -202,6 +211,7 @@ async def _merge(
             "explicit_status_conflict",
         )
         return False
+    await rehome_separations(SpamDB(conn, postgres=True), winner, loser)
     if winner_state is None and loser_state is not None:
         await conn.execute(
             "UPDATE real_job_status SET real_job_id=$1 WHERE real_job_id=$2",
@@ -398,6 +408,10 @@ async def _observed_candidates(
         )
         if owned is None or int(owned["real_job_id"]) == source_parent:
             continue
+        if await kept_separate(
+            SpamDB(conn, postgres=True), source_parent, int(owned["real_job_id"])
+        ):
+            continue
         other = await conn.fetchrow(
             "SELECT * FROM jobs WHERE id=$1", int(owned["evidence_job_id"])
         )
@@ -457,6 +471,8 @@ async def _review(
     sources: tuple[int, int],
     reason: str,
 ) -> None:
+    if await kept_separate(SpamDB(conn, postgres=True), *pair):
+        return
     await conn.execute(
         "UPDATE real_jobs SET identity_review_state='identity_conflict' "
         "WHERE id=ANY($1::bigint[]) AND identity_review_state='clear'",

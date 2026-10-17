@@ -108,7 +108,11 @@ class SqliteRealJobEvaluation:
                         if len(claimed) >= limit:
                             break
                         state = parents.get(real_id)
-                        if state is None or state["identity_review_state"] != "clear":
+                        if state is None or state["identity_review_state"] not in {
+                            "clear",
+                            "identity_conflict",
+                            "requirements_conflict",
+                        }:
                             continue
                         selected = _select_input_with_override(
                             real_id,
@@ -407,7 +411,11 @@ class SqliteRealJobEvaluation:
                         if len(claimed) >= limit:
                             break
                         state = parents.get(real_id)
-                        if state is None or state["identity_review_state"] != "clear":
+                        if state is None or state["identity_review_state"] not in {
+                            "clear",
+                            "identity_conflict",
+                            "requirements_conflict",
+                        }:
                             continue
                         current = evaluations.get(real_id)
                         if (
@@ -763,7 +771,11 @@ class SqliteRealJobEvaluation:
                 )
                 if current is not None:
                     continue
-                if parent["identity_review_state"] != "clear":
+                if parent["identity_review_state"] not in {
+                    "clear",
+                    "identity_conflict",
+                    "requirements_conflict",
+                }:
                     continue
                 sources = await _all(
                     connection,
@@ -1120,7 +1132,11 @@ async def _hold_unbackfilled_source_scores(
     state = await _one(
         connection, "SELECT identity_review_state FROM real_jobs WHERE id=?", (real_id,)
     )
-    if state is None or state["identity_review_state"] != "clear":
+    if state is None or state["identity_review_state"] not in {
+        "clear",
+        "identity_conflict",
+        "requirements_conflict",
+    }:
         return
     if await _review_source_override(connection, real_id, jobs) is not None:
         return
@@ -1434,7 +1450,15 @@ async def _claim_inputs(
     placeholders = ",".join("?" for _ in ids)
     parents = await _all(
         connection,
-        f"SELECT id,identity_review_state FROM real_jobs WHERE id IN ({placeholders})",
+        f"SELECT id,identity_review_state FROM real_jobs WHERE id IN ({placeholders}) "
+        "AND NOT EXISTS(SELECT 1 FROM real_job_applications a WHERE "
+        "a.real_job_id=real_jobs.id) "
+        "AND NOT EXISTS(SELECT 1 FROM real_job_status s WHERE "
+        "s.real_job_id=real_jobs.id AND s.status NOT IN "
+        "('new','scored')) "
+        "AND NOT EXISTS(SELECT 1 FROM job_status s JOIN jobs j ON "
+        "j.id=s.job_id WHERE j.real_job_id=real_jobs.id AND s.status "
+        "NOT IN ('new','scored'))",
         tuple(ids),
     )
     evaluations = await _all(

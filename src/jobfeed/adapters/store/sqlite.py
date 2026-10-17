@@ -13,6 +13,7 @@ import aiosqlite
 from jobfeed.adapters.store._sqlite_application_identity import (
     record_application_identity as _record_application_identity,
 )
+from jobfeed.adapters.store._sqlite_identity_review import SqliteIdentityReview
 from jobfeed.adapters.store._sqlite_intermediary import SqliteIntermediary
 from jobfeed.adapters.store._sqlite_real_job_evaluation import (
     SqliteRealJobEvaluation,
@@ -102,6 +103,7 @@ async def _refresh_backfilled_real_job_display(
 
 class SQLiteStore(
     SqliteSpam,
+    SqliteIdentityReview,
     SqliteIntermediary,
     SqliteRealJobEvaluation,
     SqliteRealJobWorkflow,
@@ -363,7 +365,9 @@ class SQLiteStore(
         async with self._lifecycle.connection() as connection:
             cursor = await connection.execute(
                 "SELECT r.id FROM real_jobs r LEFT JOIN real_job_evaluations e "
-                "ON e.real_job_id=r.id WHERE r.identity_review_state='clear' "
+                "ON e.real_job_id=r.id WHERE r.identity_review_state "
+                "IN "
+                "('clear','identity_conflict','requirements_conflict') "
                 "AND NOT EXISTS(SELECT 1 FROM real_job_applications applied "
                 "WHERE applied.real_job_id=r.id) "
                 "AND r.official_closed_at IS NULL "

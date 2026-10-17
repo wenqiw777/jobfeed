@@ -68,7 +68,7 @@ export function JobList({
       id: "score",
       header: "Fit score",
       sortingField: "score",
-      cell: (job) => job.identity_review_state !== "clear"
+      cell: (job) => !["clear", "identity_conflict", "requirements_conflict"].includes(job.identity_review_state)
         ? "Review pending"
         : job.evaluation_stale_reason === "legacy_policy_unknown"
           ? "Old score · pending"
@@ -130,7 +130,7 @@ export function JobList({
 }
 
 function VerdictBadge({ job }: { job: TriageJob }) {
-  if (job.identity_review_state !== "clear") {
+  if (!["clear", "identity_conflict", "requirements_conflict"].includes(job.identity_review_state)) {
     return <Badge color="blue">Needs review</Badge>;
   }
   if (job.evaluation_stale_reason && job.verdict === null) {

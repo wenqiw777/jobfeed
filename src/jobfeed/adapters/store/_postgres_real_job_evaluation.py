@@ -70,11 +70,20 @@ class PostgresRealJobEvaluation:
                 state = await db.fetchrow(
                     (
                         "SELECT identity_review_state FROM real_jobs "
-                        "WHERE id=$1 FOR UPDATE"
+                        "WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM "
+                        "real_job_applications a WHERE "
+                        "a.real_job_id=real_jobs.id) "
+                        "AND NOT EXISTS(SELECT 1 FROM real_job_status "
+                        "s WHERE s.real_job_id=real_jobs.id AND "
+                        "s.status NOT IN ('new','scored')) FOR UPDATE"
                     ),
                     real_id,
                 )
-                if state is None or state["identity_review_state"] != "clear":
+                if state is None or state["identity_review_state"] not in {
+                    "clear",
+                    "identity_conflict",
+                    "requirements_conflict",
+                }:
                     continue
                 rows = await db.fetch(
                     "SELECT * FROM jobs WHERE real_job_id=$1 ORDER BY id", real_id
@@ -345,10 +354,19 @@ class PostgresRealJobEvaluation:
                     break
                 state = await db.fetchrow(
                     "SELECT identity_review_state FROM real_jobs "
-                    "WHERE id=$1 FOR UPDATE",
+                    "WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM "
+                    "real_job_applications a WHERE "
+                    "a.real_job_id=real_jobs.id) "
+                    "AND NOT EXISTS(SELECT 1 FROM real_job_status s "
+                    "WHERE s.real_job_id=real_jobs.id AND s.status NOT "
+                    "IN ('new','scored')) FOR UPDATE",
                     real_id,
                 )
-                if state is None or state["identity_review_state"] != "clear":
+                if state is None or state["identity_review_state"] not in {
+                    "clear",
+                    "identity_conflict",
+                    "requirements_conflict",
+                }:
                     continue
                 current = await db.fetchrow(
                     "SELECT * FROM real_job_evaluations WHERE real_job_id=$1", real_id
@@ -688,7 +706,11 @@ class PostgresRealJobEvaluation:
                     "SELECT 1 FROM real_job_evaluations WHERE real_job_id=$1", real_id
                 ):
                     continue
-                if parent["identity_review_state"] != "clear":
+                if parent["identity_review_state"] not in {
+                    "clear",
+                    "identity_conflict",
+                    "requirements_conflict",
+                }:
                     continue
                 source_rows = await db.fetch(
                     "SELECT * FROM jobs WHERE real_job_id=$1 ORDER BY id", real_id
