@@ -102,3 +102,33 @@ operation; startup does not rewrite the database.
   clear, source eligibility true. Live API readback: 2 blocked, 0 pending.
   Only these seven historical records were reassessed; new/enriched postings
   automatically use version 2. No remote push or merge performed.
+
+## 2026-10-18 copied employer introduction correction
+
+- Scope: local implementation and false-positive verification, no deployment or
+  production state writes. Rule version 3 adds posting-only `copied_employer_posting`.
+- Require an opening `About <employer>` followed by the same employer's introduction,
+  plus an application careers/jobs URL on a matching company-name domain. An
+  unrelated publisher with consultancy/staffing/recruitment/recruiting in its name
+  blocks this posting. Without that additional signal, route to review and retain
+  eligibility. Never promote this evidence into a company-wide block.
+- Protect spaced/legal/extended company names, descriptions mentioning the publisher
+  (possible corporate relationships), ordinary customer mentions, unrelated hosts,
+  ATS URLs and non-careers URLs. This intentionally does not resolve arbitrary
+  aliases, parent companies, ATS tenant ownership or all introduction formats.
+- Test-first: two added positive/review regression cases failed with old rules
+  (`clear`), then passed. Exact production record 508964 is retained as a public
+  fixture. Final classifier, SQLite, evaluation and API suite: 65 passed. Ruff and
+  scoped mypy pass. SQLite verifies exclusions, claim prevention, posting-only
+  scope, Keep across rescan, reset and review-only eligibility.
+- Read-only Mini snapshot: 9,526 descriptions discovered since 2026-10-11 UTC
+  (including the reported ID), spanning 3,313 distinct stored company names.
+  Compared old/new classifier outputs: exactly 14 changes, all UMAI Consultancy
+  postings with ElevenLabs introductions and elevenlabs.io/careers destinations.
+  All 14 were inspected; no other disposition/evidence changes. The 9 direct
+  ElevenLabs postings remain clear. This is no observed incremental false positive
+  in this sample, not a universal false-positive guarantee.
+- Local evidence: `artifacts/copied-employer-screening/sample.json`, `audit.py`,
+  `baseline.py` and `audit.json`. Source snapshot and audit are not production writes.
+- Release remains pending explicit authorization. Historical persisted assessments
+  require a bounded re-audit at release; changing the rule does not backfill them.

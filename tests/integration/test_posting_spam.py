@@ -222,3 +222,38 @@ async def test_reaudit_clears_old_false_positive_blocks_agency_preserves_overrid
         )
     finally:
         await store.close()
+
+
+async def test_copied_employer_block_and_review_are_reversible(tmp_path):
+    store = SQLiteStore(tmp_path / "copied.sqlite")
+    await store.connect()
+    try:
+        body = "About ElevenLabs\n\nElevenLabs is an AI company. Build agents."
+        job = publisher(
+            company="UMAI Consultancy",
+            jd_text=body,
+            apply_url="https://elevenlabs.io/careers/123",
+        )
+        saved = await store.save_job(job)
+        parent = await store.resolve_real_job_id(saved.job_id)
+        assert (await store.spam_review(status="blocked"))["total"] == 1
+        assert await store.claim_real_job_stage_a_by_ids([parent]) == []
+        assert await store.get_state("spam:company:umai consultancy") is None
+        await store.spam_decide(saved.job_id, scope="job", decision="allow")
+        assert (await store.query_real_jobs_view(decision="results"))["total"] == 1
+        await store.save_job(job)
+        assert (await store.spam_review(status="reviewed"))["total"] == 1
+        await store.spam_decide(saved.job_id, scope="job", decision="reset")
+        assert (await store.query_real_jobs_view(decision="results"))["total"] == 0
+        await store.save_job(
+            publisher(
+                2,
+                company="Unknown Brand",
+                jd_text=body,
+                apply_url="https://elevenlabs.io/careers/456",
+            )
+        )
+        assert (await store.spam_review(status="pending"))["total"] == 1
+        assert (await store.query_real_jobs_view(decision="results"))["total"] == 1
+    finally:
+        await store.close()

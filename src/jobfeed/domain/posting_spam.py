@@ -8,8 +8,9 @@ from urllib.parse import urlsplit
 
 from jobfeed.domain.models import JobPosting
 
-RULE_VERSION = 2
+RULE_VERSION = 3
 _MIN_PLACEHOLDERS = 2
+_MIN_EMPLOYER_DOMAIN_LENGTH = 4
 PUBLISHER_DOMAINS = (
     "fetchjobs.co",
     "bestjobtool.com",
@@ -109,6 +110,59 @@ def _publisher_url(url: str | None) -> str | None:
     except ValueError:
         return None
     return None
+
+
+def _copied_employer(job: JobPosting, body: str) -> SpamAssessment | None:
+    """Combine an opening employer introduction with its own careers domain.
+
+    Args:
+        job: Observed publisher and application URL.
+        body: Public description used to check attribution and relationships.
+
+    Returns:
+        Posting-only finding, or None when corroboration is insufficient.
+    """
+    intro = re.match(
+        r"\s*About ([^\n]{2,80})\s*\n+\s*(?:At )?\1 (?:is|are|has|offers|provides)\b",
+        body[:1500],
+        re.I,
+    )
+    if not intro or not job.company.strip():
+        return None
+    name = intro[1].strip()
+    target = re.sub(r"[^a-z0-9]", "", name.casefold())
+    publisher = re.sub(r"[^a-z0-9]", "", job.company.casefold())
+    if len(target) < _MIN_EMPLOYER_DOMAIN_LENGTH or not publisher:
+        return None
+    # Brand extensions, legal suffixes and spaced names are common aliases.
+    if target in publisher or publisher in target:
+        return None
+    # An explicitly mentioned publisher may be a parent, subsidiary or partner.
+    if re.search(rf"(?<!\w){re.escape(job.company)}(?!\w)", body, re.I):
+        return None
+    try:
+        parsed = urlsplit(job.apply_url or "")
+        host = (parsed.hostname or "").casefold()
+        if parsed.scheme not in ("http", "https"):
+            return None
+        if not re.fullmatch(
+            rf"(?:www\.|careers\.|jobs\.)?{re.escape(target)}"
+            r"\.(?:com|io|ai|co|org|net|dev|tech|app|co\.uk)",
+            host,
+        ) or not re.match(r"^/(?:careers?|jobs)(?:/|$)", parsed.path, re.I):
+            return None
+    except ValueError:
+        return None
+    agency_name = re.search(
+        r"\b(?:consultancy|staffing|recruitment|recruiting)\b",
+        job.company,
+        re.I,
+    )
+    return SpamAssessment(
+        "block" if agency_name else "review",
+        "copied_employer_posting",
+        ("Publisher: " + job.company, intro[0].strip(), job.apply_url or ""),
+    )
 
 
 def assess_posting(job: JobPosting) -> SpamAssessment:
@@ -237,4 +291,4 @@ def assess_posting(job: JobPosting) -> SpamAssessment:
             if x
         )
         return SpamAssessment("review", "possible_publisher_or_template", evidence)
-    return SpamAssessment()
+    return _copied_employer(job, body) or SpamAssessment()

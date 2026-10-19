@@ -1,9 +1,12 @@
 """Evidence-based screening must not confuse normal employers with publishers."""
 
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
+from jobfeed.domain.models import JobPosting
 from jobfeed.domain.posting_spam import assess_posting
 from tests.support.factories import make_job
 
@@ -249,4 +252,94 @@ def test_explicit_agency_recruitment_blocks_only_this_job(body):
     assert result.disposition == "block"
     assert result.category == "agency_recruitment"
     assert result.evidence
+    assert not result.company_evidence
+
+
+@pytest.mark.parametrize(
+    "company,expected", [("UMAI Consultancy", "block"), ("Unknown Brand", "review")]
+)
+def test_copied_employer_intro_and_official_destination(company, expected):
+    job = replace(
+        make_job(),
+        company=company,
+        jd_text=(
+            "About ElevenLabs\n\nElevenLabs is an AI company.\n"
+            "About the role\nBuild agents at ElevenLabs."
+        ),
+        apply_url="https://elevenlabs.io/careers/123",
+    )
+    result = assess_posting(job)
+    assert result.disposition == expected
+    assert result.category == "copied_employer_posting"
+    assert not result.company_evidence
+
+
+@pytest.mark.parametrize(
+    "company,body,url",
+    [
+        (
+            "ElevenLabs",
+            "About ElevenLabs\n\nElevenLabs is an AI company.",
+            "https://elevenlabs.io/careers/123",
+        ),
+        (
+            "Eleven Labs Inc.",
+            "About ElevenLabs\n\nElevenLabs is an AI company.",
+            "https://elevenlabs.io/careers/123",
+        ),
+        (
+            "Valon Tech",
+            "About Valon\n\nValon is a mortgage company.",
+            "https://valon.com/careers/123",
+        ),
+        (
+            "Medal",
+            "About General Intuition\n\nGeneral Intuition is a lab built on Medal.",
+            "https://generalintuition.com/careers/123",
+        ),
+        (
+            "Acme Consultancy",
+            "About Acme Consultancy\n\nAcme Consultancy is a software firm. "
+            "We use ElevenLabs.",
+            "https://elevenlabs.io/careers/123",
+        ),
+        (
+            "Acme",
+            "About our customer\n\nElevenLabs is our customer.",
+            "https://elevenlabs.io/careers/123",
+        ),
+        (
+            "UMAI Consultancy",
+            "About ElevenLabs\n\nElevenLabs is an AI company.",
+            "https://elevenlabs.io.attacker.com/careers/123",
+        ),
+        (
+            "UMAI Consultancy",
+            "About ElevenLabs\n\nElevenLabs is an AI company.",
+            "https://boards.greenhouse.io/elevenlabs/jobs/123",
+        ),
+        ("UMAI Consultancy", "About ElevenLabs\n\nElevenLabs is an AI company.", None),
+        (
+            "UMAI Consultancy",
+            "About ElevenLabs\n\nElevenLabs is an AI company.",
+            "https://elevenlabs.io/blog/123",
+        ),
+    ],
+)
+def test_copied_employer_controls_remain_clear(company, body, url):
+    assert (
+        assess_posting(
+            replace(make_job(), company=company, jd_text=body, apply_url=url)
+        ).disposition
+        == "clear"
+    )
+
+
+def test_real_umai_posting_is_blocked():
+    record = json.loads(
+        (Path(__file__).parents[1] / "fixtures/umai_copied_employer.json").read_text()
+    )
+    result = assess_posting(JobPosting(**record))
+    assert result.disposition == "block"
+    assert result.category == "copied_employer_posting"
     assert not result.company_evidence
