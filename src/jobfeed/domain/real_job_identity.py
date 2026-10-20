@@ -23,7 +23,17 @@ _BROAD_LOCATIONS = frozenset(
 )
 _ROLE_HEADING = re.compile(r"(?im)^\s*role\s*$")
 ATS_REQUISITION_PROVIDERS = frozenset(
-    {"greenhouse", "ashby", "lever", "workday", "phenom", "eightfold"}
+    {
+        "greenhouse",
+        "ashby",
+        "lever",
+        "workday",
+        "phenom",
+        "eightfold",
+        "avature",
+        "smartrecruiters",
+        "talentbrew",
+    }
 )
 
 
@@ -126,6 +136,13 @@ def compatible_role_facts(  # noqa: C901 - explicit contradictory identity guard
         left, right, left_observed, right_observed
     ):
         return False
+    # One concrete source posting can display different city labels on mirrors.
+    # Official requisition conflicts above still take precedence.
+    shared_postings = {(i.provider, i.scope, i.native_id) for i in left_observed} & {
+        (i.provider, i.scope, i.native_id) for i in right_observed
+    }
+    if any(p == "linkedin" for p, _, _ in shared_postings):
+        return True
     locations = (_concrete_location(left.location), _concrete_location(right.location))
     if locations[0] != locations[1] and not any(
         location in _BROAD_LOCATIONS for location in locations

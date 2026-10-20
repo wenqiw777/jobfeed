@@ -4,7 +4,10 @@ from datetime import UTC, datetime
 
 from jobfeed.domain.external_identity import observed_identifier
 from jobfeed.domain.models import JobPosting
-from jobfeed.domain.real_job_identity import strict_content_equivalent
+from jobfeed.domain.real_job_identity import (
+    compatible_role_facts,
+    strict_content_equivalent,
+)
 
 
 def _posting(jd: str, *, location: str = "San Diego, CA") -> JobPosting:
@@ -62,3 +65,22 @@ def test_strict_content_rejects_distinct_team_or_location() -> None:
         _posting(body, location="San Diego, CA"),
         _posting(body, location="Dallas, TX"),
     )
+
+
+def test_shared_linkedin_posting_overrides_city_alias_but_not_official_conflict():
+    left = _posting("Same description", location="Manhattan, NY")
+    right = _posting("Same description", location="New York, NY")
+    left.url = "https://www.linkedin.com/jobs/view/4476697040/"
+    right.url = "https://www.linkedin.com/jobs/view/4476697040"
+    assert compatible_role_facts(left, right)
+    left.apply_url = "https://epic.avature.net/Careers/RegisterMethod?folderId=30063"
+    right.apply_url = "https://epic.avature.net/Careers/RegisterMethod?folderId=30064"
+    assert not compatible_role_facts(left, right)
+
+
+def test_distinct_official_tenants_do_not_merge_same_number():
+    left = _posting("Identical substantive description. " * 20)
+    right = _posting(left.jd_text)
+    left.apply_url = "https://epic.avature.net/Careers/RegisterMethod?folderId=30063"
+    right.apply_url = "https://other.avature.net/Careers/RegisterMethod?folderId=30063"
+    assert not compatible_role_facts(left, right)

@@ -61,7 +61,7 @@ async def resolve_postgres_real_job(  # noqa: C901 - bounded identity conflict r
         conn: Open source-write transaction on the PostgreSQL store.
         source_id: Stored source row to resolve.
         incoming: Posting with any newly observed Apply or identity URL.
-        include_content: Also search bounded same-company/title JD candidates.
+        include_content: Also search same-company/title JD candidates in batches.
         remaining_merges: Maximum remaining recursive parent joins.
 
     Returns:
@@ -448,21 +448,22 @@ async def _content_candidates(
     source: JobPosting,
     aliases: Aliases,
 ) -> dict[int, int]:
-    others = await conn.fetch(
+    candidates: dict[int, int] = {}
+    after_id = 0
+    while others := await conn.fetch(
         "SELECT * FROM jobs WHERE company_norm=$1 AND title_norm=$2 "
-        "AND real_job_id<>$3 ORDER BY id LIMIT $4",
+        "AND real_job_id<>$3 AND id>$4 ORDER BY id LIMIT $5",
         normalize_company(source.company),
         normalize(source.title),
         source_parent,
-        _CANDIDATE_LIMIT + 1,
-    )
-    if len(others) > _CANDIDATE_LIMIT:
-        return {}
-    return {
-        int(other["real_job_id"]): int(other["id"])
-        for other in others
-        if strict_content_equivalent(source, _posting(other), aliases)
-    }
+        after_id,
+        _CANDIDATE_LIMIT,
+    ):
+        for other in others:
+            if strict_content_equivalent(source, _posting(other), aliases):
+                candidates[int(other["real_job_id"])] = int(other["id"])
+        after_id = int(others[-1]["id"])
+    return candidates
 
 
 async def _review(

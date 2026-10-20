@@ -38,13 +38,13 @@ async def resolve_sqlite_real_job(  # noqa: C901 - bounded evidence and status c
 ) -> bool:
     """Join one source only when a scoped ID or exact substantive body proves it.
 
-    Time complexity: O(b * c^2) bounded parent and candidate comparisons.
+    Time complexity: O(b * (n + c^2)) for n source rows and c parent candidates.
 
     Args:
         connection: Open source-write transaction on an identity-enabled DB.
         source_id: Stored source row to resolve.
         job: Incoming posting with any newly observed Apply or identity URL.
-        include_content: Also search the bounded same-company/title JD candidates.
+        include_content: Also search same-company/title JD candidates in batches.
 
     Returns:
         Whether at least one parent was merged during this resolution.
@@ -202,23 +202,22 @@ async def _content_candidates(
 ) -> dict[int, int]:
     cursor = await connection.execute(
         "SELECT * FROM jobs WHERE company_norm=? AND title_norm=? "
-        "AND real_job_id<>? ORDER BY id LIMIT ?",
+        "AND real_job_id<>? ORDER BY id",
         (
             normalize_company(source_job.company),
             normalize(source_job.title),
             source_parent,
-            _CANDIDATE_LIMIT + 1,
         ),
     )
-    rows = list(await cursor.fetchall())
-    await cursor.close()
-    if len(rows) > _CANDIDATE_LIMIT:
-        return {}
-    return {
-        int(other["real_job_id"]): int(other["id"])
-        for other in rows
-        if strict_content_equivalent(source_job, _job_from_row(other), aliases)
-    }
+    candidates: dict[int, int] = {}
+    try:
+        while rows := await cursor.fetchmany(_CANDIDATE_LIMIT):
+            for other in rows:
+                if strict_content_equivalent(source_job, _job_from_row(other), aliases):
+                    candidates[int(other["real_job_id"])] = int(other["id"])
+    finally:
+        await cursor.close()
+    return candidates
 
 
 async def _source_row(

@@ -67,3 +67,37 @@ def test_exact_twins_with_different_titles_and_distinct_requisitions():
     assert [
         {job.canonical_id for job in cluster.members} for cluster in cluster_twins(jobs)
     ] == [{"0", "1"}, {"2"}]
+
+
+@pytest.mark.parametrize(
+    ("url", "identity"),
+    [
+        (
+            "https://epic.avature.net/Careers/RegisterMethod?folderId=30063",
+            "avature:epic.avature.net:30063",
+        ),
+        (
+            "https://other.avature.net/Careers/RegisterMethod?folderId=30063",
+            "avature:other.avature.net:30063",
+        ),
+        (
+            "https://jobs.smartrecruiters.com/Wise/744000151030889-engineer",
+            "smartrecruiters:wise:744000151030889",
+        ),
+        (
+            "https://www.synchronycareers.com/job/-/-/49398/101972674880?source=LinkedIn",
+            "talentbrew:www.synchronycareers.com:49398/101972674880",
+        ),
+        (
+            "https://ad.doubleclick.net/ddm/clk/123;m?https://jobs-us.pwc.com/us/en/job/PUVPUIUS750493WDEXTERNALENUS/Engineer?utm_source=linkedin",
+            "phenom:jobs-us.pwc.com:PUVPUIUS750493WDEXTERNALENUS",
+        ),
+        ("https://epic.avature.net/Careers/RegisterMethod", None),
+        ("https://evil.test/Careers/RegisterMethod?folderId=30063", None),
+        ("https://www.synchronycareers.com/job/", None),
+        ("https://jobs.smartrecruiters.com/Wise", None),
+        ("https://evil.test/?https://jobs-us.pwc.com/us/en/job/123/foo", None),
+    ],
+)
+def test_application_destination_identity(url, identity):
+    assert external_identity(url) == identity

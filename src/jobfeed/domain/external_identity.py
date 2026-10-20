@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 _UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 
@@ -32,7 +32,14 @@ def observed_identifier(url: str) -> ObservedIdentifier | None:
     if not identity:
         return None
     provider, _, rest = identity.partition(":")
-    if provider in {"workday", "phenom", "eightfold"}:
+    if provider in {
+        "workday",
+        "phenom",
+        "eightfold",
+        "avature",
+        "smartrecruiters",
+        "talentbrew",
+    }:
         scope, _, native_id = rest.rpartition(":")
         if not scope or not native_id:
             return None
@@ -52,6 +59,14 @@ def external_identity(url: str) -> str | None:  # noqa: C901 - explicit vendor U
     """
     try:
         parsed = urlsplit(url)
+        if (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname == "ad.doubleclick.net"
+            and parsed.path.startswith("/ddm/clk/")
+        ):
+            # The observed click URL contains the destination after its first ?.
+            # Unwrap once; never infer an identity from arbitrary query text.
+            parsed = urlsplit(unquote(parsed.query))
         host = (parsed.hostname or "").lower()
         query = parse_qs(parsed.query)
     except ValueError:
@@ -83,7 +98,7 @@ def external_identity(url: str) -> str | None:  # noqa: C901 - explicit vendor U
         match = re.search(r"_([^/]+)(?:/apply)?/?$", parsed.path)
         if match and "/job/" in parsed.path:
             return f"workday:{host.split('.')[0]}:{match[1]}"
-    if host == "careers.southwestair.com":
+    if host in {"careers.southwestair.com", "jobs-us.pwc.com", "careers.serco-na.com"}:
         match = re.search(r"/us/en/job/([A-Za-z0-9]+)(?:/|$)", parsed.path)
         if match:
             return f"phenom:{host}:{match[1]}"
@@ -91,6 +106,9 @@ def external_identity(url: str) -> str | None:  # noqa: C901 - explicit vendor U
         pid = query.get("pid", [""])[0]
         if parsed.path.rstrip("/") == "/careers" and pid.isdecimal():
             return f"eightfold:{host}:{pid}"
+    destination = _application_destination_identity(host, parsed.path, query)
+    if destination:
+        return destination
     if host in {"jobright.ai", "www.jobright.ai"}:
         match = re.search(r"/jobs/info/([a-zA-Z0-9-]+)(?:/|$)", parsed.path)
         if match:
@@ -99,4 +117,23 @@ def external_identity(url: str) -> str | None:  # noqa: C901 - explicit vendor U
         match = re.search(r"/jobs/(\d+)(?:/|$)", parsed.path)
         if match:
             return f"handshake:{match[1]}"
+    return None
+
+
+def _application_destination_identity(
+    host: str, path: str, query: dict[str, list[str]]
+) -> str | None:
+    """Recognize tenant-scoped concrete applications, excluding career homepages."""
+    if host.endswith(".avature.net") and path.rstrip("/") == "/Careers/RegisterMethod":
+        folder_ids = query.get("folderId", [])
+        if len(folder_ids) == 1 and folder_ids[0].isdecimal():
+            return f"avature:{host}:{folder_ids[0]}"
+    if host == "jobs.smartrecruiters.com":
+        match = re.fullmatch(r"/([^/]+)/(\d+)(?:-[^/]+)?/?", path)
+        if match:
+            return f"smartrecruiters:{match[1].lower()}:{match[2]}"
+    if host == "www.synchronycareers.com":
+        match = re.fullmatch(r"/job/[^/]+/[^/]+/(\d+)/(\d+)/?", path)
+        if match:
+            return f"talentbrew:{host}:{match[1]}/{match[2]}"
     return None
