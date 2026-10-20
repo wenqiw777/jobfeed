@@ -30,7 +30,7 @@ Failure signals to watch
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 _PATCH_MARKER = "_jobfeed_patched"
 
@@ -93,7 +93,7 @@ def apply_indeed_date_patch() -> None:
         return _original(self, _swap_date_field(job))
 
     _patched._jobfeed_patched = True  # type: ignore[attr-defined]  # idempotency marker
-    Indeed._process_job = _patched
+    cast(Any, Indeed)._process_job = _patched
 
 
 __all__ = ["JobSpyPatchError", "apply_indeed_date_patch"]

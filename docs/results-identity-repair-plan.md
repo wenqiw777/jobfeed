@@ -21,7 +21,7 @@ Deployment and production reconciliation were authorized by the user with “部
 - [x] Exercise destination matching, rescan idempotence, application retention,
   manual separation, explicit status conflicts, and differing requisitions.
 - [x] Produce a read-only historical candidate report from a consistent Mini export.
-- [ ] Deploy and reconcile production (authorized; in progress).
+- [x] Deploy and reconcile production (authorized by “部署”).
 
 ## Evidence
 
@@ -61,4 +61,33 @@ Active evaluations and intervening changes must be checked before any actual app
 - The 50-merge transaction safety bound remains; the content candidate-count cutoff
   was removed. Large shared-ID history converges through paged backfill.
 - The original checkout has unrelated changes; they are excluded from this work.
-- No production data, code, service configuration, or scheduled worker was changed.
+- Production deployment and scoped reconciliation completed after authorization;
+  original code/database backed up before changing either.
+
+
+## Production deployment evidence
+
+- Deployed the four tested identity modules after byte-for-byte baseline checks
+  against Mini; preserved all unrelated local and Mini changes.
+- Paused writers and backed up code plus the entire SQLite database to Mini:
+  `data/backups/results-identity-20261020T033511Z/`.
+- Rehearsal on the full backup and the production transaction produced identical
+  counts: 166,062 -> 165,690 canonical parents (372 removed duplicate parents),
+  178,402 source rows retained, 397 application rows retained, 228,301 status-history
+  rows retained, and both interview rows retained. Existing application content
+  and explicit workflow decisions were checked before commit. Scope was limited
+  to 27 reviewed shared-ID groups; the conflicting group was excluded.
+- SQLite quick_check and foreign_key_check passed. Deployed sources match tested
+  local bytes. API, DB, Redis healthy. Chrome extension loaded live Triage normally.
+- Live Results: Initi8 has zero remaining results, with matching source pairs
+  sharing Applied parents; Synchrony API Engineer I - Credit has one result.
+  Epic folderId=30063 now has one parent, retaining its original May discovery
+  date, so it falls outside the configured recent-posting Results window.
+- Restored scheduler and paused background process. Restoring an idle legacy
+  intermediary worker triggered RunAtLoad; stopped it immediately through the
+  run API and launchd. Comparison against the pre-deploy backup found zero source
+  URL, apply URL, JD, or enrichment timestamp changes. Active runs returned empty.
+- Initial remote CI: browser tests passed; quality gate found an existing typed
+  JobSpy method monkeypatch error. Added an explicit Any cast for that dynamic
+  assignment, with no runtime behavior change. Eight patch tests and full-source
+  mypy passed locally. Remote CI rerun is tracked separately.
