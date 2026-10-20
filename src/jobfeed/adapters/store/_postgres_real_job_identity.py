@@ -448,6 +448,11 @@ async def _content_candidates(
     source: JobPosting,
     aliases: Aliases,
 ) -> dict[int, int]:
+    """Compare same-company/title sources in keyset-paginated batches.
+
+    Time complexity: O(n * d) for n source rows and d description length,
+    plus indexed page lookups. Each source is compared once.
+    """
     candidates: dict[int, int] = {}
     after_id = 0
     while others := await conn.fetch(

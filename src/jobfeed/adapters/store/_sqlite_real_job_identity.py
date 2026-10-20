@@ -200,6 +200,11 @@ async def _content_candidates(
     source_job: JobPosting,
     aliases: Aliases,
 ) -> dict[int, int]:
+    """Compare same-company/title sources in bounded read batches.
+
+    Time complexity: O(n * d) for n source rows and d description length.
+    Each source is compared once; batching does not multiply comparisons.
+    """
     cursor = await connection.execute(
         "SELECT * FROM jobs WHERE company_norm=? AND title_norm=? "
         "AND real_job_id<>? ORDER BY id",
